@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = ["accounts", "keetanet-error"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Tanveer Wahid <twahid@keeta.com>"]
+
+[workspace.dependencies]
+# Common dependencies that can be shared across workspace members
+base32 = "0.5.1"
+bip39-dict = "0.1.3"
+hex = "0.4.3"
+hkdf = { version = "0.12.4", features = ["std"] }
+pbkdf2 = { version = "0.12.2", features = ["hmac", "parallel", "sha2", "std"] }
+rand_core = { version = "0.9.3", features = ["std", "os_rng"] }
+k256 = { version = "0.13.2", features = ["ecdsa"] }
+sha2 = { version = "0.10.9", features = ["asm", "asm-aarch64", "sha2-asm"] }
+sha3 = { version = "0.10.8", features = ["asm"] }
+zeroize = { version = "1.8.1", features = ["derive"] }
+snafu = { version = "0.8.6", features = ["std"] }
+serde = { version = "1.0.219", features = ["derive"] }
+secrecy = { version = "0.10.3", features = ["serde"] }
+strum = "0.27.2"
+strum_macros = "0.27.2"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.test]
+opt-level = 1
+debug = true

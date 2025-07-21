@@ -1,0 +1,12 @@
+[package]
+name = "keetanet-error"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+name = "keetanet_error"
+path = "src/lib.rs"
+
+[dependencies]
+snafu.workspace = true

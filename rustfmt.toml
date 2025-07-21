@@ -1,0 +1,19 @@
+# Rustfmt Configuration
+#
+# This configuration file controls the formatting of Rust code in this project.
+# It enforces a consistent style with a focus on readability.
+
+# Indentation settings
+# --------------------
+# Use tabs instead of spaces for indentation
+hard_tabs = true
+# Set tab width to 4 spaces (for display purposes)
+tab_spaces = 4
+
+# Line width settings
+# ------------------
+# Hard limit: Maximum width of 120 characters (absolute maximum line length)
+max_width = 120
+
+# Soft limit: Encourage keeping lines under 80 characters when possible
+use_small_heuristics = "Max"

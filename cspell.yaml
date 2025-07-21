@@ -1,0 +1,39 @@
+version: "0.2"
+ignorePaths:
+  - "target"
+  - "build"
+  - "node_modules"
+  - .github/**
+  - "**/*.lock"
+  - "**/*.toml"
+words:
+  - KeetaNet
+  - keeta
+  - github
+  - ECDSASECP256K1
+  - ECDSASECP256R1
+  - ED25519
+  - Keyable
+  - KeyPairType
+  - bip39
+  - pbkdf2
+  - hkdf
+  - hmac
+  - ascii
+  - secp
+  - ecdsa
+  - secp256k1
+  - passphrase
+  - hexseed
+  - pubkey
+  - keypair
+  - rng
+  - sha3
+  - Sha3_256
+  - Sha256
+  - base32
+  - FromAccountable
+  - Accountable
+  - KeyECDSASECP256K1
+  - KeyECDSASECP256R1
+  - KEYTYPE

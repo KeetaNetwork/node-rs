@@ -1,0 +1,27 @@
+[package]
+name = "accounts"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+name = "accounts"
+crate-type = ["staticlib", "cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+crypto-bigint = "0.6.1"
+base32.workspace = true
+bip39-dict.workspace = true
+hex.workspace = true
+hkdf.workspace = true
+pbkdf2.workspace = true
+rand_core.workspace = true
+k256.workspace = true
+sha2.workspace = true
+sha3.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+zeroize.workspace = true
+secrecy.workspace = true
+keetanet-error = { path = "../keetanet-error" }
