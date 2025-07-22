@@ -45,7 +45,7 @@ use crate::{
 /// ## Security Note
 ///
 /// The inner signing key is kept private and only accessible through the trait
-/// methods. Debug formatting will show "[REDACTED]" to prevent accidental
+/// methods. Debug formatting will show "\[REDACTED\]" to prevent accidental
 /// key exposure.
 #[derive(Clone)]
 pub struct Ed25519PrivateKey {

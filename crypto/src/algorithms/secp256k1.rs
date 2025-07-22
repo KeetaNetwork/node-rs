@@ -46,7 +46,7 @@ use crate::{
 /// ## Security Note
 ///
 /// The inner secret key is kept private and only accessible through the trait
-/// methods. Debug formatting will show "[REDACTED]" to prevent accidental
+/// methods. Debug formatting will show "\[REDACTED\]" to prevent accidental
 /// key exposure.
 #[derive(Clone)]
 pub struct Secp256k1PrivateKey {
