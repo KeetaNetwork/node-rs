@@ -686,7 +686,6 @@ mod tests {
 
 	// Test data structure for comprehensive data-driven testing
 	struct TestCase {
-		name: &'static str,
 		hex_seed: &'static str,
 		passphrase: &'static [&'static str],
 		expected_secp256k1_pubkey: &'static str,
@@ -727,7 +726,6 @@ mod tests {
 
 	const TEST_CASES: &[TestCase] = &[
 		TestCase {
-			name: "original test case",
 			hex_seed: "8C9CF402025839A0D7E568A375EBED1EEA2EFE6690C65FB015AD446FD299ABE2",
 			passphrase: &[
 				"public", "sketch", "attract", "blame", "verify", "faculty", "anchor", "bargain", "acid", "tonight",
@@ -740,7 +738,6 @@ mod tests {
 			expected_ed25519_pubkey: "keeta_ahdd6kd5h7jznrflkabvo6t2s4gv37l4omnmhqa3cdqpya3q2tbf75ua5ays4",
 		},
 		TestCase {
-			name: "second test case",
 			hex_seed: "1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF",
 			passphrase: &[
 				"abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
@@ -790,8 +787,6 @@ mod tests {
 	#[test]
 	fn test_secp256k1_deterministic() {
 		for test_case in TEST_CASES {
-			println!("Testing secp256k1 with: {}", test_case.name);
-
 			let passphrase: Vec<String> = test_case.passphrase.iter().map(|s| s.to_string()).collect();
 
 			// Test passphrase -> seed conversion (expect consistent results)
@@ -834,8 +829,6 @@ mod tests {
 	#[test]
 	fn test_ed25519_deterministic() {
 		for test_case in TEST_CASES {
-			println!("Testing Ed25519 with: {}", test_case.name);
-
 			let passphrase: Vec<String> = test_case.passphrase.iter().map(|s| s.to_string()).collect();
 
 			// Test passphrase -> seed conversion (expect consistent results)
@@ -879,8 +872,6 @@ mod tests {
 	#[test]
 	fn test_algorithm_differences() {
 		for test_case in TEST_CASES {
-			println!("Testing algorithm differences with: {}", test_case.name);
-
 			// Create accounts with the same seed but different algorithms
 			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
 				Keyable::HexSeed((test_case.hex_seed.to_string(), 0)),
@@ -929,12 +920,8 @@ mod tests {
 
 	#[test]
 	fn test_typescript_compatibility_private_accounts() {
-		println!("Testing TypeScript compatibility with private account derivation");
-
 		// Test deterministic key derivation from seed matches TypeScript results
 		for (index, test_case) in PRIVATE_ACCOUNT_TEST_DATA.indexes.iter().enumerate() {
-			println!("Testing index {}", index);
-
 			let seed_bytes = hex::decode(PRIVATE_ACCOUNT_TEST_DATA.seed).unwrap();
 			let seed: [u8; 32] = seed_bytes.try_into().unwrap();
 
@@ -955,16 +942,12 @@ mod tests {
 			// Verify public key format matches TypeScript
 			assert_eq!(
 				secp256k1_account.keypair.public_key, test_case.encoded_public_key_ecdsa_secp256k1,
-				"SECP256K1 public key mismatch at index {}",
-				index
+				"SECP256K1 public key mismatch at index {index}"
 			);
 			assert_eq!(
 				ed25519_account.keypair.public_key, test_case.encoded_public_key_ed25519,
-				"Ed25519 public key mismatch at index {}",
-				index
+				"Ed25519 public key mismatch at index {index}"
 			);
-
-			println!("✓ Index {} passed", index);
 		}
 	}
 

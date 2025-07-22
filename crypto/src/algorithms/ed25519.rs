@@ -24,30 +24,6 @@
 //! ### Method 2: Public Key Conversion (Bi-rational Map)
 //! 1. Convert the Ed25519 public key directly using the bi-rational map
 //! 2. Formula: montgomeryX = (edwardsY + 1) * inverse(1 - edwardsY) mod p
-//!
-//! ## Usage
-//!
-//! ```rust
-//! use crypto::{Ed25519Derivation, KeyDerivation, PrivateKey, PublicKey};
-//!
-//! // Generate key from seed
-//! let seed = b"my secure seed data with 32+ bytes!!";
-//! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
-//! let public_key = private_key.derive_public_key();
-//!
-//! // Format for display
-//! let address = public_key.to_formatted_string()?;
-//! println!("Ed25519 address: {}", address);
-//!
-//! // Convert to X25519 for ECDH
-//! let x25519_private = private_key.to_x25519()?;
-//! let x25519_public = x25519_private.derive_public_key();
-//!
-//! // Perform key exchange with another party
-//! let other_x25519_public = /* ... get other party's X25519 public key ... */;
-//! let shared_secret = x25519_private.diffie_hellman(&other_x25519_public);
-//! # Ok::<(), crypto::CryptoError>(())
-//! ```
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -447,7 +423,6 @@ mod tests {
 
 		// Convert Ed25519 public key directly to X25519 public key
 		let x25519_public_direct = ed25519_public.to_x25519().unwrap();
-
 		// Convert via private key for comparison
 		let x25519_private = ed25519_key.to_x25519().unwrap();
 		let x25519_public_via_private = x25519_private.derive_public_key();
@@ -455,11 +430,6 @@ mod tests {
 		// Both conversions should work (they produce different results as expected)
 		assert_eq!(x25519_public_direct.to_bytes().len(), 32);
 		assert_eq!(x25519_public_via_private.to_bytes().len(), 32);
-
-		// The two methods generally produce different results, but for some seeds they might
-		// coincidentally be the same. Let's just verify both methods work correctly.
-		println!("Direct conversion:     {:?}", hex::encode(x25519_public_direct.to_bytes()));
-		println!("Via private conversion: {:?}", hex::encode(x25519_public_via_private.to_bytes()));
 
 		// Both methods should produce valid 32-byte keys
 		assert_eq!(x25519_public_direct.to_bytes().len(), 32);
