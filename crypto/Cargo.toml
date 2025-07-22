@@ -1,0 +1,27 @@
+[package]
+name = "crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Cryptographic libraries
+k256.workspace = true
+ed25519-dalek.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+sha3.workspace = true
+
+# Encoding
+base32.workspace = true
+hex.workspace = true
+
+# Utilities
+rand_core.workspace = true
+snafu.workspace = true
+
+# Local dependencies
+keetanet-error = { path = "../keetanet-error" }
+
+[dev-dependencies]
+hex-literal.workspace = true

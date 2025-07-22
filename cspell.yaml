@@ -19,6 +19,7 @@ words:
   - pbkdf2
   - hkdf
   - hmac
+  - dalek
   - ascii
   - secp
   - ecdsa

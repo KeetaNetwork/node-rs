@@ -1,3 +1,4 @@
+use crypto::CryptoError;
 use keetanet_error::KeetaNetError;
 use strum_macros::AsRefStr;
 
@@ -38,5 +39,19 @@ pub enum AccountError {
 impl From<AccountError> for KeetaNetError {
 	fn from(err: AccountError) -> Self {
 		KeetaNetError::Code { code: err.as_ref().to_string(), message: format!("{err:?}") }
+	}
+}
+
+impl From<CryptoError> for AccountError {
+	fn from(err: CryptoError) -> Self {
+		match err {
+			CryptoError::InvalidKeyMaterial
+			| CryptoError::KeyDerivationFailed
+			| CryptoError::InvalidPrivateKey
+			| CryptoError::InvalidPublicKey => AccountError::InvalidConstruction,
+			CryptoError::UnsupportedAlgorithm { .. } => AccountError::InvalidKeyType,
+			CryptoError::SignatureVerificationFailed => AccountError::NoIdentifierVerify,
+			CryptoError::InternalError { .. } => AccountError::InvalidConstruction,
+		}
 	}
 }
