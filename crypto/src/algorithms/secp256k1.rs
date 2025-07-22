@@ -1,8 +1,35 @@
-use k256::{
-	ecdsa::SigningKey,
-	elliptic_curve::{ops::Reduce, sec1::ToEncodedPoint},
-	NonZeroScalar, Scalar, SecretKey as K256SecretKey, U256,
-};
+//! secp256k1 cryptographic algorithm implementation.
+//!
+//! This module provides secp256k1 elliptic curve cryptography support, the
+//! same curve used by Bitcoin.
+//!
+//! ## Key Format
+//!
+//! - **Private keys**: 32 bytes, in range [1, n-1] where n is the curve order
+//! - **Public keys**: 33 bytes compressed format (0x02/0x03 prefix + 32 bytes)
+//! - **Addresses**: Formatted with "keeta_" prefix and checksum
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use crypto::{Secp256k1Derivation, KeyDerivation, PrivateKey, PublicKey};
+//!
+//! // Generate key from seed
+//! let seed = b"my secure seed data with 32+ bytes!!";
+//! let private_key = Secp256k1Derivation::derive_from_seed(seed)?;
+//! let public_key = private_key.derive_public_key();
+//!
+//! // Format for display
+//! let address = public_key.to_formatted_string()?;
+//! println!("secp256k1 address: {}", address);
+//!
+//! // Keys can be serialized and deserialized
+//! let private_bytes = private_key.to_bytes();
+//! let restored_key = crypto::algorithms::secp256k1::Secp256k1PrivateKey::from_bytes(&private_bytes)?;
+//! # Ok::<(), crypto::CryptoError>(())
+//! ```
+
+use k256::{ecdsa::SigningKey, elliptic_curve::sec1::ToEncodedPoint, SecretKey as K256SecretKey};
 
 use crate::{
 	algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey},
@@ -10,7 +37,17 @@ use crate::{
 	utils::format_public_key,
 };
 
-/// secp256k1 private key
+/// secp256k1 private key wrapper.
+///
+/// This struct wraps the k256 SecretKey and provides the PrivateKey trait
+/// implementation. secp256k1 private keys are 32 bytes long and must be in
+/// the range [1, n-1] where n is the curve order.
+///
+/// ## Security Note
+///
+/// The inner secret key is kept private and only accessible through the trait
+/// methods. Debug formatting will show "[REDACTED]" to prevent accidental
+/// key exposure.
 #[derive(Clone)]
 pub struct Secp256k1PrivateKey {
 	inner: K256SecretKey,
@@ -22,7 +59,14 @@ impl std::fmt::Debug for Secp256k1PrivateKey {
 	}
 }
 
-/// secp256k1 public key
+/// secp256k1 public key wrapper.
+///
+/// This struct wraps the k256 PublicKey and provides the PublicKey trait
+/// implementation. secp256k1 public keys are stored in compressed format
+/// (33 bytes: 0x02/0x03 prefix + 32 bytes).
+///
+/// Public keys can be safely displayed, serialized, and shared as they contain
+/// no secret information.
 #[derive(Clone, Debug)]
 pub struct Secp256k1PublicKey {
 	inner: k256::PublicKey,
@@ -34,6 +78,7 @@ impl PrivateKey for Secp256k1PrivateKey {
 	fn derive_public_key(&self) -> Self::PublicKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
+
 		Secp256k1PublicKey { inner: verifying_key.into() }
 	}
 
@@ -49,7 +94,8 @@ impl PrivateKey for Secp256k1PrivateKey {
 
 impl PublicKey for Secp256k1PublicKey {
 	fn to_bytes(&self) -> Vec<u8> {
-		// Return compressed format (33 bytes)
+		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
+		// This is more space-efficient than uncompressed format (65 bytes)
 		self.inner.to_encoded_point(true).as_bytes().to_vec()
 	}
 
@@ -64,39 +110,51 @@ impl PublicKey for Secp256k1PublicKey {
 	}
 }
 
-/// secp256k1 key derivation
+/// secp256k1 key derivation implementation
+///
+/// This struct provides the KeyDerivation trait implementation for secp256k1.
+/// It uses HKDF with retry logic to ensure valid key generation.
+///
+/// ## Derivation Process
+///
+/// 1. **HKDF Expansion**: Use the seed as PRK material for HKDF-SHA3-256
+/// 2. **Validation**: Check if the derived 32 bytes form a valid secp256k1 key
+/// 3. **Retry Logic**: If invalid (zero or >= curve order), try again
+/// 4. **Error Handling**: Fail after 1000 attempts (unlikely to happen)
+///
+/// This process ensures we always generate valid secp256k1 private keys while
+/// maintaining deterministic derivation from the same seed.
 pub struct Secp256k1Derivation;
 
 impl KeyDerivation for Secp256k1Derivation {
 	type PrivateKey = Secp256k1PrivateKey;
 
 	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError> {
-		// Use HKDF with retry logic similar to the current implementation
-		// We will try multiple times to find a valid non-zero scalar which
-		// is necessary for secp256k1 keys
+		// The seed here is the seed + index (36 bytes total: 32-byte seed + 4-byte index)
+
+		// Try with the seed as-is first (index 0 case)
+		let mut attempt_seed = seed.to_vec();
 		for attempt in 0u32..1000 {
 			let mut key_bytes = [0u8; 32];
 
-			// Create HKDF from the seed with attempt counter
-			let mut seed_with_attempt = seed.to_vec();
-			seed_with_attempt.extend_from_slice(&attempt.to_be_bytes());
+			// For attempts > 0, append the attempt counter
+			if attempt > 0 {
+				// Remove any previous attempt counter and add the new one
+				attempt_seed.truncate(seed.len());
+				attempt_seed.extend_from_slice(&attempt.to_be_bytes());
+			}
 
-			// First extract, then expand
-			let (prk, _) = hkdf::Hkdf::<sha3::Sha3_256>::extract(None, &seed_with_attempt);
-			let hkdf = hkdf::Hkdf::<sha3::Sha3_256>::from_prk(&prk).map_err(|_| CryptoError::KeyDerivationFailed)?;
-			hkdf.expand(&[0u8; 0], &mut key_bytes).map_err(|_| CryptoError::KeyDerivationFailed)?;
+			// Use HKDF expand-only, treating the seed(+attempt) buffer as PRK
+			let hkdf =
+				hkdf::Hkdf::<sha3::Sha3_256>::from_prk(&attempt_seed).map_err(|_| CryptoError::KeyDerivationFailed)?;
+			hkdf.expand(&[], &mut key_bytes).map_err(|_| CryptoError::KeyDerivationFailed)?;
 
-			// Convert bytes to U256 and reduce modulo curve order
-			let x = U256::from_be_slice(&key_bytes);
-			let scalar = Scalar::reduce(x);
-
-			// Try to create NonZeroScalar
-			if let Some(nonzero_scalar) = NonZeroScalar::new(scalar).into_option() {
-				let secret_key = K256SecretKey::from(nonzero_scalar);
+			// Try to create the secret key - this will fail if key_bytes is zero or >= curve order
+			if let Ok(secret_key) = K256SecretKey::from_slice(&key_bytes) {
 				return Ok(Secp256k1PrivateKey { inner: secret_key });
 			}
 
-			// If scalar was zero, continue to next attempt
+			// If the key was invalid, continue to next attempt
 		}
 
 		Err(CryptoError::KeyDerivationFailed)
@@ -137,10 +195,13 @@ mod tests {
 
 	#[test]
 	fn test_secp256k1_deterministic() {
-		let seed = b"deterministic test seed";
+		// Create a proper seed+index buffer (36 bytes total)
+		let mut seed_with_index = [0u8; 36];
+		seed_with_index[..23].copy_from_slice(b"deterministic test seed");
+		// index 0 is already set (last 4 bytes are 0)
 
-		let key1 = Secp256k1Derivation::derive_from_seed(seed).unwrap();
-		let key2 = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let key1 = Secp256k1Derivation::derive_from_seed(&seed_with_index).unwrap();
+		let key2 = Secp256k1Derivation::derive_from_seed(&seed_with_index).unwrap();
 
 		assert_eq!(key1.to_bytes(), key2.to_bytes());
 

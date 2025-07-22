@@ -8,9 +8,12 @@ authors.workspace = true
 # Cryptographic libraries
 k256.workspace = true
 ed25519-dalek.workspace = true
+x25519-dalek.workspace = true
+curve25519-dalek.workspace = true
 hkdf.workspace = true
 sha2.workspace = true
 sha3.workspace = true
+zeroize.workspace = true
 
 # Encoding
 base32.workspace = true

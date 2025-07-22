@@ -48,7 +48,8 @@ impl From<CryptoError> for AccountError {
 			CryptoError::InvalidKeyMaterial
 			| CryptoError::KeyDerivationFailed
 			| CryptoError::InvalidPrivateKey
-			| CryptoError::InvalidPublicKey => AccountError::InvalidConstruction,
+			| CryptoError::InvalidPublicKey
+			| CryptoError::InvalidLength => AccountError::InvalidConstruction,
 			CryptoError::UnsupportedAlgorithm { .. } => AccountError::InvalidKeyType,
 			CryptoError::SignatureVerificationFailed => AccountError::NoIdentifierVerify,
 			CryptoError::InternalError { .. } => AccountError::InvalidConstruction,

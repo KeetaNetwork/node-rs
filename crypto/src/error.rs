@@ -25,4 +25,7 @@ pub enum CryptoError {
 	/// Internal cryptographic error
 	#[snafu(display("Internal cryptographic error: {message}"))]
 	InternalError { message: String },
+	/// Invalid length specified
+	#[snafu(display("Invalid length specified"))]
+	InvalidLength,
 }

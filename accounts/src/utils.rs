@@ -18,7 +18,8 @@ pub(crate) fn seed_from_passphrase(passphrase: &str) -> Result<Seed, AccountErro
 	}
 
 	let mut key = [0u8; 32];
-	pbkdf2::pbkdf2_hmac::<sha2::Sha256>(clean_passphrase_buffer, clean_passphrase_buffer, 64000, &mut key);
+
+	pbkdf2::pbkdf2_hmac::<sha3::Sha3_256>(clean_passphrase_buffer, clean_passphrase_buffer, 64000, &mut key);
 
 	Ok(key)
 }

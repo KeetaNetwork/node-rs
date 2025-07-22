@@ -9,10 +9,14 @@ ignorePaths:
 words:
   - KeetaNet
   - keeta
+  - tyblocks
   - github
   - ECDSASECP256K1
   - ECDSASECP256R1
   - ED25519
+  - BASEPOINT
+  - ECDH
+  - diffie
   - Keyable
   - KeyPairType
   - bip39

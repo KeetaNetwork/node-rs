@@ -1,6 +1,4 @@
-use sha3::Digest;
-
-use crate::{algorithms::Algorithm, error::CryptoError};
+use crate::{algorithms::Algorithm, error::CryptoError, hash};
 
 /// Format a public key with checksum and base32 encoding
 pub fn format_public_key(public_key_bytes: &[u8], algorithm: Algorithm) -> Result<String, CryptoError> {
@@ -10,11 +8,9 @@ pub fn format_public_key(public_key_bytes: &[u8], algorithm: Algorithm) -> Resul
 	// Add the public key bytes
 	pub_key_values.extend_from_slice(public_key_bytes);
 
-	// Calculate checksum
+	// Calculate checksum using our hash abstraction
 	let checksum_of = Vec::from(&pub_key_values[..]);
-	let mut hasher = sha3::Sha3_256::new();
-	hasher.update(&checksum_of);
-	let checksum = hasher.finalize();
+	let checksum: [u8; 32] = hash::hash_array(&checksum_of, None)?;
 
 	// Add first 5 bytes of checksum
 	pub_key_values.extend_from_slice(&checksum[..5]);
@@ -61,9 +57,7 @@ pub fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorithm), Cry
 
 	// Verify checksum
 	let checksum_input = decoded[..pubkey_end].to_vec();
-	let mut hasher = sha3::Sha3_256::new();
-	hasher.update(&checksum_input);
-	let calculated_checksum = hasher.finalize();
+	let calculated_checksum: [u8; 32] = hash::hash_array(&checksum_input, None)?;
 
 	let provided_checksum = &decoded[pubkey_end..];
 	if provided_checksum != &calculated_checksum[..5] {

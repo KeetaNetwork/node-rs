@@ -7,14 +7,22 @@
 
 pub mod algorithms;
 pub mod error;
+pub mod hash;
 pub mod utils;
 
 // Re-exports for convenience
 pub use algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey};
 pub use error::CryptoError;
+pub use hash::{
+	default_hash_algorithm, default_hash_algorithm_length, hash, hash_array, hash_default, HashAlgorithm,
+	DEFAULT_HASH_ALGORITHM, HASH_FUNCTION_LENGTH, HASH_FUNCTION_NAME,
+};
 
 // Specific algorithm implementations
-pub use algorithms::ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
+pub use algorithms::ed25519::{
+	ed25519_to_x25519_private, ed25519_to_x25519_public, Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey,
+	X25519PrivateKey, X25519PublicKeyStruct,
+};
 pub use algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
 
 /// Enum to hold different key types
