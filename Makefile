@@ -81,9 +81,15 @@ coverage-check:
 	@rustup component add llvm-tools-preview 2>/dev/null || true
 	# Generate coverage and check threshold
 	@echo "Generating coverage report..."
-	@cargo llvm-cov --all-features --workspace --summary-only > coverage_summary.txt
-	@COVERAGE=$$(grep -oE '[0-9]+\.[0-9]+%' coverage_summary.txt | head -1 | sed 's/%//'); \
-	THRESHOLD=80.0; \
+	@cargo llvm-cov --all-features --workspace --summary-only > coverage_summary.txt 2>&1
+	@COVERAGE=$$(grep "TOTAL" coverage_summary.txt | grep -oE '[0-9]+\.[0-9]+%' | tail -1 | sed 's/%//'); \
+	THRESHOLD=90.0; \
+	if [ -z "$$COVERAGE" ]; then \
+		echo "❌ Could not extract total coverage percentage"; \
+		cat coverage_summary.txt; \
+		rm -f coverage_summary.txt; \
+		exit 1; \
+	fi; \
 	echo "Current coverage: $${COVERAGE}%"; \
 	echo "Minimum threshold: $${THRESHOLD}%"; \
 	if [ $$(echo "$${COVERAGE} < $${THRESHOLD}" | bc -l) -eq 1 ]; then \
