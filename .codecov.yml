@@ -1,0 +1,22 @@
+# Codecov configuration
+# This is optional - coverage will work without it
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 5%
+    patch:
+      default:
+        target: auto
+        threshold: 5%
+
+ignore:
+  - "tests/"
+  - "examples/"
+  - "benches/"
+
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: false

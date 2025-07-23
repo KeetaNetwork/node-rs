@@ -29,6 +29,16 @@ make check
 make test
 ```
 
+### Code Coverage
+
+```bash
+# Generate HTML coverage report (opens in browser)
+make coverage
+
+# Generate LCOV coverage report for CI
+make coverage-ci
+```
+
 ### Linting
 
 ```bash
