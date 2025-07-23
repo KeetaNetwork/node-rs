@@ -136,35 +136,10 @@ jobs:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
     
-    - name: Generate code coverage
-      run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
-    
-    - name: Check coverage threshold
+    - name: Generate code coverage and check threshold
       run: |
-        # Generate coverage summary (reusing existing data, no re-run)
-        SUMMARY=$(cargo llvm-cov --all-features --workspace --summary-only --no-run)
-        echo "$SUMMARY"
-        
-        # Extract TOTAL coverage percentage from the summary
-        COVERAGE=$(echo "$SUMMARY" | grep "TOTAL" | grep -oE '[0-9]+\.[0-9]+%' | tail -1 | sed 's/%//')
-        
-        if [ -z "$COVERAGE" ]; then
-          echo "❌ Could not extract total coverage percentage"
-          exit 1
-        fi
-        
-        echo "Current coverage: ${COVERAGE}%"
-        
-        # Set minimum coverage threshold (adjust as needed)
-        THRESHOLD=90.0
-        
-        # Compare coverage with threshold (using awk for better compatibility)
-        if awk "BEGIN {exit !($COVERAGE < $THRESHOLD)}"; then
-          echo "❌ Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
-          exit 1
-        else
-          echo "✅ Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
-        fi
+        make coverage-ci
+        make coverage-check
     
     - name: Archive coverage results
       uses: actions/upload-artifact@v4
