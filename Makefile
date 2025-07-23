@@ -73,6 +73,28 @@ coverage-ci:
 	@rustup component add llvm-tools-preview 2>/dev/null || true
 	cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
 
+# Check coverage percentage and fail if below threshold
+coverage-check:
+	# Install cargo-llvm-cov if not present (quiet)
+	@cargo install cargo-llvm-cov --quiet || true
+	# Install llvm-tools-preview component (force, no prompts)
+	@rustup component add llvm-tools-preview 2>/dev/null || true
+	# Generate coverage and check threshold
+	@echo "Generating coverage report..."
+	@cargo llvm-cov --all-features --workspace --summary-only > coverage_summary.txt
+	@COVERAGE=$$(grep -oE '[0-9]+\.[0-9]+%' coverage_summary.txt | head -1 | sed 's/%//'); \
+	THRESHOLD=80.0; \
+	echo "Current coverage: $${COVERAGE}%"; \
+	echo "Minimum threshold: $${THRESHOLD}%"; \
+	if [ $$(echo "$${COVERAGE} < $${THRESHOLD}" | bc -l) -eq 1 ]; then \
+		echo "❌ Coverage $${COVERAGE}% is below threshold $${THRESHOLD}%"; \
+		rm -f coverage_summary.txt; \
+		exit 1; \
+	else \
+		echo "✅ Coverage $${COVERAGE}% meets threshold $${THRESHOLD}%"; \
+		rm -f coverage_summary.txt; \
+	fi
+
 # Build for release
 release:
 	$(MAKE) build release=1
@@ -91,5 +113,6 @@ help:
 	@echo "  make test         - Run tests"
 	@echo "  make coverage     - Generate code coverage report (HTML + LCOV)"
 	@echo "  make coverage-ci  - Generate code coverage report for CI (LCOV only)"
+	@echo "  make coverage-check - Check coverage percentage and fail if below threshold"
 	@echo "  make all          - Clean, build, and test"
 	@echo "  make help         - Show this help message"

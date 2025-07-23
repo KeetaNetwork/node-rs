@@ -139,12 +139,25 @@ jobs:
     - name: Generate code coverage
       run: cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
     
-    - name: Upload coverage to Codecov (optional)
-      uses: codecov/codecov-action@v3
-      with:
-        file: coverage.lcov
-        fail_ci_if_error: false
-        verbose: true
+    - name: Generate coverage summary
+      run: cargo llvm-cov --all-features --workspace --summary-only
+    
+    - name: Check coverage threshold
+      run: |
+        # Extract coverage percentage from summary
+        COVERAGE=$(cargo llvm-cov --all-features --workspace --summary-only | grep -oP 'lines\.+\K[0-9]+\.[0-9]+' | head -1)
+        echo "Current coverage: ${COVERAGE}%"
+        
+        # Set minimum coverage threshold (adjust as needed)
+        THRESHOLD=80.0
+        
+        # Compare coverage with threshold
+        if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+          echo "❌ Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+          exit 1
+        else
+          echo "✅ Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
+        fi
     
     - name: Archive coverage results
       uses: actions/upload-artifact@v4
