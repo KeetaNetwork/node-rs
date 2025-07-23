@@ -73,16 +73,16 @@ impl PrivateKey<Signature> for Ed25519PrivateKey {
 }
 
 #[cfg(feature = "signature")]
-impl From<Ed25519PrivateKey> for Vec<u8> {
+impl From<Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Ed25519PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
 #[cfg(feature = "signature")]
-impl From<&Ed25519PrivateKey> for Vec<u8> {
+impl From<&Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Ed25519PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
@@ -109,16 +109,16 @@ impl PrivateKey for Ed25519PrivateKey {
 }
 
 #[cfg(not(feature = "signature"))]
-impl From<Ed25519PrivateKey> for Vec<u8> {
+impl From<Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Ed25519PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
 #[cfg(not(feature = "signature"))]
-impl From<&Ed25519PrivateKey> for Vec<u8> {
+impl From<&Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Ed25519PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
@@ -324,15 +324,15 @@ impl TryFrom<&[u8]> for X25519PrivateKey {
 	}
 }
 
-impl From<X25519PrivateKey> for Vec<u8> {
+impl From<X25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: X25519PrivateKey) -> Self {
-		key.bytes.expose_secret().to_vec()
+		SecretBox::new(Box::new(key.bytes.expose_secret().to_vec()))
 	}
 }
 
-impl From<&X25519PrivateKey> for Vec<u8> {
+impl From<&X25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &X25519PrivateKey) -> Self {
-		key.bytes.expose_secret().to_vec()
+		SecretBox::new(Box::new(key.bytes.expose_secret().to_vec()))
 	}
 }
 
@@ -380,7 +380,8 @@ impl From<DalekX25519PublicKey> for X25519PublicKey {
 ///    - Set bit 254 (ensure >= 2^254)
 pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X25519PrivateKey, CryptoError> {
 	// Use our hash abstraction instead of direct sha2 import
-	let hash: [u8; 64] = hash::hash_array(&Vec::<u8>::from(ed25519_key), Some(hash::HashAlgorithm::Sha2_512))?;
+	let key_bytes = SecretBox::<Vec<u8>>::from(ed25519_key);
+	let hash: [u8; 64] = hash::hash_array(key_bytes.expose_secret(), Some(hash::HashAlgorithm::Sha2_512))?;
 
 	let mut x25519_bytes = [0u8; 32];
 	x25519_bytes.copy_from_slice(&hash[..32]);
@@ -514,9 +515,12 @@ mod tests {
 		let public_key = private_key.verifying_key();
 
 		// Test serialization roundtrip
-		let private_bytes: Vec<u8> = (&private_key).into();
-		let recovered_private = Ed25519PrivateKey::try_from(private_bytes.as_slice()).unwrap();
-		assert_eq!(Vec::<u8>::from(&private_key), Vec::<u8>::from(&recovered_private));
+		let private_bytes: SecretBox<Vec<u8>> = (&private_key).into();
+		let recovered_private = Ed25519PrivateKey::try_from(private_bytes.expose_secret().as_slice()).unwrap();
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&private_key).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&recovered_private).expose_secret()
+		);
 
 		let public_bytes: Vec<u8> = (&public_key).into();
 		let recovered_public = Ed25519PublicKey::try_from(public_bytes.as_slice()).unwrap();
@@ -534,7 +538,10 @@ mod tests {
 		let key1 = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		let key2 = Ed25519Derivation::derive_from_seed(seed).unwrap();
 
-		assert_eq!(Vec::<u8>::from(&key1), Vec::<u8>::from(&key2));
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&key1).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&key2).expose_secret()
+		);
 
 		let (pub1, pub2) = (key1.verifying_key(), key2.verifying_key());
 
@@ -547,7 +554,10 @@ mod tests {
 
 		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		let secp256k1_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
-		assert_ne!(Vec::<u8>::from(&ed25519_key), Vec::<u8>::from(&secp256k1_key));
+		assert_ne!(
+			SecretBox::<Vec<u8>>::from(&ed25519_key).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&secp256k1_key).expose_secret()
+		);
 
 		let (ed25519_pub, secp256k1_pub) = (ed25519_key.verifying_key(), secp256k1_key.verifying_key());
 		assert_ne!(Vec::<u8>::from(&ed25519_pub), Vec::<u8>::from(&secp256k1_pub));
@@ -564,19 +574,28 @@ mod tests {
 
 		// Test that conversion is deterministic
 		let x25519_key2 = ed25519_key.to_x25519().unwrap();
-		assert_eq!(Vec::<u8>::from(&x25519_key), Vec::<u8>::from(&x25519_key2));
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&x25519_key).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&x25519_key2).expose_secret()
+		);
 
 		// Test serialization roundtrip
-		let x25519_bytes = Vec::<u8>::from(&x25519_key);
-		let recovered_x25519 = X25519PrivateKey::try_from(x25519_bytes.as_slice()).unwrap();
-		assert_eq!(Vec::<u8>::from(&x25519_key), Vec::<u8>::from(&recovered_x25519));
+		let x25519_bytes = SecretBox::<Vec<u8>>::from(&x25519_key);
+		let recovered_x25519 = X25519PrivateKey::try_from(x25519_bytes.expose_secret().as_slice()).unwrap();
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&x25519_key).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&recovered_x25519).expose_secret()
+		);
 
 		let x25519_pub_bytes = Vec::<u8>::from(&x25519_public);
 		let recovered_x25519_pub = X25519PublicKey::try_from(x25519_pub_bytes.as_slice()).unwrap();
 		assert_eq!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&recovered_x25519_pub));
 
 		// Verify X25519 keys are different from Ed25519 keys
-		assert_ne!(Vec::<u8>::from(&x25519_key), Vec::<u8>::from(&ed25519_key));
+		assert_ne!(
+			SecretBox::<Vec<u8>>::from(&x25519_key).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&ed25519_key).expose_secret()
+		);
 
 		let ed25519_public_for_comparison = ed25519_key.verifying_key();
 

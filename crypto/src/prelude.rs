@@ -24,7 +24,9 @@ pub use crate::{AnyPrivateKey, AnyPublicKey};
 pub use crate::error::CryptoError;
 
 // Utility functions
-pub use crate::utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
+pub use crate::utils::{
+	create_keypair_from_seed, generate_random_passphrase, generate_random_seed, seed_from_passphrase,
+};
 
 // Hash functions
 pub use crate::hash::{hash, hash_array, hash_default, HashAlgorithm};
@@ -36,6 +38,3 @@ pub use ::signature::Keypair;
 // Signature types and operations
 pub use crate::operations::{CryptoSigner, CryptoVerifier, HybridSigner};
 pub use crate::signature::{EcdsaSignature, Ed25519Signature, SignOptions};
-
-// Key creation helper
-pub use crate::create_keypair_from_seed;

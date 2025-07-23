@@ -13,6 +13,7 @@ use k256::{
 	elliptic_curve::sec1::ToEncodedPoint,
 	SecretKey as K256SecretKey,
 };
+use secrecy::SecretBox;
 
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
@@ -60,16 +61,16 @@ impl PrivateKey<Signature> for Secp256k1PrivateKey {
 }
 
 #[cfg(feature = "signature")]
-impl From<Secp256k1PrivateKey> for Vec<u8> {
+impl From<Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Secp256k1PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
 #[cfg(feature = "signature")]
-impl From<&Secp256k1PrivateKey> for Vec<u8> {
+impl From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Secp256k1PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
@@ -97,16 +98,16 @@ impl PrivateKey for Secp256k1PrivateKey {
 }
 
 #[cfg(not(feature = "signature"))]
-impl From<Secp256k1PrivateKey> for Vec<u8> {
+impl From<Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Secp256k1PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
 #[cfg(not(feature = "signature"))]
-impl From<&Secp256k1PrivateKey> for Vec<u8> {
+impl From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Secp256k1PrivateKey) -> Self {
-		key.inner.to_bytes().to_vec()
+		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
@@ -325,6 +326,7 @@ impl KeyDerivation for Secp256k1Derivation {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use secrecy::ExposeSecret;
 
 	#[test]
 	fn test_secp256k1_key_derivation() {
@@ -333,9 +335,12 @@ mod tests {
 		let public_key = private_key.verifying_key();
 
 		// Test serialization roundtrip
-		let private_bytes: Vec<u8> = (&private_key).into();
-		let recovered_private = Secp256k1PrivateKey::try_from(private_bytes.as_slice()).unwrap();
-		assert_eq!(Vec::<u8>::from(&private_key), Vec::<u8>::from(&recovered_private));
+		let private_bytes: SecretBox<Vec<u8>> = (&private_key).into();
+		let recovered_private = Secp256k1PrivateKey::try_from(private_bytes.expose_secret().as_slice()).unwrap();
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&private_key).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&recovered_private).expose_secret()
+		);
 
 		let public_bytes: Vec<u8> = (&public_key).into();
 		let recovered_public = Secp256k1PublicKey::try_from(public_bytes.as_slice()).unwrap();
@@ -355,7 +360,10 @@ mod tests {
 
 		let key1 = Secp256k1Derivation::derive_from_seed(&seed_with_index).unwrap();
 		let key2 = Secp256k1Derivation::derive_from_seed(&seed_with_index).unwrap();
-		assert_eq!(Vec::<u8>::from(&key1), Vec::<u8>::from(&key2));
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&key1).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&key2).expose_secret()
+		);
 
 		let (pub1, pub2) = (key1.verifying_key(), key2.verifying_key());
 		assert_eq!(Vec::<u8>::from(&pub1), Vec::<u8>::from(&pub2));

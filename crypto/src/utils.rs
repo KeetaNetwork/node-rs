@@ -5,9 +5,12 @@ use pbkdf2;
 use rand_core::TryRngCore;
 use secrecy::SecretBox;
 use sha3;
+use signature::Keypair;
 
+use crate::algorithms::{Ed25519Derivation, KeyDerivation, Secp256k1Derivation};
 use crate::constants::*;
 use crate::error::CryptoError;
+use crate::{Algorithm, AnyPrivateKey, AnyPublicKey};
 
 /// Derive a seed from a passphrase using PBKDF2 with SHA3-256.
 ///
@@ -70,6 +73,30 @@ pub fn generate_random_seed() -> Result<SecretBox<[u8; 32]>, CryptoError> {
 	Ok(SecretBox::new(Box::new(seed_buffer)))
 }
 
+/// Create a key pair for the specified algorithm
+pub fn create_keypair_from_seed(
+	seed: &[u8],
+	algorithm: Algorithm,
+) -> Result<(AnyPrivateKey, AnyPublicKey), CryptoError> {
+	match algorithm {
+		Algorithm::Secp256k1 => {
+			let private_key = Secp256k1Derivation::derive_from_seed(seed)?;
+			let public_key = private_key.verifying_key();
+
+			Ok((AnyPrivateKey::Secp256k1(private_key), AnyPublicKey::Secp256k1(public_key)))
+		}
+		Algorithm::Ed25519 => {
+			let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+			let public_key = private_key.verifying_key();
+
+			Ok((AnyPrivateKey::Ed25519(private_key), AnyPublicKey::Ed25519(public_key)))
+		}
+		Algorithm::Secp256r1 => {
+			Err(CryptoError::UnsupportedAlgorithm { algorithm: "secp256r1 not implemented".to_string() })
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -106,5 +133,24 @@ mod tests {
 		assert_eq!(seed.len(), 32);
 		// Should not be all zeros (extremely unlikely)
 		assert_ne!(*seed, [0u8; 32]);
+	}
+
+	#[test]
+	fn test_create_keypair_from_seed() {
+		let seed = b"test seed for keypair creation!!!!!";
+
+		// Test secp256k1 creation
+		let (private_key, public_key) = create_keypair_from_seed(seed, crate::Algorithm::Secp256k1).unwrap();
+		assert_eq!(crate::Algorithm::from(&private_key), crate::Algorithm::Secp256k1);
+		assert_eq!(crate::Algorithm::from(&public_key), crate::Algorithm::Secp256k1);
+
+		// Test Ed25519 creation
+		let (private_key, public_key) = create_keypair_from_seed(seed, crate::Algorithm::Ed25519).unwrap();
+		assert_eq!(crate::Algorithm::from(&private_key), crate::Algorithm::Ed25519);
+		assert_eq!(crate::Algorithm::from(&public_key), crate::Algorithm::Ed25519);
+
+		// Test unsupported algorithm
+		let result = create_keypair_from_seed(seed, crate::Algorithm::Secp256r1);
+		assert!(result.is_err());
 	}
 }
