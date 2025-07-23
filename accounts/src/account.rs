@@ -65,11 +65,10 @@ impl From<KeyPairType> for Algorithm {
 /// Trait defining the interface for cryptographic key pairs.
 ///
 /// Provides methods for key generation, derivation, and type identification.
-pub trait KeyPair: Send + Sync {
-	/// Creates a new key pair from the given input.
-	fn new(input: Keyable) -> Result<Self, AccountError>
-	where
-		Self: Sized;
+pub trait KeyPair: Send + Sync + TryFrom<Keyable, Error = AccountError> {
+	/// The key pair type for this implementation.
+	const KEY_PAIR_TYPE: KeyPairType;
+
 	/// Deterministically derives a private key from a seed and index.
 	///
 	/// Uses HKDF with retry logic to ensure the derived key is valid.
@@ -77,9 +76,9 @@ pub trait KeyPair: Send + Sync {
 	/// Converts a private key into a formatted public key string.
 	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError>;
 	/// Returns the key pair type for this instance.
-	fn keypair_type(&self) -> KeyPairType;
-	/// Returns the static key pair type for this implementation.
-	fn keypair_type_static() -> KeyPairType;
+	fn keypair_type(&self) -> KeyPairType {
+		Self::KEY_PAIR_TYPE
+	}
 }
 
 #[derive(Zeroize)]
@@ -118,7 +117,33 @@ impl core::fmt::Debug for KeyECDSASECP256K1 {
 }
 
 impl KeyPair for KeyECDSASECP256K1 {
-	fn new(input: Keyable) -> Result<Self, AccountError> {
+	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::ECDSASECP256K1;
+
+	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
+		// Convert seed and index to bytes for HKDF
+		let seed_buffer = combine_seed_and_index(seed, index);
+		// Use the crypto crate's secp256k1 derivation
+		let private_key = Secp256k1Derivation::derive_from_seed(&seed_buffer)?;
+
+		Ok(AnyPrivateKey::Secp256k1(private_key))
+	}
+
+	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
+		match key {
+			AnyPrivateKey::Secp256k1(secp_key) => {
+				let public_key = secp_key.verifying_key();
+				let public_key_bytes = Vec::<u8>::from(&public_key);
+				format_public_key(&public_key_bytes, crypto::Algorithm::Secp256k1)
+			}
+			_ => Err(AccountError::InvalidConstruction),
+		}
+	}
+}
+
+impl TryFrom<Keyable> for KeyECDSASECP256K1 {
+	type Error = AccountError;
+
+	fn try_from(input: Keyable) -> Result<Self, AccountError> {
 		let (private_key, public_key) = match input {
 			Keyable::Passphrase((_, index)) | Keyable::Seed((_, index)) | Keyable::HexSeed((_, index)) => {
 				let seed = match input {
@@ -187,34 +212,6 @@ impl KeyPair for KeyECDSASECP256K1 {
 
 		Ok(KeyECDSASECP256K1 { _private_key: private_key, public_key })
 	}
-
-	fn keypair_type(&self) -> KeyPairType {
-		KeyPairType::ECDSASECP256K1
-	}
-
-	fn keypair_type_static() -> KeyPairType {
-		KeyPairType::ECDSASECP256K1
-	}
-
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index);
-		// Use the crypto crate's secp256k1 derivation
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed_buffer)?;
-
-		Ok(AnyPrivateKey::Secp256k1(private_key))
-	}
-
-	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		match key {
-			AnyPrivateKey::Secp256k1(secp_key) => {
-				let public_key = secp_key.verifying_key();
-				let public_key_bytes = Vec::<u8>::from(&public_key);
-				format_public_key(&public_key_bytes, crypto::Algorithm::Secp256k1)
-			}
-			_ => Err(AccountError::InvalidConstruction),
-		}
-	}
 }
 
 #[derive(Debug)]
@@ -230,23 +227,21 @@ impl Clone for KeyECDSASECP256R1 {
 }
 
 impl KeyPair for KeyECDSASECP256R1 {
-	fn new(_input: Keyable) -> Result<Self, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn keypair_type(&self) -> KeyPairType {
-		KeyPairType::ECDSASECP256R1
-	}
-
-	fn keypair_type_static() -> KeyPairType {
-		KeyPairType::ECDSASECP256R1
-	}
+	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::ECDSASECP256R1;
 
 	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
 		Err(AccountError::InvalidConstruction)
 	}
 
 	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
+		Err(AccountError::InvalidConstruction)
+	}
+}
+
+impl TryFrom<Keyable> for KeyECDSASECP256R1 {
+	type Error = AccountError;
+
+	fn try_from(_input: Keyable) -> Result<Self, AccountError> {
 		Err(AccountError::InvalidConstruction)
 	}
 }
@@ -267,7 +262,35 @@ impl core::fmt::Debug for KeyED25519 {
 }
 
 impl KeyPair for KeyED25519 {
-	fn new(input: Keyable) -> Result<Self, AccountError> {
+	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::ED25519;
+
+	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
+		// Convert seed and index to bytes for HKDF
+		let seed_buffer = combine_seed_and_index(seed, index);
+		// Use the crypto crate's Ed25519 derivation
+		let private_key = Ed25519Derivation::derive_from_seed(&seed_buffer)?;
+
+		Ok(AnyPrivateKey::Ed25519(private_key))
+	}
+
+	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
+		match key {
+			AnyPrivateKey::Ed25519(ed_key) => {
+				let public_key = ed_key.verifying_key();
+				let public_key_bytes = Vec::<u8>::from(&public_key);
+				let formatted_key = format_public_key(&public_key_bytes, crypto::Algorithm::Ed25519)?;
+
+				Ok(formatted_key)
+			}
+			_ => Err(AccountError::InvalidConstruction),
+		}
+	}
+}
+
+impl TryFrom<Keyable> for KeyED25519 {
+	type Error = AccountError;
+
+	fn try_from(input: Keyable) -> Result<Self, AccountError> {
 		let (private_key, public_key) = match input {
 			Keyable::Passphrase((_, index)) | Keyable::Seed((_, index)) | Keyable::HexSeed((_, index)) => {
 				let seed = match input {
@@ -336,36 +359,6 @@ impl KeyPair for KeyED25519 {
 
 		Ok(KeyED25519 { _private_key: private_key, public_key })
 	}
-
-	fn keypair_type(&self) -> KeyPairType {
-		KeyPairType::ED25519
-	}
-
-	fn keypair_type_static() -> KeyPairType {
-		KeyPairType::ED25519
-	}
-
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index);
-		// Use the crypto crate's Ed25519 derivation
-		let private_key = Ed25519Derivation::derive_from_seed(&seed_buffer)?;
-
-		Ok(AnyPrivateKey::Ed25519(private_key))
-	}
-
-	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		match key {
-			AnyPrivateKey::Ed25519(ed_key) => {
-				let public_key = ed_key.verifying_key();
-				let public_key_bytes = Vec::<u8>::from(&public_key);
-				let formatted_key = format_public_key(&public_key_bytes, crypto::Algorithm::Ed25519)?;
-
-				Ok(formatted_key)
-			}
-			_ => Err(AccountError::InvalidConstruction),
-		}
-	}
 }
 
 /// Network identifier key implementation.
@@ -387,7 +380,23 @@ impl core::fmt::Debug for KeyNETWORK {
 }
 
 impl KeyPair for KeyNETWORK {
-	fn new(input: Keyable) -> Result<Self, AccountError> {
+	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::NETWORK;
+
+	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
+		// Identifier keys don't have traditional private keys
+		let _ = (seed, index);
+		Err(AccountError::InvalidConstruction)
+	}
+
+	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
+		Err(AccountError::InvalidConstruction)
+	}
+}
+
+impl TryFrom<Keyable> for KeyNETWORK {
+	type Error = AccountError;
+
+	fn try_from(input: Keyable) -> Result<Self, AccountError> {
 		match input {
 			Keyable::Identifier(id) => Ok(KeyNETWORK { identifier: id.clone(), public_key: format!("network_{id}") }),
 			Keyable::Seed((seed, index)) => {
@@ -401,24 +410,6 @@ impl KeyPair for KeyNETWORK {
 			}
 			_ => Err(AccountError::InvalidConstruction),
 		}
-	}
-
-	fn keypair_type(&self) -> KeyPairType {
-		KeyPairType::NETWORK
-	}
-
-	fn keypair_type_static() -> KeyPairType {
-		KeyPairType::NETWORK
-	}
-
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Identifier keys don't have traditional private keys
-		let _ = (seed, index);
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
-		Err(AccountError::InvalidConstruction)
 	}
 }
 
@@ -438,7 +429,23 @@ impl core::fmt::Debug for KeyTOKEN {
 }
 
 impl KeyPair for KeyTOKEN {
-	fn new(input: Keyable) -> Result<Self, AccountError> {
+	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::TOKEN;
+
+	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
+		// Identifier keys don't have traditional private keys
+		let _ = (seed, index);
+		Err(AccountError::InvalidConstruction)
+	}
+
+	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
+		Err(AccountError::InvalidConstruction)
+	}
+}
+
+impl TryFrom<Keyable> for KeyTOKEN {
+	type Error = AccountError;
+
+	fn try_from(input: Keyable) -> Result<Self, AccountError> {
 		match input {
 			Keyable::Identifier(id) => Ok(KeyTOKEN { identifier: id.clone(), public_key: format!("token_{id}") }),
 			Keyable::Seed((seed, index)) => {
@@ -451,24 +458,6 @@ impl KeyPair for KeyTOKEN {
 			}
 			_ => Err(AccountError::InvalidConstruction),
 		}
-	}
-
-	fn keypair_type(&self) -> KeyPairType {
-		KeyPairType::TOKEN
-	}
-
-	fn keypair_type_static() -> KeyPairType {
-		KeyPairType::TOKEN
-	}
-
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Identifier keys don't have traditional private keys
-		let _ = (seed, index);
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
-		Err(AccountError::InvalidConstruction)
 	}
 }
 
@@ -491,7 +480,23 @@ impl core::fmt::Debug for KeySTORAGE {
 }
 
 impl KeyPair for KeySTORAGE {
-	fn new(input: Keyable) -> Result<Self, AccountError> {
+	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::STORAGE;
+
+	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
+		// Identifier keys don't have traditional private keys
+		let _ = (seed, index);
+		Err(AccountError::InvalidConstruction)
+	}
+
+	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
+		Err(AccountError::InvalidConstruction)
+	}
+}
+
+impl TryFrom<Keyable> for KeySTORAGE {
+	type Error = AccountError;
+
+	fn try_from(input: Keyable) -> Result<Self, AccountError> {
 		match input {
 			Keyable::Identifier(id) => Ok(KeySTORAGE { identifier: id.clone(), public_key: format!("storage_{id}") }),
 			Keyable::Seed((seed, index)) => {
@@ -504,24 +509,6 @@ impl KeyPair for KeySTORAGE {
 			}
 			_ => Err(AccountError::InvalidConstruction),
 		}
-	}
-
-	fn keypair_type(&self) -> KeyPairType {
-		KeyPairType::STORAGE
-	}
-
-	fn keypair_type_static() -> KeyPairType {
-		KeyPairType::STORAGE
-	}
-
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Identifier keys don't have traditional private keys
-		let _ = (seed, index);
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
-		Err(AccountError::InvalidConstruction)
 	}
 }
 
@@ -655,8 +642,8 @@ where
 				Ok(Account::<KEYTYPE> { keypair: keypair.unwrap() })
 			}
 			Accountable::KeyAndType(key, key_type) => {
-				let keypair: Result<KEYTYPE, AccountError> = if key_type == KEYTYPE::keypair_type_static() {
-					KEYTYPE::new(key)
+				let keypair: Result<KEYTYPE, AccountError> = if key_type == KEYTYPE::KEY_PAIR_TYPE {
+					KEYTYPE::try_from(key)
 				} else {
 					Err(AccountError::InvalidKeyType)
 				};
@@ -681,7 +668,7 @@ where
 	}
 
 	pub fn keypair_type_static() -> KeyPairType {
-		KEYTYPE::keypair_type_static()
+		KEYTYPE::KEY_PAIR_TYPE
 	}
 
 	pub fn compute_seed_from_passphrase(passphrase: Vec<String>) -> Result<Seed, AccountError> {
@@ -1133,26 +1120,26 @@ mod tests {
 	#[test]
 	fn test_identifier_key_types() {
 		// Test NETWORK identifier key
-		let network_key = KeyNETWORK::new(Keyable::Identifier("test-network-id".to_string())).unwrap();
+		let network_key = KeyNETWORK::try_from(Keyable::Identifier("test-network-id".to_string())).unwrap();
 		assert_eq!(network_key.identifier, "test-network-id");
 		assert_eq!(network_key.public_key, "network_test-network-id");
 		assert_eq!(network_key.keypair_type(), KeyPairType::NETWORK);
 
 		// Test TOKEN identifier key
-		let token_key = KeyTOKEN::new(Keyable::Identifier("test-token-id".to_string())).unwrap();
+		let token_key = KeyTOKEN::try_from(Keyable::Identifier("test-token-id".to_string())).unwrap();
 		assert_eq!(token_key.identifier, "test-token-id");
 		assert_eq!(token_key.public_key, "token_test-token-id");
 		assert_eq!(token_key.keypair_type(), KeyPairType::TOKEN);
 
 		// Test STORAGE identifier key
-		let storage_key = KeySTORAGE::new(Keyable::Identifier("test-storage-id".to_string())).unwrap();
+		let storage_key = KeySTORAGE::try_from(Keyable::Identifier("test-storage-id".to_string())).unwrap();
 		assert_eq!(storage_key.identifier, "test-storage-id");
 		assert_eq!(storage_key.public_key, "storage_test-storage-id");
 		assert_eq!(storage_key.keypair_type(), KeyPairType::STORAGE);
 
 		// Test that identifier keys fail with non-identifier input
 		let passphrase_secret = SecretBox::new(Box::new(vec!["test".to_string()]));
-		let result = KeyNETWORK::new(Keyable::Passphrase((passphrase_secret, 0)));
+		let result = KeyNETWORK::try_from(Keyable::Passphrase((passphrase_secret, 0)));
 		assert!(result.is_err());
 	}
 
