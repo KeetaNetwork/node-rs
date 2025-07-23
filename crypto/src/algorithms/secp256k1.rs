@@ -55,41 +55,11 @@ pub struct Secp256k1PublicKey {
 	inner: k256::PublicKey,
 }
 
-#[cfg(feature = "signature")]
-impl PrivateKey<Signature> for Secp256k1PrivateKey {
-	type PublicKey = Secp256k1PublicKey;
-}
-
-#[cfg(feature = "signature")]
-impl From<Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
-	fn from(key: Secp256k1PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
-	}
-}
-
-#[cfg(feature = "signature")]
-impl From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
-	fn from(key: &Secp256k1PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
-	}
-}
-
-#[cfg(feature = "signature")]
-impl TryFrom<&[u8]> for Secp256k1PrivateKey {
-	type Error = CryptoError;
-
-	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let secret_key = K256SecretKey::from_slice(bytes).map_err(|_| CryptoError::InvalidPrivateKey)?;
-
-		Ok(Secp256k1PrivateKey { inner: secret_key })
-	}
-}
-
-#[cfg(not(feature = "signature"))]
 impl PrivateKey for Secp256k1PrivateKey {
 	type PublicKey = Secp256k1PublicKey;
+	type Signature = Signature;
 
-	fn verifying_key(&self) -> Self::PublicKey {
+	fn as_public_key(&self) -> Self::PublicKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
 
@@ -97,21 +67,18 @@ impl PrivateKey for Secp256k1PrivateKey {
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl From<Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Secp256k1PrivateKey) -> Self {
 		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Secp256k1PrivateKey) -> Self {
 		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl TryFrom<&[u8]> for Secp256k1PrivateKey {
 	type Error = CryptoError;
 
@@ -145,42 +112,8 @@ impl Signer<Signature> for Secp256k1PrivateKey {
 	}
 }
 
-#[cfg(feature = "signature")]
-impl PublicKey<Signature> for Secp256k1PublicKey {}
-
-#[cfg(feature = "signature")]
-impl From<Secp256k1PublicKey> for Vec<u8> {
-	fn from(key: Secp256k1PublicKey) -> Self {
-		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
-		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner.to_encoded_point(true).as_bytes().to_vec()
-	}
-}
-
-#[cfg(feature = "signature")]
-impl From<&Secp256k1PublicKey> for Vec<u8> {
-	fn from(key: &Secp256k1PublicKey) -> Self {
-		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
-		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner.to_encoded_point(true).as_bytes().to_vec()
-	}
-}
-
-#[cfg(feature = "signature")]
-impl TryFrom<&[u8]> for Secp256k1PublicKey {
-	type Error = CryptoError;
-
-	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let public_key = k256::PublicKey::from_sec1_bytes(bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
-
-		Ok(Secp256k1PublicKey { inner: public_key })
-	}
-}
-
-#[cfg(not(feature = "signature"))]
 impl PublicKey for Secp256k1PublicKey {}
 
-#[cfg(not(feature = "signature"))]
 impl From<Secp256k1PublicKey> for Vec<u8> {
 	fn from(key: Secp256k1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
@@ -189,7 +122,6 @@ impl From<Secp256k1PublicKey> for Vec<u8> {
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl From<&Secp256k1PublicKey> for Vec<u8> {
 	fn from(key: &Secp256k1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
@@ -198,7 +130,6 @@ impl From<&Secp256k1PublicKey> for Vec<u8> {
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl TryFrom<&[u8]> for Secp256k1PublicKey {
 	type Error = CryptoError;
 
@@ -235,51 +166,6 @@ impl Verifier<Signature> for Secp256k1PublicKey {
 /// maintaining deterministic derivation from the same seed.
 pub struct Secp256k1Derivation;
 
-#[cfg(feature = "signature")]
-impl KeyDerivation<Signature> for Secp256k1Derivation {
-	type PrivateKey = Secp256k1PrivateKey;
-
-	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError> {
-		// The seed here is the seed + index (36 bytes total: 32-byte seed + 4-byte index)
-
-		// Try with the seed as-is first (index 0 case)
-		let mut attempt_seed = seed.to_vec();
-		for attempt in 0u32..1000 {
-			let mut key_bytes = [0u8; 32];
-
-			// For attempts > 0, append the attempt counter
-			if attempt > 0 {
-				// Remove any previous attempt counter and add the new one
-				attempt_seed.truncate(seed.len());
-				attempt_seed.extend_from_slice(&attempt.to_be_bytes());
-			}
-
-			// Use HKDF expand-only, treating the seed(+attempt) buffer as PRK
-			let hkdf =
-				hkdf::Hkdf::<sha3::Sha3_256>::from_prk(&attempt_seed).map_err(|_| CryptoError::KeyDerivationFailed)?;
-			hkdf.expand(&[], &mut key_bytes).map_err(|_| CryptoError::KeyDerivationFailed)?;
-
-			// Try to create the secret key - this will fail if key_bytes is zero or >= curve order
-			if let Ok(secret_key) = K256SecretKey::from_slice(&key_bytes) {
-				return Ok(Secp256k1PrivateKey { inner: secret_key });
-			}
-
-			// If the key was invalid, continue to next attempt
-		}
-
-		Err(CryptoError::KeyDerivationFailed)
-	}
-
-	fn validate_key_material(bytes: &[u8]) -> bool {
-		bytes.len() == 32 && K256SecretKey::from_slice(bytes).is_ok()
-	}
-
-	fn key_size() -> usize {
-		32
-	}
-}
-
-#[cfg(not(feature = "signature"))]
 impl KeyDerivation for Secp256k1Derivation {
 	type PrivateKey = Secp256k1PrivateKey;
 
@@ -332,7 +218,7 @@ mod tests {
 	fn test_secp256k1_key_derivation() {
 		let seed = b"test seed for secp256k1 key derivation";
 		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.verifying_key();
+		let public_key = private_key.as_public_key();
 
 		// Test serialization roundtrip
 		let private_bytes: SecretBox<Vec<u8>> = (&private_key).into();
@@ -365,7 +251,7 @@ mod tests {
 			SecretBox::<Vec<u8>>::from(&key2).expose_secret()
 		);
 
-		let (pub1, pub2) = (key1.verifying_key(), key2.verifying_key());
+		let (pub1, pub2) = (key1.as_public_key(), key2.as_public_key());
 		assert_eq!(Vec::<u8>::from(&pub1), Vec::<u8>::from(&pub2));
 	}
 }

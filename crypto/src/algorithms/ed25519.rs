@@ -67,62 +67,27 @@ pub struct Ed25519PublicKey {
 	inner: VerifyingKey,
 }
 
-#[cfg(feature = "signature")]
-impl PrivateKey<Signature> for Ed25519PrivateKey {
-	type PublicKey = Ed25519PublicKey;
-}
-
-#[cfg(feature = "signature")]
-impl From<Ed25519PrivateKey> for SecretBox<Vec<u8>> {
-	fn from(key: Ed25519PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
-	}
-}
-
-#[cfg(feature = "signature")]
-impl From<&Ed25519PrivateKey> for SecretBox<Vec<u8>> {
-	fn from(key: &Ed25519PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
-	}
-}
-
-#[cfg(feature = "signature")]
-impl TryFrom<&[u8]> for Ed25519PrivateKey {
-	type Error = CryptoError;
-
-	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] =
-			bytes.try_into().map_err(|_| CryptoError::InvalidPrivateKey)?;
-		let signing_key = SigningKey::from_bytes(&bytes_array);
-
-		Ok(Ed25519PrivateKey { inner: signing_key })
-	}
-}
-
-#[cfg(not(feature = "signature"))]
 impl PrivateKey for Ed25519PrivateKey {
 	type PublicKey = Ed25519PublicKey;
+	type Signature = Signature;
 
-	fn verifying_key(&self) -> Self::PublicKey {
+	fn as_public_key(&self) -> Self::PublicKey {
 		Ed25519PublicKey { inner: self.inner.verifying_key() }
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl From<Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Ed25519PrivateKey) -> Self {
 		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl From<&Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Ed25519PrivateKey) -> Self {
 		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl TryFrom<&[u8]> for Ed25519PrivateKey {
 	type Error = CryptoError;
 
@@ -160,54 +125,20 @@ impl Ed25519PrivateKey {
 	}
 }
 
-#[cfg(feature = "signature")]
-impl PublicKey<Signature> for Ed25519PublicKey {}
-
-#[cfg(feature = "signature")]
-impl From<Ed25519PublicKey> for Vec<u8> {
-	fn from(key: Ed25519PublicKey) -> Self {
-		key.inner.to_bytes().to_vec()
-	}
-}
-
-#[cfg(feature = "signature")]
-impl From<&Ed25519PublicKey> for Vec<u8> {
-	fn from(key: &Ed25519PublicKey) -> Self {
-		key.inner.to_bytes().to_vec()
-	}
-}
-
-#[cfg(feature = "signature")]
-impl TryFrom<&[u8]> for Ed25519PublicKey {
-	type Error = CryptoError;
-
-	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] =
-			bytes.try_into().map_err(|_| CryptoError::InvalidPublicKey)?;
-		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
-
-		Ok(Ed25519PublicKey { inner: verifying_key })
-	}
-}
-
-#[cfg(not(feature = "signature"))]
 impl PublicKey for Ed25519PublicKey {}
 
-#[cfg(not(feature = "signature"))]
 impl From<Ed25519PublicKey> for Vec<u8> {
 	fn from(key: Ed25519PublicKey) -> Self {
 		key.inner.to_bytes().to_vec()
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl From<&Ed25519PublicKey> for Vec<u8> {
 	fn from(key: &Ed25519PublicKey) -> Self {
 		key.inner.to_bytes().to_vec()
 	}
 }
 
-#[cfg(not(feature = "signature"))]
 impl TryFrom<&[u8]> for Ed25519PublicKey {
 	type Error = CryptoError;
 
@@ -440,38 +371,6 @@ pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519
 /// This process ensures the generated private key is valid.
 pub struct Ed25519Derivation;
 
-#[cfg(feature = "signature")]
-impl KeyDerivation<Signature> for Ed25519Derivation {
-	type PrivateKey = Ed25519PrivateKey;
-
-	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError> {
-		// Hash the seed+index buffer directly using our hash abstraction
-		let hash_result: [u8; 32] = hash::hash_array(seed, None)?;
-
-		// Apply Ed25519 clamping
-		let mut private_key_bytes = hash_result.to_vec();
-		private_key_bytes[0] &= 248; // Clear bits 0, 1, 2
-		private_key_bytes[31] &= 127; // Clear bit 255
-		private_key_bytes[31] |= 64; // Set bit 254
-
-		// Convert to fixed-size array for Ed25519
-		let mut key_bytes = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
-		key_bytes.copy_from_slice(&private_key_bytes[..ed25519_dalek::SECRET_KEY_LENGTH]);
-
-		let signing_key = SigningKey::from_bytes(&key_bytes);
-		Ok(Ed25519PrivateKey { inner: signing_key })
-	}
-
-	fn validate_key_material(bytes: &[u8]) -> bool {
-		bytes.len() == ed25519_dalek::SECRET_KEY_LENGTH
-	}
-
-	fn key_size() -> usize {
-		ed25519_dalek::SECRET_KEY_LENGTH
-	}
-}
-
-#[cfg(not(feature = "signature"))]
 impl KeyDerivation for Ed25519Derivation {
 	type PrivateKey = Ed25519PrivateKey;
 
@@ -512,7 +411,7 @@ mod tests {
 	fn test_ed25519_key_derivation() {
 		let seed = b"test seed for ed25519 key derivation!!";
 		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.verifying_key();
+		let public_key = private_key.as_public_key();
 
 		// Test serialization roundtrip
 		let private_bytes: SecretBox<Vec<u8>> = (&private_key).into();
@@ -543,7 +442,7 @@ mod tests {
 			SecretBox::<Vec<u8>>::from(&key2).expose_secret()
 		);
 
-		let (pub1, pub2) = (key1.verifying_key(), key2.verifying_key());
+		let (pub1, pub2) = (key1.as_public_key(), key2.as_public_key());
 
 		assert_eq!(Vec::<u8>::from(&pub1), Vec::<u8>::from(&pub2));
 	}
@@ -559,7 +458,7 @@ mod tests {
 			SecretBox::<Vec<u8>>::from(&secp256k1_key).expose_secret()
 		);
 
-		let (ed25519_pub, secp256k1_pub) = (ed25519_key.verifying_key(), secp256k1_key.verifying_key());
+		let (ed25519_pub, secp256k1_pub) = (ed25519_key.as_public_key(), secp256k1_key.as_public_key());
 		assert_ne!(Vec::<u8>::from(&ed25519_pub), Vec::<u8>::from(&secp256k1_pub));
 	}
 
@@ -597,7 +496,7 @@ mod tests {
 			SecretBox::<Vec<u8>>::from(&ed25519_key).expose_secret()
 		);
 
-		let ed25519_public_for_comparison = ed25519_key.verifying_key();
+		let ed25519_public_for_comparison = ed25519_key.as_public_key();
 
 		assert_ne!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&ed25519_public_for_comparison));
 	}
@@ -606,7 +505,7 @@ mod tests {
 	fn test_ed25519_public_to_x25519_conversion() {
 		let seed = b"seed_for_testing_public_conversion!!";
 		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let ed25519_public = ed25519_key.verifying_key();
+		let ed25519_public = ed25519_key.as_public_key();
 
 		// Convert Ed25519 public key directly to X25519 public key
 		let x25519_public_direct = ed25519_public.to_x25519().unwrap();

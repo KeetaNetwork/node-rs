@@ -4,9 +4,6 @@ use secrecy::SecretBox;
 
 use crate::error::CryptoError;
 
-#[cfg(feature = "signature")]
-use ::signature::{Keypair, Verifier};
-
 // Algorithm implementations
 pub mod ed25519;
 pub mod secp256k1;
@@ -18,43 +15,17 @@ pub use secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey
 /// Trait for cryptographic private keys that can be used for signing.
 ///
 /// This extends RustCrypto's Keypair trait with serialization capabilities
-#[cfg(feature = "signature")]
-pub trait PrivateKey<S>:
-	Keypair<VerifyingKey = Self::PublicKey>
-	+ Clone
-	+ Send
-	+ Sync
-	+ Debug
-	+ for<'a> TryFrom<&'a [u8], Error = CryptoError>
-	+ Into<SecretBox<Vec<u8>>>
-{
-	type PublicKey: PublicKey<S>;
-}
-
-/// Fallback trait for when signature feature is disabled
-#[cfg(not(feature = "signature"))]
 pub trait PrivateKey:
 	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<SecretBox<Vec<u8>>>
 {
 	type PublicKey: PublicKey;
+	type Signature: Clone + Send + Sync + Debug;
 
-	/// Get the verifying key (public key) for this private key
-	///
-	/// This method name matches RustCrypto's Keypair trait for consistency
-	fn verifying_key(&self) -> Self::PublicKey;
+	/// Get the public key for this private key
+	fn as_public_key(&self) -> Self::PublicKey;
 }
 
 /// Trait for cryptographic public keys that can be used for verification
-///
-/// This extends RustCrypto's Verifier trait with serialization capabilities
-#[cfg(feature = "signature")]
-pub trait PublicKey<S>:
-	Verifier<S> + Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>>
-{
-}
-
-/// Fallback trait for when signature feature is disabled
-#[cfg(not(feature = "signature"))]
 pub trait PublicKey:
 	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>>
 {
@@ -77,8 +48,8 @@ pub enum AnyPublicKey {
 impl AnyPrivateKey {
 	pub fn derive_public_key(&self) -> AnyPublicKey {
 		match self {
-			AnyPrivateKey::Secp256k1(key) => AnyPublicKey::Secp256k1(key.verifying_key()),
-			AnyPrivateKey::Ed25519(key) => AnyPublicKey::Ed25519(key.verifying_key()),
+			AnyPrivateKey::Secp256k1(key) => AnyPublicKey::Secp256k1(key.as_public_key()),
+			AnyPrivateKey::Ed25519(key) => AnyPublicKey::Ed25519(key.as_public_key()),
 		}
 	}
 
@@ -136,22 +107,6 @@ impl From<AnyPublicKey> for Algorithm {
 }
 
 /// Trait for key derivation algorithms
-#[cfg(feature = "signature")]
-pub trait KeyDerivation<S> {
-	type PrivateKey: PrivateKey<S>;
-
-	/// Derive a private key from seed material
-	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError>;
-
-	/// Validate that bytes represent valid key material
-	fn validate_key_material(bytes: &[u8]) -> bool;
-
-	/// Get the expected key size in bytes
-	fn key_size() -> usize;
-}
-
-/// Fallback trait for when signature feature is disabled
-#[cfg(not(feature = "signature"))]
 pub trait KeyDerivation {
 	type PrivateKey: PrivateKey;
 
@@ -235,13 +190,13 @@ mod tests {
 		let seed = b"test seed for algorithm conversion!!";
 
 		let secp256k1_private = Secp256k1Derivation::derive_from_seed(seed).unwrap();
-		let secp256k1_public = secp256k1_private.verifying_key();
+		let secp256k1_public = secp256k1_private.as_public_key();
 		let any_secp256k1_pub = AnyPublicKey::Secp256k1(secp256k1_public);
 		assert_eq!(Algorithm::from(&any_secp256k1_pub), Algorithm::Secp256k1);
 		assert_eq!(Algorithm::from(any_secp256k1_pub), Algorithm::Secp256k1);
 
 		let ed25519_private = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let ed25519_public = ed25519_private.verifying_key();
+		let ed25519_public = ed25519_private.as_public_key();
 		let any_ed25519_pub = AnyPublicKey::Ed25519(ed25519_public);
 		assert_eq!(Algorithm::from(&any_ed25519_pub), Algorithm::Ed25519);
 		assert_eq!(Algorithm::from(any_ed25519_pub), Algorithm::Ed25519);
