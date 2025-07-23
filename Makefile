@@ -1,4 +1,4 @@
-.PHONY: build clean lint test all help check release
+.PHONY: build clean lint test all help check release coverage coverage-check
 
 # Project name
 PROJ_NAME := node-rs
@@ -27,6 +27,10 @@ check:
 # Build the project
 build:
 	cargo build $(release_flag)
+
+# Build for release
+release:
+	$(MAKE) build release=1
 
 # Clean build artifacts
 clean:
@@ -65,14 +69,6 @@ coverage:
 		find target -name "index.html" -path "*/llvm-cov/*" 2>/dev/null | head -1 | xargs open || echo "No HTML report found"; \
 	fi
 
-# Generate coverage report for CI (no HTML)
-coverage-ci:
-	# Install cargo-llvm-cov if not present (quiet)
-	@cargo install cargo-llvm-cov --quiet || true
-	# Install llvm-tools-preview component (force, no prompts)
-	@rustup component add llvm-tools-preview 2>/dev/null || true
-	cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
-
 # Check coverage percentage and fail if below threshold
 coverage-check:
 	# Install cargo-llvm-cov if not present (quiet)
@@ -101,10 +97,6 @@ coverage-check:
 		rm -f coverage_summary.txt; \
 	fi
 
-# Build for release
-release:
-	$(MAKE) build release=1
-
 # Help information
 help:
 	@echo "Makefile"
@@ -118,7 +110,6 @@ help:
 	@echo "  make lint         - Lint code with clippy and format"
 	@echo "  make test         - Run tests"
 	@echo "  make coverage     - Generate code coverage report (HTML + LCOV)"
-	@echo "  make coverage-ci  - Generate code coverage report for CI (LCOV only)"
 	@echo "  make coverage-check - Check coverage percentage and fail if below threshold"
 	@echo "  make all          - Clean, build, and test"
 	@echo "  make help         - Show this help message"

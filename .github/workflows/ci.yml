@@ -136,11 +136,9 @@ jobs:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
     
-    - name: Generate code coverage and check threshold
-      run: |
-        make coverage-ci
-        make coverage-check
-    
+    - name: Check code coverage threshold
+      run: make coverage-check
+
     - name: Archive coverage results
       uses: actions/upload-artifact@v4
       with:
