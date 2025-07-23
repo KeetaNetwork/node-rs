@@ -1,32 +1,11 @@
-//! Hash abstraction module for KeetaNet cryptographic operations
+//! Hash abstraction module for KeetaNet cryptographic operations.
 //!
-//! This module provides a flexible abstraction over different hash algorithms,
-//! similar to how the cryptographic algorithms are abstracted.
-//!
-//! # Examples
-//!
-//! ```rust
-//! use crypto::{HashAlgorithm, hash_default, hash, hash_array};
-//!
-//! let data = b"hello world";
-//!
-//! // Use default algorithm (SHA3-256)
-//! let default_hash = hash_default(data); // [u8; 32]
-//! let full_hash: [u8; 32] = hash(data, None).unwrap();
-//! let truncated: [u8; 16] = hash(data, None).unwrap();
-//!
-//! // Use specific algorithms with const generics
-//! let sha2_256: [u8; 32] = hash(data, Some(HashAlgorithm::Sha2_256)).unwrap();
-//! let sha2_512: [u8; 64] = hash(data, Some(HashAlgorithm::Sha2_512)).unwrap();
-//! let sha2_512_truncated: [u8; 32] = hash(data, Some(HashAlgorithm::Sha2_512)).unwrap();
-//!
-//! // Alternative array API (same as hash function)
-//! let array_result: [u8; 32] = hash_array(data, None).unwrap();
-//! ```
+//! This module provides a flexible abstraction over different hash algorithms.
 
 use sha2::{Sha256, Sha512};
 use sha3::{Digest, Sha3_256};
 
+use crate::constants::*;
 use crate::error::CryptoError;
 
 /// Supported hash algorithms
@@ -102,15 +81,6 @@ impl HashAlgorithm {
 		Ok(hash[..length].to_vec())
 	}
 }
-
-/// Default hash algorithm for KeetaNet (SHA3-256)
-pub const DEFAULT_HASH_ALGORITHM: HashAlgorithm = HashAlgorithm::Sha3_256;
-
-/// Hash function name to use with key derivation and public key checksums
-pub const HASH_FUNCTION_NAME: &str = "sha3-256";
-
-/// Length of the hash function in bytes
-pub const HASH_FUNCTION_LENGTH: usize = 32;
 
 /// Hash some data with optional algorithm and optional fixed length
 ///

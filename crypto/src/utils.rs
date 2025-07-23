@@ -1,123 +1,110 @@
-use crate::{algorithms::Algorithm, error::CryptoError, hash};
+use core::str::FromStr;
 
-/// Format a public key with checksum and base32 encoding
-pub fn format_public_key(public_key_bytes: &[u8], algorithm: Algorithm) -> Result<String, CryptoError> {
-	// Start with algorithm identifier
-	let mut pub_key_values = vec![algorithm.id()];
+use bip39_dict::DefaultDictionary;
+use pbkdf2;
+use rand_core::TryRngCore;
+use secrecy::SecretBox;
+use sha3;
 
-	// Add the public key bytes
-	pub_key_values.extend_from_slice(public_key_bytes);
+use crate::constants::*;
+use crate::error::CryptoError;
 
-	// Calculate checksum using our hash abstraction
-	let checksum_of = Vec::from(&pub_key_values[..]);
-	let checksum: [u8; 32] = hash::hash_array(&checksum_of, None)?;
+/// Derive a seed from a passphrase using PBKDF2 with SHA3-256.
+///
+/// This function applies PBKDF2 key derivation to convert a passphrase
+/// into a 32-byte seed suitable for key derivation.
+pub fn seed_from_passphrase(passphrase: &str) -> Result<SecretBox<[u8; 32]>, CryptoError> {
+	// Normalize passphrase (lowercase, remove spaces) to match accounts crate behavior
+	let clean_passphrase = passphrase.to_lowercase().replace(" ", "");
+	let clean_passphrase_buffer = clean_passphrase.as_bytes();
 
-	// Add first 5 bytes of checksum
-	pub_key_values.extend_from_slice(&checksum[..5]);
-
-	// Expected lengths:
-	// secp256k1: 1 (algo) + 33 (compressed pubkey) + 5 (checksum) = 39 bytes
-	// ed25519: 1 (algo) + 32 (pubkey) + 5 (checksum) = 38 bytes
-	let expected_lengths = match algorithm {
-		Algorithm::Secp256k1 => vec![39],
-		Algorithm::Ed25519 => vec![38],
-		Algorithm::Secp256r1 => vec![39], // Same as secp256k1
-	};
-
-	if !expected_lengths.contains(&pub_key_values.len()) {
-		return Err(CryptoError::InvalidPublicKey);
+	if clean_passphrase_buffer.len() < MIN_PASSPHRASE_LENGTH {
+		return Err(CryptoError::InvalidInput);
 	}
 
-	// Encode as base32
-	let pub_key_formatted = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &pub_key_values);
+	let mut key = [0u8; 32];
 
-	Ok(format!("keeta_{pub_key_formatted}"))
+	// Use PBKDF2 with SHA3-256, 64000 iterations, using passphrase as both input and salt
+	pbkdf2::pbkdf2_hmac::<sha3::Sha3_256>(
+		clean_passphrase_buffer,
+		clean_passphrase_buffer,
+		PBKDF2_ITERATIONS,
+		&mut key,
+	);
+
+	Ok(SecretBox::new(Box::new(key)))
 }
 
-/// Parse a formatted public key string
-pub fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorithm), CryptoError> {
-	// Remove "keeta_" prefix
-	let encoded = formatted_key.strip_prefix("keeta_").ok_or(CryptoError::InvalidPublicKey)?;
+/// Generates a random 24-word passphrase using a specified dictionary.
+/// The default is the English dictionary.
+/// Returns an error if the OS RNG fails.
+pub fn generate_random_passphrase(
+	dictionary: Option<DefaultDictionary>,
+) -> Result<SecretBox<Vec<String>>, CryptoError> {
+	let words = dictionary.unwrap_or(bip39_dict::ENGLISH).words;
+	let word_count = words.len() as u32;
+	let passphrase: Result<Vec<String>, CryptoError> = (0..24)
+		.map(|_| {
+			let idx = rand_core::OsRng
+				.try_next_u32()
+				.map_err(|_| CryptoError::InternalError { message: "Failed to generate random number".to_string() })?;
+			let word = words[(idx % word_count) as usize];
 
-	// Decode base32
-	let decoded = base32::decode(base32::Alphabet::Rfc4648Lower { padding: false }, encoded)
-		.ok_or(CryptoError::InvalidPublicKey)?;
+			String::from_str(word)
+				.map_err(|_| CryptoError::InternalError { message: "Failed to convert word to string".to_string() })
+		})
+		.collect();
 
-	if decoded.len() < 6 {
-		// At least 1 byte algorithm + 1 byte pubkey + 5 bytes checksum
-		return Err(CryptoError::InvalidPublicKey);
-	}
+	Ok(SecretBox::new(Box::new(passphrase?)))
+}
 
-	// Extract algorithm
-	let algorithm = Algorithm::from_id(decoded[0])?;
+/// Generates a random 32-byte seed using the OS RNG.
+/// Returns an error if the OS RNG fails.
+pub fn generate_random_seed() -> Result<SecretBox<[u8; 32]>, CryptoError> {
+	let mut seed_buffer = [0u8; 32];
 
-	// Extract public key bytes (everything except first byte and last 5 bytes)
-	let pubkey_end = decoded.len() - 5;
-	let public_key_bytes = decoded[1..pubkey_end].to_vec();
+	rand_core::OsRng
+		.try_fill_bytes(&mut seed_buffer)
+		.map_err(|_| CryptoError::InternalError { message: "Failed to generate random seed".to_string() })?;
 
-	// Verify checksum
-	let checksum_input = decoded[..pubkey_end].to_vec();
-	let calculated_checksum: [u8; 32] = hash::hash_array(&checksum_input, None)?;
-
-	let provided_checksum = &decoded[pubkey_end..];
-	if provided_checksum != &calculated_checksum[..5] {
-		return Err(CryptoError::InvalidPublicKey);
-	}
-
-	Ok((public_key_bytes, algorithm))
+	Ok(SecretBox::new(Box::new(seed_buffer)))
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use secrecy::ExposeSecret;
 
 	#[test]
-	fn test_format_and_parse_secp256k1() {
-		// 33-byte compressed secp256k1 public key
-		let pubkey = vec![0x02; 33];
-		let formatted = format_public_key(&pubkey, Algorithm::Secp256k1).unwrap();
+	fn test_seed_from_passphrase() {
+		let passphrase = "panic category office glow ski camera file slight room escape indicate fiction";
 
-		assert!(formatted.starts_with("keeta_"));
+		let seed = seed_from_passphrase(passphrase);
+		assert!(seed.is_ok());
 
-		let (parsed_pubkey, algorithm) = parse_public_key(&formatted).unwrap();
-		assert_eq!(pubkey, parsed_pubkey);
-		assert_eq!(algorithm, Algorithm::Secp256k1);
+		let seed = seed.unwrap();
+		assert_eq!(seed.expose_secret().len(), 32);
 	}
 
 	#[test]
-	fn test_format_and_parse_ed25519() {
-		// 32-byte ed25519 public key
-		let pubkey = vec![0x03; 32];
-		let formatted = format_public_key(&pubkey, Algorithm::Ed25519).unwrap();
+	fn test_generate_random_passphrase() {
+		let passphrase = generate_random_passphrase(None).unwrap();
+		let passphrase = passphrase.expose_secret();
+		assert_eq!(passphrase.len(), 24);
 
-		assert!(formatted.starts_with("keeta_"));
-
-		let (parsed_pubkey, algorithm) = parse_public_key(&formatted).unwrap();
-		assert_eq!(pubkey, parsed_pubkey);
-		assert_eq!(algorithm, Algorithm::Ed25519);
+		// All words should be from the bip39 dictionary
+		for word in passphrase {
+			assert!(bip39_dict::ENGLISH.words.contains(&word.as_str()));
+		}
 	}
 
 	#[test]
-	fn test_invalid_format() {
-		// Wrong prefix
-		assert!(parse_public_key("wrong_prefix").is_err());
+	fn test_generate_random_seed() {
+		let seed = generate_random_seed().unwrap();
+		let seed = seed.expose_secret();
 
-		// Invalid base32
-		assert!(parse_public_key("keeta_invalid@base32!").is_err());
-
-		// Too short
-		assert!(parse_public_key("keeta_aa").is_err());
-	}
-
-	#[test]
-	fn test_checksum_validation() {
-		let pubkey = vec![0x04; 33];
-		let mut formatted = format_public_key(&pubkey, Algorithm::Secp256k1).unwrap();
-
-		// Corrupt the last character (checksum)
-		formatted.pop();
-		formatted.push('x');
-
-		assert!(parse_public_key(&formatted).is_err());
+		assert_eq!(seed.len(), 32);
+		// Should not be all zeros (extremely unlikely)
+		assert_ne!(*seed, [0u8; 32]);
 	}
 }

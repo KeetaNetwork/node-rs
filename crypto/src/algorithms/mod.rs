@@ -1,4 +1,9 @@
+use core::fmt::Debug;
+
 use crate::error::CryptoError;
+
+#[cfg(feature = "signature")]
+use ::signature::{Keypair, Verifier};
 
 // Algorithm implementations
 pub mod ed25519;
@@ -8,37 +13,68 @@ pub mod secp256k1;
 pub use ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 pub use secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
 
-/// Trait for cryptographic private keys
-pub trait PrivateKey: Clone + Send + Sync + std::fmt::Debug {
-	type PublicKey: PublicKey;
-
-	/// Derive the corresponding public key
-	fn derive_public_key(&self) -> Self::PublicKey;
-
-	/// Get the raw bytes of the private key
-	fn to_bytes(&self) -> Vec<u8>;
-
-	/// Create from raw bytes
-	fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError>
-	where
-		Self: Sized;
+/// Trait for cryptographic private keys that can be used for signing.
+///
+/// This extends RustCrypto's Keypair trait with serialization capabilities
+#[cfg(feature = "signature")]
+pub trait PrivateKey<S>:
+	Keypair<VerifyingKey = Self::PublicKey>
+	+ Clone
+	+ Send
+	+ Sync
+	+ Debug
+	+ for<'a> TryFrom<&'a [u8], Error = CryptoError>
+	+ Into<Vec<u8>>
+{
+	type PublicKey: PublicKey<S>;
 }
 
-/// Trait for cryptographic public keys
-pub trait PublicKey: Clone + Send + Sync + std::fmt::Debug {
-	/// Get the raw bytes of the public key
-	fn to_bytes(&self) -> Vec<u8>;
+/// Fallback trait for when signature feature is disabled
+#[cfg(not(feature = "signature"))]
+pub trait PrivateKey:
+	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>>
+{
+	type PublicKey: PublicKey;
 
-	/// Create from raw bytes
-	fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError>
-	where
-		Self: Sized;
+	/// Get the verifying key (public key) for this private key
+	///
+	/// This method name matches RustCrypto's Keypair trait for consistency
+	fn verifying_key(&self) -> Self::PublicKey;
+}
 
-	/// Format as a string with checksum and encoding
-	fn to_formatted_string(&self) -> Result<String, CryptoError>;
+/// Trait for cryptographic public keys that can be used for verification
+///
+/// This extends RustCrypto's Verifier trait with serialization capabilities
+#[cfg(feature = "signature")]
+pub trait PublicKey<S>:
+	Verifier<S> + Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>>
+{
+}
+
+/// Fallback trait for when signature feature is disabled
+#[cfg(not(feature = "signature"))]
+pub trait PublicKey:
+	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>>
+{
 }
 
 /// Trait for key derivation algorithms
+#[cfg(feature = "signature")]
+pub trait KeyDerivation<S> {
+	type PrivateKey: PrivateKey<S>;
+
+	/// Derive a private key from seed material
+	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError>;
+
+	/// Validate that bytes represent valid key material
+	fn validate_key_material(bytes: &[u8]) -> bool;
+
+	/// Get the expected key size in bytes
+	fn key_size() -> usize;
+}
+
+/// Fallback trait for when signature feature is disabled
+#[cfg(not(feature = "signature"))]
 pub trait KeyDerivation {
 	type PrivateKey: PrivateKey;
 
@@ -66,15 +102,29 @@ pub enum Algorithm {
 impl Algorithm {
 	/// Get the algorithm identifier
 	pub fn id(&self) -> u8 {
-		match self {
+		(*self).into()
+	}
+
+	/// Create from algorithm identifier
+	pub fn from_id(id: u8) -> Result<Self, CryptoError> {
+		id.try_into()
+	}
+}
+
+impl From<Algorithm> for u8 {
+	fn from(algorithm: Algorithm) -> Self {
+		match algorithm {
 			Algorithm::Secp256k1 => 0,
 			Algorithm::Ed25519 => 1,
 			Algorithm::Secp256r1 => 6,
 		}
 	}
+}
 
-	/// Create from algorithm identifier
-	pub fn from_id(id: u8) -> Result<Self, CryptoError> {
+impl TryFrom<u8> for Algorithm {
+	type Error = CryptoError;
+
+	fn try_from(id: u8) -> Result<Self, Self::Error> {
 		match id {
 			0 => Ok(Algorithm::Secp256k1),
 			1 => Ok(Algorithm::Ed25519),

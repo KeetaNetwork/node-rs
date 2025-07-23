@@ -10,16 +10,22 @@ dependencies = [
  "bip39-dict",
  "crypto",
  "hex",
- "hkdf",
  "keetanet-error",
- "pbkdf2",
  "rand_core 0.9.3",
  "secrecy",
- "sha2",
- "sha3",
  "strum",
  "strum_macros",
  "zeroize",
+]
+
+[[package]]
+name = "aead"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d122413f284cf2d62fb1b7db97e02edb8cda96d769b16e443a4f6195e35662b0"
+dependencies = [
+ "crypto-common",
+ "generic-array",
 ]
 
 [[package]]
@@ -123,7 +129,9 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 name = "crypto"
 version = "0.1.0"
 dependencies = [
+ "aead",
  "base32",
+ "bip39-dict",
  "curve25519-dalek",
  "ed25519-dalek",
  "hex",
@@ -131,9 +139,12 @@ dependencies = [
  "hkdf",
  "k256",
  "keetanet-error",
+ "pbkdf2",
  "rand_core 0.9.3",
+ "secrecy",
  "sha2",
  "sha3",
+ "signature",
  "snafu",
  "x25519-dalek",
  "zeroize",

@@ -6,24 +6,34 @@
 //! - Support for multiple algorithms (secp256k1, Ed25519)
 
 pub mod algorithms;
+pub mod constants;
 pub mod error;
 pub mod hash;
+pub mod operations;
+pub mod prelude;
+pub mod signature;
 pub mod utils;
 
 // Re-exports for convenience
 pub use algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey};
 pub use error::CryptoError;
-pub use hash::{
-	default_hash_algorithm, default_hash_algorithm_length, hash, hash_array, hash_default, HashAlgorithm,
-	DEFAULT_HASH_ALGORITHM, HASH_FUNCTION_LENGTH, HASH_FUNCTION_NAME,
-};
+pub use hash::{default_hash_algorithm, default_hash_algorithm_length, hash, hash_array, hash_default, HashAlgorithm};
+
+// Re-export the Keypair trait when signature feature is enabled
+#[cfg(feature = "signature")]
+pub use ::signature::Keypair;
+
+// Re-export signature types and crypto operations
+pub use operations::{CryptoAead, CryptoSigner, CryptoVerifier, HybridEncryption, HybridSigner, KeyExchange};
+pub use signature::{EcdsaSignature, Ed25519Signature, SignOptions, SignatureStorage};
 
 // Specific algorithm implementations
 pub use algorithms::ed25519::{
 	ed25519_to_x25519_private, ed25519_to_x25519_public, Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey,
-	X25519PrivateKey, X25519PublicKeyStruct,
+	X25519PrivateKey, X25519PublicKey,
 };
 pub use algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
+pub use utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
 
 /// Enum to hold different key types
 #[derive(Debug, Clone)]
@@ -42,15 +52,15 @@ pub enum AnyPublicKey {
 impl AnyPrivateKey {
 	pub fn derive_public_key(&self) -> AnyPublicKey {
 		match self {
-			AnyPrivateKey::Secp256k1(key) => AnyPublicKey::Secp256k1(key.derive_public_key()),
-			AnyPrivateKey::Ed25519(key) => AnyPublicKey::Ed25519(key.derive_public_key()),
+			AnyPrivateKey::Secp256k1(key) => AnyPublicKey::Secp256k1(key.verifying_key()),
+			AnyPrivateKey::Ed25519(key) => AnyPublicKey::Ed25519(key.verifying_key()),
 		}
 	}
 
 	pub fn to_bytes(&self) -> Vec<u8> {
 		match self {
-			AnyPrivateKey::Secp256k1(key) => key.to_bytes(),
-			AnyPrivateKey::Ed25519(key) => key.to_bytes(),
+			AnyPrivateKey::Secp256k1(key) => key.into(),
+			AnyPrivateKey::Ed25519(key) => key.into(),
 		}
 	}
 
@@ -65,15 +75,8 @@ impl AnyPrivateKey {
 impl AnyPublicKey {
 	pub fn to_bytes(&self) -> Vec<u8> {
 		match self {
-			AnyPublicKey::Secp256k1(key) => key.to_bytes(),
-			AnyPublicKey::Ed25519(key) => key.to_bytes(),
-		}
-	}
-
-	pub fn to_formatted_string(&self) -> Result<String, CryptoError> {
-		match self {
-			AnyPublicKey::Secp256k1(key) => key.to_formatted_string(),
-			AnyPublicKey::Ed25519(key) => key.to_formatted_string(),
+			AnyPublicKey::Secp256k1(key) => key.into(),
+			AnyPublicKey::Ed25519(key) => key.into(),
 		}
 	}
 
@@ -93,12 +96,12 @@ pub fn create_keypair_from_seed(
 	match algorithm {
 		Algorithm::Secp256k1 => {
 			let private_key = Secp256k1Derivation::derive_from_seed(seed)?;
-			let public_key = private_key.derive_public_key();
+			let public_key = private_key.verifying_key();
 			Ok((AnyPrivateKey::Secp256k1(private_key), AnyPublicKey::Secp256k1(public_key)))
 		}
 		Algorithm::Ed25519 => {
 			let private_key = Ed25519Derivation::derive_from_seed(seed)?;
-			let public_key = private_key.derive_public_key();
+			let public_key = private_key.verifying_key();
 			Ok((AnyPrivateKey::Ed25519(private_key), AnyPublicKey::Ed25519(public_key)))
 		}
 		Algorithm::Secp256r1 => {

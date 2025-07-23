@@ -9,25 +9,35 @@ authors = ["Tanveer Wahid <twahid@keeta.com>"]
 
 [workspace.dependencies]
 # Common dependencies that can be shared across workspace members
-base32 = "0.5.1"
-bip39-dict = "0.1.3"
-hex = "0.4.3"
-hex-literal = "1.0.0"
-hkdf = { version = "0.12.4", features = ["std"] }
-pbkdf2 = { version = "0.12.2", features = ["hmac", "parallel", "sha2", "std"] }
-rand_core = { version = "0.9.3", features = ["std", "os_rng"] }
-k256 = { version = "0.13.2", features = ["ecdsa"] }
-ed25519-dalek = { version = "2.0", features = ["std", "rand_core"] }
-x25519-dalek = { version = "2.0", features = ["zeroize"] }
-curve25519-dalek = { version = "4.0" }
-sha2 = { version = "0.10.9", features = ["asm", "asm-aarch64", "sha2-asm"] }
-sha3 = { version = "0.10.8", features = ["asm"] }
-zeroize = { version = "1.8.1", features = ["derive"] }
-snafu = { version = "0.8.6", features = ["std"] }
-serde = { version = "1.0.219", features = ["derive"] }
-secrecy = { version = "0.10.3", features = ["serde"] }
-strum = "0.27.2"
-strum_macros = "0.27.2"
+[workspace.dependencies.base32]
+version = "0.5.1"
+
+[workspace.dependencies.bip39-dict]
+version = "0.1.3"
+
+[workspace.dependencies.hex]
+version = "0.4.3"
+
+[workspace.dependencies.hex-literal]
+version = "1.0.0"
+
+[workspace.dependencies.serde]
+version = "1.0.219"
+features = ["derive"]
+
+[workspace.dependencies.secrecy]
+version = "0.10.3"
+features = ["serde"]
+
+[workspace.dependencies.snafu]
+version = "0.8.6"
+features = ["std"]
+
+[workspace.dependencies.strum]
+version = "0.27.2"
+
+[workspace.dependencies.strum_macros]
+version = "0.27.2"
 
 [profile.dev]
 opt-level = 0

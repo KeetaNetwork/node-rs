@@ -6,25 +6,84 @@ authors.workspace = true
 
 [dependencies]
 # Cryptographic libraries
-k256.workspace = true
-ed25519-dalek.workspace = true
-x25519-dalek.workspace = true
-curve25519-dalek.workspace = true
-hkdf.workspace = true
-sha2.workspace = true
-sha3.workspace = true
-zeroize.workspace = true
+[dependencies.k256]
+version = "0.13.2"
+features = ["ecdsa"]
 
-# Encoding
-base32.workspace = true
-hex.workspace = true
+[dependencies.ed25519-dalek]
+version = "2.0"
+features = ["std", "rand_core"]
+
+[dependencies.x25519-dalek]
+version = "2.0"
+features = ["zeroize"]
+
+[dependencies.curve25519-dalek]
+version = "4.0"
+
+[dependencies.hkdf]
+version = "0.12.4"
+features = ["std"]
+
+[dependencies.pbkdf2]
+version = "0.12.2"
+features = ["hmac", "parallel", "sha2", "std"]
+
+[dependencies.sha2]
+version = "0.10.9"
+features = ["asm", "asm-aarch64", "sha2-asm"]
+
+[dependencies.sha3]
+version = "0.10.8"
+features = ["asm"]
+
+[dependencies.zeroize]
+version = "1.8.1"
+features = ["derive"]
+
+[dependencies.rand_core]
+version = "0.9.3"
+features = ["std", "os_rng"]
+
+[dependencies.snafu]
+workspace = true
+
+# RustCrypto trait crates
+[dependencies.signature]
+version = "2.2"
+default-features = false
+features = ["alloc"]
+optional = true
+
+[dependencies.aead]
+version = "0.5"
+default-features = false
+features = ["alloc"]
+optional = true
 
 # Utilities
-rand_core.workspace = true
-snafu.workspace = true
+[dependencies.bip39-dict]
+version = "0.1.3"
+
+[dependencies.secrecy]
+version = "0.10.3"
+features = ["serde"]
+
+# Encoding
+[dependencies.base32]
+workspace = true
+
+[dependencies.hex]
+workspace = true
 
 # Local dependencies
-keetanet-error = { path = "../keetanet-error" }
+[dependencies.keetanet-error]
+path = "../keetanet-error"
+
+[features]
+default = ["signature", "aead"]
+signature = ["dep:signature"]
+aead = ["dep:aead"]
 
 [dev-dependencies]
 hex-literal.workspace = true

@@ -2,7 +2,7 @@ use crypto::CryptoError;
 use keetanet_error::KeetaNetError;
 use strum_macros::AsRefStr;
 
-#[derive(Debug, AsRefStr)]
+#[derive(Debug, AsRefStr, Clone, PartialEq, Eq)]
 pub enum AccountError {
 	#[strum(serialize = "INVALID_PREFIX")]
 	InvalidPrefix,
@@ -45,13 +45,14 @@ impl From<AccountError> for KeetaNetError {
 impl From<CryptoError> for AccountError {
 	fn from(err: CryptoError) -> Self {
 		match err {
-			CryptoError::InvalidKeyMaterial
-			| CryptoError::KeyDerivationFailed
-			| CryptoError::InvalidPrivateKey
-			| CryptoError::InvalidPublicKey
-			| CryptoError::InvalidLength => AccountError::InvalidConstruction,
+			CryptoError::InvalidKeyMaterial => AccountError::InvalidConstruction,
+			CryptoError::KeyDerivationFailed => AccountError::InvalidConstruction,
+			CryptoError::InvalidPrivateKey => AccountError::InvalidConstruction,
+			CryptoError::InvalidPublicKey => AccountError::InvalidPrefix,
+			CryptoError::InvalidLength => AccountError::InvalidConstruction,
+			CryptoError::InvalidInput => AccountError::PassphraseWeak,
 			CryptoError::UnsupportedAlgorithm { .. } => AccountError::InvalidKeyType,
-			CryptoError::SignatureVerificationFailed => AccountError::NoIdentifierVerify,
+			CryptoError::SignatureVerificationFailed => AccountError::InvalidConstruction,
 			CryptoError::InternalError { .. } => AccountError::InvalidConstruction,
 		}
 	}

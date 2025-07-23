@@ -23,18 +23,17 @@
 //!
 //! ### Method 2: Public Key Conversion (Bi-rational Map)
 //! 1. Convert the Ed25519 public key directly using the bi-rational map
-//! 2. Formula: montgomeryX = (edwardsY + 1) * inverse(1 - edwardsY) mod p
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
-use ed25519_dalek::{SigningKey, VerifyingKey};
-use x25519_dalek::PublicKey as X25519PublicKey;
+use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
+use secrecy::{ExposeSecret, SecretBox};
+use x25519_dalek::PublicKey as DalekX25519PublicKey;
 
-use crate::{
-	algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey},
-	error::CryptoError,
-	hash,
-	utils::format_public_key,
-};
+#[cfg(feature = "signature")]
+use ::signature::{Keypair, Signer, Verifier};
+use zeroize::Zeroize;
+
+use crate::{error::CryptoError, hash, KeyDerivation, PrivateKey, PublicKey};
 
 /// Ed25519 private key wrapper.
 ///
@@ -52,8 +51,8 @@ pub struct Ed25519PrivateKey {
 	inner: SigningKey,
 }
 
-impl std::fmt::Debug for Ed25519PrivateKey {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Ed25519PrivateKey {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("Ed25519PrivateKey").field("inner", &"[REDACTED]").finish()
 	}
 }
@@ -63,31 +62,94 @@ impl std::fmt::Debug for Ed25519PrivateKey {
 /// This struct wraps the ed25519-dalek VerifyingKey and provides the PublicKey
 /// trait implementation. Ed25519 public keys are 32 bytes long and represent
 /// points on the Ed25519 curve.
-///
-/// Public keys can be safely displayed, serialized, and shared as they contain
-/// no secret information.
 #[derive(Clone, Debug)]
 pub struct Ed25519PublicKey {
 	inner: VerifyingKey,
 }
 
-impl PrivateKey for Ed25519PrivateKey {
+#[cfg(feature = "signature")]
+impl PrivateKey<Signature> for Ed25519PrivateKey {
 	type PublicKey = Ed25519PublicKey;
+}
 
-	fn derive_public_key(&self) -> Self::PublicKey {
-		Ed25519PublicKey { inner: self.inner.verifying_key() }
+#[cfg(feature = "signature")]
+impl From<Ed25519PrivateKey> for Vec<u8> {
+	fn from(key: Ed25519PrivateKey) -> Self {
+		key.inner.to_bytes().to_vec()
 	}
+}
 
-	fn to_bytes(&self) -> Vec<u8> {
-		self.inner.to_bytes().to_vec()
+#[cfg(feature = "signature")]
+impl From<&Ed25519PrivateKey> for Vec<u8> {
+	fn from(key: &Ed25519PrivateKey) -> Self {
+		key.inner.to_bytes().to_vec()
 	}
+}
 
-	fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+#[cfg(feature = "signature")]
+impl TryFrom<&[u8]> for Ed25519PrivateKey {
+	type Error = CryptoError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] =
 			bytes.try_into().map_err(|_| CryptoError::InvalidPrivateKey)?;
 		let signing_key = SigningKey::from_bytes(&bytes_array);
 
 		Ok(Ed25519PrivateKey { inner: signing_key })
+	}
+}
+
+#[cfg(not(feature = "signature"))]
+impl PrivateKey for Ed25519PrivateKey {
+	type PublicKey = Ed25519PublicKey;
+
+	fn verifying_key(&self) -> Self::PublicKey {
+		Ed25519PublicKey { inner: self.inner.verifying_key() }
+	}
+}
+
+#[cfg(not(feature = "signature"))]
+impl From<Ed25519PrivateKey> for Vec<u8> {
+	fn from(key: Ed25519PrivateKey) -> Self {
+		key.inner.to_bytes().to_vec()
+	}
+}
+
+#[cfg(not(feature = "signature"))]
+impl From<&Ed25519PrivateKey> for Vec<u8> {
+	fn from(key: &Ed25519PrivateKey) -> Self {
+		key.inner.to_bytes().to_vec()
+	}
+}
+
+#[cfg(not(feature = "signature"))]
+impl TryFrom<&[u8]> for Ed25519PrivateKey {
+	type Error = CryptoError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] =
+			bytes.try_into().map_err(|_| CryptoError::InvalidPrivateKey)?;
+		let signing_key = SigningKey::from_bytes(&bytes_array);
+
+		Ok(Ed25519PrivateKey { inner: signing_key })
+	}
+}
+
+// RustCrypto Keypair trait implementation (provides derive_public_key functionality)
+#[cfg(feature = "signature")]
+impl Keypair for Ed25519PrivateKey {
+	type VerifyingKey = Ed25519PublicKey;
+
+	fn verifying_key(&self) -> Self::VerifyingKey {
+		Ed25519PublicKey { inner: self.inner.verifying_key() }
+	}
+}
+
+// RustCrypto Signer trait implementation
+#[cfg(feature = "signature")]
+impl Signer<Signature> for Ed25519PrivateKey {
+	fn try_sign(&self, msg: &[u8]) -> Result<Signature, ::signature::Error> {
+		self.inner.try_sign(msg)
 	}
 }
 
@@ -98,28 +160,77 @@ impl Ed25519PrivateKey {
 	}
 }
 
-impl PublicKey for Ed25519PublicKey {
-	fn to_bytes(&self) -> Vec<u8> {
-		self.inner.to_bytes().to_vec()
-	}
+#[cfg(feature = "signature")]
+impl PublicKey<Signature> for Ed25519PublicKey {}
 
-	fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+#[cfg(feature = "signature")]
+impl From<Ed25519PublicKey> for Vec<u8> {
+	fn from(key: Ed25519PublicKey) -> Self {
+		key.inner.to_bytes().to_vec()
+	}
+}
+
+#[cfg(feature = "signature")]
+impl From<&Ed25519PublicKey> for Vec<u8> {
+	fn from(key: &Ed25519PublicKey) -> Self {
+		key.inner.to_bytes().to_vec()
+	}
+}
+
+#[cfg(feature = "signature")]
+impl TryFrom<&[u8]> for Ed25519PublicKey {
+	type Error = CryptoError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] =
 			bytes.try_into().map_err(|_| CryptoError::InvalidPublicKey)?;
 		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
 
 		Ok(Ed25519PublicKey { inner: verifying_key })
 	}
+}
 
-	fn to_formatted_string(&self) -> Result<String, CryptoError> {
-		let raw_bytes = self.to_bytes();
-		format_public_key(&raw_bytes, Algorithm::Ed25519)
+#[cfg(not(feature = "signature"))]
+impl PublicKey for Ed25519PublicKey {}
+
+#[cfg(not(feature = "signature"))]
+impl From<Ed25519PublicKey> for Vec<u8> {
+	fn from(key: Ed25519PublicKey) -> Self {
+		key.inner.to_bytes().to_vec()
+	}
+}
+
+#[cfg(not(feature = "signature"))]
+impl From<&Ed25519PublicKey> for Vec<u8> {
+	fn from(key: &Ed25519PublicKey) -> Self {
+		key.inner.to_bytes().to_vec()
+	}
+}
+
+#[cfg(not(feature = "signature"))]
+impl TryFrom<&[u8]> for Ed25519PublicKey {
+	type Error = CryptoError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] =
+			bytes.try_into().map_err(|_| CryptoError::InvalidPublicKey)?;
+		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
+
+		Ok(Ed25519PublicKey { inner: verifying_key })
+	}
+}
+
+// RustCrypto Verifier trait implementation
+#[cfg(feature = "signature")]
+impl Verifier<Signature> for Ed25519PublicKey {
+	fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), ::signature::Error> {
+		self.inner.verify(msg, signature)
 	}
 }
 
 impl Ed25519PublicKey {
-	/// Convert this Ed25519 public key to an X25519 public key for ECDH
-	pub fn to_x25519(&self) -> Result<X25519PublicKeyStruct, CryptoError> {
+	/// Convert this Ed25519 public key to an X25519 public ke6y for ECDH
+	pub fn to_x25519(&self) -> Result<X25519PublicKey, CryptoError> {
 		ed25519_to_x25519_public(self)
 	}
 }
@@ -129,13 +240,13 @@ impl Ed25519PublicKey {
 /// This struct wraps the raw X25519 private key bytes and provides a safe
 /// interface for X25519 key exchange operations. X25519 keys are derived from
 /// Ed25519 keys but use different curve operations optimized for ECDH.
-#[derive(Clone)]
+#[derive(Zeroize)]
 pub struct X25519PrivateKey {
-	bytes: [u8; 32],
+	bytes: SecretBox<[u8; 32]>,
 }
 
-impl std::fmt::Debug for X25519PrivateKey {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for X25519PrivateKey {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("X25519PrivateKey").field("bytes", &"[REDACTED]").finish()
 	}
 }
@@ -144,30 +255,20 @@ impl std::fmt::Debug for X25519PrivateKey {
 ///
 /// This struct wraps the x25519-dalek PublicKey and represents a point on the
 /// Curve25519 curve used for key exchange operations.
-#[derive(Clone, Debug)]
-pub struct X25519PublicKeyStruct {
-	inner: X25519PublicKey,
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+pub struct X25519PublicKey {
+	inner: DalekX25519PublicKey,
 }
 
 impl X25519PrivateKey {
 	/// Derive the corresponding X25519 public key from this private key
-	pub fn derive_public_key(&self) -> X25519PublicKeyStruct {
+	pub fn derive_public_key(&self) -> X25519PublicKey {
 		// Compute the X25519 public key from the private key using scalar multiplication
-		let private_key_array: [u8; 32] = self.bytes;
+		let private_key_array: [u8; 32] = *self.bytes.expose_secret();
 		let public_key_bytes = x25519_dalek::x25519(private_key_array, x25519_dalek::X25519_BASEPOINT_BYTES);
-		let public_key = X25519PublicKey::from(public_key_bytes);
-		X25519PublicKeyStruct { inner: public_key }
-	}
+		let public_key = DalekX25519PublicKey::from(public_key_bytes);
 
-	/// Convert the private key to bytes
-	pub fn to_bytes(&self) -> Vec<u8> {
-		self.bytes.to_vec()
-	}
-
-	/// Create a private key from bytes
-	pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-		let bytes_array: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::InvalidPrivateKey)?;
-		Ok(X25519PrivateKey { bytes: bytes_array })
+		X25519PublicKey::from(public_key)
 	}
 
 	/// Perform ECDH key exchange with another X25519 public key
@@ -204,25 +305,63 @@ impl X25519PrivateKey {
 	/// assert_eq!(alice_shared, bob_shared);
 	/// # Ok::<(), crypto::CryptoError>(())
 	/// ```
-	pub fn diffie_hellman(&self, other_public: &X25519PublicKeyStruct) -> [u8; 32] {
+	pub fn diffie_hellman(&self, other_public: &X25519PublicKey) -> [u8; 32] {
 		// Create private key from our bytes and perform ECDH
-		let private_key_array: [u8; 32] = self.bytes;
+		let private_key_array: [u8; 32] = *self.bytes.expose_secret();
 		let shared_secret = x25519_dalek::x25519(private_key_array, *other_public.inner.as_bytes());
+
 		shared_secret
 	}
 }
 
-impl X25519PublicKeyStruct {
-	/// Convert the public key to bytes
-	pub fn to_bytes(&self) -> Vec<u8> {
-		self.inner.as_bytes().to_vec()
-	}
+impl TryFrom<&[u8]> for X25519PrivateKey {
+	type Error = CryptoError;
 
-	/// Create a public key from bytes
-	pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		let bytes_array: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::InvalidPrivateKey)?;
+
+		Ok(X25519PrivateKey { bytes: SecretBox::new(Box::new(bytes_array)) })
+	}
+}
+
+impl From<X25519PrivateKey> for Vec<u8> {
+	fn from(key: X25519PrivateKey) -> Self {
+		key.bytes.expose_secret().to_vec()
+	}
+}
+
+impl From<&X25519PrivateKey> for Vec<u8> {
+	fn from(key: &X25519PrivateKey) -> Self {
+		key.bytes.expose_secret().to_vec()
+	}
+}
+
+impl TryFrom<&[u8]> for X25519PublicKey {
+	type Error = CryptoError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let bytes_array: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::InvalidPublicKey)?;
-		let public_key = X25519PublicKey::from(bytes_array);
-		Ok(X25519PublicKeyStruct { inner: public_key })
+		let public_key = DalekX25519PublicKey::from(bytes_array);
+
+		Ok(X25519PublicKey { inner: public_key })
+	}
+}
+
+impl From<X25519PublicKey> for Vec<u8> {
+	fn from(key: X25519PublicKey) -> Self {
+		key.inner.as_bytes().to_vec()
+	}
+}
+
+impl From<&X25519PublicKey> for Vec<u8> {
+	fn from(key: &X25519PublicKey) -> Self {
+		key.inner.as_bytes().to_vec()
+	}
+}
+
+impl From<DalekX25519PublicKey> for X25519PublicKey {
+	fn from(public_key: DalekX25519PublicKey) -> Self {
+		X25519PublicKey { inner: public_key }
 	}
 }
 
@@ -241,7 +380,7 @@ impl X25519PublicKeyStruct {
 ///    - Set bit 254 (ensure >= 2^254)
 pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X25519PrivateKey, CryptoError> {
 	// Use our hash abstraction instead of direct sha2 import
-	let hash: [u8; 64] = hash::hash_array(&ed25519_key.to_bytes(), Some(hash::HashAlgorithm::Sha2_512))?;
+	let hash: [u8; 64] = hash::hash_array(&Vec::<u8>::from(ed25519_key), Some(hash::HashAlgorithm::Sha2_512))?;
 
 	let mut x25519_bytes = [0u8; 32];
 	x25519_bytes.copy_from_slice(&hash[..32]);
@@ -251,7 +390,7 @@ pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X255
 	x25519_bytes[31] &= 127; // Clear bit 255
 	x25519_bytes[31] |= 64; // Set bit 254
 
-	Ok(X25519PrivateKey { bytes: x25519_bytes })
+	X25519PrivateKey::try_from(x25519_bytes.as_slice())
 }
 
 /// Convert an Ed25519 public key to an X25519 public key
@@ -265,8 +404,8 @@ pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X255
 /// represent different cryptographic operations.
 ///
 /// The conversion formula: montgomeryX = (edwardsY + 1) * inverse(1 - edwardsY) mod p
-pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519PublicKeyStruct, CryptoError> {
-	let ed25519_bytes = ed25519_key.to_bytes();
+pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519PublicKey, CryptoError> {
+	let ed25519_bytes: Vec<u8> = ed25519_key.into();
 
 	// Parse the Ed25519 public key as a compressed Edwards point
 	let compressed_edwards =
@@ -279,9 +418,9 @@ pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519
 	// Get the Montgomery point bytes
 	let montgomery_bytes = montgomery_point.as_bytes();
 	// Create X25519 public key from the Montgomery point
-	let x25519_public = X25519PublicKey::from(*montgomery_bytes);
+	let x25519_public = DalekX25519PublicKey::from(*montgomery_bytes);
 
-	Ok(X25519PublicKeyStruct { inner: x25519_public })
+	Ok(X25519PublicKey { inner: x25519_public })
 }
 
 /// Ed25519 key derivation implementation
@@ -300,6 +439,38 @@ pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519
 /// This process ensures the generated private key is valid.
 pub struct Ed25519Derivation;
 
+#[cfg(feature = "signature")]
+impl KeyDerivation<Signature> for Ed25519Derivation {
+	type PrivateKey = Ed25519PrivateKey;
+
+	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError> {
+		// Hash the seed+index buffer directly using our hash abstraction
+		let hash_result: [u8; 32] = hash::hash_array(seed, None)?;
+
+		// Apply Ed25519 clamping
+		let mut private_key_bytes = hash_result.to_vec();
+		private_key_bytes[0] &= 248; // Clear bits 0, 1, 2
+		private_key_bytes[31] &= 127; // Clear bit 255
+		private_key_bytes[31] |= 64; // Set bit 254
+
+		// Convert to fixed-size array for Ed25519
+		let mut key_bytes = [0u8; ed25519_dalek::SECRET_KEY_LENGTH];
+		key_bytes.copy_from_slice(&private_key_bytes[..ed25519_dalek::SECRET_KEY_LENGTH]);
+
+		let signing_key = SigningKey::from_bytes(&key_bytes);
+		Ok(Ed25519PrivateKey { inner: signing_key })
+	}
+
+	fn validate_key_material(bytes: &[u8]) -> bool {
+		bytes.len() == ed25519_dalek::SECRET_KEY_LENGTH
+	}
+
+	fn key_size() -> usize {
+		ed25519_dalek::SECRET_KEY_LENGTH
+	}
+}
+
+#[cfg(not(feature = "signature"))]
 impl KeyDerivation for Ed25519Derivation {
 	type PrivateKey = Ed25519PrivateKey;
 
@@ -334,24 +505,26 @@ impl KeyDerivation for Ed25519Derivation {
 mod tests {
 	use super::*;
 
+	use crate::algorithms::secp256k1::Secp256k1Derivation;
+
 	#[test]
 	fn test_ed25519_key_derivation() {
 		let seed = b"test seed for ed25519 key derivation!!";
 		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.derive_public_key();
+		let public_key = private_key.verifying_key();
 
 		// Test serialization roundtrip
-		let private_bytes = private_key.to_bytes();
-		let recovered_private = Ed25519PrivateKey::from_bytes(&private_bytes).unwrap();
-		assert_eq!(private_key.to_bytes(), recovered_private.to_bytes());
+		let private_bytes: Vec<u8> = (&private_key).into();
+		let recovered_private = Ed25519PrivateKey::try_from(private_bytes.as_slice()).unwrap();
+		assert_eq!(Vec::<u8>::from(&private_key), Vec::<u8>::from(&recovered_private));
 
-		let public_bytes = public_key.to_bytes();
-		let recovered_public = Ed25519PublicKey::from_bytes(&public_bytes).unwrap();
-		assert_eq!(public_key.to_bytes(), recovered_public.to_bytes());
+		let public_bytes: Vec<u8> = (&public_key).into();
+		let recovered_public = Ed25519PublicKey::try_from(public_bytes.as_slice()).unwrap();
+		assert_eq!(Vec::<u8>::from(&public_key), Vec::<u8>::from(&recovered_public));
 
-		// Test public key formatting
-		let formatted = public_key.to_formatted_string().unwrap();
-		assert!(formatted.starts_with("keeta_"));
+		// Test public key formatting - now handled by accounts crate
+		let hex_formatted = hex::encode(Vec::<u8>::from(&public_key));
+		assert_eq!(hex_formatted.len(), 64); // 32 bytes * 2 chars per byte
 	}
 
 	#[test]
@@ -361,31 +534,23 @@ mod tests {
 		let key1 = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		let key2 = Ed25519Derivation::derive_from_seed(seed).unwrap();
 
-		assert_eq!(key1.to_bytes(), key2.to_bytes());
+		assert_eq!(Vec::<u8>::from(&key1), Vec::<u8>::from(&key2));
 
-		let pub1 = key1.derive_public_key();
-		let pub2 = key2.derive_public_key();
+		let (pub1, pub2) = (key1.verifying_key(), key2.verifying_key());
 
-		assert_eq!(pub1.to_bytes(), pub2.to_bytes());
+		assert_eq!(Vec::<u8>::from(&pub1), Vec::<u8>::from(&pub2));
 	}
 
 	#[test]
 	fn test_ed25519_different_from_secp256k1() {
-		use crate::algorithms::secp256k1::Secp256k1Derivation;
-
 		let seed = b"same seed for both algorithms!!!!!!";
 
 		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		let secp256k1_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		assert_ne!(Vec::<u8>::from(&ed25519_key), Vec::<u8>::from(&secp256k1_key));
 
-		// Keys should be different even with same seed
-		assert_ne!(ed25519_key.to_bytes(), secp256k1_key.to_bytes());
-
-		let ed25519_pub = ed25519_key.derive_public_key();
-		let secp256k1_pub = secp256k1_key.derive_public_key();
-
-		// Public keys should also be different
-		assert_ne!(ed25519_pub.to_bytes(), secp256k1_pub.to_bytes());
+		let (ed25519_pub, secp256k1_pub) = (ed25519_key.verifying_key(), secp256k1_key.verifying_key());
+		assert_ne!(Vec::<u8>::from(&ed25519_pub), Vec::<u8>::from(&secp256k1_pub));
 	}
 
 	#[test]
@@ -399,27 +564,30 @@ mod tests {
 
 		// Test that conversion is deterministic
 		let x25519_key2 = ed25519_key.to_x25519().unwrap();
-		assert_eq!(x25519_key.to_bytes(), x25519_key2.to_bytes());
+		assert_eq!(Vec::<u8>::from(&x25519_key), Vec::<u8>::from(&x25519_key2));
 
 		// Test serialization roundtrip
-		let x25519_bytes = x25519_key.to_bytes();
-		let recovered_x25519 = X25519PrivateKey::from_bytes(&x25519_bytes).unwrap();
-		assert_eq!(x25519_key.to_bytes(), recovered_x25519.to_bytes());
+		let x25519_bytes = Vec::<u8>::from(&x25519_key);
+		let recovered_x25519 = X25519PrivateKey::try_from(x25519_bytes.as_slice()).unwrap();
+		assert_eq!(Vec::<u8>::from(&x25519_key), Vec::<u8>::from(&recovered_x25519));
 
-		let x25519_pub_bytes = x25519_public.to_bytes();
-		let recovered_x25519_pub = X25519PublicKeyStruct::from_bytes(&x25519_pub_bytes).unwrap();
-		assert_eq!(x25519_public.to_bytes(), recovered_x25519_pub.to_bytes());
+		let x25519_pub_bytes = Vec::<u8>::from(&x25519_public);
+		let recovered_x25519_pub = X25519PublicKey::try_from(x25519_pub_bytes.as_slice()).unwrap();
+		assert_eq!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&recovered_x25519_pub));
 
 		// Verify X25519 keys are different from Ed25519 keys
-		assert_ne!(x25519_key.to_bytes(), ed25519_key.to_bytes());
-		assert_ne!(x25519_public.to_bytes(), ed25519_key.derive_public_key().to_bytes());
+		assert_ne!(Vec::<u8>::from(&x25519_key), Vec::<u8>::from(&ed25519_key));
+
+		let ed25519_public_for_comparison = ed25519_key.verifying_key();
+
+		assert_ne!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&ed25519_public_for_comparison));
 	}
 
 	#[test]
 	fn test_ed25519_public_to_x25519_conversion() {
 		let seed = b"seed_for_testing_public_conversion!!";
 		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let ed25519_public = ed25519_key.derive_public_key();
+		let ed25519_public = ed25519_key.verifying_key();
 
 		// Convert Ed25519 public key directly to X25519 public key
 		let x25519_public_direct = ed25519_public.to_x25519().unwrap();
@@ -428,12 +596,12 @@ mod tests {
 		let x25519_public_via_private = x25519_private.derive_public_key();
 
 		// Both conversions should work (they produce different results as expected)
-		assert_eq!(x25519_public_direct.to_bytes().len(), 32);
-		assert_eq!(x25519_public_via_private.to_bytes().len(), 32);
+		assert_eq!(Vec::<u8>::from(&x25519_public_direct).len(), 32);
+		assert_eq!(Vec::<u8>::from(&x25519_public_via_private).len(), 32);
 
 		// Both methods should produce valid 32-byte keys
-		assert_eq!(x25519_public_direct.to_bytes().len(), 32);
-		assert_eq!(x25519_public_via_private.to_bytes().len(), 32);
+		assert_eq!(Vec::<u8>::from(&x25519_public_direct).len(), 32);
+		assert_eq!(Vec::<u8>::from(&x25519_public_via_private).len(), 32);
 	}
 
 	#[test]

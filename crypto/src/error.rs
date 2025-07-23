@@ -28,4 +28,7 @@ pub enum CryptoError {
 	/// Invalid length specified
 	#[snafu(display("Invalid length specified"))]
 	InvalidLength,
+	/// Invalid input provided
+	#[snafu(display("Invalid input provided"))]
+	InvalidInput,
 }
