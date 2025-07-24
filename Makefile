@@ -1,4 +1,4 @@
-.PHONY: build clean lint test all help check release coverage coverage-check coverage-ci coverage-setup developer
+.PHONY: build clean do-lint do-lint-ci test all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer
 
 # Project name
 PROJ_NAME := node-rs
@@ -18,7 +18,7 @@ endif
 default: build
 
 # Build everything
-all: clean build
+all: clean build test
 
 # Just check compilation without building
 check:
@@ -39,9 +39,14 @@ clean:
 	rm -rf build/
 
 # Lint code
-lint:
+do-lint:
 	cargo clippy --fix --allow-staged --allow-dirty
 	cargo fmt
+
+# Lint code for CI (check only, no fixes)
+do-lint-ci:
+	cargo fmt --all -- --check
+	cargo clippy --all-targets --all-features -- -D warnings
 
 # Run tests with host system's default target
 test:
@@ -101,6 +106,14 @@ coverage-ci: coverage-setup
 	# Generate LCOV coverage report for CI/SonarCloud
 	cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
 
+# Run security audit
+audit:
+	cargo audit
+
+# Generate and open documentation
+docs:
+	cargo doc --no-deps --document-private-items --all-features --open
+
 # Developer setup - install Rust and set up development environment
 developer:
 	@echo "🚀 Setting up development environment..."
@@ -125,6 +138,7 @@ developer:
 		echo "📋 Cargo version: $$(cargo --version)"; \
 		echo "🧪 Installing development tools..."; \
 		$(MAKE) coverage-setup; \
+		cargo install cargo-audit --quiet || echo "⚠️  cargo-audit installation failed or already installed"; \
 		echo "🏗️  Running initial build and test..."; \
 		$(MAKE) check; \
 		$(MAKE) test; \
@@ -136,28 +150,28 @@ developer:
 		echo "   source $$HOME/.cargo/env"; \
 		echo "   make developer"; \
 	fi
-	@echo ""
-	@echo "🎯 Quick start commands:"
-	@echo "  make build    - Build the project"
-	@echo "  make test     - Run tests"
-	@echo "  make lint     - Format and lint code"
-	@echo "  make coverage - Generate test coverage report"
-	@echo "  make help     - Show all available commands"
+	$(MAKE) help
 
 # Help information
 help:
 	@echo "Makefile"
 	@echo "=================================="
-	@echo "Available commands:"
+	@echo "Developer commands:"
 	@echo "  make              - Build in debug mode"
+	@echo "  make help         - Show this help message"
 	@echo "  make developer    - Set up development environment (install Rust, tools, etc.)"
 	@echo "  make build        - Build in debug mode"
 	@echo "  make release      - Build in release mode"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make check        - Check compilation without building"
-	@echo "  make lint         - Lint code with clippy and format"
+	@echo "  make do-lint      - Lint code with clippy and format (with fixes)"
 	@echo "  make test         - Run tests"
+	@echo "  make audit        - Run security audit"
+	@echo "  make docs         - Generate and open documentation"
 	@echo "  make coverage     - Generate code coverage report (HTML + LCOV)"
 	@echo "  make coverage-check - Check coverage percentage and fail if below threshold"
 	@echo "  make all          - Clean, build, and test"
-	@echo "  make help         - Show this help message"
+	@echo ""
+	@echo "CI Commands:"
+	@echo "  make do-lint-ci  - Lint code for CI (check only, no fixes)"
+	@echo "  make coverage-ci  - Generate LCOV coverage report for CI/SonarCloud"
