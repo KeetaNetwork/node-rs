@@ -1,4 +1,4 @@
-.PHONY: build clean lint test all help check release coverage coverage-check coverage-setup developer
+.PHONY: build clean lint test all help check release coverage coverage-check coverage-ci coverage-setup developer
 
 # Project name
 PROJ_NAME := node-rs
@@ -95,6 +95,11 @@ coverage-check: coverage-setup
 		echo "✅ Coverage $${COVERAGE}% meets threshold $${THRESHOLD}%"; \
 		rm -f coverage_summary.txt; \
 	fi
+
+# Generate coverage report for CI (LCOV format for SonarCloud)
+coverage-ci: coverage-setup
+	# Generate LCOV coverage report for CI/SonarCloud
+	cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
 
 # Developer setup - install Rust and set up development environment
 developer:
