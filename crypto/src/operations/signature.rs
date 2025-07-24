@@ -6,85 +6,217 @@
 use crate::error::CryptoError;
 
 // Re-export key RustCrypto signature traits for easier use
-#[cfg(feature = "signature")]
 pub use signature::{DigestSigner, DigestVerifier, RandomizedSigner, Signer, Verifier};
 
 /// Core cryptographic signing operations
 ///
-/// This trait provides signing functionality with conditional RustCrypto integration.
-/// When the "signature" feature is enabled, it extends RustCrypto's Signer trait.
-pub trait CryptoSigner<S> {
+/// This trait extends RustCrypto's Signer trait with additional functionality
+/// needed for our cryptographic operations.
+pub trait CryptoSigner<S>: Signer<S> {
 	/// Check if this signer has access to the private key
 	fn has_private_key(&self) -> bool;
-
-	/// Get the verifying key (public key) for this signer
-	fn verifying_key(&self) -> impl CryptoVerifier<S>;
-
-	/// Sign data (available when signature feature is enabled)
-	#[cfg(feature = "signature")]
-	fn try_sign(&self, msg: &[u8]) -> Result<S, signature::Error>
-	where
-		Self: Signer<S>,
-		S: signature::SignatureEncoding;
 }
 
 /// Core cryptographic verification operations
 ///
-/// This trait provides verification functionality with conditional RustCrypto integration.
-/// When the "signature" feature is enabled, it extends RustCrypto's Verifier trait.
-pub trait CryptoVerifier<S> {
+/// This trait extends RustCrypto's Verifier trait with additional functionality
+/// needed for our cryptographic operations.
+pub trait CryptoVerifier<S>: Verifier<S> {
 	/// Get the public key bytes for this verifier
 	fn public_key_bytes(&self) -> Vec<u8>;
 
 	/// Get the formatted public key string
 	fn public_key_string(&self) -> Result<String, CryptoError>;
-
-	/// Verify a signature (available when signature feature is enabled)
-	#[cfg(feature = "signature")]
-	fn verify(&self, msg: &[u8], signature: &S) -> Result<(), signature::Error>
-	where
-		Self: Verifier<S>,
-		S: signature::SignatureEncoding;
-}
-
-/// Combined trait for keys that support both signing and key exchange
-///
-/// This trait combines signing capabilities with key exchange for hybrid
-/// crypto systems that need both operations.
-pub trait HybridSigner<S>: CryptoSigner<S> {
-	/// Sign and prepare data for encrypted transmission
-	fn sign_for_encryption(&self, data: &[u8], recipient_pubkey: &[u8]) -> Result<Vec<u8>, CryptoError>;
-
-	/// Verify and decrypt data in one operation  
-	fn verify_from_encryption(&self, encrypted_data: &[u8], sender_pubkey: &[u8]) -> Result<Vec<u8>, CryptoError>;
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use signature::{Signer, Verifier};
+
+	// Mock implementations for testing
+	// Note: There are algorithm-specific tests for real implementations
+	struct MockSigner;
+	struct MockVerifier;
+
+	#[derive(Clone)]
+	struct MockSignature([u8; 32]);
+
+	impl signature::SignatureEncoding for MockSignature {
+		type Repr = [u8; 32];
+	}
+
+	impl TryFrom<&[u8]> for MockSignature {
+		type Error = signature::Error;
+
+		fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+			if bytes.len() != 32 {
+				return Err(signature::Error::new());
+			}
+
+			let mut arr = [0u8; 32];
+			arr.copy_from_slice(bytes);
+
+			Ok(MockSignature(arr))
+		}
+	}
+
+	impl TryInto<[u8; 32]> for MockSignature {
+		type Error = signature::Error;
+
+		fn try_into(self) -> Result<[u8; 32], Self::Error> {
+			Ok(self.0)
+		}
+	}
+
+	impl AsRef<[u8]> for MockSignature {
+		fn as_ref(&self) -> &[u8] {
+			&self.0
+		}
+	}
+
+	impl Signer<MockSignature> for MockSigner {
+		fn try_sign(&self, _msg: &[u8]) -> Result<MockSignature, signature::Error> {
+			Ok(MockSignature([1u8; 32]))
+		}
+	}
+
+	impl CryptoSigner<MockSignature> for MockSigner {
+		fn has_private_key(&self) -> bool {
+			true
+		}
+	}
+
+	impl Verifier<MockSignature> for MockVerifier {
+		fn verify(&self, _msg: &[u8], _signature: &MockSignature) -> Result<(), signature::Error> {
+			Ok(())
+		}
+	}
+
+	impl CryptoVerifier<MockSignature> for MockVerifier {
+		fn public_key_bytes(&self) -> Vec<u8> {
+			vec![0x02, 0x03, 0x04, 0x05] // Mock 4-byte public key
+		}
+
+		fn public_key_string(&self) -> Result<String, CryptoError> {
+			Ok("02030405".to_string())
+		}
+	}
+
+	// Mock implementations that can fail for error testing
+	struct FailingMockVerifier;
+
+	impl Verifier<MockSignature> for FailingMockVerifier {
+		fn verify(&self, _msg: &[u8], _signature: &MockSignature) -> Result<(), signature::Error> {
+			Err(signature::Error::new())
+		}
+	}
+
+	impl CryptoVerifier<MockSignature> for FailingMockVerifier {
+		fn public_key_bytes(&self) -> Vec<u8> {
+			vec![] // Empty bytes to test edge case
+		}
+
+		fn public_key_string(&self) -> Result<String, CryptoError> {
+			Err(CryptoError::InvalidPublicKey) // Test error case
+		}
+	}
 
 	#[test]
-	fn test_signature_trait_bounds() {
-		// This test ensures our trait bounds compile correctly
-		fn _test_crypto_signer<S, T>(_signer: T)
-		where
-			T: CryptoSigner<S>,
-		{
-			// This function compiles if the bounds are correct
-		}
+	fn test_crypto_signer_trait() {
+		let signer = MockSigner;
 
-		fn _test_crypto_verifier<S, T>(_verifier: T)
-		where
-			T: CryptoVerifier<S>,
-		{
-			// This function compiles if the bounds are correct
-		}
+		// Test CryptoSigner trait method
+		assert!(signer.has_private_key());
 
-		fn _test_hybrid_signer<S, T>(_signer: T)
-		where
-			T: HybridSigner<S>,
-		{
-			// This function compiles if the bounds are correct
-		}
+		// Test signing a message
+		let message = b"test message for signer trait";
+		let signature = signer.try_sign(message).unwrap();
+		assert_eq!(signature.as_ref(), &[1u8; 32]);
+	}
+
+	#[test]
+	fn test_crypto_verifier_trait() {
+		let verifier = MockVerifier;
+		let signer = MockSigner;
+		let message = b"test message for verifier trait";
+		let signature = signer.try_sign(message).unwrap();
+
+		// Test CryptoVerifier trait methods
+		let public_key_bytes = verifier.public_key_bytes();
+		assert_eq!(public_key_bytes, vec![0x02, 0x03, 0x04, 0x05]);
+
+		let public_key_string = verifier.public_key_string().unwrap();
+		assert_eq!(public_key_string, "02030405");
+
+		// Test the verify method
+		assert!(verifier.verify(message, &signature).is_ok());
+	}
+
+	#[test]
+	fn test_crypto_verifier_error_handling() {
+		let verifier = MockVerifier;
+
+		// Test that public_key_string() succeeds for valid keys
+		let result = verifier.public_key_string();
+		assert!(result.is_ok());
+
+		// Test that the string is valid hex
+		let hex_string = result.unwrap();
+		assert!(hex_string.chars().all(|c| c.is_ascii_hexdigit()));
+		assert_eq!(hex_string.len(), 8); // 4 bytes * 2 hex chars
+	}
+
+	#[test]
+	fn test_crypto_verifier_failure_cases() {
+		let failing_verifier = FailingMockVerifier;
+		let signer = MockSigner;
+		let message = b"test message";
+		let signature = signer.try_sign(message).unwrap();
+
+		// Test verification failure
+		assert!(failing_verifier.verify(message, &signature).is_err());
+
+		// Test empty public key bytes
+		let empty_bytes = failing_verifier.public_key_bytes();
+		assert!(empty_bytes.is_empty());
+
+		// Test public_key_string error
+		let result = failing_verifier.public_key_string();
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidPublicKey));
+	}
+
+	#[test]
+	fn test_mock_signature_encoding() {
+		// Test MockSignature creation from bytes
+		let bytes = [5u8; 32];
+		let signature = MockSignature::try_from(&bytes[..]).unwrap();
+		assert_eq!(signature.as_ref(), &bytes);
+
+		// Test conversion back to array
+		let array: [u8; 32] = signature.try_into().unwrap();
+		assert_eq!(array, bytes);
+
+		// Test error case with wrong length
+		let wrong_bytes = [1u8; 16]; // Wrong length
+		let result = MockSignature::try_from(&wrong_bytes[..]);
+		assert!(result.is_err());
+	}
+
+	#[test]
+	fn test_trait_object_compatibility() {
+		// Test that our traits can be used as trait objects
+		let signer = MockSigner;
+		let verifier = MockVerifier;
+
+		// Test CryptoSigner as trait object
+		let crypto_signer: &dyn CryptoSigner<MockSignature> = &signer;
+		assert!(crypto_signer.has_private_key());
+
+		// Test CryptoVerifier as trait object
+		let crypto_verifier: &dyn CryptoVerifier<MockSignature> = &verifier;
+		assert!(!crypto_verifier.public_key_bytes().is_empty());
+		assert!(crypto_verifier.public_key_string().is_ok());
 	}
 }

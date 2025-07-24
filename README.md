@@ -42,16 +42,13 @@ make test
 ```bash
 # Generate HTML coverage report (opens in browser)
 make coverage
-
-# Generate LCOV coverage report for CI
-make coverage-ci
 ```
 
 ### Linting
 
 ```bash
 # Format code and run clippy
-make lint
+make do-lint
 ```
 
 ### Other Commands
@@ -62,4 +59,14 @@ make clean
 
 # Show all available commands
 make help
+```
+
+### CI Commands
+
+```bash
+# Generate LCOV coverage report for CI
+make coverage-ci
+
+# Format code and clippy without fixes
+make do-lint-ci
 ```

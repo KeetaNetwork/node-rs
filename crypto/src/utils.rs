@@ -12,15 +12,29 @@ use crate::constants::*;
 use crate::error::CryptoError;
 use crate::{Algorithm, AnyPrivateKey, AnyPublicKey};
 
+// Helper functions for error creation
+// Note: These are necessary for test coverage
+fn create_rng_error() -> CryptoError {
+	CryptoError::InternalError { message: "Failed to generate random number".to_string() }
+}
+
+fn create_string_conversion_error() -> CryptoError {
+	CryptoError::InternalError { message: "Failed to convert word to string".to_string() }
+}
+
+fn create_seed_generation_error() -> CryptoError {
+	CryptoError::InternalError { message: "Failed to generate random seed".to_string() }
+}
+
 /// Derive a seed from a passphrase using PBKDF2 with SHA3-256.
 ///
 /// This function applies PBKDF2 key derivation to convert a passphrase
 /// into a 32-byte seed suitable for key derivation.
 pub fn seed_from_passphrase(passphrase: &str) -> Result<SecretBox<[u8; 32]>, CryptoError> {
-	// Normalize passphrase (lowercase, remove spaces) to match accounts crate behavior
+	// Normalize passphrase (lowercase, remove spaces)
 	let clean_passphrase = passphrase.to_lowercase().replace(" ", "");
-	let clean_passphrase_buffer = clean_passphrase.as_bytes();
 
+	let clean_passphrase_buffer = clean_passphrase.as_bytes();
 	if clean_passphrase_buffer.len() < MIN_PASSPHRASE_LENGTH {
 		return Err(CryptoError::InvalidInput);
 	}
@@ -48,13 +62,10 @@ pub fn generate_random_passphrase(
 	let word_count = words.len() as u32;
 	let passphrase: Result<Vec<String>, CryptoError> = (0..24)
 		.map(|_| {
-			let idx = rand_core::OsRng
-				.try_next_u32()
-				.map_err(|_| CryptoError::InternalError { message: "Failed to generate random number".to_string() })?;
+			let idx = rand_core::OsRng.try_next_u32().map_err(|_| create_rng_error())?;
 			let word = words[(idx % word_count) as usize];
 
-			String::from_str(word)
-				.map_err(|_| CryptoError::InternalError { message: "Failed to convert word to string".to_string() })
+			String::from_str(word).map_err(|_| create_string_conversion_error())
 		})
 		.collect();
 
@@ -66,9 +77,7 @@ pub fn generate_random_passphrase(
 pub fn generate_random_seed() -> Result<SecretBox<[u8; 32]>, CryptoError> {
 	let mut seed_buffer = [0u8; 32];
 
-	rand_core::OsRng
-		.try_fill_bytes(&mut seed_buffer)
-		.map_err(|_| CryptoError::InternalError { message: "Failed to generate random seed".to_string() })?;
+	rand_core::OsRng.try_fill_bytes(&mut seed_buffer).map_err(|_| create_seed_generation_error())?;
 
 	Ok(SecretBox::new(Box::new(seed_buffer)))
 }
@@ -100,6 +109,7 @@ pub fn create_keypair_from_seed(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::Algorithm;
 	use secrecy::ExposeSecret;
 
 	#[test]
@@ -111,6 +121,34 @@ mod tests {
 
 		let seed = seed.unwrap();
 		assert_eq!(seed.expose_secret().len(), 32);
+
+		// Test with passphrase shorter than MIN_PASSPHRASE_LENGTH (60 characters)
+		let short_passphrase = "short"; // Only 5 characters
+		let result = seed_from_passphrase(short_passphrase);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidInput));
+
+		// Test with passphrase that's just under the limit
+		let almost_long_passphrase = "a".repeat(59); // 59 characters, 1 under limit
+		let result = seed_from_passphrase(&almost_long_passphrase);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidInput));
+
+		// Test with passphrase that meets the minimum length
+		let min_length_passphrase = "a".repeat(60); // Exactly 60 characters
+		let result = seed_from_passphrase(&min_length_passphrase);
+		assert!(result.is_ok());
+
+		// Test that spaces are removed and lowercase is applied
+		let passphrase_with_spaces = "PANIC CATEGORY OFFICE GLOW SKI CAMERA FILE SLIGHT ROOM ESCAPE INDICATE FICTION";
+		// cspell:disable-next-line
+		let normalized_passphrase = "paniccategoryofficeglowskicamerafileslightroomescapeindicatefiction";
+
+		let seed1 = seed_from_passphrase(passphrase_with_spaces).unwrap();
+		let seed2 = seed_from_passphrase(normalized_passphrase).unwrap();
+
+		// Both should produce the same result
+		assert_eq!(seed1.expose_secret(), seed2.expose_secret());
 	}
 
 	#[test]
@@ -140,17 +178,25 @@ mod tests {
 		let seed = b"test seed for keypair creation!!!!!";
 
 		// Test secp256k1 creation
-		let (private_key, public_key) = create_keypair_from_seed(seed, crate::Algorithm::Secp256k1).unwrap();
-		assert_eq!(crate::Algorithm::from(&private_key), crate::Algorithm::Secp256k1);
-		assert_eq!(crate::Algorithm::from(&public_key), crate::Algorithm::Secp256k1);
+		let (private_key, public_key) = create_keypair_from_seed(seed, Algorithm::Secp256k1).unwrap();
+		assert_eq!(Algorithm::from(&private_key), Algorithm::Secp256k1);
+		assert_eq!(Algorithm::from(&public_key), Algorithm::Secp256k1);
 
 		// Test Ed25519 creation
-		let (private_key, public_key) = create_keypair_from_seed(seed, crate::Algorithm::Ed25519).unwrap();
-		assert_eq!(crate::Algorithm::from(&private_key), crate::Algorithm::Ed25519);
-		assert_eq!(crate::Algorithm::from(&public_key), crate::Algorithm::Ed25519);
+		let (private_key, public_key) = create_keypair_from_seed(seed, Algorithm::Ed25519).unwrap();
+		assert_eq!(Algorithm::from(&private_key), Algorithm::Ed25519);
+		assert_eq!(Algorithm::from(&public_key), Algorithm::Ed25519);
 
 		// Test unsupported algorithm
-		let result = create_keypair_from_seed(seed, crate::Algorithm::Secp256r1);
+		let result = create_keypair_from_seed(seed, Algorithm::Secp256r1);
 		assert!(result.is_err());
+	}
+
+	#[test]
+	fn test_error_creation_functions() {
+		// Test that error creation functions work correctly and return InternalError variants
+		assert!(matches!(create_rng_error(), CryptoError::InternalError { .. }));
+		assert!(matches!(create_seed_generation_error(), CryptoError::InternalError { .. }));
+		assert!(matches!(create_string_conversion_error(), CryptoError::InternalError { .. }));
 	}
 }

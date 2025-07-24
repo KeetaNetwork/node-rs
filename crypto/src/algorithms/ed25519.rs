@@ -559,4 +559,195 @@ mod tests {
 		let alice_charlie_shared = alice_x25519.diffie_hellman(&charlie_public);
 		assert_ne!(alice_shared, alice_charlie_shared);
 	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_ed25519_signature_operations() {
+		let seed = b"test seed for ed25519 signatures!!!!!";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+		let message = b"Hello, Ed25519 signature world!";
+
+		// Test signing with RustCrypto Signer trait
+		let signature = private_key.try_sign(message).unwrap();
+		assert!(public_key.verify(message, &signature).is_ok());
+
+		// Test that verification fails with wrong message
+		let wrong_message = b"Wrong message";
+		assert!(public_key.verify(wrong_message, &signature).is_err());
+
+		// Test that verification fails with wrong key
+		let wrong_seed = b"wrong seed for ed25519 signatures!!";
+		let wrong_private_key = Ed25519Derivation::derive_from_seed(wrong_seed).unwrap();
+		let wrong_public_key = wrong_private_key.as_public_key();
+		assert!(wrong_public_key.verify(message, &signature).is_err());
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_ed25519_keypair_trait() {
+		let seed = b"test seed for ed25519 keypair trait!";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+
+		// Test verifying_key method from Keypair trait
+		let verifying_key = private_key.verifying_key();
+		let public_key = private_key.as_public_key();
+
+		// Both should produce the same public key bytes
+		assert_eq!(Vec::<u8>::from(&verifying_key), Vec::<u8>::from(&public_key));
+	}
+
+	#[test]
+	fn test_ed25519_key_derivation_utility_methods() {
+		// Test validate_key_material with valid key
+		let valid_key = [0x01; ed25519_dalek::SECRET_KEY_LENGTH]; // Valid 32-byte key
+		assert!(Ed25519Derivation::validate_key_material(&valid_key));
+
+		// Test validate_key_material with invalid key (wrong length)
+		let invalid_key = [0x01; 16]; // Invalid length
+		assert!(!Ed25519Derivation::validate_key_material(&invalid_key));
+
+		// Test key_size
+		assert_eq!(Ed25519Derivation::key_size(), ed25519_dalek::SECRET_KEY_LENGTH);
+		assert_eq!(Ed25519Derivation::key_size(), 32);
+	}
+
+	#[test]
+	fn test_ed25519_debug_formatting() {
+		let seed = b"test seed for ed25519 debug format!!";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+
+		// Test that Debug format hides the private key
+		let debug_string = format!("{private_key:?}");
+		assert!(debug_string.contains("Ed25519PrivateKey"));
+		assert!(debug_string.contains("[REDACTED]"));
+		// Make sure no actual key bytes are shown
+		assert!(!debug_string.contains("SigningKey"));
+	}
+
+	#[test]
+	fn test_x25519_debug_formatting() {
+		let seed = b"test seed for x25519 debug format!!!";
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let x25519_key = ed25519_key.to_x25519().unwrap();
+
+		// Test that Debug format hides the private key
+		let debug_string = format!("{x25519_key:?}");
+		assert!(debug_string.contains("X25519PrivateKey"));
+		assert!(debug_string.contains("[REDACTED]"));
+		// The debug format shows "bytes: [REDACTED]" which is correct for hiding the secret
+	}
+
+	#[test]
+	fn test_ed25519_serialization_roundtrips() {
+		let seed = b"test seed for ed25519 serialization!!";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+
+		// Test Ed25519PrivateKey TryFrom<&[u8]>
+		let private_bytes: SecretBox<Vec<u8>> = (&private_key).into();
+		let recovered_private = Ed25519PrivateKey::try_from(private_bytes.expose_secret().as_slice()).unwrap();
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&private_key).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&recovered_private).expose_secret()
+		);
+
+		// Test Ed25519PublicKey TryFrom<&[u8]>
+		let public_bytes: Vec<u8> = (&public_key).into();
+		let recovered_public = Ed25519PublicKey::try_from(public_bytes.as_slice()).unwrap();
+		assert_eq!(Vec::<u8>::from(&public_key), Vec::<u8>::from(&recovered_public));
+
+		// Test SecretBox From conversions for Ed25519PrivateKey
+		let secret_box_owned: SecretBox<Vec<u8>> = private_key.clone().into();
+		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
+		assert_eq!(secret_box_owned.expose_secret(), secret_box_ref.expose_secret());
+
+		// Test Vec<u8> From conversions for Ed25519PublicKey
+		let public_vec_owned: Vec<u8> = public_key.clone().into();
+		let public_vec_ref: Vec<u8> = (&public_key).into();
+		assert_eq!(public_vec_owned, public_vec_ref);
+	}
+
+	#[test]
+	fn test_x25519_serialization_roundtrips() {
+		let seed = b"test seed for x25519 serialization!!!";
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let x25519_private = ed25519_key.to_x25519().unwrap();
+		let x25519_public = x25519_private.derive_public_key();
+
+		// Test X25519PrivateKey TryFrom<&[u8]>
+		let x25519_bytes: SecretBox<Vec<u8>> = (&x25519_private).into();
+		let recovered_x25519_private = X25519PrivateKey::try_from(x25519_bytes.expose_secret().as_slice()).unwrap();
+		assert_eq!(
+			SecretBox::<Vec<u8>>::from(&x25519_private).expose_secret(),
+			SecretBox::<Vec<u8>>::from(&recovered_x25519_private).expose_secret()
+		);
+
+		// Test X25519PublicKey TryFrom<&[u8]>
+		let x25519_pub_bytes: Vec<u8> = (&x25519_public).into();
+		let recovered_x25519_public = X25519PublicKey::try_from(x25519_pub_bytes.as_slice()).unwrap();
+		assert_eq!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&recovered_x25519_public));
+
+		// Test SecretBox From conversions for X25519PrivateKey
+		let secret_box_ref: SecretBox<Vec<u8>> = (&x25519_private).into();
+		assert_eq!(secret_box_ref.expose_secret().len(), 32);
+
+		// Test Vec<u8> From conversions for X25519PublicKey
+		let public_vec_owned: Vec<u8> = x25519_public.into();
+		let public_vec_ref: Vec<u8> = (&x25519_public).into();
+		assert_eq!(public_vec_owned, public_vec_ref);
+	}
+
+	#[test]
+	fn test_ed25519_invalid_key_material() {
+		// Test invalid private key length
+		let invalid_private = [0x01; 16]; // Wrong length
+		assert!(Ed25519PrivateKey::try_from(invalid_private.as_slice()).is_err());
+
+		// Test invalid public key length
+		let invalid_public = [0x01; 16]; // Wrong length
+		assert!(Ed25519PublicKey::try_from(invalid_public.as_slice()).is_err());
+
+		// Test invalid X25519 private key length
+		let invalid_x25519_private = [0x01; 16]; // Wrong length
+		assert!(X25519PrivateKey::try_from(invalid_x25519_private.as_slice()).is_err());
+
+		// Test invalid X25519 public key length
+		let invalid_x25519_public = [0x01; 16]; // Wrong length
+		assert!(X25519PublicKey::try_from(invalid_x25519_public.as_slice()).is_err());
+	}
+
+	#[test]
+	fn test_direct_x25519_key_operations() {
+		// Create X25519 keys directly from bytes
+		let alice_private_bytes = [0x77; 32];
+		let alice_private = X25519PrivateKey::try_from(alice_private_bytes.as_slice()).unwrap();
+		let alice_public = alice_private.derive_public_key();
+
+		let bob_private_bytes = [0x88; 32];
+		let bob_private = X25519PrivateKey::try_from(bob_private_bytes.as_slice()).unwrap();
+		let bob_public = bob_private.derive_public_key();
+
+		// Test Diffie-Hellman
+		let alice_shared = alice_private.diffie_hellman(&bob_public);
+		let bob_shared = bob_private.diffie_hellman(&alice_public);
+		assert_eq!(alice_shared, bob_shared);
+
+		// Test key lengths
+		assert_eq!(alice_shared.len(), 32);
+		assert_eq!(Vec::<u8>::from(&alice_public).len(), 32);
+		assert_eq!(Vec::<u8>::from(&bob_public).len(), 32);
+	}
+
+	#[test]
+	fn test_x25519_owned_conversions() {
+		// Create X25519 private key to test owned conversions
+		let private_bytes = [0x42; 32];
+		let x25519_private = X25519PrivateKey::try_from(private_bytes.as_slice()).unwrap();
+
+		// Test the From<X25519PrivateKey> for SecretBox<Vec<u8>> implementation (owned)
+		let secret_box_owned: SecretBox<Vec<u8>> = x25519_private.into();
+		assert_eq!(secret_box_owned.expose_secret().len(), 32);
+		assert_eq!(secret_box_owned.expose_secret(), &private_bytes.to_vec());
+	}
 }

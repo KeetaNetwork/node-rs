@@ -11,7 +11,6 @@ pub mod error;
 pub mod hash;
 pub mod operations;
 pub mod prelude;
-pub mod signature;
 pub mod utils;
 
 // Re-exports for convenience
@@ -26,8 +25,7 @@ pub use hash::{default_hash_algorithm, default_hash_algorithm_length, hash, hash
 pub use ::signature::Keypair;
 
 // Signature types and crypto operations
-pub use operations::{CryptoAead, CryptoSigner, CryptoVerifier, HybridEncryption, HybridSigner, KeyExchange};
-pub use signature::{EcdsaSignature, Ed25519Signature, SignOptions, SignatureStorage};
+pub use operations::{AsymmetricEncryption, CryptoAead, CryptoSigner, CryptoVerifier, KeyExchange};
 
 // Algorithm-agnostic key types
 pub use algorithms::{AnyPrivateKey, AnyPublicKey};

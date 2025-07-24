@@ -131,8 +131,9 @@ impl KeyPair for KeyECDSASECP256K1 {
 	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
 		match key {
 			AnyPrivateKey::Secp256k1(secp_key) => {
-				let public_key = secp_key.verifying_key();
+				let public_key = secp_key.as_public_key();
 				let public_key_bytes = Vec::<u8>::from(&public_key);
+
 				format_public_key(&public_key_bytes, crypto::Algorithm::Secp256k1)
 			}
 			_ => Err(AccountError::InvalidConstruction),

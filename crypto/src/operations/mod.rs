@@ -3,15 +3,20 @@
 //! This module provides organized sub-modules for different types of
 //! cryptographic operations, similar to the algorithms module structure.
 
+#[cfg(feature = "encryption")]
 pub mod encryption;
+#[cfg(feature = "signature")]
 pub mod signature;
 
 // Re-export commonly used items
-pub use encryption::{CryptoAead, HybridEncryption, KeyExchange};
-pub use signature::{CryptoSigner, CryptoVerifier, HybridSigner};
+#[cfg(feature = "encryption")]
+pub use encryption::{AsymmetricEncryption, CryptoAead, KeyExchange};
+#[cfg(feature = "signature")]
+pub use signature::{CryptoSigner, CryptoVerifier};
 
+// Re-export RustCrypto traits for convenience
 #[cfg(feature = "signature")]
 pub use signature::{DigestSigner, DigestVerifier, RandomizedSigner, Signer, Verifier};
 
-#[cfg(feature = "aead")]
+#[cfg(feature = "encryption")]
 pub use encryption::{Aead, AeadCore, AeadInPlace, KeyInit};

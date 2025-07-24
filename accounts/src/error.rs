@@ -53,6 +53,9 @@ impl From<CryptoError> for AccountError {
 			CryptoError::InvalidInput => AccountError::PassphraseWeak,
 			CryptoError::UnsupportedAlgorithm { .. } => AccountError::InvalidKeyType,
 			CryptoError::SignatureVerificationFailed => AccountError::InvalidConstruction,
+			CryptoError::EncryptionFailed => AccountError::InvalidConstruction,
+			CryptoError::DecryptionFailed => AccountError::InvalidConstruction,
+			CryptoError::InvalidOperation => AccountError::InvalidConstruction,
 			CryptoError::InternalError { .. } => AccountError::InvalidConstruction,
 		}
 	}

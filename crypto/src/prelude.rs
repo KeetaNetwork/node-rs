@@ -36,5 +36,4 @@ pub use crate::hash::{hash, hash_array, hash_default, HashAlgorithm};
 pub use ::signature::Keypair;
 
 // Signature types and operations
-pub use crate::operations::{CryptoSigner, CryptoVerifier, HybridSigner};
-pub use crate::signature::{EcdsaSignature, Ed25519Signature, SignOptions};
+pub use crate::operations::{CryptoSigner, CryptoVerifier};

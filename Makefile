@@ -67,7 +67,7 @@ coverage: coverage-setup
 	# Generate HTML coverage report
 	cargo llvm-cov --all-features --workspace --html
 	# Generate LCOV coverage report (reusing the same coverage data)
-	cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov --no-run
+	cargo llvm-cov report --lcov --output-path coverage.lcov
 	# Open HTML report in browser (macOS) if it exists
 	@if [ -f target/llvm-cov/html/index.html ]; then \
 		open target/llvm-cov/html/index.html; \

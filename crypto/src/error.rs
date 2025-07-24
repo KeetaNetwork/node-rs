@@ -31,4 +31,13 @@ pub enum CryptoError {
 	/// Invalid input provided
 	#[snafu(display("Invalid input provided"))]
 	InvalidInput,
+	/// Encryption operation failed
+	#[snafu(display("Encryption failed"))]
+	EncryptionFailed,
+	/// Decryption operation failed
+	#[snafu(display("Decryption failed"))]
+	DecryptionFailed,
+	/// Invalid operation for this key type
+	#[snafu(display("Invalid operation for this key type"))]
+	InvalidOperation,
 }

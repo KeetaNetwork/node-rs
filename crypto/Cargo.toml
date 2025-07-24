@@ -61,6 +61,12 @@ default-features = false
 features = ["alloc"]
 optional = true
 
+[dependencies.ecies]
+version = "0.2"
+default-features = false
+features = ["pure"]
+optional = true
+
 # Utilities
 [dependencies.bip39-dict]
 version = "0.1.3"
@@ -81,9 +87,10 @@ workspace = true
 path = "../keetanet-error"
 
 [features]
-default = ["signature", "aead"]
+default = ["signature", "encryption"]
 signature = ["dep:signature"]
-aead = ["dep:aead"]
+encryption = ["dep:aead", "dep:ecies"]
 
 [dev-dependencies]
 hex-literal.workspace = true
+aes-gcm = "0.10.3"
