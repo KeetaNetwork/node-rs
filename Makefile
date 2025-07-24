@@ -1,4 +1,4 @@
-.PHONY: build clean lint test all help check release coverage coverage-check
+.PHONY: build clean lint test all help check release coverage coverage-check coverage-setup developer
 
 # Project name
 PROJ_NAME := node-rs
@@ -48,12 +48,15 @@ test:
 	# Use a shell script to unset CARGO_BUILD_TARGET and run tests
 	sh -c 'unset CARGO_BUILD_TARGET; cargo test --all-features --workspace'
 
-# Generate code coverage report
-coverage:
+# Set up coverage tools (internal helper target)
+coverage-setup:
 	# Install cargo-llvm-cov if not present (quiet)
 	@cargo install cargo-llvm-cov --quiet || true
 	# Install llvm-tools-preview component (force, no prompts)
 	@rustup component add llvm-tools-preview 2>/dev/null || true
+
+# Generate code coverage report
+coverage: coverage-setup
 	# Clean previous coverage data
 	@cargo llvm-cov clean --workspace || true
 	# Generate HTML coverage report
@@ -70,11 +73,7 @@ coverage:
 	fi
 
 # Check coverage percentage and fail if below threshold
-coverage-check:
-	# Install cargo-llvm-cov if not present (quiet)
-	@cargo install cargo-llvm-cov --quiet || true
-	# Install llvm-tools-preview component (force, no prompts)
-	@rustup component add llvm-tools-preview 2>/dev/null || true
+coverage-check: coverage-setup
 	# Generate coverage and check threshold
 	@echo "Generating coverage report..."
 	@cargo llvm-cov --all-features --workspace --summary-only > coverage_summary.txt 2>&1
@@ -97,12 +96,56 @@ coverage-check:
 		rm -f coverage_summary.txt; \
 	fi
 
+# Developer setup - install Rust and set up development environment
+developer:
+	@echo "🚀 Setting up development environment..."
+	@if command -v rustc > /dev/null 2>&1; then \
+		echo "✅ Rust is already installed (version: $$(rustc --version))"; \
+	else \
+		echo "📦 Installing Rust via rustup (automated)..."; \
+		if [ -f rustup-init.sh ]; then \
+			chmod +x rustup-init.sh; \
+			./rustup-init.sh -y --default-toolchain stable; \
+			echo "🔄 Rust installed! Sourcing environment..."; \
+			. "$$HOME/.cargo/env" 2>/dev/null || true; \
+		else \
+			echo "❌ rustup-init.sh not found in project root."; \
+			echo "   Please download it from: https://sh.rustup.rs/"; \
+			exit 1; \
+		fi; \
+	fi
+	@echo "🔧 Setting up development tools..."
+	@if command -v rustc > /dev/null 2>&1; then \
+		echo "📋 Rust version: $$(rustc --version)"; \
+		echo "📋 Cargo version: $$(cargo --version)"; \
+		echo "🧪 Installing development tools..."; \
+		$(MAKE) coverage-setup; \
+		echo "🏗️  Running initial build and test..."; \
+		$(MAKE) check; \
+		$(MAKE) test; \
+		echo ""; \
+		echo "✅ Development environment setup complete!"; \
+	else \
+		echo "⚠️  Rust installation completed but not available in current shell."; \
+		echo "🔄 Please restart your shell or run:"; \
+		echo "   source $$HOME/.cargo/env"; \
+		echo "   make developer"; \
+	fi
+	@echo ""
+	@echo "🎯 Quick start commands:"
+	@echo "  make build    - Build the project"
+	@echo "  make test     - Run tests"
+	@echo "  make lint     - Format and lint code"
+	@echo "  make coverage - Generate test coverage report"
+	@echo "  make help     - Show all available commands"
+
 # Help information
 help:
 	@echo "Makefile"
 	@echo "=================================="
 	@echo "Available commands:"
 	@echo "  make              - Build in debug mode"
+	@echo "  make developer    - Set up development environment (install Rust, tools, etc.)"
 	@echo "  make build        - Build in debug mode"
 	@echo "  make release      - Build in release mode"
 	@echo "  make clean        - Clean build artifacts"

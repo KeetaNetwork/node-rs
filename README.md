@@ -4,11 +4,19 @@ A Rust implementation of KeetaNet node
 
 ## Development
 
-### Prerequisites
+### Quick Start
 
-- Rust 1.70+ (MSRV)
-- Cargo
-- Make
+For first-time setup, simply run:
+
+```bash
+make developer
+```
+
+This will:
+
+- Install Rust (if not already installed)
+- Install development tools
+- Run initial build and tests
 
 ### Building
 

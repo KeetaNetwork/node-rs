@@ -9,7 +9,12 @@ ignorePaths:
 words:
   - KeetaNet
   - keeta
+  - keetapay
   - repr
+  - rustc
+  - MSRV
+  - tlsv
+  - clippy
   - rustup
   - tyblocks
   - github
