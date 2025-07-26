@@ -1560,7 +1560,6 @@ where
 }
 
 /// Enhanced from_public_key_string that returns proper typed accounts
-/// This provides better type safety compared to the Box<dyn Any> version
 impl Account<KeyECDSASECP256K1> {
 	/// Create an ECDSA SECP256K1 account from a public key string
 	pub fn from_secp256k1_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
