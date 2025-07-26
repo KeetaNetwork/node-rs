@@ -78,11 +78,11 @@ mod tests {
 	fn test_account_error_debug() {
 		// Test Debug trait implementation
 		let error = AccountError::InvalidPrefix;
-		let debug_string = format!("{:?}", error);
+		let debug_string = format!("{error:?}");
 		assert_eq!(debug_string, "InvalidPrefix");
 
 		let error2 = AccountError::PassphraseWeak;
-		let debug_string2 = format!("{:?}", error2);
+		let debug_string2 = format!("{error2:?}");
 		assert_eq!(debug_string2, "PassphraseWeak");
 	}
 

@@ -196,8 +196,7 @@ impl KeyPair for KeyECDSASECP256K1 {
 		let public_key = crypto::algorithms::secp256k1::Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
 
 		// Convert signature bytes to proper format
-		let signature =
-			Secp256k1Signature::try_from(signature.as_ref()).map_err(|_| AccountError::InvalidConstruction)?;
+		let signature = Secp256k1Signature::try_from(signature).map_err(|_| AccountError::InvalidConstruction)?;
 
 		Ok(public_key.verify(message, &signature).is_ok())
 	}
@@ -362,8 +361,7 @@ impl KeyPair for KeyECDSASECP256R1 {
 		let public_key = crypto::algorithms::secp256r1::Secp256r1PublicKey::try_from(public_key_bytes.as_slice())?;
 
 		// Convert signature bytes to proper format
-		let signature =
-			Secp256r1Signature::try_from(signature.as_ref()).map_err(|_| AccountError::InvalidConstruction)?;
+		let signature = Secp256r1Signature::try_from(signature).map_err(|_| AccountError::InvalidConstruction)?;
 
 		Ok(public_key.verify(message, &signature).is_ok())
 	}
@@ -1963,8 +1961,8 @@ mod tests {
 					))
 					.unwrap();
 
-					assert_eq!(account.keypair.keypair_type(), key_type.clone(), "KeyPair type mismatch for {}", name);
-					assert_eq!(account.keypair_type(), key_type.clone(), "Account type mismatch for {}", name);
+					assert_eq!(account.keypair.keypair_type(), key_type.clone());
+					assert_eq!(account.keypair_type(), key_type.clone());
 				}
 				KeyPairType::ED25519 => {
 					let passphrase = Account::<KeyED25519>::generate_passphrase().unwrap();
@@ -1974,8 +1972,8 @@ mod tests {
 					))
 					.unwrap();
 
-					assert_eq!(account.keypair.keypair_type(), key_type.clone(), "KeyPair type mismatch for {}", name);
-					assert_eq!(account.keypair_type(), key_type.clone(), "Account type mismatch for {}", name);
+					assert_eq!(account.keypair.keypair_type(), key_type.clone());
+					assert_eq!(account.keypair_type(), key_type.clone());
 				}
 				_ => unreachable!(),
 			}
@@ -2093,7 +2091,7 @@ mod tests {
 					"expected_secp256r1_pubkey" => test_case.expected_secp256r1_pubkey,
 					_ => unreachable!(),
 				};
-				assert_eq!(public_key, expected_key, "Public key mismatch for {:?}", key_type);
+				assert_eq!(public_key, expected_key, "Public key mismatch for {key_type:?}");
 			}
 		}
 	}
@@ -2112,19 +2110,19 @@ mod tests {
 				KeyPairType::NETWORK => {
 					let key = KeyNETWORK::try_from(Keyable::Identifier(test_id.to_string())).unwrap();
 					assert_eq!(key.identifier, test_id);
-					assert_eq!(key.public_key, format!("{}{}", expected_prefix, test_id));
+					assert_eq!(key.public_key, format!("{expected_prefix}{test_id}"));
 					assert_eq!(key.keypair_type(), key_type);
 				}
 				KeyPairType::TOKEN => {
 					let key = KeyTOKEN::try_from(Keyable::Identifier(test_id.to_string())).unwrap();
 					assert_eq!(key.identifier, test_id);
-					assert_eq!(key.public_key, format!("{}{}", expected_prefix, test_id));
+					assert_eq!(key.public_key, format!("{expected_prefix}{test_id}"));
 					assert_eq!(key.keypair_type(), key_type);
 				}
 				KeyPairType::STORAGE => {
 					let key = KeySTORAGE::try_from(Keyable::Identifier(test_id.to_string())).unwrap();
 					assert_eq!(key.identifier, test_id);
-					assert_eq!(key.public_key, format!("{}{}", expected_prefix, test_id));
+					assert_eq!(key.public_key, format!("{expected_prefix}{test_id}"));
 					assert_eq!(key.keypair_type(), key_type);
 				}
 				_ => unreachable!(),
@@ -2775,13 +2773,13 @@ mod tests {
 			))
 			.unwrap();
 
-			let debug_string = format!("{:?}", secp256k1_account);
+			let debug_string = format!("{secp256k1_account:?}");
 			assert!(debug_string.contains("Account"));
 		}
 
 		// Test identifier accounts
 		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
-		let network_debug = format!("{:?}", network_account);
+		let network_debug = format!("{network_account:?}");
 		assert!(network_debug.contains("Account"));
 	}
 
@@ -3113,7 +3111,7 @@ mod tests {
 		// Test invalid public key strings (should fail)
 		for invalid_key in INVALID_PUBLIC_KEYS {
 			let result = from_public_key_string_auto(invalid_key);
-			assert!(result.is_err(), "Invalid key should fail: {}", invalid_key);
+			assert!(result.is_err(), "Invalid key should fail: {invalid_key}");
 		}
 
 		// Test valid public key strings (should pass)
@@ -3924,8 +3922,7 @@ mod tests {
 		let prefix = &public_key_string[6..8];
 		assert!(
 			prefix == "ay" || prefix == "az" || prefix == "a2" || prefix == "a3",
-			"SECP256R1 public key should have correct prefix, got: {}",
-			prefix
+			"SECP256R1 public key should have correct prefix, got: {prefix}"
 		);
 
 		// Test that we can create account from this public key string
