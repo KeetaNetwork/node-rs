@@ -1951,7 +1951,7 @@ mod tests {
 		// Test data for cryptographic key types
 		let crypto_types = [(KeyPairType::ECDSASECP256K1, "SECP256K1"), (KeyPairType::ED25519, "ED25519")];
 
-		for (key_type, name) in &crypto_types {
+		for (key_type, _) in &crypto_types {
 			match key_type {
 				KeyPairType::ECDSASECP256K1 => {
 					let passphrase = Account::<KeyECDSASECP256K1>::generate_passphrase().unwrap();
