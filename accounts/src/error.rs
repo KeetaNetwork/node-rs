@@ -42,6 +42,9 @@ impl From<AccountError> for KeetaNetError {
 	}
 }
 
+// Import signature::Error through the crypto crate's re-exports
+use crypto::operations::Error as SignatureError;
+
 impl From<CryptoError> for AccountError {
 	fn from(err: CryptoError) -> Self {
 		match err {
@@ -57,6 +60,54 @@ impl From<CryptoError> for AccountError {
 			CryptoError::DecryptionFailed => AccountError::InvalidConstruction,
 			CryptoError::InvalidOperation => AccountError::InvalidConstruction,
 			CryptoError::InternalError { .. } => AccountError::InvalidConstruction,
+		}
+	}
+}
+
+impl From<SignatureError> for AccountError {
+	fn from(_err: SignatureError) -> Self {
+		AccountError::InvalidConstruction
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_account_error_debug() {
+		// Test Debug trait implementation
+		let error = AccountError::InvalidPrefix;
+		let debug_string = format!("{:?}", error);
+		assert_eq!(debug_string, "InvalidPrefix");
+
+		let error2 = AccountError::PassphraseWeak;
+		let debug_string2 = format!("{:?}", error2);
+		assert_eq!(debug_string2, "PassphraseWeak");
+	}
+
+	#[test]
+	fn test_from_keeta_net_error() {
+		// Test conversion from AccountError to KeetaNetError
+		let account_error = AccountError::InvalidPrefix;
+		let keeta_error: KeetaNetError = account_error.into();
+
+		if let KeetaNetError::Code { code, message } = keeta_error {
+			assert_eq!(code, "INVALID_PREFIX");
+			assert_eq!(message, "InvalidPrefix");
+		} else {
+			assert!(matches!(keeta_error, KeetaNetError::Code { .. }));
+		}
+
+		// Test another error type
+		let account_error2 = AccountError::PassphraseWeak;
+		let keeta_error2: KeetaNetError = account_error2.into();
+
+		if let KeetaNetError::Code { code, message } = keeta_error2 {
+			assert_eq!(code, "PASSPHRASE_WEAK");
+			assert_eq!(message, "PassphraseWeak");
+		} else {
+			assert!(matches!(keeta_error2, KeetaNetError::Code { .. }));
 		}
 	}
 }

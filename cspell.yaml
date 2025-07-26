@@ -35,8 +35,9 @@ words:
   - secp
   - ecdsa
   - ecies
-  - ciphertext
   - secp256k1
+  - ciphertext
+  - zeroization
   - passphrase
   - hexseed
   - pubkey

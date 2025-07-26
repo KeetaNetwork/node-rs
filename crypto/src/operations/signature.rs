@@ -6,7 +6,12 @@
 use crate::error::CryptoError;
 
 // Re-export key RustCrypto signature traits for easier use
-pub use signature::{DigestSigner, DigestVerifier, RandomizedSigner, Signer, Verifier};
+pub use signature::{DigestSigner, DigestVerifier, Error, RandomizedSigner, Signer, Verifier};
+
+// Re-export algorithm-specific signature types
+pub use ed25519_dalek::Signature as Ed25519Signature;
+pub use k256::ecdsa::Signature as Secp256k1Signature;
+pub use p256::ecdsa::Signature as Secp256r1Signature;
 
 /// Core cryptographic signing operations
 ///

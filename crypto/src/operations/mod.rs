@@ -16,7 +16,11 @@ pub use signature::{CryptoSigner, CryptoVerifier};
 
 // Re-export RustCrypto traits for convenience
 #[cfg(feature = "signature")]
-pub use signature::{DigestSigner, DigestVerifier, RandomizedSigner, Signer, Verifier};
+pub use signature::{DigestSigner, DigestVerifier, Error, RandomizedSigner, Signer, Verifier};
+
+// Re-export algorithm-specific signature types
+#[cfg(feature = "signature")]
+pub use signature::{Ed25519Signature, Secp256k1Signature};
 
 #[cfg(feature = "encryption")]
 pub use encryption::{Aead, AeadCore, AeadInPlace, KeyInit};

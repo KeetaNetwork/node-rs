@@ -7,10 +7,12 @@ use crate::error::CryptoError;
 // Algorithm implementations
 pub mod ed25519;
 pub mod secp256k1;
+pub mod secp256r1;
 
 // Re-export algorithm implementations
 pub use ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 pub use secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
+pub use secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey};
 
 /// Trait for cryptographic private keys that can be used for signing.
 ///
@@ -36,6 +38,7 @@ pub trait PublicKey:
 pub enum AnyPrivateKey {
 	Secp256k1(Secp256k1PrivateKey),
 	Ed25519(Ed25519PrivateKey),
+	Secp256r1(Secp256r1PrivateKey),
 }
 
 /// Enum to hold different public key types
@@ -43,6 +46,7 @@ pub enum AnyPrivateKey {
 pub enum AnyPublicKey {
 	Secp256k1(Secp256k1PublicKey),
 	Ed25519(Ed25519PublicKey),
+	Secp256r1(Secp256r1PublicKey),
 }
 
 impl AnyPrivateKey {
@@ -50,6 +54,7 @@ impl AnyPrivateKey {
 		match self {
 			AnyPrivateKey::Secp256k1(key) => AnyPublicKey::Secp256k1(key.as_public_key()),
 			AnyPrivateKey::Ed25519(key) => AnyPublicKey::Ed25519(key.as_public_key()),
+			AnyPrivateKey::Secp256r1(key) => AnyPublicKey::Secp256r1(key.as_public_key()),
 		}
 	}
 
@@ -57,6 +62,7 @@ impl AnyPrivateKey {
 		match self {
 			AnyPrivateKey::Secp256k1(key) => key.into(),
 			AnyPrivateKey::Ed25519(key) => key.into(),
+			AnyPrivateKey::Secp256r1(key) => key.into(),
 		}
 	}
 }
@@ -66,6 +72,7 @@ impl From<&AnyPrivateKey> for Algorithm {
 		match key {
 			AnyPrivateKey::Secp256k1(_) => Algorithm::Secp256k1,
 			AnyPrivateKey::Ed25519(_) => Algorithm::Ed25519,
+			AnyPrivateKey::Secp256r1(_) => Algorithm::Secp256r1,
 		}
 	}
 }
@@ -75,6 +82,7 @@ impl From<AnyPrivateKey> for Algorithm {
 		match key {
 			AnyPrivateKey::Secp256k1(_) => Algorithm::Secp256k1,
 			AnyPrivateKey::Ed25519(_) => Algorithm::Ed25519,
+			AnyPrivateKey::Secp256r1(_) => Algorithm::Secp256r1,
 		}
 	}
 }
@@ -84,6 +92,7 @@ impl AnyPublicKey {
 		match self {
 			AnyPublicKey::Secp256k1(key) => key.into(),
 			AnyPublicKey::Ed25519(key) => key.into(),
+			AnyPublicKey::Secp256r1(key) => key.into(),
 		}
 	}
 }
@@ -93,6 +102,7 @@ impl From<&AnyPublicKey> for Algorithm {
 		match key {
 			AnyPublicKey::Secp256k1(_) => Algorithm::Secp256k1,
 			AnyPublicKey::Ed25519(_) => Algorithm::Ed25519,
+			AnyPublicKey::Secp256r1(_) => Algorithm::Secp256r1,
 		}
 	}
 }
@@ -102,6 +112,7 @@ impl From<AnyPublicKey> for Algorithm {
 		match key {
 			AnyPublicKey::Secp256k1(_) => Algorithm::Secp256k1,
 			AnyPublicKey::Ed25519(_) => Algorithm::Ed25519,
+			AnyPublicKey::Secp256r1(_) => Algorithm::Secp256r1,
 		}
 	}
 }
@@ -184,6 +195,11 @@ mod tests {
 		let any_ed25519 = AnyPrivateKey::Ed25519(ed25519_key);
 		assert_eq!(Algorithm::from(&any_ed25519), Algorithm::Ed25519);
 		assert_eq!(Algorithm::from(any_ed25519), Algorithm::Ed25519);
+
+		let secp256r1_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
+		let any_secp256r1 = AnyPrivateKey::Secp256r1(secp256r1_key);
+		assert_eq!(Algorithm::from(&any_secp256r1), Algorithm::Secp256r1);
+		assert_eq!(Algorithm::from(any_secp256r1), Algorithm::Secp256r1);
 	}
 
 	#[test]
@@ -201,6 +217,12 @@ mod tests {
 		let any_ed25519_pub = AnyPublicKey::Ed25519(ed25519_public);
 		assert_eq!(Algorithm::from(&any_ed25519_pub), Algorithm::Ed25519);
 		assert_eq!(Algorithm::from(any_ed25519_pub), Algorithm::Ed25519);
+
+		let secp256r1_private = Secp256r1Derivation::derive_from_seed(seed).unwrap();
+		let secp256r1_public = secp256r1_private.as_public_key();
+		let any_secp256r1_pub = AnyPublicKey::Secp256r1(secp256r1_public);
+		assert_eq!(Algorithm::from(&any_secp256r1_pub), Algorithm::Secp256r1);
+		assert_eq!(Algorithm::from(any_secp256r1_pub), Algorithm::Secp256r1);
 	}
 
 	#[test]
@@ -234,6 +256,20 @@ mod tests {
 		let any_key_bytes = any_ed25519.to_bytes();
 		let expected_bytes = SecretBox::<Vec<u8>>::from(&ed25519_key);
 		assert_eq!(any_key_bytes.expose_secret(), expected_bytes.expose_secret());
+
+		// Test secp256r1 variant
+		let secp256r1_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
+		let any_secp256r1 = AnyPrivateKey::Secp256r1(secp256r1_key.clone());
+
+		// Test derive_public_key
+		let derived_public = any_secp256r1.derive_public_key();
+		let expected_public = secp256r1_key.as_public_key();
+		assert_eq!(derived_public.to_bytes(), Vec::<u8>::from(expected_public));
+
+		// Test to_bytes
+		let any_key_bytes = any_secp256r1.to_bytes();
+		let expected_bytes = SecretBox::<Vec<u8>>::from(&secp256r1_key);
+		assert_eq!(any_key_bytes.expose_secret(), expected_bytes.expose_secret());
 	}
 
 	#[test]
@@ -258,6 +294,16 @@ mod tests {
 		// Test to_bytes
 		let any_pub_bytes = any_ed25519_pub.to_bytes();
 		let expected_bytes = Vec::<u8>::from(&ed25519_public);
+		assert_eq!(any_pub_bytes, expected_bytes);
+
+		// Test secp256r1 variant
+		let secp256r1_private = Secp256r1Derivation::derive_from_seed(seed).unwrap();
+		let secp256r1_public = secp256r1_private.as_public_key();
+		let any_secp256r1_pub = AnyPublicKey::Secp256r1(secp256r1_public.clone());
+
+		// Test to_bytes
+		let any_pub_bytes = any_secp256r1_pub.to_bytes();
+		let expected_bytes = Vec::<u8>::from(&secp256r1_public);
 		assert_eq!(any_pub_bytes, expected_bytes);
 	}
 

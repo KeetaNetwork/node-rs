@@ -7,6 +7,10 @@ pub mod constants;
 pub mod error;
 pub mod utils;
 
+// Re-export the main types for easier use
+pub use account::Account;
+pub use error::AccountError;
+
 use secrecy::SecretBox;
 
 /// A 256-bit seed used for key derivation.
