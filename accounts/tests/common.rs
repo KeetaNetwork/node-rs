@@ -100,7 +100,6 @@ pub const TEST_PRIVATE_ACCOUNT: PrivateAccountTestData = PrivateAccountTestData 
 			private_key_ecdsa_secp256k1: "6FF01C1B8092A715DF4231AD531CA1101FA941E49BD76EADE0DA047D5333E20E",
 			private_key_ecdsa_secp256r1: "6FF01C1B8092A715DF4231AD531CA1101FA941E49BD76EADE0DA047D5333E20E",
 			private_key_ed25519: "6823B06E9A84281499ADDFF3719B7A530B8E8C9764629858C73DCA7844675346",
-			
 			encoded_public_key_ecdsa_secp256k1: // cspell:disable-next-line
 				"keeta_aabenomfdx4qdgspfmllant23pq5bqe6g74ecy5gc42htzcl5fg5zdr55yndzra",
 			encoded_public_key_ecdsa_secp256r1: // cspell:disable-next-line

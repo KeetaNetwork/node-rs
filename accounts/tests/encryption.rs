@@ -71,7 +71,7 @@ fn test_encryption_message_sizes() {
 	}
 
 	// Test various message sizes
-	let test_messages = vec![
+	let test_messages = [
 		b"".to_vec(),                  // Empty message
 		b"a".to_vec(),                 // Single character
 		b"Hello World!".to_vec(),      // Short message
@@ -83,7 +83,7 @@ fn test_encryption_message_sizes() {
 	for (i, message) in test_messages.iter().enumerate() {
 		let encrypted = account.encrypt(message).unwrap();
 		let decrypted = account.decrypt(&encrypted).unwrap();
-		assert_eq!(message, &decrypted, "Message {} failed round-trip", i);
+		assert_eq!(message, &decrypted, "Message {i} failed round-trip");
 
 		// Verify encrypted data is different from original (except possibly empty messages)
 		if !message.is_empty() {
@@ -128,7 +128,7 @@ fn test_decryption_invalid_data() {
 	}
 
 	// Test various invalid encrypted data
-	let invalid_data_cases = vec![
+	let invalid_data_cases = [
 		vec![],          // Empty data
 		vec![0],         // Single byte
 		vec![0; 10],     // Too short
@@ -138,7 +138,7 @@ fn test_decryption_invalid_data() {
 
 	for (i, invalid_data) in invalid_data_cases.iter().enumerate() {
 		let decrypt_result = account.decrypt(invalid_data);
-		assert!(decrypt_result.is_err(), "Decryption should fail with invalid data case {}", i);
+		assert!(decrypt_result.is_err(), "Decryption should fail with invalid data case {i}");
 	}
 }
 
@@ -170,8 +170,7 @@ fn test_encryption_nondeterministic() {
 		for j in (i + 1)..encryptions.len() {
 			assert_ne!(
 				encryptions[i], encryptions[j],
-				"Encryption {} and {} should be different (non-deterministic)",
-				i, j
+				"Encryption {i} and {j} should be different (non-deterministic)"
 			);
 		}
 	}
@@ -179,6 +178,6 @@ fn test_encryption_nondeterministic() {
 	// But all should decrypt to the same original message
 	for (i, encrypted) in encryptions.iter().enumerate() {
 		let decrypted = account.decrypt(encrypted).unwrap();
-		assert_eq!(message, decrypted.as_slice(), "Decryption {} should match original", i);
+		assert_eq!(message, decrypted.as_slice(), "Decryption {i} should match original");
 	}
 }

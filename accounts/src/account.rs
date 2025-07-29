@@ -14,7 +14,7 @@ use crate::utils::*;
 use crate::{HexSeedAndIndex, Index, PassphraseAndIndex, Seed, SeedAndIndex};
 
 /// Signing and verification options
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SigningOptions {
 	/// If true, use the raw message without hashing
 	/// If false, pre-hash the message before signing/verification
@@ -23,12 +23,6 @@ pub struct SigningOptions {
 	/// For certificate processing
 	/// Currently used primarily for SECP256R1 DER encoding
 	pub for_cert: bool,
-}
-
-impl Default for SigningOptions {
-	fn default() -> Self {
-		Self { raw: false, for_cert: false }
-	}
 }
 
 impl SigningOptions {

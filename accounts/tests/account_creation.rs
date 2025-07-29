@@ -45,31 +45,31 @@ fn test_account_from_public_key_parsing() {
 		match &account {
 			GenericAccount::EcdsaSecp256k1(acc) => {
 				assert_eq!(acc.keypair_type(), KeyPairType::ECDSASECP256K1);
-				assert_eq!(acc.is_identifier(), false);
+				assert!(!acc.is_identifier());
 			}
 			GenericAccount::EcdsaSecp256r1(acc) => {
 				assert_eq!(acc.keypair_type(), KeyPairType::ECDSASECP256R1);
-				assert_eq!(acc.is_identifier(), false);
+				assert!(!acc.is_identifier());
 			}
 			GenericAccount::Ed25519(acc) => {
 				assert_eq!(acc.keypair_type(), KeyPairType::ED25519);
-				assert_eq!(acc.is_identifier(), false);
+				assert!(!acc.is_identifier());
 			}
 			GenericAccount::Network(acc) => {
 				assert_eq!(acc.keypair_type(), KeyPairType::NETWORK);
-				assert_eq!(acc.is_identifier(), true);
+				assert!(acc.is_identifier());
 			}
 			GenericAccount::Token(acc) => {
 				assert_eq!(acc.keypair_type(), KeyPairType::TOKEN);
-				assert_eq!(acc.is_identifier(), true);
+				assert!(acc.is_identifier());
 			}
 			GenericAccount::Storage(acc) => {
 				assert_eq!(acc.keypair_type(), KeyPairType::STORAGE);
-				assert_eq!(acc.is_identifier(), true);
+				assert!(acc.is_identifier());
 			}
 			GenericAccount::Multisig(acc) => {
 				assert_eq!(acc.keypair_type(), KeyPairType::MULTISIG);
-				assert_eq!(acc.is_identifier(), true);
+				assert!(acc.is_identifier());
 			}
 		}
 
@@ -103,7 +103,7 @@ fn test_account_from_public_key_parsing() {
 				assert_eq!(acc.public_key_string(), encoded_public_key);
 				assert_eq!(acc.is_identifier(), is_identifier);
 			}
-			_ => panic!("Account type mismatch for {}", encoded_public_key),
+			_ => panic!("Account type mismatch for {encoded_public_key}"),
 		}
 	}
 }
