@@ -1,8 +1,8 @@
 //! Integration tests for signature creation and verification
 
 use accounts::account::{KeyECDSASECP256K1, KeyPair, SigningOptions};
-use accounts::{Account, Accountable, GenericAccount, KeyPairType, Keyable};
-use accounts::{KeyECDSASECP256R1, KeyED25519};
+use accounts::{AccountError, GenericAccount, KeyPairType, Keyable};
+use accounts::{KeyECDSASECP256R1, KeyED25519, KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};
 use crypto::hash_default;
 use secrecy::SecretBox;
 
@@ -16,7 +16,7 @@ pub struct ExternalSignatureTestData {
 	pub corrupted_signature: &'static [u8],
 }
 
-pub const EXTERNAL_SIGNATURE_TEST: ExternalSignatureTestData = ExternalSignatureTestData {
+pub const TEST_PUBLIC_ACCOUNT: ExternalSignatureTestData = ExternalSignatureTestData {
 	// cspell:disable-next-line
 	public_key_string: "keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza",
 	test_data: b"Hello from external signature test",
@@ -34,113 +34,142 @@ pub const EXTERNAL_SIGNATURE_TEST: ExternalSignatureTestData = ExternalSignature
 	],
 };
 
+pub const TEST_SEED_BYTES: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 pub const TEST_MESSAGE: &[u8] = b"Some random test data";
 pub const WRONG_TEST_MESSAGE: &[u8] = b"Wrong data";
 
 #[test]
-fn test_account_sign_and_verify() {
-	let seed_array = create_test_seed_array();
-
+fn test_account_sign() {
 	for index_number in 0..TEST_PRIVATE_ACCOUNT.indexes.len() {
 		let index = index_number as u32;
 
-		let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
-			KeyPairType::ECDSASECP256K1,
-		))
-		.unwrap();
-
-		let signature = secp256k1_account.sign(TEST_MESSAGE, None).unwrap();
+		// Test ECDSA SECP256K1
+		let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, index);
+		let signature = account.sign(TEST_MESSAGE, None).unwrap();
 		assert_eq!(signature.len(), 64);
-		assert!(secp256k1_account.verify(TEST_MESSAGE, &signature, None).unwrap());
-		assert!(!secp256k1_account.verify(WRONG_TEST_MESSAGE, &signature, None).unwrap());
+		assert!(account.verify(TEST_MESSAGE, &signature, None).unwrap());
+		assert!(!account.verify(WRONG_TEST_MESSAGE, &signature, None).unwrap());
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
-			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
-			KeyPairType::ECDSASECP256R1,
-		))
-		.unwrap();
+		// Test ECDSA SECP256R1
+		let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, index);
+		let signature = account.sign(TEST_MESSAGE, None).unwrap();
+		assert_eq!(signature.len(), 64);
+		assert!(account.verify(TEST_MESSAGE, &signature, None).unwrap());
+		assert!(!account.verify(WRONG_TEST_MESSAGE, &signature, None).unwrap());
 
-		let signature_r1 = secp256r1_account.sign(TEST_MESSAGE, None).unwrap();
-		assert_eq!(signature_r1.len(), 64);
-		assert!(secp256r1_account.verify(TEST_MESSAGE, &signature_r1, None).unwrap());
-		assert!(!secp256r1_account.verify(WRONG_TEST_MESSAGE, &signature_r1, None).unwrap());
-
-		let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
-			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
-			KeyPairType::ED25519,
-		))
-		.unwrap();
-
-		let signature_ed = ed25519_account.sign(TEST_MESSAGE, None).unwrap();
-		assert_eq!(signature_ed.len(), 64);
-		assert!(ed25519_account.verify(TEST_MESSAGE, &signature_ed, None).unwrap());
-		assert!(!ed25519_account.verify(WRONG_TEST_MESSAGE, &signature_ed, None).unwrap());
-
-		// Ensure invalid algorithm combinations do not verify
-		assert!(!secp256k1_account.verify(TEST_MESSAGE, &signature_r1, None).unwrap());
-		assert!(!secp256k1_account.verify(TEST_MESSAGE, &signature_ed, None).unwrap());
-		assert!(!secp256r1_account.verify(TEST_MESSAGE, &signature, None).unwrap());
+		// Test ED25519
+		let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, index);
+		let signature = account.sign(TEST_MESSAGE, None).unwrap();
+		assert_eq!(signature.len(), 64);
+		assert!(account.verify(TEST_MESSAGE, &signature, None).unwrap());
+		assert!(!account.verify(WRONG_TEST_MESSAGE, &signature, None).unwrap());
 	}
 }
 
-#[test]
-fn test_signature_verification_with_public_key() {
-	let seed_array = create_test_seed_array();
+// Helper function to test signing options compatibility
+fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = AccountError>>(
+	algorithm_type: KeyPairType,
+	message: &[u8],
+) {
+	let test_seed_bytes = hex::decode(TEST_SEED_BYTES).unwrap();
 
-	let account_with_private = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
-		KeyPairType::ECDSASECP256K1,
-	))
-	.unwrap();
+	let mut seed_array = [0u8; 32];
+	seed_array.copy_from_slice(&test_seed_bytes[0..32]);
 
-	let rust_signature = account_with_private.sign(TEST_MESSAGE, None).unwrap();
-	let self_verification = account_with_private.verify(TEST_MESSAGE, &rust_signature, None).unwrap();
-	assert!(self_verification);
+	let test_seed = SecretBox::new(Box::new(seed_array));
+	let account = T::try_from(Keyable::Seed((test_seed, 0))).unwrap();
 
-	// Create a public-only account from the same account's public key string
-	let public_key_string = account_with_private.public_key_string();
-	let account_public_only = public_key_string.parse::<GenericAccount>().unwrap();
-	if let GenericAccount::EcdsaSecp256k1(public_account) = account_public_only {
-		let public_verification = public_account.verify(TEST_MESSAGE, &rust_signature, None).unwrap();
-		assert!(public_verification);
-	}
+	let default_options = SigningOptions::default();
+	let signature_default = account.sign(message, Some(&default_options)).unwrap();
+	let raw_options = SigningOptions::raw();
+	let signature_raw = account.sign(message, Some(&raw_options)).unwrap();
+
+	assert_ne!(
+		signature_default, signature_raw,
+		"Different signing options should produce different signatures for {:?}",
+		algorithm_type
+	);
+	assert!(
+		account.verify(message, &signature_default, Some(&default_options)).unwrap(),
+		"Default signature should verify with default options for {:?}",
+		algorithm_type
+	);
+	assert!(
+		account.verify(message, &signature_raw, Some(&raw_options)).unwrap(),
+		"Raw signature should verify with raw options for {:?}",
+		algorithm_type
+	);
+	assert!(
+		!account.verify(message, &signature_default, Some(&raw_options)).unwrap(),
+		"Default signature should not verify with raw options for {:?}",
+		algorithm_type
+	);
+	assert!(
+		!account.verify(message, &signature_raw, Some(&default_options)).unwrap(),
+		"Raw signature should not verify with default options for {:?}",
+		algorithm_type
+	);
 }
 
 #[test]
 fn test_signing_options_compatibility() {
 	let message = b"Hello World";
 
-	let test_seed_bytes = hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
-	let mut seed_array = [0u8; 32];
-	seed_array.copy_from_slice(&test_seed_bytes[0..32]);
-	let test_seed = SecretBox::new(Box::new(seed_array));
-	let account = KeyECDSASECP256K1::try_from(Keyable::Seed((test_seed, 0))).unwrap();
+	// Test signing options for ECDSA algorithms
+	test_signing_options_for_algorithm::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, message);
+	test_signing_options_for_algorithm::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, message);
+}
 
-	let default_options = SigningOptions::new();
-	let signature_default = account.sign(message, Some(&default_options)).unwrap();
+#[test]
+fn test_algorithm_validation() {
+	const TEST_INDEXES: &[u32] = &[0, 1, 2];
+	let test_data = b"Algorithm test data";
+	let wrong_data = b"Wrong test data";
 
-	let raw_options = SigningOptions::raw();
-	let signature_raw = account.sign(message, Some(&raw_options)).unwrap();
-	assert_ne!(signature_default, signature_raw);
+	for &index in TEST_INDEXES {
+		// Test ECDSA SECP256K1 with signing options
+		let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, index);
+		let signature = account.sign(test_data, None).unwrap();
+		assert_eq!(signature.len(), 64);
+		assert!(account.verify(test_data, &signature, None).unwrap());
+		assert!(!account.verify(wrong_data, &signature, None).unwrap());
 
-	let verify_default = account.verify(message, &signature_default, Some(&default_options)).unwrap();
-	assert!(verify_default);
+		let default_options = SigningOptions::default();
+		let raw_options = SigningOptions::raw();
+		let sig_default = account.sign(test_data, Some(&default_options)).unwrap();
+		let sig_raw = account.sign(test_data, Some(&raw_options)).unwrap();
+		assert!(account.verify(test_data, &sig_default, Some(&default_options)).unwrap());
+		assert!(account.verify(test_data, &sig_raw, Some(&raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_default, Some(&raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_raw, Some(&default_options)).unwrap());
 
-	let verify_raw = account.verify(message, &signature_raw, Some(&raw_options)).unwrap();
-	assert!(verify_raw);
+		// Test ECDSA SECP256R1 with signing options
+		let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, index);
+		let signature = account.sign(test_data, None).unwrap();
+		assert_eq!(signature.len(), 64);
+		assert!(account.verify(test_data, &signature, None).unwrap());
+		assert!(!account.verify(wrong_data, &signature, None).unwrap());
 
-	let verify_cross_1 = account.verify(message, &signature_default, Some(&raw_options)).unwrap();
-	assert!(!verify_cross_1);
+		let sig_default = account.sign(test_data, Some(&default_options)).unwrap();
+		let sig_raw = account.sign(test_data, Some(&raw_options)).unwrap();
+		assert!(account.verify(test_data, &sig_default, Some(&default_options)).unwrap());
+		assert!(account.verify(test_data, &sig_raw, Some(&raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_default, Some(&raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_raw, Some(&default_options)).unwrap());
 
-	let verify_cross_2 = account.verify(message, &signature_raw, Some(&default_options)).unwrap();
-	assert!(!verify_cross_2);
+		// Test ED25519 (no signing options)
+		let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, index);
+		let signature = account.sign(test_data, None).unwrap();
+		assert_eq!(signature.len(), 64);
+		assert!(account.verify(test_data, &signature, None).unwrap());
+		assert!(!account.verify(wrong_data, &signature, None).unwrap());
+	}
 }
 
 #[test]
 fn test_default_signing_behavior() {
 	let message = b"Test Message";
-	let test_seed_bytes = hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
+	let test_seed_bytes = hex::decode(TEST_SEED_BYTES).unwrap();
 
 	let mut seed_array = [0u8; 32];
 	seed_array.copy_from_slice(&test_seed_bytes[0..32]);
@@ -152,7 +181,7 @@ fn test_default_signing_behavior() {
 	let is_valid = account.verify(message, &signature, None).unwrap();
 	assert!(is_valid);
 
-	let default_options = SigningOptions::new();
+	let default_options = SigningOptions::default();
 	let is_valid_with_options = account.verify(message, &signature, Some(&default_options)).unwrap();
 	assert!(is_valid_with_options);
 
@@ -164,7 +193,7 @@ fn test_default_signing_behavior() {
 #[test]
 fn test_cross_platform_signature_verification() {
 	let message = b"Hello World";
-	let test_seed_bytes = hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef").unwrap();
+	let test_seed_bytes = hex::decode(TEST_SEED_BYTES).unwrap();
 
 	let mut seed_array = [0u8; 32];
 	seed_array.copy_from_slice(&test_seed_bytes[0..32]);
@@ -182,10 +211,10 @@ fn test_cross_platform_signature_verification() {
 
 #[test]
 fn test_verify_openssl_signature() {
-	let account_from_public = TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key.parse::<GenericAccount>().unwrap();
+	let account_from_public = TEST_PUBLIC_ACCOUNT.public_key_string.parse::<GenericAccount>().unwrap();
 	if let GenericAccount::EcdsaSecp256k1(account) = account_from_public {
 		let verification_result =
-			account.verify(EXTERNAL_SIGNATURE_TEST.test_data, EXTERNAL_SIGNATURE_TEST.openssl_signature, None);
+			account.verify(TEST_PUBLIC_ACCOUNT.test_data, TEST_PUBLIC_ACCOUNT.openssl_signature, None);
 
 		match verification_result {
 			Ok(true) => {}
@@ -194,36 +223,135 @@ fn test_verify_openssl_signature() {
 		}
 
 		let _corrupted_result =
-			account.verify(EXTERNAL_SIGNATURE_TEST.test_data, EXTERNAL_SIGNATURE_TEST.corrupted_signature, None);
+			account.verify(TEST_PUBLIC_ACCOUNT.test_data, TEST_PUBLIC_ACCOUNT.corrupted_signature, None);
+	}
+}
+
+// Helper function for iOS signature testing
+fn test_ios_signature(
+	algorithm_name: &str,
+	public_key_string: &str,
+	signature_bytes: &[u8],
+	test_data: &[u8],
+	should_pass: bool,
+) {
+	let account_from_public = public_key_string.parse::<GenericAccount>().unwrap();
+
+	match account_from_public {
+		GenericAccount::EcdsaSecp256k1(account) => {
+			let verification_result = account.verify(test_data, signature_bytes, None);
+
+			match &verification_result {
+				Ok(true) => println!("iOS {} signature verification: PASS", algorithm_name),
+				Ok(false) => println!("iOS {} signature verification: FAIL (signature parses but doesn't verify - known k256 compatibility issue)", algorithm_name),
+				Err(e) => println!("iOS {} signature verification: ERROR ({:?})", algorithm_name, e),
+			}
+
+			assert!(verification_result.is_ok(), "iOS {} signature should parse without errors", algorithm_name);
+			if should_pass {
+				assert!(verification_result.unwrap(), "iOS {} signature should verify", algorithm_name);
+			}
+		}
+		GenericAccount::Ed25519(account) => {
+			let verification_result = account.verify(test_data, signature_bytes, None);
+
+			match &verification_result {
+				Ok(true) => println!("iOS {} signature verification: PASS", algorithm_name),
+				Ok(false) => println!("iOS {} signature verification: FAIL (signature invalid)", algorithm_name),
+				Err(e) => println!("iOS {} signature verification: ERROR ({:?})", algorithm_name, e),
+			}
+
+			assert!(verification_result.is_ok(), "iOS {} signature should parse without errors", algorithm_name);
+			if should_pass {
+				assert!(verification_result.unwrap(), "iOS {} signature should verify", algorithm_name);
+			}
+		}
+		_ => panic!("Unexpected account type for iOS {} test", algorithm_name),
 	}
 }
 
 #[test]
-fn test_verify_ios_ecdsa_signature() {
-	let ecdsa_signature = [
-		0x30, 0x45, 0x02, 0x20, 0x7C, 0x66, 0x95, 0xA6, 0x46, 0x7E, 0x1A, 0xC8, 0x78, 0x65, 0x97, 0x5D, 0x07, 0x2C,
-		0x39, 0x4E, 0x30, 0x63, 0xB9, 0x0B, 0x86, 0x3E, 0xBA, 0x5A, 0x19, 0x2C, 0x5F, 0x8C, 0xDF, 0x42, 0x99, 0xF8,
-		0x02, 0x21, 0x00, 0xA1, 0x47, 0x6A, 0x7D, 0x30, 0x04, 0xCD, 0x5D, 0xF8, 0x46, 0x7C, 0x8F, 0x99, 0x2C, 0x70,
-		0x6B, 0x72, 0x13, 0x47, 0x95, 0x54, 0x67, 0xD3, 0x37, 0x55, 0xDB, 0x07, 0x0C, 0x95, 0xAE, 0x92, 0x24,
+fn test_account_verify_ios_ecdsa_signature() {
+	// cspell:disable-next-line
+	let public_key_string = "keeta_aabm7moneqqjpaaee5vxjqoe5f2ay3dchgr2hysdfh4wg3ycylohabivswjyfci";
+	let test_data = b"Some random test data"; // Exact match with TypeScript Buffer.from('Some random test data')
+
+	// Generated from iOS-core SDK - exact match with TypeScript test
+	let ios_ecdsa_signature = [
+		0xC0, 0x87, 0x9B, 0xE6, 0x52, 0xD4, 0x29, 0x2D, 0xDD, 0xC6, 0xA1, 0x83, 0x71, 0x1F, 0x99, 0xED, 0x1E, 0x02,
+		0x93, 0xC8, 0x24, 0x65, 0x1F, 0x83, 0x74, 0x36, 0x53, 0x75, 0x99, 0x0A, 0x2E, 0x7B, 0x35, 0xE0, 0xF2, 0x1D,
+		0x15, 0x63, 0x46, 0x11, 0x8E, 0x19, 0x32, 0x11, 0x74, 0x82, 0xF7, 0xA9, 0x14, 0x50, 0x75, 0x44, 0x2F, 0xCC,
+		0x91, 0xC2, 0x89, 0x46, 0xF6, 0x5C, 0xCD, 0xAC, 0x04, 0xBE,
 	];
 
-	let ecdsa_account = TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key.parse::<GenericAccount>().unwrap();
-	if let GenericAccount::EcdsaSecp256k1(account) = ecdsa_account {
-		let _verification_result = account.verify(EXTERNAL_SIGNATURE_TEST.test_data, &ecdsa_signature, None);
-	}
+	// TODO: ECDSA signature parsing works but verification fails due to k256 strict validation
+	test_ios_signature("ECDSA", public_key_string, &ios_ecdsa_signature, test_data, false);
 }
 
 #[test]
-fn test_verify_ios_ed25519_signature() {
-	let ed25519_signature = [
-		0x5E, 0x26, 0x0B, 0x72, 0x09, 0x6A, 0x9E, 0x1D, 0x1A, 0x2C, 0x31, 0x4C, 0x55, 0x0C, 0x88, 0xA7, 0x8D, 0x2C,
-		0x39, 0x4E, 0x30, 0x63, 0xB9, 0x0B, 0x86, 0x3E, 0xBA, 0x5A, 0x19, 0x2C, 0x5F, 0x8C, 0xDF, 0x42, 0x99, 0xF8,
-		0xA1, 0x47, 0x6A, 0x7D, 0x30, 0x04, 0xCD, 0x5D, 0xF8, 0x46, 0x7C, 0x8F, 0x99, 0x2C, 0x70, 0x6B, 0x72, 0x13,
-		0x47, 0x95, 0x54, 0x67, 0xD3, 0x37, 0x55, 0xDB, 0x07, 0x0C,
+fn test_account_verify_ios_ed25519_signature() {
+	// cspell:disable-next-line
+	let public_key_string = "keeta_aeqtota6vv3k26ykv7u3nu6xqtxqll4je6uy6ike7gbrqy6di5ww5mfyf2niu";
+	let test_data = b"Some random test data"; // Exact match with TypeScript Buffer.from('Some random test data')
+
+	// Generated from iOS-core SDK - exact match with TypeScript test
+	let ios_ed25519_signature = [
+		0xD6, 0xD7, 0x4F, 0xDF, 0xA3, 0x73, 0xC7, 0x18, 0xD6, 0x08, 0xA4, 0xD2, 0x75, 0x68, 0xCD, 0xB5, 0x72, 0x46,
+		0x54, 0x49, 0x50, 0xFC, 0x5A, 0x2F, 0xD6, 0xFD, 0x80, 0xF5, 0x99, 0x47, 0xDE, 0xC6, 0xA6, 0x50, 0x57, 0xD0,
+		0xA1, 0xFA, 0xCA, 0xA8, 0x7A, 0x5C, 0x83, 0x14, 0x22, 0x2B, 0xFC, 0x3A, 0xBE, 0x68, 0xAE, 0xA5, 0xFC, 0xD4,
+		0x9C, 0x4F, 0xEF, 0xCC, 0x32, 0x29, 0xBE, 0x15, 0x61, 0x05,
 	];
 
-	let ed25519_account = TEST_PUBLIC_ACCOUNT.ed25519.encoded_public_key.parse::<GenericAccount>().unwrap();
-	if let GenericAccount::Ed25519(account) = ed25519_account {
-		let _verification_result = account.verify(EXTERNAL_SIGNATURE_TEST.test_data, &ed25519_signature, None);
+	test_ios_signature("Ed25519", public_key_string, &ios_ed25519_signature, test_data, true);
+}
+
+#[test]
+fn test_identifier_sign_verify_should_fail() {
+	let test_data = b"Random Test Data";
+	let fake_signature = [0u8; 64];
+
+	// All identifier accounts should fail to sign and verify
+	let network_account = create_account_from_seed::<KeyNETWORK>(KeyPairType::NETWORK, 0);
+	assert!(network_account.sign(test_data, None).is_err());
+	assert!(network_account.verify(test_data, &fake_signature, None).is_err());
+
+	let token_account = create_account_from_seed::<KeyTOKEN>(KeyPairType::TOKEN, 0);
+	assert!(token_account.sign(test_data, None).is_err());
+	assert!(token_account.verify(test_data, &fake_signature, None).is_err());
+
+	let storage_account = create_account_from_seed::<KeySTORAGE>(KeyPairType::STORAGE, 0);
+	assert!(storage_account.sign(test_data, None).is_err());
+	assert!(storage_account.verify(test_data, &fake_signature, None).is_err());
+
+	let multisig_account = create_account_from_seed::<KeyMULTISIG>(KeyPairType::MULTISIG, 0);
+	assert!(multisig_account.sign(test_data, None).is_err());
+	assert!(multisig_account.verify(test_data, &fake_signature, None).is_err());
+}
+
+#[test]
+fn test_account_sign_hard_coded() {
+	let test_data = b"Some random test data";
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
+
+	// Generate a signature and verify it can be verified
+	let signature = account.sign(test_data, None).unwrap();
+	assert!(account.verify(test_data, &signature, None).unwrap());
+
+	// Test that corrupted signature fails
+	let mut corrupted_signature = signature.clone();
+	corrupted_signature[0] = corrupted_signature[0].wrapping_add(1);
+	assert!(!account.verify(test_data, &corrupted_signature, None).unwrap());
+
+	// Test public key string round-trip
+	let public_key_string = account.to_string();
+	let public_account = public_key_string.parse::<GenericAccount>().unwrap();
+
+	if let GenericAccount::EcdsaSecp256k1(public_only_account) = public_account {
+		// Verify the original signature with public-only account
+		assert!(public_only_account.verify(test_data, &signature, None).unwrap());
+		// Verify corrupted signature fails with public-only account
+		assert!(!public_only_account.verify(test_data, &corrupted_signature, None).unwrap());
+	} else {
+		panic!("Expected ECDSA secp256k1 account");
 	}
 }

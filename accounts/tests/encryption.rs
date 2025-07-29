@@ -1,8 +1,6 @@
 //! Integration tests for encryption and decryption operations.
 
-use accounts::{Account, Accountable, KeyPairType, Keyable};
-use accounts::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
-use secrecy::SecretBox;
+use accounts::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyPairType};
 
 mod common;
 use common::*;
@@ -10,60 +8,41 @@ use common::*;
 #[test]
 fn test_encryption_round_trip_operations() {
 	let plaintext = b"Hello, encryption world!";
-	let seed_array = create_test_seed_array();
 
-	let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
-		KeyPairType::ECDSASECP256K1,
-	))
-	.unwrap();
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
 
-	if secp256k1_account.supports_encryption() {
-		let encrypted = secp256k1_account.encrypt(plaintext).unwrap();
-		let decrypted = secp256k1_account.decrypt(&encrypted).unwrap();
-		assert_eq!(plaintext, decrypted.as_slice());
+	if account.supports_encryption() {
+		let encrypted = account.encrypt(plaintext).unwrap();
+		let decrypted = account.decrypt(&encrypted).unwrap();
+		assert_eq!(plaintext, decrypted.as_slice(), "Decrypted data should match original plaintext");
 
 		// Verify encryption produces different output each time (should be non-deterministic)
-		let encrypted2 = secp256k1_account.encrypt(plaintext).unwrap();
-		assert_ne!(encrypted, encrypted2); // Should be different due to randomness
-
+		let encrypted2 = account.encrypt(plaintext).unwrap();
+		assert_ne!(encrypted, encrypted2, "Encryption should produce different output each time");
 		// But both should decrypt to the same plaintext
-		let decrypted2 = secp256k1_account.decrypt(&encrypted2).unwrap();
-		assert_eq!(plaintext, decrypted2.as_slice());
+		let decrypted2 = account.decrypt(&encrypted2).unwrap();
+		assert_eq!(plaintext, decrypted2.as_slice(), "Decrypted data should match original plaintext");
 	}
 
-	let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
-		KeyPairType::ED25519,
-	))
-	.unwrap();
+	let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, 0);
 
-	if ed25519_account.supports_encryption() {
-		let encrypted = ed25519_account.encrypt(plaintext).unwrap();
-		let decrypted = ed25519_account.decrypt(&encrypted).unwrap();
-		assert_eq!(plaintext, decrypted.as_slice());
+	if account.supports_encryption() {
+		let encrypted = account.encrypt(plaintext).unwrap();
+		let decrypted = account.decrypt(&encrypted).unwrap();
+		assert_eq!(plaintext, decrypted.as_slice(), "ED25519 encryption/decryption failed");
 	}
 
 	// Test SECP256R1 encryption (should not be supported yet)
 	// TODO: Support R1
-	let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new([1u8; 32])), 0)),
-		KeyPairType::ECDSASECP256R1,
-	))
-	.unwrap();
+	let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, 0);
 
-	assert!(!secp256r1_account.supports_encryption());
-	assert!(secp256r1_account.encrypt(plaintext).is_err());
+	assert!(!account.supports_encryption());
+	assert!(account.encrypt(plaintext).is_err());
 }
 
 #[test]
 fn test_encryption_message_sizes() {
-	let seed_array = create_test_seed_array();
-	let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
-		KeyPairType::ECDSASECP256K1,
-	))
-	.unwrap();
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
 
 	if !account.supports_encryption() {
 		// Skip if encryption not supported
@@ -94,33 +73,22 @@ fn test_encryption_message_sizes() {
 
 #[test]
 fn test_encryption_error_cases() {
-	let seed_array = create_test_seed_array();
-
 	// Test with account that doesn't support encryption
-	let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
-		KeyPairType::ECDSASECP256R1,
-	))
-	.unwrap();
-	assert!(!secp256r1_account.supports_encryption());
+	let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, 0);
+	assert!(!account.supports_encryption());
 
 	let test_message = b"This should fail";
-	let encrypt_result = secp256r1_account.encrypt(test_message);
+	let encrypt_result = account.encrypt(test_message);
 	assert!(encrypt_result.is_err(), "Encryption should fail for unsupported key types");
 
-	let decrypt_result = secp256r1_account.decrypt(&[1, 2, 3, 4]);
+	let decrypt_result = account.decrypt(&[1, 2, 3, 4]);
 	assert!(decrypt_result.is_err(), "Decryption should fail for unsupported key types");
 }
 
 /// Test decryption with invalid data
 #[test]
 fn test_decryption_invalid_data() {
-	let seed_array = create_test_seed_array();
-	let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
-		KeyPairType::ECDSASECP256K1,
-	))
-	.unwrap();
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
 
 	if !account.supports_encryption() {
 		// Skip if encryption not supported
@@ -144,12 +112,7 @@ fn test_decryption_invalid_data() {
 
 #[test]
 fn test_encryption_nondeterministic() {
-	let seed_array = create_test_seed_array();
-	let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
-		KeyPairType::ECDSASECP256K1,
-	))
-	.unwrap();
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
 
 	if !account.supports_encryption() {
 		// Skip if encryption not supported

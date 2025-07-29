@@ -21,11 +21,11 @@ fn test_network_address_generation() {
 
 	// Network addresses should be deterministic
 	let network_account2 = Account::<KeyNETWORK>::generate_network_address(network_id).unwrap();
-	assert_eq!(network_account.public_key_string(), network_account2.public_key_string());
+	assert_eq!(network_account.to_string(), network_account2.to_string());
 
 	// Different network IDs should produce different addresses
 	let different_network = Account::<KeyNETWORK>::generate_network_address(54321u64).unwrap();
-	assert_ne!(network_account.public_key_string(), different_network.public_key_string());
+	assert_ne!(network_account.to_string(), different_network.to_string());
 }
 
 #[test]

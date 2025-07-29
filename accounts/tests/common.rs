@@ -1,5 +1,10 @@
 //! Common test utilities and data shared across integration tests
 
+use std::convert::TryFrom;
+
+use accounts::{Account, Accountable, KeyPairType, Keyable};
+use secrecy::SecretBox;
+
 #[allow(dead_code)]
 pub struct PublicAccountTestData {
 	pub ecdsa_secp256k1: PublicKeyData,
@@ -115,4 +120,19 @@ pub const TEST_PRIVATE_ACCOUNT: PrivateAccountTestData = PrivateAccountTestData 
 pub fn create_test_seed_array() -> [u8; 32] {
 	let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).unwrap();
 	seed_bytes.try_into().unwrap()
+}
+
+/// Helper function to create an account from seed for different key types
+#[allow(dead_code)]
+pub fn create_account_from_seed<T>(key_type: KeyPairType, index: u32) -> Account<T>
+where
+	T: accounts::KeyPair,
+	Account<T>: TryFrom<Accountable<T>, Error = accounts::AccountError>,
+{
+	let seed_array = create_test_seed_array();
+	Account::<T>::try_from(Accountable::KeyAndType(
+		Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
+		key_type,
+	))
+	.unwrap()
 }
