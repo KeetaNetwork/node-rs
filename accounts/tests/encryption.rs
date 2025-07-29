@@ -12,7 +12,7 @@ fn test_encryption_round_trip_operations() {
 	let plaintext = b"Hello, encryption world!";
 	let seed_array = create_test_seed_array();
 
-	let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+	let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))
@@ -32,7 +32,7 @@ fn test_encryption_round_trip_operations() {
 		assert_eq!(plaintext, decrypted2.as_slice());
 	}
 
-	let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+	let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ED25519,
 	))
@@ -46,7 +46,7 @@ fn test_encryption_round_trip_operations() {
 
 	// Test SECP256R1 encryption (should not be supported yet)
 	// TODO: Support R1
-	let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+	let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new([1u8; 32])), 0)),
 		KeyPairType::ECDSASECP256R1,
 	))
@@ -59,7 +59,7 @@ fn test_encryption_round_trip_operations() {
 #[test]
 fn test_encryption_message_sizes() {
 	let seed_array = create_test_seed_array();
-	let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+	let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))
@@ -97,7 +97,7 @@ fn test_encryption_error_cases() {
 	let seed_array = create_test_seed_array();
 
 	// Test with account that doesn't support encryption
-	let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+	let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ECDSASECP256R1,
 	))
@@ -116,7 +116,7 @@ fn test_encryption_error_cases() {
 #[test]
 fn test_decryption_invalid_data() {
 	let seed_array = create_test_seed_array();
-	let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+	let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))
@@ -145,7 +145,7 @@ fn test_decryption_invalid_data() {
 #[test]
 fn test_encryption_nondeterministic() {
 	let seed_array = create_test_seed_array();
-	let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+	let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))

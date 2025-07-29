@@ -34,7 +34,7 @@ fn test_identifier_generation() {
 	use secrecy::SecretBox;
 
 	let seed_array = create_test_seed_array();
-	let crypto_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+	let crypto_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))

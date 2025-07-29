@@ -44,7 +44,7 @@ fn test_account_sign_and_verify() {
 	for index_number in 0..TEST_PRIVATE_ACCOUNT.indexes.len() {
 		let index = index_number as u32;
 
-		let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -55,7 +55,7 @@ fn test_account_sign_and_verify() {
 		assert!(secp256k1_account.verify(TEST_MESSAGE, &signature, None).unwrap());
 		assert!(!secp256k1_account.verify(WRONG_TEST_MESSAGE, &signature, None).unwrap());
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -66,7 +66,7 @@ fn test_account_sign_and_verify() {
 		assert!(secp256r1_account.verify(TEST_MESSAGE, &signature_r1, None).unwrap());
 		assert!(!secp256r1_account.verify(WRONG_TEST_MESSAGE, &signature_r1, None).unwrap());
 
-		let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+		let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ED25519,
 		))
@@ -88,7 +88,7 @@ fn test_account_sign_and_verify() {
 fn test_signature_verification_with_public_key() {
 	let seed_array = create_test_seed_array();
 
-	let account_with_private = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+	let account_with_private = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))

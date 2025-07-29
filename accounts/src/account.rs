@@ -1148,103 +1148,6 @@ where
 	pub keypair: KEYTYPE,
 }
 
-pub trait FromAccountable<KEYTYPE>
-where
-	KEYTYPE: KeyPair,
-{
-	fn try_from_accountable(input: Accountable<KEYTYPE>) -> Option<KEYTYPE>;
-}
-
-impl FromAccountable<KeyECDSASECP256K1> for KeyECDSASECP256K1 {
-	fn try_from_accountable(input: Accountable<KeyECDSASECP256K1>) -> Option<Self> {
-		match input {
-			Accountable::Key(k) => Some(k),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyECDSASECP256R1> for KeyECDSASECP256R1 {
-	fn try_from_accountable(input: Accountable<KeyECDSASECP256R1>) -> Option<Self> {
-		match input {
-			Accountable::Key(k) => Some(k),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyED25519> for KeyED25519 {
-	fn try_from_accountable(input: Accountable<KeyED25519>) -> Option<Self> {
-		match input {
-			Accountable::Key(k) => Some(k),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyNETWORK> for KeyNETWORK {
-	fn try_from_accountable(input: Accountable<KeyNETWORK>) -> Option<Self> {
-		match input {
-			Accountable::Key(k) => Some(k),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyTOKEN> for KeyTOKEN {
-	fn try_from_accountable(input: Accountable<KeyTOKEN>) -> Option<Self> {
-		match input {
-			Accountable::Key(k) => Some(k),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeySTORAGE> for KeySTORAGE {
-	fn try_from_accountable(input: Accountable<KeySTORAGE>) -> Option<Self> {
-		match input {
-			Accountable::Key(k) => Some(k),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyMULTISIG> for KeyMULTISIG {
-	fn try_from_accountable(input: Accountable<KeyMULTISIG>) -> Option<Self> {
-		match input {
-			Accountable::Key(k) => Some(k),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyECDSASECP256K1> for Account<KeyECDSASECP256K1> {
-	fn try_from_accountable(input: Accountable<KeyECDSASECP256K1>) -> Option<KeyECDSASECP256K1> {
-		match input {
-			Accountable::Account(account) => Some(account.keypair),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyECDSASECP256R1> for Account<KeyECDSASECP256R1> {
-	fn try_from_accountable(input: Accountable<KeyECDSASECP256R1>) -> Option<KeyECDSASECP256R1> {
-		match input {
-			Accountable::Account(account) => Some(account.keypair),
-			_ => None,
-		}
-	}
-}
-
-impl FromAccountable<KeyED25519> for Account<KeyED25519> {
-	fn try_from_accountable(input: Accountable<KeyED25519>) -> Option<KeyED25519> {
-		match input {
-			Accountable::Account(account) => Some(account.keypair),
-			_ => None,
-		}
-	}
-}
-
 // Trait for types that have a keypair type
 pub trait HasKeypairType {
 	const KEYPAIR_TYPE: KeyPairType;
@@ -1260,42 +1163,32 @@ impl<KEYTYPE: KeyPair> HasKeypairType for Account<KEYTYPE> {
 	const KEYPAIR_TYPE: KeyPairType = KEYTYPE::KEY_PAIR_TYPE;
 }
 
-impl<KEYTYPE> Account<KEYTYPE>
+impl<KEYTYPE> TryFrom<Accountable<KEYTYPE>> for Account<KEYTYPE>
 where
-	KEYTYPE: KeyPair + FromAccountable<KEYTYPE> + Clone,
+	KEYTYPE: KeyPair + Clone,
 {
-	pub fn new(input: Accountable<KEYTYPE>) -> Result<Self, AccountError> {
-		let account: Result<Self, AccountError> = match input {
-			Accountable::Account(account) => {
-				let keypair = KEYTYPE::try_from_accountable(Accountable::Key(account.keypair.clone()));
-				if keypair.is_none() {
-					return Err(AccountError::InvalidKeyType);
-				}
+	type Error = AccountError;
 
-				Ok(Account::<KEYTYPE> { keypair: keypair.unwrap() })
-			}
+	fn try_from(input: Accountable<KEYTYPE>) -> Result<Self, Self::Error> {
+		match input {
+			Accountable::Account(account) => Ok(Account::<KEYTYPE> { keypair: account.keypair }),
+			Accountable::Key(key) => Ok(Account::<KEYTYPE> { keypair: key }),
 			Accountable::KeyAndType(key, key_type) => {
-				let keypair: Result<KEYTYPE, AccountError> = if key_type == KEYTYPE::KEY_PAIR_TYPE {
-					KEYTYPE::try_from(key)
+				if key_type == KEYTYPE::KEY_PAIR_TYPE {
+					let keypair = KEYTYPE::try_from(key)?;
+					Ok(Account::<KEYTYPE> { keypair })
 				} else {
 					Err(AccountError::InvalidKeyType)
-				};
-
-				Ok(Account::<KEYTYPE> { keypair: keypair? })
-			}
-			keypair_accountable => {
-				let keypair = KEYTYPE::try_from_accountable(keypair_accountable);
-				if keypair.is_none() {
-					return Err(AccountError::InvalidConstruction);
 				}
-
-				Ok(Account::<KEYTYPE> { keypair: keypair.unwrap() })
 			}
-		};
-
-		account
+		}
 	}
+}
 
+impl<KEYTYPE> Account<KEYTYPE>
+where
+	KEYTYPE: KeyPair + Clone,
+{
 	pub fn keypair_type(&self) -> KeyPairType {
 		self.keypair.keypair_type()
 	}
@@ -1317,32 +1210,6 @@ where
 		Ok(crypto::generate_random_seed()?)
 	}
 
-	/// Create an account from a formatted public key string
-	/// This will automatically detect the algorithm from the key format
-	pub fn from_public_key_string(public_key_string: &str) -> Result<Box<dyn core::any::Any>, AccountError> {
-		let (_, algorithm) = parse_public_key(public_key_string)?;
-
-		match algorithm {
-			Algorithm::Secp256k1 => {
-				let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
-					Keyable::PublicKeyString(public_key_string.to_string()),
-					KeyPairType::ECDSASECP256K1,
-				))?;
-				Ok(Box::new(account))
-			}
-			Algorithm::Ed25519 => {
-				let account = Account::<KeyED25519>::new(Accountable::KeyAndType(
-					Keyable::PublicKeyString(public_key_string.to_string()),
-					KeyPairType::ED25519,
-				))?;
-				Ok(Box::new(account))
-			}
-			Algorithm::Secp256r1 => {
-				Err(AccountError::InvalidConstruction) // Not implemented yet
-			}
-		}
-	}
-
 	/// Generate a network address from a network ID
 	pub fn generate_network_address(network_id: u64) -> Result<Account<KeyNETWORK>, AccountError> {
 		// Convert network ID to seed (32 bytes)
@@ -1351,7 +1218,7 @@ where
 		let seed = SecretBox::new(Box::new(seed_data));
 
 		// Create network account from seed with index 0
-		Account::<KeyNETWORK>::new(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::NETWORK))
+		Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::NETWORK))
 	}
 
 	/// Encrypt data using the account's public key.
@@ -1381,7 +1248,7 @@ where
 
 impl<KEYTYPE> Account<KEYTYPE>
 where
-	KEYTYPE: KeyPair + FromAccountable<KEYTYPE> + Clone,
+	KEYTYPE: KeyPair + Clone,
 {
 	/// Generate an identifier from this account
 	pub fn generate_identifier(
@@ -1438,28 +1305,28 @@ where
 		let seed = SecretBox::new(Box::new(seed_hash));
 		match identifier_type {
 			KeyPairType::NETWORK => {
-				let account = Account::<KeyNETWORK>::new(Accountable::KeyAndType(
+				let account = Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::NETWORK,
 				))?;
 				Ok(GenericAccount::Network(account))
 			}
 			KeyPairType::TOKEN => {
-				let account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
+				let account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::TOKEN,
 				))?;
 				Ok(GenericAccount::Token(account))
 			}
 			KeyPairType::STORAGE => {
-				let account = Account::<KeySTORAGE>::new(Accountable::KeyAndType(
+				let account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::STORAGE,
 				))?;
 				Ok(GenericAccount::Storage(account))
 			}
 			KeyPairType::MULTISIG => {
-				let account = Account::<KeyMULTISIG>::new(Accountable::KeyAndType(
+				let account = Account::<KeyMULTISIG>::try_from(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::MULTISIG,
 				))?;
@@ -1625,7 +1492,7 @@ where
 	/// Compare this account with another account
 	pub fn compare_account<T>(&self, other: &Account<T>) -> bool
 	where
-		T: KeyPair + FromAccountable<T> + Clone,
+		T: KeyPair + Clone,
 	{
 		self.public_key_string() == other.public_key_string()
 	}
@@ -1748,19 +1615,19 @@ impl FromStr for GenericAccount {
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
 		// Try to determine the account type based on prefix
 		if s.starts_with("keeta_aa") {
-			let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::ECDSASECP256K1,
 			))?;
 			Ok(GenericAccount::EcdsaSecp256k1(account))
 		} else if s.starts_with("keeta_ae") || s.starts_with("keeta_ah") {
-			let account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::ED25519,
 			))?;
 			Ok(GenericAccount::Ed25519(account))
 		} else if s.starts_with("keeta_ay") {
-			let account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+			let account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::ECDSASECP256R1,
 			))?;
@@ -1770,7 +1637,7 @@ impl FromStr for GenericAccount {
 			|| s.starts_with("keeta_ak")
 			|| s.starts_with("keeta_al")
 		{
-			let account = Account::<KeyNETWORK>::new(Accountable::KeyAndType(
+			let account = Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::NETWORK,
 			))?;
@@ -1780,7 +1647,7 @@ impl FromStr for GenericAccount {
 			|| s.starts_with("keeta_ao")
 			|| s.starts_with("keeta_ap")
 		{
-			let account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
+			let account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::TOKEN,
 			))?;
@@ -1790,7 +1657,7 @@ impl FromStr for GenericAccount {
 			|| s.starts_with("keeta_as")
 			|| s.starts_with("keeta_at")
 		{
-			let account = Account::<KeySTORAGE>::new(Accountable::KeyAndType(
+			let account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::STORAGE,
 			))?;
@@ -1800,7 +1667,7 @@ impl FromStr for GenericAccount {
 			|| s.starts_with("keeta_a6")
 			|| s.starts_with("keeta_a7")
 		{
-			let account = Account::<KeyMULTISIG>::new(Accountable::KeyAndType(
+			let account = Account::<KeyMULTISIG>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::MULTISIG,
 			))?;
@@ -1989,7 +1856,7 @@ mod tests {
 			match key_type {
 				KeyPairType::ECDSASECP256K1 => {
 					let passphrase = Account::<KeyECDSASECP256K1>::generate_passphrase().unwrap();
-					let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+					let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 						Keyable::Passphrase((passphrase, 0)),
 						key_type.clone(),
 					))
@@ -2000,7 +1867,7 @@ mod tests {
 				}
 				KeyPairType::ED25519 => {
 					let passphrase = Account::<KeyED25519>::generate_passphrase().unwrap();
-					let account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+					let account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 						Keyable::Passphrase((passphrase, 0)),
 						key_type.clone(),
 					))
@@ -2015,7 +1882,7 @@ mod tests {
 
 		// Test SECP256R1 separately
 		let passphrase = Account::<KeyECDSASECP256R1>::generate_passphrase().unwrap();
-		let account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Passphrase((passphrase, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -2033,7 +1900,7 @@ mod tests {
 
 			// Test passphrase -> seed conversion (expect consistent results)
 			let seed1 = Account::<KeyED25519>::compute_seed_from_passphrase(passphrase.clone()).unwrap();
-			let account1 = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let account1 = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::Passphrase((passphrase_secret, 0)),
 				KeyPairType::ED25519,
 			))
@@ -2042,13 +1909,13 @@ mod tests {
 
 			// Test hex seed
 			let hex_seed_secret = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let account2 = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let account2 = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret, 0)),
 				KeyPairType::ED25519,
 			))
 			.unwrap();
-			let account3 = Account::<KeyED25519>::new(Accountable::Key(account2.clone().keypair)).unwrap();
-			let account4 = Account::<KeyED25519>::new(Accountable::Account(account2.clone())).unwrap();
+			let account3 = Account::<KeyED25519>::try_from(Accountable::Key(account2.clone().keypair)).unwrap();
+			let account4 = Account::<KeyED25519>::try_from(Accountable::Account(account2.clone())).unwrap();
 
 			// Test deterministic passphrase behavior
 			let seed2 = Account::<KeyED25519>::compute_seed_from_passphrase(
@@ -2083,7 +1950,7 @@ mod tests {
 
 				match key_type {
 					KeyPairType::ECDSASECP256K1 => {
-						let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+						let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 							Keyable::HexSeed((hex_seed_secret, 0)),
 							key_type.clone(),
 						))
@@ -2091,7 +1958,7 @@ mod tests {
 						accounts.push((account.keypair.public_key.clone(), key_type.clone(), *expected_field));
 					}
 					KeyPairType::ED25519 => {
-						let account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+						let account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 							Keyable::HexSeed((hex_seed_secret, 0)),
 							key_type.clone(),
 						))
@@ -2099,7 +1966,7 @@ mod tests {
 						accounts.push((account.keypair.public_key.clone(), key_type.clone(), *expected_field));
 					}
 					KeyPairType::ECDSASECP256R1 => {
-						let account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+						let account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 							Keyable::HexSeed((hex_seed_secret, 0)),
 							key_type.clone(),
 						))
@@ -2177,21 +2044,21 @@ mod tests {
 			let seed_data: [u8; 32] = seed_bytes.try_into().unwrap();
 
 			// Test ECDSA SECP256K1 derivation
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((SecretBox::new(Box::new(seed_data)), index as u32)),
 				KeyPairType::ECDSASECP256K1,
 			))
 			.unwrap();
 
 			// Test ECDSA SECP256R1 derivation
-			let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+			let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((SecretBox::new(Box::new(seed_data)), index as u32)),
 				KeyPairType::ECDSASECP256R1,
 			))
 			.unwrap();
 
 			// Test Ed25519 derivation
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((SecretBox::new(Box::new(seed_data)), index as u32)),
 				KeyPairType::ED25519,
 			))
@@ -2245,27 +2112,27 @@ mod tests {
 		for test_case in TEST_CASES {
 			// Create account from hex seed to get expected formatted public key
 			let hex_seed_secret1 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret1, 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
 			.unwrap();
 
 			let hex_seed_secret2 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret2, 0)),
 				KeyPairType::ED25519,
 			))
 			.unwrap();
 
 			// Test creating accounts from their formatted public key strings
-			let secp256k1_from_pubkey = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_from_pubkey = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(secp256k1_account.keypair.public_key.clone()),
 				KeyPairType::ECDSASECP256K1,
 			))
 			.unwrap();
 
-			let ed25519_from_pubkey = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_from_pubkey = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(ed25519_account.keypair.public_key.clone()),
 				KeyPairType::ED25519,
 			))
@@ -2298,13 +2165,13 @@ mod tests {
 		];
 
 		for invalid_key in invalid_keys {
-			let result = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let result = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(invalid_key.to_string()),
 				KeyPairType::ECDSASECP256K1,
 			));
 			assert!(result.is_err(), "Should reject invalid public key: {invalid_key}");
 
-			let result2 = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let result2 = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(invalid_key.to_string()),
 				KeyPairType::ED25519,
 			));
@@ -2317,28 +2184,28 @@ mod tests {
 		// Test that accounts reject public keys from the wrong algorithm
 		for test_case in TEST_CASES {
 			let hex_seed_secret1 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret1, 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
 			.unwrap();
 
 			let hex_seed_secret2 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret2, 0)),
 				KeyPairType::ED25519,
 			))
 			.unwrap();
 
 			// Try to create SECP256K1 account with Ed25519 public key (should fail)
-			let result = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let result = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(ed25519_account.keypair.public_key.clone()),
 				KeyPairType::ECDSASECP256K1,
 			));
 			assert!(result.is_err(), "Should reject Ed25519 key for SECP256K1 account");
 
 			// Try to create Ed25519 account with SECP256K1 public key (should fail)
-			let result2 = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let result2 = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::PublicKeyString(secp256k1_account.keypair.public_key.clone()),
 				KeyPairType::ED25519,
 			));
@@ -2352,7 +2219,7 @@ mod tests {
 		let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).unwrap();
 		let seed_array: [u8; 32] = seed_bytes.try_into().unwrap();
 		let seed = SecretBox::new(Box::new(seed_array));
-		let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -2397,7 +2264,7 @@ mod tests {
 		.map(|s| s.to_string())
 		.collect();
 		let passphrase_secret = SecretBox::new(Box::new(passphrase));
-		let crypto_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let crypto_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Passphrase((passphrase_secret, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -2464,14 +2331,14 @@ mod tests {
 		let ed25519_data = KEY_TYPE_TEST_DATA.iter().find(|d| d.key_type == KeyPairType::ED25519).unwrap();
 
 		let hex_seed_secret1 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-		let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::HexSeed((hex_seed_secret1, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
 		.unwrap();
 
 		let hex_seed_secret2 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-		let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+		let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 			Keyable::HexSeed((hex_seed_secret2, 0)),
 			KeyPairType::ED25519,
 		))
@@ -2494,13 +2361,13 @@ mod tests {
 				}
 				KeyPairType::TOKEN => {
 					let token_key = KeyTOKEN::try_from(Keyable::Identifier("test-token".to_string())).unwrap();
-					let token_account = Account::<KeyTOKEN>::new(Accountable::Key(token_key)).unwrap();
+					let token_account = Account::<KeyTOKEN>::try_from(Accountable::Key(token_key)).unwrap();
 					test_account_guards!(token_account, test_data);
 					assert!(!token_account.has_private_key());
 				}
 				KeyPairType::STORAGE => {
 					let storage_key = KeySTORAGE::try_from(Keyable::Identifier("test-storage".to_string())).unwrap();
-					let storage_account = Account::<KeySTORAGE>::new(Accountable::Key(storage_key)).unwrap();
+					let storage_account = Account::<KeySTORAGE>::try_from(Accountable::Key(storage_key)).unwrap();
 					test_account_guards!(storage_account, test_data);
 					assert!(!storage_account.has_private_key());
 				}
@@ -2513,14 +2380,14 @@ mod tests {
 	fn test_public_key_string_accessor() {
 		for test_case in TEST_CASES {
 			let hex_seed_secret1 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret1, 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
 			.unwrap();
 
 			let hex_seed_secret2 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret2, 0)),
 				KeyPairType::ED25519,
 			))
@@ -2539,7 +2406,7 @@ mod tests {
 		assert!(network_account.public_key_string().starts_with("network_"));
 
 		let token_key = KeyTOKEN::try_from(Keyable::Identifier("test-token".to_string())).unwrap();
-		let token_account = Account::<KeyTOKEN>::new(Accountable::Key(token_key)).unwrap();
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::Key(token_key)).unwrap();
 		assert!(token_account.public_key_string().starts_with("token_"));
 	}
 
@@ -2547,14 +2414,14 @@ mod tests {
 	fn test_public_key_comparison() {
 		for test_case in TEST_CASES {
 			let hex_seed_secret1 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret1, 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
 			.unwrap();
 
 			let hex_seed_secret2 = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret2, 0)),
 				KeyPairType::ED25519,
 			))
@@ -2571,7 +2438,7 @@ mod tests {
 			assert!(!ed25519_account.compare_public_key(""));
 
 			// Test account-to-account comparison
-			let secp256k1_account2 = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account2 = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((SecretBox::new(Box::new(test_case.hex_seed.to_string())), 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
@@ -2617,7 +2484,7 @@ mod tests {
 		// Test accounts created from seeds have private keys
 		for test_case in TEST_CASES {
 			let hex_seed_secret = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret, 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
@@ -2636,7 +2503,7 @@ mod tests {
 		assert!(!network_account.has_private_key());
 
 		let token_key = KeyTOKEN::try_from(Keyable::Identifier("test".to_string())).unwrap();
-		let token_account = Account::<KeyTOKEN>::new(Accountable::Key(token_key)).unwrap();
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::Key(token_key)).unwrap();
 		assert!(!token_account.has_private_key());
 	}
 
@@ -2658,7 +2525,7 @@ mod tests {
 		assert_eq!(random_seed2.expose_secret().len(), 32);
 
 		// Test that accounts can be created from generated seeds
-		let account1 = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let account1 = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed1, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -2724,14 +2591,14 @@ mod tests {
 
 		// Test token account format
 		let token_key = KeyTOKEN::try_from(Keyable::Identifier("test-token".to_string())).unwrap();
-		let token_account = Account::<KeyTOKEN>::new(Accountable::Key(token_key)).unwrap();
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::Key(token_key)).unwrap();
 		let token_pubkey = token_account.public_key_string();
 		assert!(token_pubkey.starts_with("token_"));
 		assert_eq!(token_pubkey, "token_test-token");
 
 		// Test storage account format
 		let storage_key = KeySTORAGE::try_from(Keyable::Identifier("test-storage".to_string())).unwrap();
-		let storage_account = Account::<KeySTORAGE>::new(Accountable::Key(storage_key)).unwrap();
+		let storage_account = Account::<KeySTORAGE>::try_from(Accountable::Key(storage_key)).unwrap();
 		let storage_pubkey = storage_account.public_key_string();
 		assert!(storage_pubkey.starts_with("storage_"));
 		assert_eq!(storage_pubkey, "storage_test-storage");
@@ -2742,7 +2609,7 @@ mod tests {
 		// Test Debug trait for various account types
 		for test_case in TEST_CASES {
 			let hex_seed_secret = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret, 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
@@ -2763,7 +2630,7 @@ mod tests {
 		// Test Clone trait for key types
 		for test_case in TEST_CASES {
 			let hex_seed_secret = SecretBox::new(Box::new(test_case.hex_seed.to_string()));
-			let original_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let original_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret, 0)),
 				KeyPairType::ECDSASECP256K1,
 			))
@@ -2816,6 +2683,57 @@ mod tests {
 		let secp256k1_invalid =
 			KeyECDSASECP256K1::try_from(Keyable::Passphrase((SecretBox::new(Box::new(invalid_passphrase)), 0)));
 		assert!(secp256k1_invalid.is_err(), "Short passphrase should fail");
+	}
+
+	#[test]
+	fn test_account_try_from_accountable() {
+		let passphrase: Vec<_> = vec![
+			"abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+			"abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+			"abandon", "abandon", "abandon", "abandon", "abandon", "art",
+		]
+		.iter()
+		.map(|s| s.to_string())
+		.collect();
+		let passphrase_secret = SecretBox::new(Box::new(passphrase.clone()));
+
+		// Test Accountable::KeyAndType variant
+		let accountable =
+			Accountable::KeyAndType(Keyable::Passphrase((passphrase_secret, 0)), KeyPairType::ECDSASECP256K1);
+		let account: Result<Account<KeyECDSASECP256K1>, AccountError> = Account::try_from(accountable);
+		assert!(account.is_ok(), "Should create account from KeyAndType");
+
+		// Test that new() delegates to try_from()
+		let passphrase_secret2 = SecretBox::new(Box::new(passphrase));
+		let accountable2 =
+			Accountable::KeyAndType(Keyable::Passphrase((passphrase_secret2, 0)), KeyPairType::ECDSASECP256K1);
+		let account_new = Account::<KeyECDSASECP256K1>::try_from(accountable2);
+		assert!(account_new.is_ok(), "new() should delegate to try_from()");
+
+		// Test Accountable::Key variant
+		let key = KeyNETWORK::try_from(Keyable::Identifier("test-network".to_string())).unwrap();
+		let accountable_key = Accountable::Key(key);
+		let account_from_key: Result<Account<KeyNETWORK>, AccountError> = Account::try_from(accountable_key);
+		assert!(account_from_key.is_ok(), "Should create account from Key variant");
+
+		// Test Accountable::Account variant (should just clone the keypair)
+		let original_account = account_from_key.unwrap();
+		let accountable_account = Accountable::Account(original_account.clone());
+		let account_from_account: Result<Account<KeyNETWORK>, AccountError> = Account::try_from(accountable_account);
+		assert!(account_from_account.is_ok(), "Should create account from Account variant");
+		assert_eq!(
+			original_account.public_key_string(),
+			account_from_account.unwrap().public_key_string(),
+			"Account should be identical"
+		);
+
+		// Test error case: wrong key type
+		let accountable_wrong_type = Accountable::KeyAndType(
+			Keyable::Identifier("test".to_string()),
+			KeyPairType::ECDSASECP256K1, // Wrong type for identifier
+		);
+		let account_wrong: Result<Account<KeyNETWORK>, AccountError> = Account::try_from(accountable_wrong_type);
+		assert!(account_wrong.is_err(), "Should fail with wrong key type");
 	}
 
 	struct TestPublicAccountData {
@@ -3115,7 +3033,7 @@ mod tests {
 		for (index_number, test_index) in TEST_PRIVATE_ACCOUNT.indexes.iter().enumerate() {
 			// Test ECDSA SECP256K1
 			let secp256k1_seed = SecretBox::new(Box::new(seed_array));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((secp256k1_seed, index_number as u32)),
 				KeyPairType::ECDSASECP256K1,
 			))
@@ -3127,7 +3045,7 @@ mod tests {
 
 			// Test ECDSA SECP256R1
 			let secp256r1_seed = SecretBox::new(Box::new(seed_array));
-			let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+			let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((secp256r1_seed, index_number as u32)),
 				KeyPairType::ECDSASECP256R1,
 			))
@@ -3142,7 +3060,7 @@ mod tests {
 
 			// Test Ed25519
 			let ed25519_seed = SecretBox::new(Box::new(seed_array));
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((ed25519_seed, index_number as u32)),
 				KeyPairType::ED25519,
 			))
@@ -3163,7 +3081,7 @@ mod tests {
 		for (index_number, _test_index) in TEST_PRIVATE_ACCOUNT.indexes.iter().enumerate() {
 			// Test ECDSA SECP256K1 signing
 			let secp256k1_seed = SecretBox::new(Box::new(seed_array));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((secp256k1_seed, index_number as u32)),
 				KeyPairType::ECDSASECP256K1,
 			))
@@ -3188,7 +3106,7 @@ mod tests {
 
 			// Test ECDSA SECP256R1 signing
 			let secp256r1_seed = SecretBox::new(Box::new(seed_array));
-			let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+			let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((secp256r1_seed, index_number as u32)),
 				KeyPairType::ECDSASECP256R1,
 			))
@@ -3200,7 +3118,7 @@ mod tests {
 
 			// Test Ed25519 signing
 			let ed25519_seed = SecretBox::new(Box::new(seed_array));
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((ed25519_seed, index_number as u32)),
 				KeyPairType::ED25519,
 			))
@@ -3227,7 +3145,7 @@ mod tests {
 
 		// Test token account
 		let token_key = KeyTOKEN::try_from(Keyable::Identifier("test-token".to_string())).unwrap();
-		let token_account = Account::<KeyTOKEN>::new(Accountable::Key(token_key)).unwrap();
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::Key(token_key)).unwrap();
 		let token_sign_result = token_account.sign(test_data, None);
 		assert!(matches!(token_sign_result, Err(AccountError::NoIdentifierSign)));
 
@@ -3236,7 +3154,7 @@ mod tests {
 
 		// Test storage account
 		let storage_key = KeySTORAGE::try_from(Keyable::Identifier("test-storage".to_string())).unwrap();
-		let storage_account = Account::<KeySTORAGE>::new(Accountable::Key(storage_key)).unwrap();
+		let storage_account = Account::<KeySTORAGE>::try_from(Accountable::Key(storage_key)).unwrap();
 		let storage_sign_result = storage_account.sign(test_data, None);
 		assert!(matches!(storage_sign_result, Err(AccountError::NoIdentifierSign)));
 
@@ -3264,7 +3182,7 @@ mod tests {
 		let seed = SecretBox::new(Box::new(seed_array));
 
 		// Cryptographic key types should support encryption
-		let ecdsa_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let ecdsa_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -3275,7 +3193,7 @@ mod tests {
 		let seed2 = SecretBox::new(Box::new(seed_array2));
 
 		let ed25519_account =
-			Account::<KeyED25519>::new(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
+			Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
 				.unwrap();
 		assert!(ed25519_account.supports_encryption());
 
@@ -3283,14 +3201,14 @@ mod tests {
 		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
 		assert!(!network_account.supports_encryption());
 
-		let token_account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
 			Keyable::PublicKeyString(REFERENCE_PUBLIC_ACCOUNT_DATA.token.1.to_string()),
 			KeyPairType::TOKEN,
 		))
 		.unwrap();
 		assert!(!token_account.supports_encryption());
 
-		let storage_account = Account::<KeySTORAGE>::new(Accountable::KeyAndType(
+		let storage_account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(
 			Keyable::PublicKeyString(REFERENCE_PUBLIC_ACCOUNT_DATA.storage.1.to_string()),
 			KeyPairType::STORAGE,
 		))
@@ -3308,7 +3226,7 @@ mod tests {
 		assert!(!network_account.is_multisig());
 		assert!(network_account.is_identifier());
 
-		let token_account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
 			Keyable::PublicKeyString(REFERENCE_PUBLIC_ACCOUNT_DATA.token.1.to_string()),
 			KeyPairType::TOKEN,
 		))
@@ -3319,7 +3237,7 @@ mod tests {
 		assert!(!token_account.is_multisig());
 		assert!(token_account.is_identifier());
 
-		let storage_account = Account::<KeySTORAGE>::new(Accountable::KeyAndType(
+		let storage_account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(
 			Keyable::PublicKeyString(REFERENCE_PUBLIC_ACCOUNT_DATA.storage.1.to_string()),
 			KeyPairType::STORAGE,
 		))
@@ -3332,7 +3250,7 @@ mod tests {
 
 		let seed_array: [u8; 32] = [0u8; 32];
 		let seed = SecretBox::new(Box::new(seed_array));
-		let ecdsa_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let ecdsa_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -3393,7 +3311,7 @@ mod tests {
 		assert!(!network_account.is_storage());
 		assert!(!network_account.is_multisig());
 
-		let token_account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
 			Keyable::PublicKeyString(REFERENCE_PUBLIC_ACCOUNT_DATA.token.1.to_string()),
 			KeyPairType::TOKEN,
 		))
@@ -3404,7 +3322,7 @@ mod tests {
 		assert!(!token_account.is_storage());
 		assert!(!token_account.is_multisig());
 
-		let storage_account = Account::<KeySTORAGE>::new(Accountable::KeyAndType(
+		let storage_account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(
 			Keyable::PublicKeyString(REFERENCE_PUBLIC_ACCOUNT_DATA.storage.1.to_string()),
 			KeyPairType::STORAGE,
 		))
@@ -3454,7 +3372,7 @@ mod tests {
 		// Accounts created from seeds should have private keys
 		let seed_array1: [u8; 32] = [1u8; 32];
 		let seed1 = SecretBox::new(Box::new(seed_array1));
-		let ecdsa_from_seed = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let ecdsa_from_seed = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed1, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -3464,7 +3382,7 @@ mod tests {
 		let seed_array2: [u8; 32] = [1u8; 32];
 		let seed2 = SecretBox::new(Box::new(seed_array2));
 		let ed25519_from_seed =
-			Account::<KeyED25519>::new(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
+			Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
 				.unwrap();
 		assert!(ed25519_from_seed.has_private_key());
 
@@ -3480,7 +3398,7 @@ mod tests {
 		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
 		assert!(!network_account.has_private_key());
 
-		let token_account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
+		let token_account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
 			Keyable::Identifier("test-token".to_string()),
 			KeyPairType::TOKEN,
 		))
@@ -3496,7 +3414,7 @@ mod tests {
 		// Test ECDSA SECP256K1 encryption
 		let seed_array1: [u8; 32] = [1u8; 32];
 		let seed1 = SecretBox::new(Box::new(seed_array1));
-		let ecdsa_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let ecdsa_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed1, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -3514,7 +3432,7 @@ mod tests {
 		let seed_array2: [u8; 32] = [1u8; 32];
 		let seed2 = SecretBox::new(Box::new(seed_array2));
 		let ed25519_account =
-			Account::<KeyED25519>::new(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
+			Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
 				.unwrap();
 
 		if ed25519_account.supports_encryption() {
@@ -3537,7 +3455,7 @@ mod tests {
 		// Test that signature sizes are consistent across key types
 		let seed_array1: [u8; 32] = [1u8; 32];
 		let seed1 = SecretBox::new(Box::new(seed_array1));
-		let ecdsa_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let ecdsa_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed1, 0)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -3547,7 +3465,7 @@ mod tests {
 		let seed_array2: [u8; 32] = [1u8; 32];
 		let seed2 = SecretBox::new(Box::new(seed_array2));
 		let ed25519_account =
-			Account::<KeyED25519>::new(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
+			Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
 				.unwrap();
 		assert_eq!(ed25519_account.signature_size(), 64);
 
@@ -3607,7 +3525,7 @@ mod tests {
 		assert!(multisig_account.decrypt(test_data).is_err());
 
 		// Test creation from identifier
-		let multisig_from_id = Account::<KeyMULTISIG>::new(Accountable::KeyAndType(
+		let multisig_from_id = Account::<KeyMULTISIG>::try_from(Accountable::KeyAndType(
 			Keyable::Identifier("multisig-test".to_string()),
 			KeyPairType::MULTISIG,
 		))
@@ -3739,7 +3657,7 @@ mod tests {
 		let test_seed_bytes: [u8; 32] = [1u8; 32];
 		let test_seed = SecretBox::new(Box::new(test_seed_bytes));
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3752,7 +3670,7 @@ mod tests {
 
 		// Generate another account with same seed - should be identical
 		let test_seed2 = SecretBox::new(Box::new([1u8; 32]));
-		let secp256r1_account2 = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account2 = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed2, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3763,7 +3681,7 @@ mod tests {
 
 		// Generate account with different index - should be different
 		let test_seed3 = SecretBox::new(Box::new([1u8; 32]));
-		let secp256r1_account3 = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account3 = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed3, 1)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3779,7 +3697,7 @@ mod tests {
 		let test_data = b"SECP256R1 test message";
 		let test_seed = SecretBox::new(Box::new([42u8; 32]));
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3821,7 +3739,7 @@ mod tests {
 		let test_data = b"Test encryption data";
 
 		// Encryption is not yet implemented for secp256r1
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3840,7 +3758,7 @@ mod tests {
 	fn test_secp256r1_public_key_format() {
 		// Test SECP256R1 public key string format
 		let test_seed = SecretBox::new(Box::new([123u8; 32]));
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3872,7 +3790,7 @@ mod tests {
 		let hex_seed = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 		let hex_seed_secret = SecretBox::new(Box::new(hex_seed.to_string()));
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::HexSeed((hex_seed_secret, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3882,7 +3800,7 @@ mod tests {
 
 		// Test that it's deterministic
 		let hex_seed_secret2 = SecretBox::new(Box::new(hex_seed.to_string()));
-		let secp256r1_account2 = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account2 = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::HexSeed((hex_seed_secret2, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3903,7 +3821,7 @@ mod tests {
 		.collect();
 		let passphrase_secret = SecretBox::new(Box::new(passphrase));
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Passphrase((passphrase_secret, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3921,7 +3839,7 @@ mod tests {
 	#[test]
 	fn test_secp256r1_cross_validation() {
 		let test_seed = SecretBox::new(Box::new([255u8; 32]));
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -3962,7 +3880,7 @@ mod tests {
 
 		// Invalid hex seed
 		let invalid_hex = SecretBox::new(Box::new("not_hex".to_string()));
-		let invalid_hex_result = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let invalid_hex_result = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::HexSeed((invalid_hex, 0)),
 			KeyPairType::ECDSASECP256R1,
 		));
@@ -3970,7 +3888,7 @@ mod tests {
 
 		// Wrong key type mismatch
 		let test_seed = SecretBox::new(Box::new([1u8; 32]));
-		let wrong_type_result = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let wrong_type_result = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed, 0)),
 			KeyPairType::ECDSASECP256K1, // Wrong type for SECP256R1
 		));
@@ -3985,7 +3903,7 @@ mod tests {
 		for (index_number, test_index) in TEST_PRIVATE_ACCOUNT.indexes.iter().enumerate() {
 			// SECP256K1
 			let secp256k1_seed = SecretBox::new(Box::new(seed_array));
-			let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+			let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((secp256k1_seed, index_number as u32)),
 				KeyPairType::ECDSASECP256K1,
 			))
@@ -3994,7 +3912,7 @@ mod tests {
 
 			// Ed25519
 			let ed25519_seed = SecretBox::new(Box::new(seed_array));
-			let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+			let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((ed25519_seed, index_number as u32)),
 				KeyPairType::ED25519,
 			))
@@ -4003,7 +3921,7 @@ mod tests {
 
 			// SECP256R1
 			let secp256r1_seed = SecretBox::new(Box::new(seed_array));
-			let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+			let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 				Keyable::Seed((secp256r1_seed, index_number as u32)),
 				KeyPairType::ECDSASECP256R1,
 			))

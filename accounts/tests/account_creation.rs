@@ -126,7 +126,7 @@ fn test_account_from_seed_creation() {
 	for (index_number, test_index) in TEST_PRIVATE_ACCOUNT.indexes.iter().enumerate() {
 		let index = index_number as u32;
 
-		let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ECDSASECP256K1,
 		))
@@ -138,7 +138,7 @@ fn test_account_from_seed_creation() {
 		assert!(secp256k1_account.has_private_key());
 		assert!(!secp256k1_account.is_identifier());
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ECDSASECP256R1,
 		))
@@ -150,7 +150,7 @@ fn test_account_from_seed_creation() {
 		assert!(secp256r1_account.has_private_key());
 		assert!(!secp256r1_account.is_identifier());
 
-		let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+		let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ED25519,
 		))
@@ -170,21 +170,21 @@ fn test_cross_platform_account_compatibility() {
 		let seed_array = create_test_seed_array();
 		let index = index_number as u32;
 
-		let secp256k1_account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+		let secp256k1_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ECDSASECP256K1,
 		))
 		.unwrap();
 		assert_eq!(secp256k1_account.public_key_string(), test_index.encoded_public_key_ecdsa_secp256k1);
 
-		let secp256r1_account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ECDSASECP256R1,
 		))
 		.unwrap();
 		assert_eq!(secp256r1_account.public_key_string(), test_index.encoded_public_key_ecdsa_secp256r1);
 
-		let ed25519_account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+		let ed25519_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
 			KeyPairType::ED25519,
 		))
