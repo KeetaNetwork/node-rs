@@ -55,8 +55,8 @@ fn test_account_from_public_key_parsing() {
 			GenericAccount::Multisig(acc) => (KeyPairType::MULTISIG, true, acc.to_string()),
 		};
 
-		assert_eq!(actual_type, expected_type, "Key type mismatch for {}", encoded_public_key);
-		assert_eq!(actual_is_identifier, is_identifier, "Identifier flag mismatch for {}", encoded_public_key);
+		assert_eq!(actual_type, expected_type, "Key type mismatch for {encoded_public_key}");
+		assert_eq!(actual_is_identifier, is_identifier, "Identifier flag mismatch for {encoded_public_key}");
 		assert_eq!(actual_public_key, encoded_public_key, "Public key string mismatch");
 	}
 }

@@ -1497,13 +1497,13 @@ macro_rules! cast_and_get_public_key_string {
 	}};
 }
 
-// ToString implementation for Account types
-impl<KEYTYPE> ToString for Account<KEYTYPE>
+// Display blanket implementation for Account types
+impl<KEYTYPE> std::fmt::Display for Account<KEYTYPE>
 where
 	KEYTYPE: KeyPair + Clone,
 {
-	fn to_string(&self) -> String {
-		match self.keypair_type() {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let public_key_string = match self.keypair_type() {
 			KeyPairType::ECDSASECP256K1 => cast_and_get_public_key_string!(self, KeyECDSASECP256K1),
 			KeyPairType::ED25519 => cast_and_get_public_key_string!(self, KeyED25519),
 			KeyPairType::ECDSASECP256R1 => cast_and_get_public_key_string!(self, KeyECDSASECP256R1),
@@ -1511,7 +1511,8 @@ where
 			KeyPairType::TOKEN => cast_and_get_public_key_string!(self, KeyTOKEN),
 			KeyPairType::STORAGE => cast_and_get_public_key_string!(self, KeySTORAGE),
 			KeyPairType::MULTISIG => cast_and_get_public_key_string!(self, KeyMULTISIG),
-		}
+		};
+		write!(f, "{public_key_string}")
 	}
 }
 
@@ -4013,7 +4014,7 @@ mod tests {
 				Keyable::HexSeed((hex_seed_secret, 0)),
 				KeyPairType::ECDSASECP256K1,
 			));
-			assert!(result.is_err(), "Should fail for {}: {}", description, invalid_hex);
+			assert!(result.is_err(), "Should fail for {description}: {invalid_hex}");
 		}
 
 		// Test wrong key type scenarios

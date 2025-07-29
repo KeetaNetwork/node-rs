@@ -86,28 +86,23 @@ fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = Acco
 
 	assert_ne!(
 		signature_default, signature_raw,
-		"Different signing options should produce different signatures for {:?}",
-		algorithm_type
+		"Different signing options should produce different signatures for {algorithm_type:?}"
 	);
 	assert!(
 		account.verify(message, &signature_default, Some(&default_options)).unwrap(),
-		"Default signature should verify with default options for {:?}",
-		algorithm_type
+		"Default signature should verify with default options for {algorithm_type:?}"
 	);
 	assert!(
 		account.verify(message, &signature_raw, Some(&raw_options)).unwrap(),
-		"Raw signature should verify with raw options for {:?}",
-		algorithm_type
+		"Raw signature should verify with raw options for {algorithm_type:?}"
 	);
 	assert!(
 		!account.verify(message, &signature_default, Some(&raw_options)).unwrap(),
-		"Default signature should not verify with raw options for {:?}",
-		algorithm_type
+		"Default signature should not verify with raw options for {algorithm_type:?}"
 	);
 	assert!(
 		!account.verify(message, &signature_raw, Some(&default_options)).unwrap(),
-		"Raw signature should not verify with default options for {:?}",
-		algorithm_type
+		"Raw signature should not verify with default options for {algorithm_type:?}"
 	);
 }
 
@@ -242,31 +237,31 @@ fn test_ios_signature(
 			let verification_result = account.verify(test_data, signature_bytes, None);
 
 			match &verification_result {
-				Ok(true) => println!("iOS {} signature verification: PASS", algorithm_name),
-				Ok(false) => println!("iOS {} signature verification: FAIL (signature parses but doesn't verify - known k256 compatibility issue)", algorithm_name),
-				Err(e) => println!("iOS {} signature verification: ERROR ({:?})", algorithm_name, e),
+				Ok(true) => println!("iOS {algorithm_name} signature verification: PASS"),
+				Ok(false) => println!("iOS {algorithm_name} signature verification: FAIL (signature parses but doesn't verify - known k256 compatibility issue)"),
+				Err(e) => println!("iOS {algorithm_name} signature verification: ERROR ({e:?})"),
 			}
 
-			assert!(verification_result.is_ok(), "iOS {} signature should parse without errors", algorithm_name);
+			assert!(verification_result.is_ok(), "iOS {algorithm_name} signature should parse without errors");
 			if should_pass {
-				assert!(verification_result.unwrap(), "iOS {} signature should verify", algorithm_name);
+				assert!(verification_result.unwrap(), "iOS {algorithm_name} signature should verify");
 			}
 		}
 		GenericAccount::Ed25519(account) => {
 			let verification_result = account.verify(test_data, signature_bytes, None);
 
 			match &verification_result {
-				Ok(true) => println!("iOS {} signature verification: PASS", algorithm_name),
-				Ok(false) => println!("iOS {} signature verification: FAIL (signature invalid)", algorithm_name),
-				Err(e) => println!("iOS {} signature verification: ERROR ({:?})", algorithm_name, e),
+				Ok(true) => println!("iOS {algorithm_name} signature verification: PASS"),
+				Ok(false) => println!("iOS {algorithm_name} signature verification: FAIL (signature invalid)"),
+				Err(e) => println!("iOS {algorithm_name} signature verification: ERROR ({e:?})"),
 			}
 
-			assert!(verification_result.is_ok(), "iOS {} signature should parse without errors", algorithm_name);
+			assert!(verification_result.is_ok(), "iOS {algorithm_name} signature should parse without errors");
 			if should_pass {
-				assert!(verification_result.unwrap(), "iOS {} signature should verify", algorithm_name);
+				assert!(verification_result.unwrap(), "iOS {algorithm_name} signature should verify");
 			}
 		}
-		_ => panic!("Unexpected account type for iOS {} test", algorithm_name),
+		_ => panic!("Unexpected account type for iOS {algorithm_name} test"),
 	}
 }
 
