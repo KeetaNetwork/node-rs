@@ -8,7 +8,10 @@ pub mod error;
 pub mod utils;
 
 // Re-export the main types for easier use
-pub use account::Account;
+pub use account::{
+	Account, Accountable, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyMULTISIG, KeyNETWORK,
+	KeyPairType, KeySTORAGE, KeyTOKEN, Keyable,
+};
 pub use error::AccountError;
 
 use secrecy::SecretBox;

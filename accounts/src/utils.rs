@@ -4,6 +4,11 @@ use secrecy::ExposeSecret;
 use crate::error::AccountError;
 use crate::{Index, Seed};
 
+/// Hash function using the crypto crate's default hash algorithm (SHA3-256)
+pub(crate) fn hash_message(data: &[u8]) -> Vec<u8> {
+	hash_default(data).to_vec()
+}
+
 /// Combines a 32-byte seed and a 4-byte index into a 36-byte array.
 pub(crate) fn combine_seed_and_index(seed: &Seed, index: Index) -> [u8; 36] {
 	let mut indexed_seed = [0u8; 36];
@@ -88,6 +93,18 @@ mod tests {
 	use secrecy::{ExposeSecret, SecretBox};
 
 	use super::*;
+
+	#[test]
+	fn test_hash_message() {
+		let test_data = b"hello world";
+		let hash1 = hash_message(test_data);
+		let hash2 = hash_message(test_data);
+
+		// Hash should be deterministic
+		assert_eq!(hash1, hash2);
+		// Hash should be 32 bytes (SHA3-256)
+		assert_eq!(hash1.len(), 32);
+	}
 
 	#[test]
 	fn test_combine_seed_and_index() {

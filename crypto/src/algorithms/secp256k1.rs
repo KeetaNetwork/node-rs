@@ -173,7 +173,7 @@ impl CryptoVerifier<Signature> for Secp256k1PublicKey {
 	}
 }
 
-// ECIES implementation for secp256k1 (matches TypeScript ecies-geth behavior)
+// ECIES implementation for secp256k1
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Secp256k1PrivateKey {
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {

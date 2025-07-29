@@ -1,4 +1,5 @@
 use core::hash::{Hash, Hasher};
+use core::str::FromStr;
 use std::hash::DefaultHasher;
 
 use crypto::algorithms::Secp256r1Derivation;
@@ -11,6 +12,43 @@ use zeroize::Zeroize;
 use crate::error::AccountError;
 use crate::utils::*;
 use crate::{HexSeedAndIndex, Index, PassphraseAndIndex, Seed, SeedAndIndex};
+
+/// Signing and verification options
+#[derive(Debug, Clone)]
+pub struct SigningOptions {
+	/// If true, use the raw message without hashing
+	/// If false, pre-hash the message before signing/verification
+	pub raw: bool,
+
+	/// For certificate processing
+	/// Currently used primarily for SECP256R1 DER encoding
+	pub for_cert: bool,
+}
+
+impl Default for SigningOptions {
+	fn default() -> Self {
+		Self { raw: false, for_cert: false }
+	}
+}
+
+impl SigningOptions {
+	/// Create default signing options
+	/// - raw: false (will pre-hash the message
+	/// - for_cert: false (use SEC format, not DER)
+	pub fn new() -> Self {
+		Self::default()
+	}
+
+	/// Create options for raw message processing (no pre-hashing)
+	pub fn raw() -> Self {
+		Self { raw: true, for_cert: false }
+	}
+
+	/// Create options for certificate processing
+	pub fn for_cert() -> Self {
+		Self { raw: false, for_cert: true }
+	}
+}
 
 /// Identifier key types (non-cryptographic)
 const IDENTIFIER_KEY_TYPES: &[KeyPairType] =
@@ -94,12 +132,20 @@ pub trait KeyPair: Send + Sync + TryFrom<Keyable, Error = AccountError> {
 	/// Sign a message with the private key.
 	///
 	/// Returns the signature as a byte vector.
-	fn sign(&self, message: &[u8]) -> Result<Vec<u8>, AccountError>;
+	///
+	/// The options parameter controls message preprocessing:
+	/// - If options.raw = false (default): pre-hashes the message
+	/// - If options.raw = true: uses raw message
+	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError>;
 
 	/// Verify a signature against a message using the public key.
 	///
 	/// Returns true if the signature is valid, false otherwise.
-	fn verify(&self, message: &[u8], signature: &[u8]) -> Result<bool, AccountError>;
+	///
+	/// The options parameter controls message preprocessing:
+	/// - If options.raw = false (default): pre-hashes the message
+	/// - If options.raw = true: uses raw message
+	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError>;
 
 	/// Encrypt data using the public key.
 	///
@@ -166,39 +212,48 @@ impl KeyPair for KeyECDSASECP256K1 {
 	}
 
 	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		match key {
-			AnyPrivateKey::Secp256k1(secp_key) => {
-				let public_key = secp_key.as_public_key();
-				let public_key_bytes = Vec::<u8>::from(&public_key);
+		if let AnyPrivateKey::Secp256k1(secp_key) = key {
+			let public_key = secp_key.as_public_key();
+			let public_key_bytes = Vec::<u8>::from(&public_key);
 
-				format_public_key(&public_key_bytes, crypto::Algorithm::Secp256k1)
-			}
-			_ => Err(AccountError::InvalidConstruction),
+			format_public_key(&public_key_bytes, crypto::Algorithm::Secp256k1)
+		} else {
+			Err(AccountError::InvalidConstruction)
 		}
 	}
 
-	fn sign(&self, message: &[u8]) -> Result<Vec<u8>, AccountError> {
+	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		// Apply preprocessing based on options
+		let data = match options {
+			Some(opts) if opts.raw => message.to_vec(),
+			_ => hash_message(message),
+		};
+
 		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
 
-		match private_key {
-			AnyPrivateKey::Secp256k1(secp_key) => {
-				let signature = secp_key.try_sign(message)?;
-				// Convert signature to bytes - secp256k1 signatures are serializable
-				Ok(signature.to_bytes().to_vec())
-			}
-			_ => Err(AccountError::InvalidKeyType),
+		if let AnyPrivateKey::Secp256k1(secp_key) = private_key {
+			let signature = secp_key.try_sign(&data)?;
+			// Convert signature to bytes - secp256k1 signatures are serializable
+			Ok(signature.to_bytes().to_vec())
+		} else {
+			Err(AccountError::InvalidKeyType)
 		}
 	}
 
-	fn verify(&self, message: &[u8], signature: &[u8]) -> Result<bool, AccountError> {
+	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError> {
+		// Apply preprocessing based on options
+		let data = match options {
+			Some(opts) if opts.raw => message.to_vec(),
+			_ => hash_message(message),
+		};
+
 		// Parse the public key from the formatted string
 		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
 		let public_key = crypto::algorithms::secp256k1::Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
-
 		// Convert signature bytes to proper format
 		let signature = Secp256k1Signature::try_from(signature).map_err(|_| AccountError::InvalidConstruction)?;
 
-		Ok(public_key.verify(message, &signature).is_ok())
+		Ok(public_key.verify(&data, &signature).is_ok())
 	}
 
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
@@ -214,12 +269,11 @@ impl KeyPair for KeyECDSASECP256K1 {
 	fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, AccountError> {
 		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
 
-		match private_key {
-			AnyPrivateKey::Secp256k1(secp_key) => {
-				let plaintext = secp_key.decrypt(ciphertext)?;
-				Ok(plaintext)
-			}
-			_ => Err(AccountError::InvalidKeyType),
+		if let AnyPrivateKey::Secp256k1(secp_key) = private_key {
+			let plaintext = secp_key.decrypt(ciphertext)?;
+			Ok(plaintext)
+		} else {
+			Err(AccountError::InvalidKeyType)
 		}
 	}
 
@@ -331,31 +385,41 @@ impl KeyPair for KeyECDSASECP256R1 {
 	}
 
 	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		match key {
-			AnyPrivateKey::Secp256r1(secp_key) => {
-				let public_key = secp_key.as_public_key();
-				let public_key_bytes = Vec::<u8>::from(&public_key);
+		if let AnyPrivateKey::Secp256r1(secp_key) = key {
+			let public_key = secp_key.as_public_key();
+			let public_key_bytes = Vec::<u8>::from(&public_key);
 
-				format_public_key(&public_key_bytes, crypto::Algorithm::Secp256r1)
-			}
-			_ => Err(AccountError::InvalidConstruction),
+			format_public_key(&public_key_bytes, crypto::Algorithm::Secp256r1)
+		} else {
+			Err(AccountError::InvalidConstruction)
 		}
 	}
 
-	fn sign(&self, message: &[u8]) -> Result<Vec<u8>, AccountError> {
+	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		// Apply preprocessing based on options
+		let data = match options {
+			Some(opts) if opts.raw => message.to_vec(),
+			_ => hash_message(message),
+		};
+
 		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
 
-		match private_key {
-			AnyPrivateKey::Secp256r1(secp_key) => {
-				let signature = secp_key.try_sign(message)?;
-				// Convert signature to bytes - secp256r1 signatures are serializable
-				Ok(signature.to_bytes().to_vec())
-			}
-			_ => Err(AccountError::InvalidKeyType),
+		if let AnyPrivateKey::Secp256r1(secp_key) = private_key {
+			let signature = secp_key.try_sign(&data)?;
+			// Convert signature to bytes - secp256r1 signatures are serializable
+			Ok(signature.to_bytes().to_vec())
+		} else {
+			Err(AccountError::InvalidKeyType)
 		}
 	}
 
-	fn verify(&self, message: &[u8], signature: &[u8]) -> Result<bool, AccountError> {
+	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError> {
+		// Apply preprocessing based on options
+		let data = match options {
+			Some(opts) if opts.raw => message.to_vec(),
+			_ => hash_message(message),
+		};
+
 		// Parse the public key from the formatted string
 		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
 		let public_key = crypto::algorithms::secp256r1::Secp256r1PublicKey::try_from(public_key_bytes.as_slice())?;
@@ -363,7 +427,7 @@ impl KeyPair for KeyECDSASECP256R1 {
 		// Convert signature bytes to proper format
 		let signature = Secp256r1Signature::try_from(signature).map_err(|_| AccountError::InvalidConstruction)?;
 
-		Ok(public_key.verify(message, &signature).is_ok())
+		Ok(public_key.verify(&data, &signature).is_ok())
 	}
 
 	fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
@@ -493,32 +557,42 @@ impl KeyPair for KeyED25519 {
 	}
 
 	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		match key {
-			AnyPrivateKey::Ed25519(ed_key) => {
-				let public_key = ed_key.verifying_key();
-				let public_key_bytes = Vec::<u8>::from(&public_key);
-				let formatted_key = format_public_key(&public_key_bytes, crypto::Algorithm::Ed25519)?;
+		if let AnyPrivateKey::Ed25519(ed_key) = key {
+			let public_key = ed_key.verifying_key();
+			let public_key_bytes = Vec::<u8>::from(&public_key);
+			let formatted_key = format_public_key(&public_key_bytes, crypto::Algorithm::Ed25519)?;
 
-				Ok(formatted_key)
-			}
-			_ => Err(AccountError::InvalidConstruction),
+			Ok(formatted_key)
+		} else {
+			Err(AccountError::InvalidConstruction)
 		}
 	}
 
-	fn sign(&self, message: &[u8]) -> Result<Vec<u8>, AccountError> {
+	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		// Apply preprocessing based on options
+		let data = match options {
+			Some(opts) if opts.raw => message.to_vec(),
+			_ => hash_message(message),
+		};
+
 		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
 
-		match private_key {
-			AnyPrivateKey::Ed25519(ed_key) => {
-				let signature = ed_key.try_sign(message)?;
-				// Convert signature to bytes - Ed25519 signatures are 64 bytes
-				Ok(signature.to_bytes().to_vec())
-			}
-			_ => Err(AccountError::InvalidKeyType),
+		if let AnyPrivateKey::Ed25519(ed_key) = private_key {
+			let signature = ed_key.try_sign(&data)?;
+			// Convert signature to bytes - Ed25519 signatures are 64 bytes
+			Ok(signature.to_bytes().to_vec())
+		} else {
+			Err(AccountError::InvalidKeyType)
 		}
 	}
 
-	fn verify(&self, message: &[u8], signature: &[u8]) -> Result<bool, AccountError> {
+	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError> {
+		// Apply preprocessing based on options
+		let data = match options {
+			Some(opts) if opts.raw => message.to_vec(),
+			_ => hash_message(message),
+		};
+
 		// Parse the public key from the formatted string
 		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
 		let public_key = crypto::algorithms::ed25519::Ed25519PublicKey::try_from(public_key_bytes.as_slice())?;
@@ -533,40 +607,39 @@ impl KeyPair for KeyED25519 {
 		sig_bytes.copy_from_slice(signature);
 		let signature = Ed25519Signature::from_bytes(&sig_bytes);
 
-		Ok(public_key.verify(message, &signature).is_ok())
+		Ok(public_key.verify(&data, &signature).is_ok())
 	}
 
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
 		// Ed25519 encryption via X25519 key exchange
 		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
 
-		match private_key {
-			AnyPrivateKey::Ed25519(ed_key) => {
-				// Convert Ed25519 to X25519 for key exchange
-				let x25519_private = ed_key.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
+		if let AnyPrivateKey::Ed25519(ed_key) = private_key {
+			// Convert Ed25519 to X25519 for key exchange
+			let x25519_private = ed_key.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
 
-				// Get the Ed25519 public key and convert to X25519
-				let ed25519_public = ed_key.as_public_key();
-				let x25519_public = ed25519_public.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
+			// Get the Ed25519 public key and convert to X25519
+			let ed25519_public = ed_key.as_public_key();
+			let x25519_public = ed25519_public.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
 
-				// Perform key exchange to get shared secret
-				let shared_secret = x25519_private.diffie_hellman(&x25519_public);
+			// Perform key exchange to get shared secret
+			let shared_secret = x25519_private.diffie_hellman(&x25519_public);
 
-				// Create encryption key from shared secret only (not plaintext)
-				let mut hasher = DefaultHasher::new();
-				shared_secret.hash(&mut hasher);
-				let hash = hasher.finish();
+			// Create encryption key from shared secret only (not plaintext)
+			let mut hasher = DefaultHasher::new();
+			shared_secret.hash(&mut hasher);
+			let hash = hasher.finish();
 
-				// Simple XOR-based encryption for demonstration
-				let mut result = plaintext.to_vec();
-				let key_bytes = hash.to_le_bytes();
-				for (i, byte) in result.iter_mut().enumerate() {
-					*byte ^= key_bytes[i % key_bytes.len()];
-				}
-
-				Ok(result)
+			// Simple XOR-based encryption for demonstration
+			let mut result = plaintext.to_vec();
+			let key_bytes = hash.to_le_bytes();
+			for (i, byte) in result.iter_mut().enumerate() {
+				*byte ^= key_bytes[i % key_bytes.len()];
 			}
-			_ => Err(AccountError::InvalidKeyType),
+
+			Ok(result)
+		} else {
+			Err(AccountError::InvalidKeyType)
 		}
 	}
 
@@ -574,33 +647,32 @@ impl KeyPair for KeyED25519 {
 		// Ed25519 decryption via X25519 key exchange (reverse of encrypt)
 		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
 
-		match private_key {
-			AnyPrivateKey::Ed25519(ed_key) => {
-				// Convert Ed25519 to X25519 for key exchange
-				let x25519_private = ed_key.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
+		if let AnyPrivateKey::Ed25519(ed_key) = private_key {
+			// Convert Ed25519 to X25519 for key exchange
+			let x25519_private = ed_key.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
 
-				// Get the Ed25519 public key and convert to X25519
-				let ed25519_public = ed_key.as_public_key();
-				let x25519_public = ed25519_public.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
+			// Get the Ed25519 public key and convert to X25519
+			let ed25519_public = ed_key.as_public_key();
+			let x25519_public = ed25519_public.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
 
-				// Perform key exchange to get shared secret
-				let shared_secret = x25519_private.diffie_hellman(&x25519_public);
+			// Perform key exchange to get shared secret
+			let shared_secret = x25519_private.diffie_hellman(&x25519_public);
 
-				// Use the same key derivation as encrypt
-				let mut hasher = DefaultHasher::new();
-				shared_secret.hash(&mut hasher);
-				let hash = hasher.finish();
+			// Use the same key derivation as encrypt
+			let mut hasher = DefaultHasher::new();
+			shared_secret.hash(&mut hasher);
+			let hash = hasher.finish();
 
-				// Simple XOR-based decryption (same operation as encryption)
-				let mut result = ciphertext.to_vec();
-				let key_bytes = hash.to_le_bytes();
-				for (i, byte) in result.iter_mut().enumerate() {
-					*byte ^= key_bytes[i % key_bytes.len()];
-				}
-
-				Ok(result)
+			// Simple XOR-based decryption (same operation as encryption)
+			let mut result = ciphertext.to_vec();
+			let key_bytes = hash.to_le_bytes();
+			for (i, byte) in result.iter_mut().enumerate() {
+				*byte ^= key_bytes[i % key_bytes.len()];
 			}
-			_ => Err(AccountError::InvalidKeyType),
+
+			Ok(result)
+		} else {
+			Err(AccountError::InvalidKeyType)
 		}
 	}
 
@@ -718,11 +790,16 @@ impl KeyPair for KeyNETWORK {
 		Err(AccountError::InvalidConstruction)
 	}
 
-	fn sign(&self, _message: &[u8]) -> Result<Vec<u8>, AccountError> {
+	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		Err(AccountError::NoIdentifierSign)
 	}
 
-	fn verify(&self, _message: &[u8], _signature: &[u8]) -> Result<bool, AccountError> {
+	fn verify(
+		&self,
+		_message: &[u8],
+		_signature: &[u8],
+		_options: Option<&SigningOptions>,
+	) -> Result<bool, AccountError> {
 		Err(AccountError::NoIdentifierVerify)
 	}
 
@@ -804,11 +881,16 @@ impl KeyPair for KeyTOKEN {
 		Err(AccountError::InvalidConstruction)
 	}
 
-	fn sign(&self, _message: &[u8]) -> Result<Vec<u8>, AccountError> {
+	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		Err(AccountError::NoIdentifierSign)
 	}
 
-	fn verify(&self, _message: &[u8], _signature: &[u8]) -> Result<bool, AccountError> {
+	fn verify(
+		&self,
+		_message: &[u8],
+		_signature: &[u8],
+		_options: Option<&SigningOptions>,
+	) -> Result<bool, AccountError> {
 		Err(AccountError::NoIdentifierVerify)
 	}
 
@@ -889,11 +971,16 @@ impl KeyPair for KeySTORAGE {
 		Err(AccountError::InvalidConstruction)
 	}
 
-	fn sign(&self, _message: &[u8]) -> Result<Vec<u8>, AccountError> {
+	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		Err(AccountError::NoIdentifierSign)
 	}
 
-	fn verify(&self, _message: &[u8], _signature: &[u8]) -> Result<bool, AccountError> {
+	fn verify(
+		&self,
+		_message: &[u8],
+		_signature: &[u8],
+		_options: Option<&SigningOptions>,
+	) -> Result<bool, AccountError> {
 		Err(AccountError::NoIdentifierVerify)
 	}
 
@@ -973,11 +1060,16 @@ impl KeyPair for KeyMULTISIG {
 		Err(AccountError::InvalidConstruction)
 	}
 
-	fn sign(&self, _message: &[u8]) -> Result<Vec<u8>, AccountError> {
+	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		Err(AccountError::NoIdentifierSign)
 	}
 
-	fn verify(&self, _message: &[u8], _signature: &[u8]) -> Result<bool, AccountError> {
+	fn verify(
+		&self,
+		_message: &[u8],
+		_signature: &[u8],
+		_options: Option<&SigningOptions>,
+	) -> Result<bool, AccountError> {
 		Err(AccountError::NoIdentifierVerify)
 	}
 
@@ -1031,7 +1123,7 @@ impl TryFrom<Keyable> for KeyMULTISIG {
 
 /// Enum to represent any account type for identifier generation results
 #[derive(Debug, Clone)]
-pub enum AnyAccount {
+pub enum GenericAccount {
 	// Cryptographic accounts
 	EcdsaSecp256k1(Account<KeyECDSASECP256K1>),
 	EcdsaSecp256r1(Account<KeyECDSASECP256R1>),
@@ -1268,20 +1360,6 @@ where
 		Account::<KeyNETWORK>::new(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::NETWORK))
 	}
 
-	/// Sign a message with the account's private key.
-	///
-	/// Returns the signature as a byte vector.
-	pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>, AccountError> {
-		self.keypair.sign(message)
-	}
-
-	/// Verify a signature against a message using the account's public key.
-	///
-	/// Returns true if the signature is valid, false otherwise.
-	pub fn verify(&self, message: &[u8], signature: &[u8]) -> Result<bool, AccountError> {
-		self.keypair.verify(message, signature)
-	}
-
 	/// Encrypt data using the account's public key.
 	///
 	/// Returns the encrypted data as a byte vector.
@@ -1317,7 +1395,7 @@ where
 		identifier_type: KeyPairType,
 		block_hash: Option<&str>,
 		operation_index: u32,
-	) -> Result<AnyAccount, AccountError> {
+	) -> Result<GenericAccount, AccountError> {
 		// Validate that we're generating an identifier type
 		if !identifier_type.is_identifier() {
 			return Err(AccountError::InvalidIdentifierConstruction);
@@ -1370,28 +1448,28 @@ where
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::NETWORK,
 				))?;
-				Ok(AnyAccount::Network(account))
+				Ok(GenericAccount::Network(account))
 			}
 			KeyPairType::TOKEN => {
 				let account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::TOKEN,
 				))?;
-				Ok(AnyAccount::Token(account))
+				Ok(GenericAccount::Token(account))
 			}
 			KeyPairType::STORAGE => {
 				let account = Account::<KeySTORAGE>::new(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::STORAGE,
 				))?;
-				Ok(AnyAccount::Storage(account))
+				Ok(GenericAccount::Storage(account))
 			}
 			KeyPairType::MULTISIG => {
 				let account = Account::<KeyMULTISIG>::new(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					KeyPairType::MULTISIG,
 				))?;
-				Ok(AnyAccount::Multisig(account))
+				Ok(GenericAccount::Multisig(account))
 			}
 			_ => Err(AccountError::InvalidIdentifierConstruction),
 		}
@@ -1557,188 +1635,185 @@ where
 	{
 		self.public_key_string() == other.public_key_string()
 	}
+
+	/// Sign a message with the account's private key.
+	///
+	/// Returns the signature as a byte vector.y)
+	pub fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		self.keypair.sign(message, options)
+	}
+
+	/// Verify a signature against a message using the account's public key.
+	///
+	/// Returns true if the signature is valid, false otherwise.
+	pub fn verify(
+		&self,
+		message: &[u8],
+		signature: &[u8],
+		options: Option<&SigningOptions>,
+	) -> Result<bool, AccountError> {
+		self.keypair.verify(message, signature, options)
+	}
 }
 
-/// Enhanced from_public_key_string that returns proper typed accounts
-impl Account<KeyECDSASECP256K1> {
-	/// Create an ECDSA SECP256K1 account from a public key string
-	pub fn from_secp256k1_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
-		let (_, algorithm) = parse_public_key(public_key_string)?;
-		match algorithm {
-			Algorithm::Secp256k1 => Self::new(Accountable::KeyAndType(
-				Keyable::PublicKeyString(public_key_string.to_string()),
+// FromStr implementations for Account types
+impl FromStr for Account<KeyECDSASECP256K1> {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let generic: GenericAccount = s.parse()?;
+		if let GenericAccount::EcdsaSecp256k1(account) = generic {
+			Ok(account)
+		} else {
+			Err(AccountError::InvalidConstruction)
+		}
+	}
+}
+
+impl FromStr for Account<KeyECDSASECP256R1> {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let generic: GenericAccount = s.parse()?;
+		if let GenericAccount::EcdsaSecp256r1(account) = generic {
+			Ok(account)
+		} else {
+			Err(AccountError::InvalidConstruction)
+		}
+	}
+}
+
+impl FromStr for Account<KeyED25519> {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let generic: GenericAccount = s.parse()?;
+		if let GenericAccount::Ed25519(account) = generic {
+			Ok(account)
+		} else {
+			Err(AccountError::InvalidConstruction)
+		}
+	}
+}
+
+impl FromStr for Account<KeyNETWORK> {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let generic: GenericAccount = s.parse()?;
+		if let GenericAccount::Network(account) = generic {
+			Ok(account)
+		} else {
+			Err(AccountError::InvalidConstruction)
+		}
+	}
+}
+
+impl FromStr for Account<KeyTOKEN> {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let generic: GenericAccount = s.parse()?;
+		if let GenericAccount::Token(account) = generic {
+			Ok(account)
+		} else {
+			Err(AccountError::InvalidConstruction)
+		}
+	}
+}
+
+impl FromStr for Account<KeySTORAGE> {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let generic: GenericAccount = s.parse()?;
+		if let GenericAccount::Storage(account) = generic {
+			Ok(account)
+		} else {
+			Err(AccountError::InvalidConstruction)
+		}
+	}
+}
+
+impl FromStr for Account<KeyMULTISIG> {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let generic: GenericAccount = s.parse()?;
+		if let GenericAccount::Multisig(account) = generic {
+			Ok(account)
+		} else {
+			Err(AccountError::InvalidConstruction)
+		}
+	}
+}
+
+impl FromStr for GenericAccount {
+	type Err = AccountError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		// Try to determine the account type based on prefix
+		if s.starts_with("keeta_aa") {
+			let account = Account::<KeyECDSASECP256K1>::new(Accountable::KeyAndType(
+				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::ECDSASECP256K1,
-			)),
-			_ => Err(AccountError::InvalidConstruction),
-		}
-	}
-}
-
-impl Account<KeyED25519> {
-	/// Create an Ed25519 account from a public key string
-	pub fn from_ed25519_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
-		let (_, algorithm) = parse_public_key(public_key_string)?;
-		match algorithm {
-			Algorithm::Ed25519 => Self::new(Accountable::KeyAndType(
-				Keyable::PublicKeyString(public_key_string.to_string()),
+			))?;
+			Ok(GenericAccount::EcdsaSecp256k1(account))
+		} else if s.starts_with("keeta_ae") || s.starts_with("keeta_ah") {
+			let account = Account::<KeyED25519>::new(Accountable::KeyAndType(
+				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::ED25519,
-			)),
-			_ => Err(AccountError::InvalidConstruction),
-		}
-	}
-}
-
-impl Account<KeyECDSASECP256R1> {
-	/// Create an ECDSA SECP256R1 account from a public key string
-	pub fn from_secp256r1_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
-		let (_, algorithm) = parse_public_key(public_key_string)?;
-		match algorithm {
-			Algorithm::Secp256r1 => Self::new(Accountable::KeyAndType(
-				Keyable::PublicKeyString(public_key_string.to_string()),
+			))?;
+			Ok(GenericAccount::Ed25519(account))
+		} else if s.starts_with("keeta_ay") {
+			let account = Account::<KeyECDSASECP256R1>::new(Accountable::KeyAndType(
+				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::ECDSASECP256R1,
-			)),
-			_ => Err(AccountError::InvalidConstruction),
-		}
-	}
-}
-
-impl Account<KeyNETWORK> {
-	/// Create a network account from a public key string
-	pub fn from_network_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
-		// Network accounts use identifier parsing, not cryptographic key parsing
-		if public_key_string.starts_with("keeta_ai")
-			|| public_key_string.starts_with("keeta_aj")
-			|| public_key_string.starts_with("keeta_ak")
-			|| public_key_string.starts_with("keeta_al")
+			))?;
+			Ok(GenericAccount::EcdsaSecp256r1(account))
+		} else if s.starts_with("keeta_ai")
+			|| s.starts_with("keeta_aj")
+			|| s.starts_with("keeta_ak")
+			|| s.starts_with("keeta_al")
 		{
-			Self::new(Accountable::KeyAndType(
-				Keyable::PublicKeyString(public_key_string.to_string()),
+			let account = Account::<KeyNETWORK>::new(Accountable::KeyAndType(
+				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::NETWORK,
-			))
-		} else {
-			Err(AccountError::InvalidConstruction)
-		}
-	}
-}
-
-impl Account<KeyTOKEN> {
-	/// Create a token account from a public key string
-	pub fn from_token_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
-		// Token accounts use identifier parsing, not cryptographic key parsing
-		if public_key_string.starts_with("keeta_am")
-			|| public_key_string.starts_with("keeta_an")
-			|| public_key_string.starts_with("keeta_ao")
-			|| public_key_string.starts_with("keeta_ap")
+			))?;
+			Ok(GenericAccount::Network(account))
+		} else if s.starts_with("keeta_am")
+			|| s.starts_with("keeta_an")
+			|| s.starts_with("keeta_ao")
+			|| s.starts_with("keeta_ap")
 		{
-			Self::new(Accountable::KeyAndType(
-				Keyable::PublicKeyString(public_key_string.to_string()),
+			let account = Account::<KeyTOKEN>::new(Accountable::KeyAndType(
+				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::TOKEN,
-			))
-		} else {
-			Err(AccountError::InvalidConstruction)
-		}
-	}
-}
-
-impl Account<KeySTORAGE> {
-	/// Create a storage account from a public key string
-	pub fn from_storage_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
-		// Storage accounts use identifier parsing, not cryptographic key parsing
-		if public_key_string.starts_with("keeta_aq")
-			|| public_key_string.starts_with("keeta_ar")
-			|| public_key_string.starts_with("keeta_as")
-			|| public_key_string.starts_with("keeta_at")
+			))?;
+			Ok(GenericAccount::Token(account))
+		} else if s.starts_with("keeta_aq")
+			|| s.starts_with("keeta_ar")
+			|| s.starts_with("keeta_as")
+			|| s.starts_with("keeta_at")
 		{
-			Self::new(Accountable::KeyAndType(
-				Keyable::PublicKeyString(public_key_string.to_string()),
+			let account = Account::<KeySTORAGE>::new(Accountable::KeyAndType(
+				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::STORAGE,
-			))
-		} else {
-			Err(AccountError::InvalidConstruction)
-		}
-	}
-}
-
-impl Account<KeyMULTISIG> {
-	/// Create a multisig account from a public key string
-	pub fn from_multisig_public_key_string(public_key_string: &str) -> Result<Self, AccountError> {
-		// Multisig accounts use identifier parsing
-		if public_key_string.starts_with("keeta_a4")
-			|| public_key_string.starts_with("keeta_a5")
-			|| public_key_string.starts_with("keeta_a6")
-			|| public_key_string.starts_with("keeta_a7")
+			))?;
+			Ok(GenericAccount::Storage(account))
+		} else if s.starts_with("keeta_a4")
+			|| s.starts_with("keeta_a5")
+			|| s.starts_with("keeta_a6")
+			|| s.starts_with("keeta_a7")
 		{
-			Self::new(Accountable::KeyAndType(
-				Keyable::PublicKeyString(public_key_string.to_string()),
+			let account = Account::<KeyMULTISIG>::new(Accountable::KeyAndType(
+				Keyable::PublicKeyString(s.to_string()),
 				KeyPairType::MULTISIG,
-			))
+			))?;
+			Ok(GenericAccount::Multisig(account))
 		} else {
 			Err(AccountError::InvalidConstruction)
 		}
-	}
-}
-
-/// Universal account creation from public key string with automatic type detection
-pub fn from_public_key_string_auto(public_key_string: &str) -> Result<AnyAccount, AccountError> {
-	// Try to determine the account type from the public key string prefix
-	if public_key_string.starts_with("keeta_aa")
-		|| public_key_string.starts_with("keeta_ab")
-		|| public_key_string.starts_with("keeta_ac")
-		|| public_key_string.starts_with("keeta_ad")
-	{
-		// SECP256K1
-		let account = Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(public_key_string)?;
-		Ok(AnyAccount::EcdsaSecp256k1(account))
-	} else if public_key_string.starts_with("keeta_ay")
-		|| public_key_string.starts_with("keeta_az")
-		|| public_key_string.starts_with("keeta_a2")
-		|| public_key_string.starts_with("keeta_a3")
-	{
-		// SECP256R1
-		let account = Account::<KeyECDSASECP256R1>::from_secp256r1_public_key_string(public_key_string)?;
-		Ok(AnyAccount::EcdsaSecp256r1(account))
-	} else if public_key_string.starts_with("keeta_ae")
-		|| public_key_string.starts_with("keeta_af")
-		|| public_key_string.starts_with("keeta_ag")
-		|| public_key_string.starts_with("keeta_ah")
-	{
-		// Ed25519
-		let account = Account::<KeyED25519>::from_ed25519_public_key_string(public_key_string)?;
-		Ok(AnyAccount::Ed25519(account))
-	} else if public_key_string.starts_with("keeta_ai")
-		|| public_key_string.starts_with("keeta_aj")
-		|| public_key_string.starts_with("keeta_ak")
-		|| public_key_string.starts_with("keeta_al")
-	{
-		// Network
-		let account = Account::<KeyNETWORK>::from_network_public_key_string(public_key_string)?;
-		Ok(AnyAccount::Network(account))
-	} else if public_key_string.starts_with("keeta_am")
-		|| public_key_string.starts_with("keeta_an")
-		|| public_key_string.starts_with("keeta_ao")
-		|| public_key_string.starts_with("keeta_ap")
-	{
-		// Token
-		let account = Account::<KeyTOKEN>::from_token_public_key_string(public_key_string)?;
-		Ok(AnyAccount::Token(account))
-	} else if public_key_string.starts_with("keeta_aq")
-		|| public_key_string.starts_with("keeta_ar")
-		|| public_key_string.starts_with("keeta_as")
-		|| public_key_string.starts_with("keeta_at")
-	{
-		// Storage
-		let account = Account::<KeySTORAGE>::from_storage_public_key_string(public_key_string)?;
-		Ok(AnyAccount::Storage(account))
-	} else if public_key_string.starts_with("keeta_a4")
-		|| public_key_string.starts_with("keeta_a5")
-		|| public_key_string.starts_with("keeta_a6")
-		|| public_key_string.starts_with("keeta_a7")
-	{
-		// Multisig
-		let account = Account::<KeyMULTISIG>::from_multisig_public_key_string(public_key_string)?;
-		Ok(AnyAccount::Multisig(account))
-	} else {
-		Err(AccountError::InvalidConstruction)
 	}
 }
 
@@ -1910,40 +1985,6 @@ mod tests {
 			expected_secp256r1_pubkey: "keeta_aybsoespx3vvbochl6g5vr4ibufupvqvp5dbrsvoykzhlsu6br2xu4otoj4la4a",
 		},
 	];
-
-	// Helper function to validate any account type (reduces repetition)
-	fn validate_any_account(account: &AnyAccount, expected_key_type: KeyPairType, expected_public_key: &str) {
-		match account {
-			AnyAccount::EcdsaSecp256k1(acc) => {
-				assert_eq!(acc.keypair_type(), expected_key_type);
-				assert_eq!(acc.public_key_string(), expected_public_key);
-			}
-			AnyAccount::EcdsaSecp256r1(acc) => {
-				assert_eq!(acc.keypair_type(), expected_key_type);
-				assert_eq!(acc.public_key_string(), expected_public_key);
-			}
-			AnyAccount::Ed25519(acc) => {
-				assert_eq!(acc.keypair_type(), expected_key_type);
-				assert_eq!(acc.public_key_string(), expected_public_key);
-			}
-			AnyAccount::Network(acc) => {
-				assert_eq!(acc.keypair_type(), expected_key_type);
-				assert_eq!(acc.public_key_string(), expected_public_key);
-			}
-			AnyAccount::Token(acc) => {
-				assert_eq!(acc.keypair_type(), expected_key_type);
-				assert_eq!(acc.public_key_string(), expected_public_key);
-			}
-			AnyAccount::Storage(acc) => {
-				assert_eq!(acc.keypair_type(), expected_key_type);
-				assert_eq!(acc.public_key_string(), expected_public_key);
-			}
-			AnyAccount::Multisig(acc) => {
-				assert_eq!(acc.keypair_type(), expected_key_type);
-				assert_eq!(acc.public_key_string(), expected_public_key);
-			}
-		}
-	}
 
 	#[test]
 	fn test_basic_account_generation() {
@@ -2371,12 +2412,12 @@ mod tests {
 		let token_result = crypto_account.generate_identifier(KeyPairType::TOKEN, None, 0);
 		let result = token_result.unwrap();
 
-		if let AnyAccount::Token(token_account) = result {
+		if let GenericAccount::Token(token_account) = result {
 			assert_eq!(token_account.keypair_type(), KeyPairType::TOKEN);
 			assert!(!token_account.keypair.identifier.is_empty());
 			assert!(token_account.keypair.public_key.starts_with("token_"));
 		} else {
-			assert!(matches!(result, AnyAccount::Token(_)));
+			assert!(matches!(result, GenericAccount::Token(_)));
 		}
 
 		// Test network -> token generation (allowed scenario)
@@ -2551,8 +2592,7 @@ mod tests {
 	fn test_enhanced_from_public_key_string() {
 		for test_case in TEST_CASES {
 			// Test SECP256K1 account creation
-			let secp256k1_result =
-				Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(test_case.expected_secp256k1_pubkey);
+			let secp256k1_result = test_case.expected_secp256k1_pubkey.parse::<Account<KeyECDSASECP256K1>>();
 			assert!(secp256k1_result.is_ok());
 
 			let secp256k1_account = secp256k1_result.unwrap();
@@ -2561,8 +2601,7 @@ mod tests {
 			assert!(!secp256k1_account.has_private_key()); // Created from public key only
 
 			// Test Ed25519 account creation
-			let ed25519_result =
-				Account::<KeyED25519>::from_ed25519_public_key_string(test_case.expected_ed25519_pubkey);
+			let ed25519_result = test_case.expected_ed25519_pubkey.parse::<Account<KeyED25519>>();
 			assert!(ed25519_result.is_ok());
 
 			let ed25519_account = ed25519_result.unwrap();
@@ -2571,67 +2610,12 @@ mod tests {
 			assert!(!ed25519_account.has_private_key()); // Created from public key only
 
 			// Test cross-algorithm errors
-			let secp256k1_from_ed25519 =
-				Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(test_case.expected_ed25519_pubkey);
+			let secp256k1_from_ed25519 = test_case.expected_ed25519_pubkey.parse::<Account<KeyECDSASECP256K1>>();
 			assert!(secp256k1_from_ed25519.is_err());
 
-			let ed25519_from_secp256k1 =
-				Account::<KeyED25519>::from_ed25519_public_key_string(test_case.expected_secp256k1_pubkey);
+			let ed25519_from_secp256k1 = test_case.expected_secp256k1_pubkey.parse::<Account<KeyED25519>>();
 			assert!(ed25519_from_secp256k1.is_err());
 		}
-	}
-
-	#[test]
-	fn test_universal_from_public_key_string_auto() {
-		for test_case in TEST_CASES {
-			// Test automatic detection for SECP256K1
-			let secp256k1_result = from_public_key_string_auto(test_case.expected_secp256k1_pubkey);
-			assert!(secp256k1_result.is_ok());
-
-			let secp256k1_account = secp256k1_result.unwrap();
-			assert!(matches!(secp256k1_account, AnyAccount::EcdsaSecp256k1(_)));
-
-			if let AnyAccount::EcdsaSecp256k1(account) = secp256k1_account {
-				assert_eq!(account.keypair_type(), KeyPairType::ECDSASECP256K1);
-				assert_eq!(account.public_key_string(), test_case.expected_secp256k1_pubkey);
-			}
-
-			// Test automatic detection for Ed25519
-			let ed25519_result = from_public_key_string_auto(test_case.expected_ed25519_pubkey);
-			assert!(ed25519_result.is_ok());
-
-			let ed25519_account = ed25519_result.unwrap();
-			assert!(matches!(ed25519_account, AnyAccount::Ed25519(_)));
-
-			if let AnyAccount::Ed25519(account) = ed25519_account {
-				assert_eq!(account.keypair_type(), KeyPairType::ED25519);
-				assert_eq!(account.public_key_string(), test_case.expected_ed25519_pubkey);
-			}
-		}
-
-		// Test with real test data from TEST_PUBLIC_ACCOUNTS
-		for test_case in TEST_PUBLIC_ACCOUNTS {
-			let result = from_public_key_string_auto(test_case.encoded_public_key);
-			assert!(result.is_ok(), "Failed to parse {}", test_case.encoded_public_key);
-
-			let account = result.unwrap();
-			match test_case.key_type {
-				KeyPairType::ECDSASECP256K1 => assert!(matches!(account, AnyAccount::EcdsaSecp256k1(_))),
-				KeyPairType::ECDSASECP256R1 => assert!(matches!(account, AnyAccount::EcdsaSecp256r1(_))),
-				KeyPairType::ED25519 => assert!(matches!(account, AnyAccount::Ed25519(_))),
-				KeyPairType::NETWORK => assert!(matches!(account, AnyAccount::Network(_))),
-				KeyPairType::TOKEN => assert!(matches!(account, AnyAccount::Token(_))),
-				KeyPairType::STORAGE => assert!(matches!(account, AnyAccount::Storage(_))),
-				KeyPairType::MULTISIG => assert!(matches!(account, AnyAccount::Multisig(_))),
-			}
-		}
-
-		// Test invalid keys
-		let invalid_result = from_public_key_string_auto("invalid_key");
-		assert!(invalid_result.is_err());
-
-		let unknown_prefix_result = from_public_key_string_auto("keeta_zz");
-		assert!(unknown_prefix_result.is_err());
 	}
 
 	#[test]
@@ -2649,9 +2633,7 @@ mod tests {
 
 		// Test accounts created from public key strings don't have private keys
 		for test_case in TEST_CASES {
-			let secp256k1_account =
-				Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(test_case.expected_secp256k1_pubkey)
-					.unwrap();
+			let secp256k1_account = test_case.expected_secp256k1_pubkey.parse::<Account<KeyECDSASECP256K1>>().unwrap();
 			assert!(!secp256k1_account.has_private_key());
 		}
 
@@ -2999,102 +2981,54 @@ mod tests {
 	};
 
 	#[test]
-	fn test_basic_tests() {
-		for test_case in TEST_PUBLIC_ACCOUNTS {
-			let account = from_public_key_string_auto(test_case.encoded_public_key).unwrap();
-
-			// Verify basic properties
-			match &account {
-				AnyAccount::EcdsaSecp256k1(acc) => {
-					assert_eq!(acc.keypair_type(), KeyPairType::ECDSASECP256K1);
-					assert!(!acc.is_identifier());
-					assert!(!acc.has_private_key());
-				}
-				AnyAccount::EcdsaSecp256r1(acc) => {
-					assert_eq!(acc.keypair_type(), KeyPairType::ECDSASECP256R1);
-					assert!(!acc.is_identifier());
-					assert!(!acc.has_private_key());
-				}
-				AnyAccount::Ed25519(acc) => {
-					assert_eq!(acc.keypair_type(), KeyPairType::ED25519);
-					assert!(!acc.is_identifier());
-					assert!(!acc.has_private_key());
-				}
-				AnyAccount::Network(acc) => {
-					assert_eq!(acc.keypair_type(), KeyPairType::NETWORK);
-					assert!(acc.is_identifier());
-					assert!(!acc.has_private_key());
-				}
-				AnyAccount::Token(acc) => {
-					assert_eq!(acc.keypair_type(), KeyPairType::TOKEN);
-					assert!(acc.is_identifier());
-					assert!(!acc.has_private_key());
-				}
-				AnyAccount::Storage(acc) => {
-					assert_eq!(acc.keypair_type(), KeyPairType::STORAGE);
-					assert!(acc.is_identifier());
-					assert!(!acc.has_private_key());
-				}
-				AnyAccount::Multisig(acc) => {
-					assert_eq!(acc.keypair_type(), KeyPairType::MULTISIG);
-					assert!(acc.is_identifier());
-					assert!(!acc.has_private_key());
-				}
-			}
-		}
-	}
-
-	#[test]
 	fn test_account_from_account() {
 		// Test creating account from existing account for all key types
 		for test_case in TEST_PUBLIC_ACCOUNTS {
-			let original_account = from_public_key_string_auto(test_case.encoded_public_key).unwrap();
-
-			// Test that we can clone accounts and verify properties
+			let original_account = test_case.encoded_public_key.parse().unwrap();
 			match &original_account {
-				AnyAccount::EcdsaSecp256k1(acc) => {
+				GenericAccount::EcdsaSecp256k1(acc) => {
 					let cloned = acc.clone();
 					assert_eq!(cloned.public_key_string(), acc.public_key_string());
 					assert_eq!(cloned.keypair_type(), acc.keypair_type());
 					assert_eq!(cloned.is_identifier(), acc.is_identifier());
 					assert_eq!(cloned.has_private_key(), acc.has_private_key());
 				}
-				AnyAccount::EcdsaSecp256r1(acc) => {
+				GenericAccount::EcdsaSecp256r1(acc) => {
 					let cloned = acc.clone();
 					assert_eq!(cloned.public_key_string(), acc.public_key_string());
 					assert_eq!(cloned.keypair_type(), acc.keypair_type());
 					assert_eq!(cloned.is_identifier(), acc.is_identifier());
 					assert_eq!(cloned.has_private_key(), acc.has_private_key());
 				}
-				AnyAccount::Ed25519(acc) => {
+				GenericAccount::Ed25519(acc) => {
 					let cloned = acc.clone();
 					assert_eq!(cloned.public_key_string(), acc.public_key_string());
 					assert_eq!(cloned.keypair_type(), acc.keypair_type());
 					assert_eq!(cloned.is_identifier(), acc.is_identifier());
 					assert_eq!(cloned.has_private_key(), acc.has_private_key());
 				}
-				AnyAccount::Network(acc) => {
+				GenericAccount::Network(acc) => {
 					let cloned = acc.clone();
 					assert_eq!(cloned.public_key_string(), acc.public_key_string());
 					assert_eq!(cloned.keypair_type(), acc.keypair_type());
 					assert_eq!(cloned.is_identifier(), acc.is_identifier());
 					assert_eq!(cloned.has_private_key(), acc.has_private_key());
 				}
-				AnyAccount::Token(acc) => {
+				GenericAccount::Token(acc) => {
 					let cloned = acc.clone();
 					assert_eq!(cloned.public_key_string(), acc.public_key_string());
 					assert_eq!(cloned.keypair_type(), acc.keypair_type());
 					assert_eq!(cloned.is_identifier(), acc.is_identifier());
 					assert_eq!(cloned.has_private_key(), acc.has_private_key());
 				}
-				AnyAccount::Storage(acc) => {
+				GenericAccount::Storage(acc) => {
 					let cloned = acc.clone();
 					assert_eq!(cloned.public_key_string(), acc.public_key_string());
 					assert_eq!(cloned.keypair_type(), acc.keypair_type());
 					assert_eq!(cloned.is_identifier(), acc.is_identifier());
 					assert_eq!(cloned.has_private_key(), acc.has_private_key());
 				}
-				AnyAccount::Multisig(acc) => {
+				GenericAccount::Multisig(acc) => {
 					let cloned = acc.clone();
 					assert_eq!(cloned.public_key_string(), acc.public_key_string());
 					assert_eq!(cloned.keypair_type(), acc.keypair_type());
@@ -3109,7 +3043,7 @@ mod tests {
 	fn test_account_from_public_key() {
 		// Test invalid public key strings (should fail)
 		for invalid_key in INVALID_PUBLIC_KEYS {
-			let result = from_public_key_string_auto(invalid_key);
+			let result = invalid_key.parse::<Account<KeyECDSASECP256K1>>();
 			assert!(result.is_err(), "Invalid key should fail: {invalid_key}");
 		}
 
@@ -3118,68 +3052,55 @@ mod tests {
 			// Test specific algorithm methods and verify account properties
 			match test_case.key_type {
 				KeyPairType::ECDSASECP256K1 => {
-					let account =
-						Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(test_case.encoded_public_key)
-							.unwrap();
+					let account = test_case.encoded_public_key.parse::<Account<KeyECDSASECP256K1>>().unwrap();
 					assert_eq!(account.public_key_string(), test_case.encoded_public_key);
 					assert_eq!(account.keypair_type(), test_case.key_type);
 					assert_eq!(account.is_identifier(), test_case.is_identifier);
 					assert!(account.compare_public_key(test_case.encoded_public_key));
 				}
 				KeyPairType::ECDSASECP256R1 => {
-					let account =
-						Account::<KeyECDSASECP256R1>::from_secp256r1_public_key_string(test_case.encoded_public_key)
-							.unwrap();
+					let account = test_case.encoded_public_key.parse::<Account<KeyECDSASECP256R1>>().unwrap();
 					assert_eq!(account.public_key_string(), test_case.encoded_public_key);
 					assert_eq!(account.keypair_type(), test_case.key_type);
 					assert_eq!(account.is_identifier(), test_case.is_identifier);
 					assert!(account.compare_public_key(test_case.encoded_public_key));
 				}
 				KeyPairType::ED25519 => {
-					let account =
-						Account::<KeyED25519>::from_ed25519_public_key_string(test_case.encoded_public_key).unwrap();
+					let account = test_case.encoded_public_key.parse::<Account<KeyED25519>>().unwrap();
 					assert_eq!(account.public_key_string(), test_case.encoded_public_key);
 					assert_eq!(account.keypair_type(), test_case.key_type);
 					assert_eq!(account.is_identifier(), test_case.is_identifier);
 					assert!(account.compare_public_key(test_case.encoded_public_key));
 				}
 				KeyPairType::NETWORK => {
-					let account =
-						Account::<KeyNETWORK>::from_network_public_key_string(test_case.encoded_public_key).unwrap();
+					let account = test_case.encoded_public_key.parse::<Account<KeyNETWORK>>().unwrap();
 					assert_eq!(account.public_key_string(), test_case.encoded_public_key);
 					assert_eq!(account.keypair_type(), test_case.key_type);
 					assert_eq!(account.is_identifier(), test_case.is_identifier);
 					assert!(account.compare_public_key(test_case.encoded_public_key));
 				}
 				KeyPairType::TOKEN => {
-					let account =
-						Account::<KeyTOKEN>::from_token_public_key_string(test_case.encoded_public_key).unwrap();
+					let account = test_case.encoded_public_key.parse::<Account<KeyTOKEN>>().unwrap();
 					assert_eq!(account.public_key_string(), test_case.encoded_public_key);
 					assert_eq!(account.keypair_type(), test_case.key_type);
 					assert_eq!(account.is_identifier(), test_case.is_identifier);
 					assert!(account.compare_public_key(test_case.encoded_public_key));
 				}
 				KeyPairType::STORAGE => {
-					let account =
-						Account::<KeySTORAGE>::from_storage_public_key_string(test_case.encoded_public_key).unwrap();
+					let account = test_case.encoded_public_key.parse::<Account<KeySTORAGE>>().unwrap();
 					assert_eq!(account.public_key_string(), test_case.encoded_public_key);
 					assert_eq!(account.keypair_type(), test_case.key_type);
 					assert_eq!(account.is_identifier(), test_case.is_identifier);
 					assert!(account.compare_public_key(test_case.encoded_public_key));
 				}
 				KeyPairType::MULTISIG => {
-					let account =
-						Account::<KeyMULTISIG>::from_multisig_public_key_string(test_case.encoded_public_key).unwrap();
+					let account = test_case.encoded_public_key.parse::<Account<KeyMULTISIG>>().unwrap();
 					assert_eq!(account.public_key_string(), test_case.encoded_public_key);
 					assert_eq!(account.keypair_type(), test_case.key_type);
 					assert_eq!(account.is_identifier(), test_case.is_identifier);
 					assert!(account.compare_public_key(test_case.encoded_public_key));
 				}
 			}
-
-			// Test universal account creation from public key string
-			let universal_account = from_public_key_string_auto(test_case.encoded_public_key).unwrap();
-			validate_any_account(&universal_account, test_case.key_type.clone(), test_case.encoded_public_key);
 
 			// Test round-trip: encoded -> account -> raw hex public key (for non-identifiers only)
 			if !test_case.is_identifier {
@@ -3255,20 +3176,20 @@ mod tests {
 			.unwrap();
 
 			// Generate a valid signature and validate it
-			let signature = secp256k1_account.sign(test_data).unwrap();
-			let is_valid = secp256k1_account.verify(test_data, &signature).unwrap();
+			let signature = secp256k1_account.keypair.sign(test_data, None).unwrap();
+			let is_valid = secp256k1_account.keypair.verify(test_data, &signature, None).unwrap();
 			assert!(is_valid, "Valid signature should verify for SECP256K1");
 
 			// Modify signature and verify it fails
 			let mut invalid_signature = signature.clone();
 			invalid_signature[1] = invalid_signature[1].wrapping_add(1);
-			let is_invalid = secp256k1_account.verify(test_data, &invalid_signature).unwrap();
+			let is_invalid = secp256k1_account.keypair.verify(test_data, &invalid_signature, None).unwrap();
 			assert!(!is_invalid, "Modified signature should not verify for SECP256K1");
 
 			// Modify data and verify signature fails
 			let mut invalid_data = test_data.to_vec();
 			invalid_data[1] = invalid_data[1].wrapping_add(1);
-			let is_invalid_data = secp256k1_account.verify(&invalid_data, &signature).unwrap();
+			let is_invalid_data = secp256k1_account.keypair.verify(&invalid_data, &signature, None).unwrap();
 			assert!(!is_invalid_data, "Modified data should not verify for SECP256K1");
 
 			// Test ECDSA SECP256R1 signing
@@ -3279,8 +3200,8 @@ mod tests {
 			))
 			.unwrap();
 
-			let r1_signature = secp256r1_account.sign(test_data).unwrap();
-			let r1_is_valid = secp256r1_account.verify(test_data, &r1_signature).unwrap();
+			let r1_signature = secp256r1_account.keypair.sign(test_data, None).unwrap();
+			let r1_is_valid = secp256r1_account.keypair.verify(test_data, &r1_signature, None).unwrap();
 			assert!(r1_is_valid, "Valid signature should verify for SECP256R1");
 
 			// Test Ed25519 signing
@@ -3291,8 +3212,8 @@ mod tests {
 			))
 			.unwrap();
 
-			let ed_signature = ed25519_account.sign(test_data).unwrap();
-			let ed_is_valid = ed25519_account.verify(test_data, &ed_signature).unwrap();
+			let ed_signature = ed25519_account.keypair.sign(test_data, None).unwrap();
+			let ed_is_valid = ed25519_account.keypair.verify(test_data, &ed_signature, None).unwrap();
 			assert!(ed_is_valid, "Valid signature should verify for Ed25519");
 		}
 	}
@@ -3304,28 +3225,28 @@ mod tests {
 
 		// Test network account
 		let network_account = Account::<KeyNETWORK>::generate_network_address(5).unwrap();
-		let sign_result = network_account.sign(test_data);
+		let sign_result = network_account.sign(test_data, None);
 		assert!(matches!(sign_result, Err(AccountError::NoIdentifierSign)));
 
-		let verify_result = network_account.verify(test_data, fake_signature);
+		let verify_result = network_account.verify(test_data, fake_signature, None);
 		assert!(matches!(verify_result, Err(AccountError::NoIdentifierVerify)));
 
 		// Test token account
 		let token_key = KeyTOKEN::try_from(Keyable::Identifier("test-token".to_string())).unwrap();
 		let token_account = Account::<KeyTOKEN>::new(Accountable::Key(token_key)).unwrap();
-		let token_sign_result = token_account.sign(test_data);
+		let token_sign_result = token_account.sign(test_data, None);
 		assert!(matches!(token_sign_result, Err(AccountError::NoIdentifierSign)));
 
-		let token_verify_result = token_account.verify(test_data, fake_signature);
+		let token_verify_result = token_account.verify(test_data, fake_signature, None);
 		assert!(matches!(token_verify_result, Err(AccountError::NoIdentifierVerify)));
 
 		// Test storage account
 		let storage_key = KeySTORAGE::try_from(Keyable::Identifier("test-storage".to_string())).unwrap();
 		let storage_account = Account::<KeySTORAGE>::new(Accountable::Key(storage_key)).unwrap();
-		let storage_sign_result = storage_account.sign(test_data);
+		let storage_sign_result = storage_account.sign(test_data, None);
 		assert!(matches!(storage_sign_result, Err(AccountError::NoIdentifierSign)));
 
-		let storage_verify_result = storage_account.verify(test_data, fake_signature);
+		let storage_verify_result = storage_account.verify(test_data, fake_signature, None);
 		assert!(matches!(storage_verify_result, Err(AccountError::NoIdentifierVerify)));
 	}
 
@@ -3431,20 +3352,17 @@ mod tests {
 
 	#[test]
 	fn test_hard_coded_signature_verification() {
-		// Use the centralized hard-coded signature test data
-		let account =
-			Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(HARD_CODED_SIGNATURE_TEST.public_key_string)
-				.unwrap();
+		let account = HARD_CODED_SIGNATURE_TEST.public_key_string.parse::<Account<KeyECDSASECP256K1>>().unwrap();
 
 		// Verify the known signature matches
 		let verification_result =
-			account.verify(HARD_CODED_SIGNATURE_TEST.test_data, HARD_CODED_SIGNATURE_TEST.expected_signature);
+			account.verify(HARD_CODED_SIGNATURE_TEST.test_data, HARD_CODED_SIGNATURE_TEST.expected_signature, None);
 		match verification_result {
 			Ok(is_valid) => {
 				if !is_valid {
 					// XXX:TODO Don't fail the test for now - this is a known compatibility issue
 					// between Rust and TypeScript signature verification
-					println!("WARNING: Hard-coded signature verification failed - known compatibility issue");
+					println!("WARNING: signature verification failed - known compatibility issue");
 					return;
 				}
 
@@ -3452,7 +3370,7 @@ mod tests {
 			}
 			Err(_e) => {
 				// Cross-platform signature verification not yet fully compatible
-				println!("WARNING: Hard-coded signature verification error - known compatibility issue");
+				println!("WARNING: signature verification error - known compatibility issue");
 			}
 		}
 
@@ -3460,7 +3378,7 @@ mod tests {
 		let mut corrupted_signature = HARD_CODED_SIGNATURE_TEST.expected_signature.to_vec();
 		corrupted_signature[63] = 0x50; // Change last byte from 0x4F to 0x50
 
-		let corrupted_result = account.verify(HARD_CODED_SIGNATURE_TEST.test_data, &corrupted_signature);
+		let corrupted_result = account.verify(HARD_CODED_SIGNATURE_TEST.test_data, &corrupted_signature, None);
 		match corrupted_result {
 			Ok(is_valid) => {
 				assert!(!is_valid, "Corrupted signature should not verify as valid");
@@ -3504,10 +3422,8 @@ mod tests {
 		assert!(!storage_account.is_multisig());
 
 		// Test cryptographic accounts
-		let ecdsa_account = Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(
-			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1,
-		)
-		.unwrap();
+		let ecdsa_account =
+			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1.parse::<Account<KeyECDSASECP256K1>>().unwrap();
 		assert!(!ecdsa_account.is_identifier());
 		assert!(!ecdsa_account.is_network());
 		assert!(!ecdsa_account.is_token());
@@ -3518,17 +3434,10 @@ mod tests {
 	#[test]
 	fn test_account_comparison_methods() {
 		// Test compare_public_key and compare_account methods
-		let account1 = Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(
-			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1,
-		)
-		.unwrap();
-		let account2 = Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(
-			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1,
-		)
-		.unwrap();
+		let account1 = REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1.parse::<Account<KeyECDSASECP256K1>>().unwrap();
+		let account2 = REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1.parse::<Account<KeyECDSASECP256K1>>().unwrap();
 
-		let different_account =
-			Account::<KeyED25519>::from_ed25519_public_key_string(REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1).unwrap();
+		let different_account = REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1.parse::<Account<KeyED25519>>().unwrap();
 		// Test compare_public_key
 		assert!(account1.compare_public_key(REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1));
 		assert!(!account1.compare_public_key(REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1));
@@ -3566,14 +3475,11 @@ mod tests {
 		assert!(ed25519_from_seed.has_private_key());
 
 		// Accounts created from public key strings should not have private keys
-		let ecdsa_from_pubkey = Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(
-			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1,
-		)
-		.unwrap();
+		let ecdsa_from_pubkey =
+			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1.parse::<Account<KeyECDSASECP256K1>>().unwrap();
 		assert!(!ecdsa_from_pubkey.has_private_key());
 
-		let ed25519_from_pubkey =
-			Account::<KeyED25519>::from_ed25519_public_key_string(REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1).unwrap();
+		let ed25519_from_pubkey = REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1.parse::<Account<KeyED25519>>().unwrap();
 		assert!(!ed25519_from_pubkey.has_private_key());
 
 		// Identifier accounts never have private keys
@@ -3653,10 +3559,10 @@ mod tests {
 
 		// Test that signature size matches actual signature length
 		let test_data = b"test signature size";
-		let ecdsa_signature = ecdsa_account.sign(test_data).unwrap();
+		let ecdsa_signature = ecdsa_account.sign(test_data, None).unwrap();
 		assert_eq!(ecdsa_signature.len(), ecdsa_account.signature_size());
 
-		let ed25519_signature = ed25519_account.sign(test_data).unwrap();
+		let ed25519_signature = ed25519_account.sign(test_data, None).unwrap();
 		assert_eq!(ed25519_signature.len(), ed25519_account.signature_size());
 
 		// Identifier accounts have signature size 0
@@ -3667,34 +3573,28 @@ mod tests {
 	#[test]
 	fn test_specific_public_key_string_methods() {
 		// Test ECDSA SECP256K1
-		let ecdsa_account = Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(
-			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1,
-		)
-		.unwrap();
+		let ecdsa_account =
+			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1.parse::<Account<KeyECDSASECP256K1>>().unwrap();
 		assert_eq!(ecdsa_account.keypair_type(), KeyPairType::ECDSASECP256K1);
 		assert_eq!(ecdsa_account.public_key_string(), REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1);
 
 		// Test Ed25519
-		let ed25519_account =
-			Account::<KeyED25519>::from_ed25519_public_key_string(REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1).unwrap();
+		let ed25519_account = REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1.parse::<Account<KeyED25519>>().unwrap();
 		assert_eq!(ed25519_account.keypair_type(), KeyPairType::ED25519);
 		assert_eq!(ed25519_account.public_key_string(), REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1);
 
 		// Test error cases - wrong algorithm for method
-		let wrong_ecdsa =
-			Account::<KeyECDSASECP256K1>::from_secp256k1_public_key_string(REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1);
+		let wrong_ecdsa = REFERENCE_PUBLIC_ACCOUNT_DATA.ed25519.1.parse::<Account<KeyECDSASECP256K1>>();
 		assert!(wrong_ecdsa.is_err());
 
-		let wrong_ed25519 =
-			Account::<KeyED25519>::from_ed25519_public_key_string(REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1);
+		let wrong_ed25519 = REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1.parse::<Account<KeyED25519>>();
 		assert!(wrong_ed25519.is_err());
 	}
 
 	#[test]
 	fn test_multisig_account_functionality() {
 		// Test creation from multisig public key string
-		let multisig_account =
-			Account::<KeyMULTISIG>::from_multisig_public_key_string("keeta_a4test_multisig_example").unwrap();
+		let multisig_account = "keeta_a4test_multisig_example".parse::<Account<KeyMULTISIG>>().unwrap();
 		assert_eq!(multisig_account.keypair_type(), KeyPairType::MULTISIG);
 		assert!(multisig_account.is_multisig());
 		assert!(multisig_account.is_identifier());
@@ -3707,8 +3607,8 @@ mod tests {
 
 		// Test that multisig accounts cannot sign or verify
 		let test_data = b"test data";
-		assert!(multisig_account.sign(test_data).is_err());
-		assert!(multisig_account.verify(test_data, b"fake signature").is_err());
+		assert!(multisig_account.sign(test_data, None).is_err());
+		assert!(multisig_account.verify(test_data, b"fake signature", None).is_err());
 		assert!(multisig_account.encrypt(test_data).is_err());
 		assert!(multisig_account.decrypt(test_data).is_err());
 
@@ -3722,83 +3622,121 @@ mod tests {
 		assert!(multisig_from_id.is_identifier());
 
 		// Test auto-detection from public key string
-		let auto_result = from_public_key_string_auto("keeta_a5multisig_example");
+		let auto_result = "keeta_a5multisig_example".parse::<Account<KeyMULTISIG>>();
 		assert!(auto_result.is_ok());
-		assert!(matches!(auto_result.unwrap(), AnyAccount::Multisig(_)));
+		let account = auto_result.unwrap();
+		assert!(account.is_multisig());
 
 		// Test invalid multisig public key string
-		let invalid_result = Account::<KeyMULTISIG>::from_multisig_public_key_string("keeta_aa_not_multisig");
+		let invalid_result = "keeta_aa_not_multisig".parse::<Account<KeyMULTISIG>>();
 		assert!(invalid_result.is_err());
 	}
 
 	#[test]
 	fn test_enhanced_public_key_string_prefixes() {
 		// Helper function to test prefix detection
-		fn test_prefix_detection(prefixes: &[&str], expected_variant: fn(&AnyAccount) -> bool, variant_name: &str) {
+		fn test_prefix_detection(prefixes: &[&str], expected_variant: fn(&GenericAccount) -> bool, variant_name: &str) {
 			for prefix in prefixes {
 				let test_key = format!("{prefix}test123");
-				if let Ok(result) = from_public_key_string_auto(&test_key) {
+				if let Ok(result) = test_key.parse::<GenericAccount>() {
 					assert!(expected_variant(&result), "Expected {variant_name} for prefix {prefix}");
 				}
 			}
 		}
 
 		// Helper function for identifier types that should always succeed
-		fn test_identifier_prefixes(prefixes: &[&str], expected_variant: fn(&AnyAccount) -> bool, variant_name: &str) {
+		fn test_identifier_prefixes(
+			prefixes: &[&str],
+			expected_variant: fn(&GenericAccount) -> bool,
+			variant_name: &str,
+		) {
 			for prefix in prefixes {
 				let test_key = format!("{prefix}test123");
-				let result = from_public_key_string_auto(&test_key).unwrap();
-				assert!(expected_variant(&result), "Expected {variant_name} for prefix {prefix}");
+				// Try parsing with identifier account types
+				let mut found_match = false;
+
+				if let Ok(account) = test_key.parse::<Account<KeyNETWORK>>() {
+					let any_account = GenericAccount::Network(account);
+					if expected_variant(&any_account) {
+						found_match = true;
+					}
+				}
+				if let Ok(account) = test_key.parse::<Account<KeyTOKEN>>() {
+					let any_account = GenericAccount::Token(account);
+					if expected_variant(&any_account) {
+						found_match = true;
+					}
+				}
+				if let Ok(account) = test_key.parse::<Account<KeySTORAGE>>() {
+					let any_account = GenericAccount::Storage(account);
+					if expected_variant(&any_account) {
+						found_match = true;
+					}
+				}
+				if let Ok(account) = test_key.parse::<Account<KeyMULTISIG>>() {
+					let any_account = GenericAccount::Multisig(account);
+					if expected_variant(&any_account) {
+						found_match = true;
+					}
+				}
+
+				assert!(found_match, "Expected {variant_name} for prefix {prefix}");
 			}
 		}
 
 		// Test crypto algorithm prefixes (may fail parsing but should detect correct type)
 		test_prefix_detection(
 			&["keeta_aa", "keeta_ab", "keeta_ac", "keeta_ad"],
-			|acc| matches!(acc, AnyAccount::EcdsaSecp256k1(_)),
+			|acc| matches!(acc, GenericAccount::EcdsaSecp256k1(_)),
 			"SECP256K1",
 		);
 
 		test_prefix_detection(
 			&["keeta_ay", "keeta_az", "keeta_a2", "keeta_a3"],
-			|acc| matches!(acc, AnyAccount::EcdsaSecp256r1(_)),
+			|acc| matches!(acc, GenericAccount::EcdsaSecp256r1(_)),
 			"SECP256R1",
 		);
 
 		test_prefix_detection(
 			&["keeta_ae", "keeta_af", "keeta_ag", "keeta_ah"],
-			|acc| matches!(acc, AnyAccount::Ed25519(_)),
+			|acc| matches!(acc, GenericAccount::Ed25519(_)),
 			"Ed25519",
 		);
 
 		// Test identifier prefixes (should always succeed)
 		test_identifier_prefixes(
 			&["keeta_ai", "keeta_aj", "keeta_ak", "keeta_al"],
-			|acc| matches!(acc, AnyAccount::Network(_)),
+			|acc| matches!(acc, GenericAccount::Network(_)),
 			"Network",
 		);
 
 		test_identifier_prefixes(
 			&["keeta_am", "keeta_an", "keeta_ao", "keeta_ap"],
-			|acc| matches!(acc, AnyAccount::Token(_)),
+			|acc| matches!(acc, GenericAccount::Token(_)),
 			"Token",
 		);
 
 		test_identifier_prefixes(
 			&["keeta_aq", "keeta_ar", "keeta_as", "keeta_at"],
-			|acc| matches!(acc, AnyAccount::Storage(_)),
+			|acc| matches!(acc, GenericAccount::Storage(_)),
 			"Storage",
 		);
 
 		test_identifier_prefixes(
 			&["keeta_a4", "keeta_a5", "keeta_a6", "keeta_a7"],
-			|acc| matches!(acc, AnyAccount::Multisig(_)),
+			|acc| matches!(acc, GenericAccount::Multisig(_)),
 			"Multisig",
 		);
 
-		// Test invalid prefix
-		let invalid_result = from_public_key_string_auto("keeta_xx_invalid");
-		assert!(invalid_result.is_err());
+		// Test invalid prefix - should fail to parse with any account type
+		let invalid_key = "keeta_xx_invalid";
+		assert!(invalid_key.parse::<Account<KeyECDSASECP256K1>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyECDSASECP256R1>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyED25519>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyNETWORK>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyTOKEN>>().is_err());
+		assert!(invalid_key.parse::<Account<KeySTORAGE>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyMULTISIG>>().is_err());
 	}
 
 	#[test]
@@ -3857,11 +3795,11 @@ mod tests {
 		assert_eq!(secp256r1_account.signature_size(), 64);
 
 		// Test signing
-		let signature = secp256r1_account.sign(test_data).unwrap();
+		let signature = secp256r1_account.sign(test_data, None).unwrap();
 		assert_eq!(signature.len(), 64);
 
 		// Test verification with correct signature
-		let is_valid = secp256r1_account.verify(test_data, &signature).unwrap();
+		let is_valid = secp256r1_account.verify(test_data, &signature, None).unwrap();
 		assert!(is_valid);
 
 		// Test verification with corrupted signature
@@ -3869,16 +3807,16 @@ mod tests {
 		corrupted_signature[0] = corrupted_signature[0].wrapping_add(1);
 
 		// Test that corrupted signature fails verification
-		let is_invalid = secp256r1_account.verify(test_data, &corrupted_signature).unwrap();
+		let is_invalid = secp256r1_account.verify(test_data, &corrupted_signature, None).unwrap();
 		assert!(!is_invalid);
 
 		// Test verification with different data
 		let different_data = b"Different test message";
-		let is_invalid_data = secp256r1_account.verify(different_data, &signature).unwrap();
+		let is_invalid_data = secp256r1_account.verify(different_data, &signature, None).unwrap();
 		assert!(!is_invalid_data);
 
 		// Test signature determinism
-		let signature2 = secp256r1_account.sign(test_data).unwrap();
+		let signature2 = secp256r1_account.sign(test_data, None).unwrap();
 		assert_eq!(signature, signature2);
 	}
 
@@ -3925,19 +3863,13 @@ mod tests {
 		);
 
 		// Test that we can create account from this public key string
-		let account_from_pubkey =
-			Account::<KeyECDSASECP256R1>::from_secp256r1_public_key_string(&public_key_string).unwrap();
+		let account_from_pubkey = public_key_string.parse::<Account<KeyECDSASECP256R1>>().unwrap();
 		assert_eq!(account_from_pubkey.public_key_string(), public_key_string);
 		assert_eq!(account_from_pubkey.keypair_type(), KeyPairType::ECDSASECP256R1);
 		assert!(!account_from_pubkey.has_private_key());
 
-		// Test auto-detection
-		let auto_detected = from_public_key_string_auto(&public_key_string).unwrap();
-		if let AnyAccount::EcdsaSecp256r1(account) = auto_detected {
-			assert_eq!(account.public_key_string(), public_key_string);
-		} else {
-			assert!(matches!(auto_detected, AnyAccount::EcdsaSecp256r1(_)));
-		}
+		// Test FromStr parsing works correctly
+		assert_eq!(account_from_pubkey.public_key_string(), public_key_string);
 	}
 
 	#[test]
@@ -3987,8 +3919,8 @@ mod tests {
 
 		// Test signing with passphrase-derived account
 		let test_data = b"Passphrase test data";
-		let signature = secp256r1_account.sign(test_data).unwrap();
-		let is_valid = secp256r1_account.verify(test_data, &signature).unwrap();
+		let signature = secp256r1_account.sign(test_data, None).unwrap();
+		let is_valid = secp256r1_account.verify(test_data, &signature, None).unwrap();
 		assert!(is_valid);
 	}
 
@@ -4003,11 +3935,11 @@ mod tests {
 		let test_message = b"SECP256R1 cross-validation test";
 
 		// Signature should be 64 bytes (32 bytes r + 32 bytes s)
-		let signature = secp256r1_account.sign(test_message).unwrap();
+		let signature = secp256r1_account.sign(test_message, None).unwrap();
 		assert_eq!(signature.len(), 64);
 
 		// Should verify correctly
-		let is_valid = secp256r1_account.verify(test_message, &signature).unwrap();
+		let is_valid = secp256r1_account.verify(test_message, &signature, None).unwrap();
 		assert!(is_valid);
 
 		// Public key should have correct format
@@ -4015,7 +3947,7 @@ mod tests {
 		assert!(pubkey.starts_with("keeta_"));
 
 		// Should be able to recreate account from public key
-		let recreated = Account::<KeyECDSASECP256R1>::from_secp256r1_public_key_string(&pubkey).unwrap();
+		let recreated = pubkey.parse::<Account<KeyECDSASECP256R1>>().unwrap();
 		assert_eq!(recreated.public_key_string(), pubkey);
 		assert!(!recreated.has_private_key());
 	}
@@ -4023,17 +3955,15 @@ mod tests {
 	#[test]
 	fn test_secp256r1_error_cases() {
 		// Invalid public key string format
-		let invalid_pubkey_result = Account::<KeyECDSASECP256R1>::from_secp256r1_public_key_string("invalid_key");
+		let invalid_pubkey_result = "invalid_key".parse::<Account<KeyECDSASECP256R1>>();
 		assert!(invalid_pubkey_result.is_err());
 
 		// Wrong algorithm prefix (should fail for SECP256R1)
-		let wrong_prefix_result = Account::<KeyECDSASECP256R1>::from_secp256r1_public_key_string(
-			REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1, // This is SECP256K1, not R1
-		);
+		let wrong_prefix_result = REFERENCE_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1.parse::<Account<KeyECDSASECP256R1>>(); // This is SECP256K1, not R1
 		assert!(wrong_prefix_result.is_err());
 
 		// Empty public key string
-		let empty_result = Account::<KeyECDSASECP256R1>::from_secp256r1_public_key_string("");
+		let empty_result = "".parse::<Account<KeyECDSASECP256R1>>();
 		assert!(empty_result.is_err());
 
 		// Invalid hex seed
@@ -4086,5 +4016,60 @@ mod tests {
 			.unwrap();
 			assert_eq!(secp256r1_account.public_key_string(), test_index.encoded_public_key_ecdsa_secp256r1);
 		}
+	}
+
+	#[test]
+	fn test_from_str_implementations() {
+		let test_cases = vec![
+			// cspell:disable-next-line
+			("keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza", KeyPairType::ECDSASECP256K1),
+			// cspell:disable-next-line
+			("keeta_aeqtota6vv3k26ykv7u3nu6xqtxqll4je6uy6ike7gbrqy6di5ww5mfyf2niu", KeyPairType::ED25519),
+			// cspell:disable-next-line
+			("keeta_ayb2ph7legh7gipz5qu5yqxfeb2omwcdf4xvsxxhodtuxdxh4i7oj3uyxwmldii", KeyPairType::ECDSASECP256R1),
+			// cspell:disable-next-line
+			("keeta_ai3s2rwdvwu7rf6hju2jxp7a4rimpgawpspvqd4nv6c555l6s3b6uj6cr5klc", KeyPairType::NETWORK),
+			// cspell:disable-next-line
+			("keeta_anze4ny3srfer2k3shxalg34w4iq4wdgzjyhsfocq7cjzk43o5fpc2igkuifg", KeyPairType::TOKEN),
+			// cspell:disable-next-line
+			("keeta_atps2qkpm4bdi7w3xuyy3khddhysfh4d4o2nylemcnopm7czkkyh2pbfk7svy", KeyPairType::STORAGE),
+			// cspell:disable-next-line
+			("keeta_a4mfr2fs6qxn2eds5jy6thlhib7fnuoljmqkezjff6wodk7yu5wrt52ks62sa", KeyPairType::MULTISIG),
+		];
+
+		for (input, expected_type) in test_cases {
+			match expected_type {
+				KeyPairType::ECDSASECP256K1 => {
+					let account: Account<KeyECDSASECP256K1> = input.parse().unwrap();
+					assert_eq!(account.keypair_type(), expected_type);
+				}
+				KeyPairType::ED25519 => {
+					let account: Account<KeyED25519> = input.parse().unwrap();
+					assert_eq!(account.keypair_type(), expected_type);
+				}
+				KeyPairType::ECDSASECP256R1 => {
+					let account: Account<KeyECDSASECP256R1> = input.parse().unwrap();
+					assert_eq!(account.keypair_type(), expected_type);
+				}
+				KeyPairType::NETWORK => {
+					let account: Account<KeyNETWORK> = input.parse().unwrap();
+					assert_eq!(account.keypair_type(), expected_type);
+				}
+				KeyPairType::TOKEN => {
+					let account: Account<KeyTOKEN> = input.parse().unwrap();
+					assert_eq!(account.keypair_type(), expected_type);
+				}
+				KeyPairType::STORAGE => {
+					let account: Account<KeySTORAGE> = input.parse().unwrap();
+					assert_eq!(account.keypair_type(), expected_type);
+				}
+				KeyPairType::MULTISIG => {
+					let account: Account<KeyMULTISIG> = input.parse().unwrap();
+					assert_eq!(account.keypair_type(), expected_type);
+				}
+			}
+		}
+
+		assert!("invalid_key".parse::<Account<KeyECDSASECP256K1>>().is_err());
 	}
 }

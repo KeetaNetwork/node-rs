@@ -6,12 +6,13 @@ edition.workspace = true
 
 [lib]
 name = "accounts"
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
 # Local crates
 crypto = { path = "../crypto" }
+keetanet-error = { path = "../keetanet-error" }
 
 # External dependencies
 base32.workspace = true
@@ -19,7 +20,6 @@ bip39-dict.workspace = true
 hex.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
+secrecy.workspace = true
 zeroize = { version = "1.8.1", features = ["derive"] }
 rand_core = { version = "0.9.3", features = ["std", "os_rng"] }
-secrecy.workspace = true
-keetanet-error = { path = "../keetanet-error" }
