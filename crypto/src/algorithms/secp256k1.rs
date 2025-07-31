@@ -394,6 +394,78 @@ mod tests {
 		assert_eq!(Vec::<u8>::from(&pub1), Vec::<u8>::from(&pub2));
 	}
 
+	#[test]
+	fn test_key_derivation_utility_methods() {
+		// Test validate_key_material with valid key
+		let valid_key = [0x01; 32]; // Valid 32-byte key
+		assert!(Secp256k1Derivation::validate_key_material(&valid_key));
+
+		// Test validate_key_material with invalid key (wrong length)
+		let invalid_key = [0x01; 16]; // Invalid length
+		assert!(!Secp256k1Derivation::validate_key_material(&invalid_key));
+
+		// Test validate_key_material with invalid key (all zeros)
+		let zero_key = [0x00; 32]; // All zeros is invalid for secp256k1
+		assert!(!Secp256k1Derivation::validate_key_material(&zero_key));
+
+		// Test key_size
+		assert_eq!(Secp256k1Derivation::key_size(), 32);
+	}
+
+	#[test]
+	fn test_secret_box_from_private_key() {
+		let mut seed = [0u8; 36]; // Proper seed + index length
+		seed[..26].copy_from_slice(b"test seed for secret box c");
+
+		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+
+		// Test From<Secp256k1PrivateKey> for SecretBox<Vec<u8>>
+		let secret_box: SecretBox<Vec<u8>> = private_key.clone().into();
+		assert_eq!(secret_box.expose_secret().len(), 32);
+
+		// Test From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>>
+		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
+		assert_eq!(secret_box_ref.expose_secret().len(), 32);
+
+		// Both should be the same
+		assert_eq!(secret_box.expose_secret(), secret_box_ref.expose_secret());
+	}
+
+	#[test]
+	fn test_public_key_from_conversion() {
+		let mut seed = [0u8; 36]; // Proper seed + index length
+		seed[..26].copy_from_slice(b"test seed for public key c");
+
+		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+		let public_key = private_key.as_public_key();
+
+		// Test From<Secp256k1PublicKey> for Vec<u8>
+		let public_bytes: Vec<u8> = public_key.clone().into();
+		assert_eq!(public_bytes.len(), 33); // Compressed secp256k1 public key
+
+		// Test From<&Secp256k1PublicKey> for Vec<u8>
+		let public_bytes_ref: Vec<u8> = (&public_key).into();
+		assert_eq!(public_bytes_ref.len(), 33);
+
+		// Both should be the same
+		assert_eq!(public_bytes, public_bytes_ref);
+	}
+
+	#[test]
+	fn test_debug_formatting() {
+		let mut seed = [0u8; 36]; // Proper seed + index length
+		seed[..22].copy_from_slice(b"test seed for debug fo");
+
+		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+
+		// Test that Debug format hides the private key
+		let debug_string = format!("{private_key:?}");
+		assert!(debug_string.contains("Secp256k1PrivateKey"));
+		assert!(debug_string.contains("[REDACTED]"));
+		// Make sure no actual key bytes are shown
+		assert!(!debug_string.contains("SecretKey"));
+	}
+
 	#[cfg(feature = "signature")]
 	#[test]
 	fn test_crypto_signer_ext_trait() {
@@ -472,6 +544,63 @@ mod tests {
 		assert!(public_key.verify(message, &signature2).is_ok());
 	}
 
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_crypto_signer_with_options() {
+		let seed = b"test seed for signer with options";
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let message = b"test message for signing with options";
+
+		// Test with default options (pre-hash)
+		let default_options = SigningOptions::default();
+		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+
+		// Test with raw options (no pre-hash)
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+
+		// Test with cert options (pre-hash, but for_cert flag set)
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+		// Signatures should be different when using different message processing
+		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
+		// Default and cert should be the same since they both pre-hash
+		assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
+
+		// Verify that the regular signing (which pre-hashes) matches default options
+		let regular_signature = private_key.try_sign(message).unwrap();
+		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes()); // Different because regular signing doesn't pre-hash message
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_crypto_verifier_with_options() {
+		let seed = b"test seed for verifier with options";
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+		let message = b"test message for verification with options";
+
+		// Test verification with matching options
+		let default_options = SigningOptions::default();
+		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_default, default_options).is_ok());
+
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_raw, raw_options).is_ok());
+
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_cert, cert_options).is_ok());
+		// Test verification failure with mismatched options
+		assert!(public_key.verify_with_options(message, &signature_raw, default_options).is_err());
+		assert!(public_key.verify_with_options(message, &signature_default, raw_options).is_err());
+
+		// Test verification failure with wrong message
+		let wrong_message = b"wrong message";
+		assert!(public_key.verify_with_options(wrong_message, &signature_default, default_options).is_err());
+	}
+
 	#[cfg(feature = "encryption")]
 	#[test]
 	fn test_ecies_encryption_decryption() {
@@ -534,132 +663,52 @@ mod tests {
 		assert_eq!(decrypted.as_slice(), message);
 	}
 
+	#[cfg(feature = "encryption")]
 	#[test]
-	fn test_key_derivation_utility_methods() {
-		// Test validate_key_material with valid key
-		let valid_key = [0x01; 32]; // Valid 32-byte key
-		assert!(Secp256k1Derivation::validate_key_material(&valid_key));
+	fn test_secp256k1_key_exchange_trait() {
+		let seed1 = b"test seed for secp256k1 key exchange 1";
+		let seed2 = b"test seed for secp256k1 key exchange 2";
 
-		// Test validate_key_material with invalid key (wrong length)
-		let invalid_key = [0x01; 16]; // Invalid length
-		assert!(!Secp256k1Derivation::validate_key_material(&invalid_key));
+		let private_key1 = Secp256k1Derivation::derive_from_seed(seed1).unwrap();
+		let private_key2 = Secp256k1Derivation::derive_from_seed(seed2).unwrap();
 
-		// Test validate_key_material with invalid key (all zeros)
-		let zero_key = [0x00; 32]; // All zeros is invalid for secp256k1
-		assert!(!Secp256k1Derivation::validate_key_material(&zero_key));
+		let public_key1 = private_key1.as_public_key();
+		let public_key2 = private_key2.as_public_key();
 
-		// Test key_size
-		assert_eq!(Secp256k1Derivation::key_size(), 32);
-	}
+		// Test ECDH key exchange with public key objects
+		let shared_secret1 = private_key1.ecdh(&public_key2).unwrap();
+		let shared_secret2 = private_key2.ecdh(&public_key1).unwrap();
 
-	#[test]
-	fn test_secret_box_from_private_key() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..26].copy_from_slice(b"test seed for secret box c");
+		// Both parties should compute the same shared secret
+		assert_eq!(shared_secret1, shared_secret2);
+		assert!(!shared_secret1.is_empty());
 
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+		// Test key_exchange with public key bytes
+		let public_key2_bytes: Vec<u8> = (&public_key2).into();
+		let shared_secret1_bytes = private_key1.key_exchange(&public_key2_bytes).unwrap();
+		assert_eq!(shared_secret1, shared_secret1_bytes);
 
-		// Test From<Secp256k1PrivateKey> for SecretBox<Vec<u8>>
-		let secret_box: SecretBox<Vec<u8>> = private_key.clone().into();
-		assert_eq!(secret_box.expose_secret().len(), 32);
+		let public_key1_bytes: Vec<u8> = (&public_key1).into();
+		let shared_secret2_bytes = private_key2.key_exchange(&public_key1_bytes).unwrap();
+		assert_eq!(shared_secret2, shared_secret2_bytes);
 
-		// Test From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>>
-		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
-		assert_eq!(secret_box_ref.expose_secret().len(), 32);
+		// Test that different key pairs produce different shared secrets
+		let seed3 = b"test seed for secp256k1 key exchange 3";
+		let private_key3 = Secp256k1Derivation::derive_from_seed(seed3).unwrap();
+		let public_key3 = private_key3.as_public_key();
 
-		// Both should be the same
-		assert_eq!(secret_box.expose_secret(), secret_box_ref.expose_secret());
-	}
+		let shared_secret3 = private_key1.ecdh(&public_key3).unwrap();
+		assert_ne!(shared_secret1, shared_secret3);
 
-	#[test]
-	fn test_public_key_from_conversion() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..26].copy_from_slice(b"test seed for public key c");
+		// Test error handling with invalid public key bytes
+		let invalid_public_key = vec![0u8; 32]; // Wrong length
+		let result = private_key1.key_exchange(&invalid_public_key);
+		assert!(result.is_err());
 
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
-		let public_key = private_key.as_public_key();
-
-		// Test From<Secp256k1PublicKey> for Vec<u8>
-		let public_bytes: Vec<u8> = public_key.clone().into();
-		assert_eq!(public_bytes.len(), 33); // Compressed secp256k1 public key
-
-		// Test From<&Secp256k1PublicKey> for Vec<u8>
-		let public_bytes_ref: Vec<u8> = (&public_key).into();
-		assert_eq!(public_bytes_ref.len(), 33);
-
-		// Both should be the same
-		assert_eq!(public_bytes, public_bytes_ref);
-	}
-
-	#[test]
-	fn test_debug_formatting() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..22].copy_from_slice(b"test seed for debug fo");
-
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
-
-		// Test that Debug format hides the private key
-		let debug_string = format!("{private_key:?}");
-		assert!(debug_string.contains("Secp256k1PrivateKey"));
-		assert!(debug_string.contains("[REDACTED]"));
-		// Make sure no actual key bytes are shown
-		assert!(!debug_string.contains("SecretKey"));
-	}
-
-	#[cfg(feature = "signature")]
-	#[test]
-	fn test_crypto_signer_with_options() {
-		let seed = b"test seed for signer with options";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
-		let message = b"test message for signing with options";
-
-		// Test with default options (pre-hash)
-		let default_options = SigningOptions::default();
-		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
-
-		// Test with raw options (no pre-hash)
-		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
-
-		// Test with cert options (pre-hash, but for_cert flag set)
-		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
-		// Signatures should be different when using different message processing
-		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
-		// Default and cert should be the same since they both pre-hash
-		assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
-
-		// Verify that the regular signing (which pre-hashes) matches default options
-		let regular_signature = private_key.try_sign(message).unwrap();
-		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes()); // Different because regular signing doesn't pre-hash message
-	}
-
-	#[cfg(feature = "signature")]
-	#[test]
-	fn test_crypto_verifier_with_options() {
-		let seed = b"test seed for verifier with options";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.as_public_key();
-		let message = b"test message for verification with options";
-
-		// Test verification with matching options
-		let default_options = SigningOptions::default();
-		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_default, default_options).is_ok());
-
-		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_raw, raw_options).is_ok());
-
-		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_cert, cert_options).is_ok());
-		// Test verification failure with mismatched options
-		assert!(public_key.verify_with_options(message, &signature_raw, default_options).is_err());
-		assert!(public_key.verify_with_options(message, &signature_default, raw_options).is_err());
-
-		// Test verification failure with wrong message
-		let wrong_message = b"wrong message";
-		assert!(public_key.verify_with_options(wrong_message, &signature_default, default_options).is_err());
+		// Test derive_aead_key
+		let aead_result = private_key1.derive_aead_key::<aes_gcm::Aes256Gcm>(&shared_secret1);
+		assert!(aead_result.is_err());
+		// Test that it specifically returns EncryptionNotSupported
+		assert!(matches!(aead_result, Err(CryptoError::EncryptionNotSupported)));
 	}
 }

@@ -122,6 +122,7 @@ impl SymmetricEncryption for Aes128CtrCipher {
 				if iv_slice.len() != 16 {
 					return Err(CryptoError::InvalidIvSize);
 				}
+
 				let mut iv_array = [0u8; 16];
 				iv_array.copy_from_slice(iv_slice);
 				iv_array
@@ -178,7 +179,9 @@ mod tests {
 
 	#[test]
 	fn test_aes_128_ctr_basic() {
-		let cipher = Aes128CtrCipher::new();
+		// This fixes coverage issues and ensures the default is covered
+		#[allow(clippy::default_constructed_unit_structs)]
+		let cipher = Aes128CtrCipher::default();
 		let key = [0x42u8; 16]; // 128-bit key
 		let plaintext = b"Hello, AES-CTR world!";
 
@@ -340,5 +343,136 @@ mod tests {
 		let decrypted2 = cipher.decrypt_with_iv(&key, &iv, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext1);
 		assert_eq!(decrypted2, plaintext2);
+	}
+
+	#[test]
+	fn test_aes_128_ctr_default_implementation() {
+		let cipher1 = Aes128CtrCipher::new();
+		let cipher2 = Aes128CtrCipher;
+
+		// Both should work the same way
+		let key = [0x42u8; 16];
+		let plaintext = b"test default implementation";
+
+		let ciphertext1 = cipher1.encrypt(&key, None, plaintext).unwrap();
+		let ciphertext2 = cipher2.encrypt(&key, None, plaintext).unwrap();
+
+		// Both should decrypt correctly (though ciphertext will be different due to random IVs)
+		let decrypted1 = cipher1.decrypt(&key, &ciphertext1).unwrap();
+		let decrypted2 = cipher2.decrypt(&key, &ciphertext2).unwrap();
+		assert_eq!(decrypted1, plaintext);
+		assert_eq!(decrypted2, plaintext);
+	}
+
+	#[test]
+	fn test_aes_128_ctr_invalid_iv_size_in_encrypt() {
+		let cipher = Aes128CtrCipher::new();
+		let key = [0x42u8; 16];
+		let plaintext = b"test with invalid IV size";
+
+		// Test with too short IV
+		let short_iv = [0x12u8; 8]; // 8 bytes instead of 16
+		let result = cipher.encrypt(&key, Some(&short_iv), plaintext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidIvSize));
+
+		// Test with too long IV
+		let long_iv = [0x12u8; 32]; // 32 bytes instead of 16
+		let result = cipher.encrypt(&key, Some(&long_iv), plaintext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidIvSize));
+	}
+
+	#[test]
+	fn test_aes_128_ctr_invalid_iv_size_in_encrypt_with_iv() {
+		let cipher = Aes128CtrCipher::new();
+		let key = [0x42u8; 16];
+		let plaintext = b"test with invalid IV size";
+
+		// Test with wrong IV size
+		let wrong_iv = [0x12u8; 8]; // 8 bytes instead of 16
+		let result = cipher.encrypt_with_iv(&key, &wrong_iv, plaintext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
+	}
+
+	#[test]
+	fn test_aes_128_ctr_invalid_iv_size_in_decrypt_with_iv() {
+		let cipher = Aes128CtrCipher::new();
+		let key = [0x42u8; 16];
+		let ciphertext = b"test ciphertext";
+
+		// Test with wrong IV size
+		let wrong_iv = [0x12u8; 8]; // 8 bytes instead of 16
+		let result = cipher.decrypt_with_iv(&key, &wrong_iv, ciphertext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
+	}
+
+	#[test]
+	fn test_aes_128_ctr_invalid_key_size_in_encrypt_with_iv() {
+		let cipher = Aes128CtrCipher::new();
+		let iv = [0x12u8; 16];
+		let plaintext = b"test with invalid key size";
+
+		// Test with wrong key size
+		let wrong_key = [0x42u8; 8]; // 8 bytes instead of 16
+		let result = cipher.encrypt_with_iv(&wrong_key, &iv, plaintext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
+	}
+
+	#[test]
+	fn test_aes_128_ctr_invalid_key_size_in_decrypt_with_iv() {
+		let cipher = Aes128CtrCipher::new();
+		let iv = [0x12u8; 16];
+		let ciphertext = b"test ciphertext";
+
+		// Test with wrong key size
+		let wrong_key = [0x42u8; 8]; // 8 bytes instead of 16
+		let result = cipher.decrypt_with_iv(&wrong_key, &iv, ciphertext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
+	}
+
+	#[test]
+	fn test_aes_128_ctr_invalid_key_size_in_decrypt() {
+		let cipher = Aes128CtrCipher::new();
+		let ciphertext = [0u8; 32]; // Valid length with IV
+
+		// Test with wrong key size
+		let wrong_key = [0x42u8; 8]; // 8 bytes instead of 16
+		let result = cipher.decrypt(&wrong_key, &ciphertext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
+	}
+
+	#[test]
+	fn test_aes_128_ctr_exactly_iv_size_ciphertext() {
+		let cipher = Aes128CtrCipher::new();
+		let key = [0x42u8; 16];
+		let ciphertext = [0u8; 16]; // Exactly IV size, should work (empty plaintext)
+
+		let result = cipher.decrypt(&key, &ciphertext);
+		assert!(result.is_ok());
+		let decrypted = result.unwrap();
+		assert_eq!(decrypted.len(), 0); // Should be empty plaintext
+	}
+
+	#[test]
+	fn test_aes_128_ctr_static_methods() {
+		assert_eq!(Aes128CtrCipher::key_size(), 16);
+		assert_eq!(Aes128CtrCipher::iv_size(), 16);
+	}
+
+	#[test]
+	fn test_aes_128_ctr_too_short_ciphertext() {
+		let cipher = Aes128CtrCipher::new();
+		let key = [0x42u8; 16];
+		let ciphertext = [0u8; 15]; // Less than IV size, should fail
+
+		let result = cipher.decrypt(&key, &ciphertext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
 	}
 }

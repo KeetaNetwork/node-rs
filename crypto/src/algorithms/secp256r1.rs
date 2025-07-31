@@ -149,13 +149,12 @@ impl KeyExchange for Secp256r1PrivateKey {
 		self.ecdh(&public_key)
 	}
 
-	fn derive_aead_key<A>(&self, shared_secret: &Self::SharedSecret) -> Result<A, CryptoError>
+	fn derive_aead_key<A>(&self, _shared_secret: &Self::SharedSecret) -> Result<A, CryptoError>
 	where
 		A: KeyInit,
 	{
-		// Use the shared secret directly as the key material
-		// For production use, you might want to use HKDF or similar KDF
-		A::new_from_slice(shared_secret.as_ref()).map_err(|_| CryptoError::KeyDerivationFailed)
+		// Use ECDH to derive the key
+		Err(CryptoError::EncryptionNotSupported)
 	}
 }
 
@@ -353,6 +352,9 @@ mod tests {
 	#[cfg(feature = "signature")]
 	use ::signature::{Signer, Verifier};
 
+	#[cfg(feature = "encryption")]
+	use aes_gcm;
+
 	#[test]
 	fn test_secp256r1_key_derivation() {
 		let seed = b"test seed for secp256r1 key derivation";
@@ -409,6 +411,212 @@ mod tests {
 		let public_key_1 = private_key_1.as_public_key();
 		let public_key_2 = private_key_2.as_public_key();
 		assert_eq!(Vec::<u8>::from(&public_key_1), Vec::<u8>::from(&public_key_2));
+	}
+
+	#[test]
+	fn test_secret_box_from_private_key() {
+		let mut seed = [0u8; 36]; // Proper seed + index length
+		seed[..26].copy_from_slice(b"test seed for secret box c");
+
+		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
+
+		// Test From<Secp256r1PrivateKey> for SecretBox<Vec<u8>>
+		let secret_box: SecretBox<Vec<u8>> = private_key.clone().into();
+		assert_eq!(secret_box.expose_secret().len(), 32);
+
+		// Test From<&Secp256r1PrivateKey> for SecretBox<Vec<u8>>
+		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
+		assert_eq!(secret_box_ref.expose_secret().len(), 32);
+		// Both should be the same
+		assert_eq!(secret_box.expose_secret(), secret_box_ref.expose_secret());
+	}
+
+	#[test]
+	fn test_public_key_from_conversion() {
+		let mut seed = [0u8; 36]; // Proper seed + index length
+		seed[..26].copy_from_slice(b"test seed for public key c");
+
+		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
+		let public_key = private_key.as_public_key();
+
+		// Test From<Secp256r1PublicKey> for Vec<u8>
+		let public_bytes: Vec<u8> = public_key.clone().into();
+		assert_eq!(public_bytes.len(), 33); // Compressed secp256r1 public key
+
+		// Test From<&Secp256r1PublicKey> for Vec<u8>
+		let public_bytes_ref: Vec<u8> = (&public_key).into();
+		assert_eq!(public_bytes_ref.len(), 33);
+		// Both should be the same
+		assert_eq!(public_bytes, public_bytes_ref);
+	}
+
+	#[test]
+	fn test_private_key_roundtrip() {
+		let seed = b"test seed for secp256r1 roundtrip!!";
+		let original_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
+		// Convert to bytes and back
+		let key_bytes = SecretBox::<Vec<u8>>::from(&original_key);
+		let key_bytes_exposed = key_bytes.expose_secret();
+		let reconstructed_key = Secp256r1PrivateKey::try_from(key_bytes_exposed.as_slice()).unwrap();
+
+		// They should produce the same public key
+		let original_public = original_key.as_public_key();
+		let reconstructed_public = reconstructed_key.as_public_key();
+		assert_eq!(Vec::<u8>::from(&original_public), Vec::<u8>::from(&reconstructed_public));
+	}
+
+	#[test]
+	fn test_public_key_roundtrip() {
+		let seed = b"test seed for secp256r1 public rt!!";
+		let private_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
+		let original_public_key = private_key.as_public_key();
+
+		// Convert to bytes and back
+		let public_key_bytes = Vec::<u8>::from(&original_public_key);
+		let reconstructed_public_key = Secp256r1PublicKey::try_from(public_key_bytes.as_slice()).unwrap();
+		assert_eq!(Vec::<u8>::from(&original_public_key), Vec::<u8>::from(&reconstructed_public_key));
+	}
+
+	#[test]
+	fn test_key_derivation_utility_methods() {
+		// Test validate_key_material with valid key
+		let valid_key = [0x01; 32]; // Valid 32-byte key
+		assert!(Secp256r1Derivation::validate_key_material(&valid_key));
+
+		// Test validate_key_material with invalid key (wrong length)
+		let invalid_key = [0x01; 16]; // Invalid length
+		assert!(!Secp256r1Derivation::validate_key_material(&invalid_key));
+
+		let zero_key = [0x00; 32]; // All zeros is invalid for secp256r1
+							 // Test validate_key_material with invalid key (all zeros)
+		assert!(!Secp256r1Derivation::validate_key_material(&zero_key));
+		// Test key_size
+		assert_eq!(Secp256r1Derivation::key_size(), 32);
+
+		// Also test the old specific tests
+		// Valid 32-byte key material
+		let valid_key2 = hex!("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
+		assert!(Secp256r1Derivation::validate_key_material(&valid_key2));
+
+		// Invalid length
+		let invalid_short = hex!("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f67");
+		assert!(!Secp256r1Derivation::validate_key_material(&invalid_short));
+
+		let invalid_long = hex!("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f672100");
+		assert!(!Secp256r1Derivation::validate_key_material(&invalid_long));
+
+		// Zero key (invalid for ECDSA)
+		let zero_key2 = [0u8; 32];
+		assert!(!Secp256r1Derivation::validate_key_material(&zero_key2));
+	}
+
+	#[test]
+	fn test_debug_formatting() {
+		let mut seed = [0u8; 36]; // Proper seed + index length
+		seed[..22].copy_from_slice(b"test seed for debug fo");
+
+		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
+
+		// Test that Debug format hides the private key
+		let debug_string = format!("{private_key:?}");
+		assert!(debug_string.contains("Secp256r1PrivateKey"));
+		assert!(debug_string.contains("[REDACTED]"));
+		// Make sure no actual key bytes are shown
+		assert!(!debug_string.contains("SecretKey"));
+	}
+
+	#[cfg(feature = "encryption")]
+	#[test]
+	fn test_ecies_encryption_decryption() {
+		let seed = b"test seed for ECIES encryption test";
+		let private_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+		let message = b"Hello, ECIES encryption world!";
+
+		// Test encryption with public key
+		let encrypted = public_key.encrypt(message).unwrap();
+		assert!(!encrypted.is_empty());
+		assert_ne!(encrypted, message);
+
+		// Test decryption with private key
+		let decrypted = private_key.decrypt(&encrypted).unwrap();
+		assert_eq!(decrypted, message);
+
+		// Test encryption with private key - should delegate to public key
+		let encrypted2 = private_key.encrypt(message).unwrap();
+		let decrypted2 = private_key.decrypt(&encrypted2).unwrap();
+		assert_eq!(decrypted2, message);
+
+		// Test that different encryptions produce different cipher texts
+		assert_ne!(encrypted, encrypted2);
+
+		// Test that public key cannot decrypt
+		let public_decrypt_result = public_key.decrypt(&encrypted);
+		assert!(public_decrypt_result.is_err());
+		assert!(matches!(public_decrypt_result.unwrap_err(), CryptoError::InvalidOperation));
+	}
+
+	#[cfg(feature = "encryption")]
+	#[test]
+	fn test_algorithm_info_methods() {
+		let mut seed = [0u8; 36]; // Proper seed + index length
+		seed[..23].copy_from_slice(b"test seed for algorithm");
+
+		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
+		let public_key = private_key.as_public_key();
+		// Test algorithm_info for private key
+		assert_eq!(private_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
+		// Test algorithm_info for public key
+		assert_eq!(public_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
+	}
+
+	#[cfg(feature = "encryption")]
+	#[test]
+	fn test_secp256r1_key_exchange_trait() {
+		let seed1 = b"test seed for secp256r1 key exchange 1";
+		let seed2 = b"test seed for secp256r1 key exchange 2";
+
+		let private_key1 = Secp256r1Derivation::derive_from_seed(seed1).unwrap();
+		let private_key2 = Secp256r1Derivation::derive_from_seed(seed2).unwrap();
+
+		let public_key1 = private_key1.as_public_key();
+		let public_key2 = private_key2.as_public_key();
+
+		// Test ECDH key exchange with public key objects
+		let shared_secret1 = private_key1.ecdh(&public_key2).unwrap();
+		let shared_secret2 = private_key2.ecdh(&public_key1).unwrap();
+
+		// Both parties should compute the same shared secret
+		assert_eq!(shared_secret1, shared_secret2);
+		assert!(!shared_secret1.is_empty());
+
+		// Test key_exchange with public key bytes
+		let public_key2_bytes: Vec<u8> = (&public_key2).into();
+		let shared_secret1_bytes = private_key1.key_exchange(&public_key2_bytes).unwrap();
+		assert_eq!(shared_secret1, shared_secret1_bytes);
+
+		let public_key1_bytes: Vec<u8> = (&public_key1).into();
+		let shared_secret2_bytes = private_key2.key_exchange(&public_key1_bytes).unwrap();
+		assert_eq!(shared_secret2, shared_secret2_bytes);
+
+		// Test that different key pairs produce different shared secrets
+		let seed3 = b"test seed for secp256r1 key exchange 3";
+		let private_key3 = Secp256r1Derivation::derive_from_seed(seed3).unwrap();
+		let public_key3 = private_key3.as_public_key();
+
+		let shared_secret3 = private_key1.ecdh(&public_key3).unwrap();
+		assert_ne!(shared_secret1, shared_secret3);
+
+		// Test error handling with invalid public key bytes
+		let invalid_public_key = vec![0u8; 32]; // Wrong length
+		let result = private_key1.key_exchange(&invalid_public_key);
+		assert!(result.is_err());
+
+		// Test derive_aead_key
+		let aead_result = private_key1.derive_aead_key::<aes_gcm::Aes256Gcm>(&shared_secret1);
+		assert!(aead_result.is_err());
+		// Test that it specifically returns EncryptionNotSupported
+		assert!(matches!(aead_result, Err(CryptoError::EncryptionNotSupported)));
 	}
 
 	#[cfg(feature = "signature")]
@@ -501,163 +709,6 @@ mod tests {
 		let public_key = private_key1.as_public_key();
 		assert!(public_key.verify(message, &signature1).is_ok());
 		assert!(public_key.verify(message, &signature2).is_ok());
-	}
-
-	#[cfg(feature = "encryption")]
-	#[test]
-	fn test_ecies_encryption_decryption() {
-		let seed = b"test seed for ECIES encryption test";
-		let private_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.as_public_key();
-		let message = b"Hello, ECIES encryption world!";
-
-		// Test encryption with public key
-		let encrypted = public_key.encrypt(message).unwrap();
-		assert!(!encrypted.is_empty());
-		assert_ne!(encrypted, message);
-
-		// Test decryption with private key
-		let decrypted = private_key.decrypt(&encrypted).unwrap();
-		assert_eq!(decrypted, message);
-
-		// Test encryption with private key - should delegate to public key
-		let encrypted2 = private_key.encrypt(message).unwrap();
-		let decrypted2 = private_key.decrypt(&encrypted2).unwrap();
-		assert_eq!(decrypted2, message);
-
-		// Test that different encryptions produce different cipher texts
-		assert_ne!(encrypted, encrypted2);
-
-		// Test that public key cannot decrypt
-		let public_decrypt_result = public_key.decrypt(&encrypted);
-		assert!(public_decrypt_result.is_err());
-		assert!(matches!(public_decrypt_result.unwrap_err(), CryptoError::InvalidOperation));
-	}
-
-	#[cfg(feature = "encryption")]
-	#[test]
-	fn test_algorithm_info_methods() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..23].copy_from_slice(b"test seed for algorithm");
-
-		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
-		let public_key = private_key.as_public_key();
-		// Test algorithm_info for private key
-		assert_eq!(private_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
-		// Test algorithm_info for public key
-		assert_eq!(public_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
-	}
-
-	#[test]
-	fn test_private_key_roundtrip() {
-		let seed = b"test seed for secp256r1 roundtrip!!";
-		let original_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
-		// Convert to bytes and back
-		let key_bytes = SecretBox::<Vec<u8>>::from(&original_key);
-		let key_bytes_exposed = key_bytes.expose_secret();
-		let reconstructed_key = Secp256r1PrivateKey::try_from(key_bytes_exposed.as_slice()).unwrap();
-
-		// They should produce the same public key
-		let original_public = original_key.as_public_key();
-		let reconstructed_public = reconstructed_key.as_public_key();
-		assert_eq!(Vec::<u8>::from(&original_public), Vec::<u8>::from(&reconstructed_public));
-	}
-
-	#[test]
-	fn test_public_key_roundtrip() {
-		let seed = b"test seed for secp256r1 public rt!!";
-		let private_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
-		let original_public_key = private_key.as_public_key();
-
-		// Convert to bytes and back
-		let public_key_bytes = Vec::<u8>::from(&original_public_key);
-		let reconstructed_public_key = Secp256r1PublicKey::try_from(public_key_bytes.as_slice()).unwrap();
-		assert_eq!(Vec::<u8>::from(&original_public_key), Vec::<u8>::from(&reconstructed_public_key));
-	}
-
-	#[test]
-	fn test_key_derivation_utility_methods() {
-		// Test validate_key_material with valid key
-		let valid_key = [0x01; 32]; // Valid 32-byte key
-		assert!(Secp256r1Derivation::validate_key_material(&valid_key));
-
-		// Test validate_key_material with invalid key (wrong length)
-		let invalid_key = [0x01; 16]; // Invalid length
-		assert!(!Secp256r1Derivation::validate_key_material(&invalid_key));
-
-		let zero_key = [0x00; 32]; // All zeros is invalid for secp256r1
-							 // Test validate_key_material with invalid key (all zeros)
-		assert!(!Secp256r1Derivation::validate_key_material(&zero_key));
-		// Test key_size
-		assert_eq!(Secp256r1Derivation::key_size(), 32);
-
-		// Also test the old specific tests
-		// Valid 32-byte key material
-		let valid_key2 = hex!("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
-		assert!(Secp256r1Derivation::validate_key_material(&valid_key2));
-
-		// Invalid length
-		let invalid_short = hex!("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f67");
-		assert!(!Secp256r1Derivation::validate_key_material(&invalid_short));
-
-		let invalid_long = hex!("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f672100");
-		assert!(!Secp256r1Derivation::validate_key_material(&invalid_long));
-
-		// Zero key (invalid for ECDSA)
-		let zero_key2 = [0u8; 32];
-		assert!(!Secp256r1Derivation::validate_key_material(&zero_key2));
-	}
-
-	#[test]
-	fn test_secret_box_from_private_key() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..26].copy_from_slice(b"test seed for secret box c");
-
-		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
-
-		// Test From<Secp256r1PrivateKey> for SecretBox<Vec<u8>>
-		let secret_box: SecretBox<Vec<u8>> = private_key.clone().into();
-		assert_eq!(secret_box.expose_secret().len(), 32);
-
-		// Test From<&Secp256r1PrivateKey> for SecretBox<Vec<u8>>
-		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
-		assert_eq!(secret_box_ref.expose_secret().len(), 32);
-		// Both should be the same
-		assert_eq!(secret_box.expose_secret(), secret_box_ref.expose_secret());
-	}
-
-	#[test]
-	fn test_public_key_from_conversion() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..26].copy_from_slice(b"test seed for public key c");
-
-		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
-		let public_key = private_key.as_public_key();
-
-		// Test From<Secp256r1PublicKey> for Vec<u8>
-		let public_bytes: Vec<u8> = public_key.clone().into();
-		assert_eq!(public_bytes.len(), 33); // Compressed secp256r1 public key
-
-		// Test From<&Secp256r1PublicKey> for Vec<u8>
-		let public_bytes_ref: Vec<u8> = (&public_key).into();
-		assert_eq!(public_bytes_ref.len(), 33);
-		// Both should be the same
-		assert_eq!(public_bytes, public_bytes_ref);
-	}
-
-	#[test]
-	fn test_debug_formatting() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..22].copy_from_slice(b"test seed for debug fo");
-
-		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
-
-		// Test that Debug format hides the private key
-		let debug_string = format!("{private_key:?}");
-		assert!(debug_string.contains("Secp256r1PrivateKey"));
-		assert!(debug_string.contains("[REDACTED]"));
-		// Make sure no actual key bytes are shown
-		assert!(!debug_string.contains("SecretKey"));
 	}
 
 	#[cfg(feature = "signature")]

@@ -16,6 +16,15 @@ use crate::hash::HashAlgorithm;
 use crate::operations::encryption::{KeyGeneration, SymmetricEncryption};
 use crate::PrivateKey;
 
+/// Algorithm identifier for ECIES with secp256k1
+pub const ECIES_SECP256K1_ALGORITHM: &str = "ECIES-secp256k1-AES128CTR";
+
+/// Algorithm identifier for ECIES with X25519
+pub const ECIES_X25519_ALGORITHM: &str = "ECIES-X25519-AES-CBC";
+
+/// Algorithm identifier for ECIES with secp256r1
+pub const ECIES_SECP256R1_ALGORITHM: &str = "ECIES-secp256r1-AES256CBC";
+
 /// ECIES (Elliptic Curve Integrated Encryption Scheme) trait.
 ///
 /// This trait provides a standard interface for ECIES implementations
@@ -196,7 +205,7 @@ impl Ecies for EciesSecp256k1 {
 	}
 
 	fn algorithm_info() -> &'static str {
-		"ECIES-secp256k1-AES128CTR"
+		ECIES_SECP256K1_ALGORITHM
 	}
 }
 
@@ -322,7 +331,7 @@ impl Ecies for EciesX25519 {
 	}
 
 	fn algorithm_info() -> &'static str {
-		"ECIES-X25519-AES-CBC"
+		ECIES_X25519_ALGORITHM
 	}
 }
 
@@ -452,7 +461,7 @@ impl Ecies for EciesSecp256r1 {
 	}
 
 	fn algorithm_info() -> &'static str {
-		"ECIES-secp256r1-AES256CBC"
+		ECIES_SECP256R1_ALGORITHM
 	}
 }
 
@@ -506,7 +515,7 @@ mod tests {
 	use crate::algorithms::ed25519::{ed25519_to_x25519_private, Ed25519Derivation};
 	use crate::algorithms::secp256k1::Secp256k1Derivation;
 	use crate::algorithms::secp256r1::Secp256r1Derivation;
-	use crate::algorithms::PrivateKey;
+	use crate::algorithms::{Algorithm, PrivateKey};
 	use crate::error::CryptoError;
 	use crate::operations::encryption::AsymmetricEncryption;
 	use crate::KeyDerivation;
@@ -845,37 +854,67 @@ mod tests {
 	}
 
 	#[test]
+	fn test_ecies_algorithm_info() {
+		// Test algorithm_info methods for all implementations
+		assert_eq!(EciesSecp256k1::algorithm_info(), ECIES_SECP256K1_ALGORITHM);
+		assert_eq!(EciesX25519::algorithm_info(), ECIES_X25519_ALGORITHM);
+		assert_eq!(EciesSecp256r1::algorithm_info(), ECIES_SECP256R1_ALGORITHM);
+	}
+
+	#[test]
+	fn test_ecies_secp256k1_short_cipher_with_iv() {
+		let private_key = Secp256k1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
+
+		// Create a malformed ciphertext with valid ephemeral key and HMAC but
+		// short cipher_with_iv. This should hit the error condition.
+		let mut malformed_ciphertext = vec![0u8; 113];
+		// Set a valid ephemeral public key (uncompressed secp256k1 point)
+		malformed_ciphertext[0] = 0x04; // Uncompressed point marker
+								  // Fill with some valid-looking point data
+		for (i, item) in malformed_ciphertext.iter_mut().enumerate().take(65).skip(1) {
+			*item = (i % 256) as u8;
+		}
+
+		// Put some data in the cipher_with_iv section but make it too short
+		malformed_ciphertext = vec![0u8; 112]; // Make it exactly at the boundary
+		malformed_ciphertext[0] = 0x04;
+		for (i, item) in malformed_ciphertext.iter_mut().enumerate().take(65).skip(1) {
+			*item = (i % 256) as u8;
+		}
+
+		let result = EciesSecp256k1::decrypt(&private_key, &malformed_ciphertext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
+	}
+
+	#[test]
 	fn test_ecies_typescript_compatibility() {
 		// Test cases for different curve implementations
 		struct TypeScriptTestCase {
-			name: &'static str,
 			seed_hex: &'static str,
 			encrypted_data_base64: &'static str,
 			expected_plaintext: &'static str,
-			curve_type: &'static str,
+			algorithm: Algorithm,
 		}
 
 		let test_cases = [
 			TypeScriptTestCase {
-				name: "SECP256K1",
 				seed_hex: "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D",
 				encrypted_data_base64: "BI8ePLqAhgOQvUXsTqW8ifQ77eRhg7Z6FpxX5wd6xJfE+ErjHyuXFKNjSDMBgTAG6iKylZITJajh6Zdgcbpdvb3+pBN17zCaaOzAgpId4hcOG3P/ueHMRWolYQPJ5jGqM1xmBO64sa3nodxDwEtAI5dA3CG4mg==",
 				expected_plaintext: "Hello",
-				curve_type: "secp256k1",
+				algorithm: Algorithm::Secp256k1,
 			},
 			TypeScriptTestCase {
-				name: "ED25519/X25519",
 				seed_hex: "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D",
 				encrypted_data_base64: "fZazrME6jGTTj2Dp1o9imAuri5s3MxeE0ZnK8HP2dK4TgnAJ3825UWKFaQnW0E0tETD0iyo8B1Zex4JUB7Ab83RnJrWBxGfoho6YqaKdHTWYfAPPJ1G2EBkDo1qoiGpO8t1Tb3o9JiOQf6jAMp2VKg==",
 				expected_plaintext: "Ed25519 Encryption",
-				curve_type: "ed25519",
+				algorithm: Algorithm::Ed25519,
 			},
 			TypeScriptTestCase {
-				name: "SECP256R1",
 				seed_hex: "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D",
 				encrypted_data_base64: "BBF2ML5v5BMyOu/BMChxa984vGgED2rjaM5I0QP01MmjdMWnHx/00AfpxSCaVkFx3qYbl4cpxBM3WcHo9PIZG5P1CMv36lv8wmMMus+xQ/KrUozna8hLRlJN9ez3i+vzOZeMKYm9EfkpMZ2eQv1y1clevkvKicA8V+Zt3CVog0MhT9HYuTwWWN9yoxfshAlqGpODSFiHabdLG3E4er2d9q8=",
 				expected_plaintext: "Hello",
-				curve_type: "secp256r1",
+				algorithm: Algorithm::Secp256r1,
 			},
 		];
 
@@ -883,8 +922,8 @@ mod tests {
 			let seed = hex::decode(test_case.seed_hex).unwrap();
 			let encrypted_data = BASE64.decode(test_case.encrypted_data_base64).unwrap();
 
-			match test_case.curve_type {
-				"secp256k1" => {
+			match test_case.algorithm {
+				Algorithm::Secp256k1 => {
 					let index = 0u32;
 					// Combine seed and index like the accounts module does
 					let mut indexed_seed = [0u8; 36];
@@ -896,25 +935,15 @@ mod tests {
 
 					// Test decryption of TypeScript data
 					let decrypted = EciesSecp256k1::decrypt(&private_key, &encrypted_data).unwrap();
-					assert_eq!(
-						decrypted,
-						test_case.expected_plaintext.as_bytes(),
-						"Failed to decrypt {} TypeScript data",
-						test_case.name
-					);
+					assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
 
 					// Test round-trip encryption/decryption
 					let rust_encrypted =
 						EciesSecp256k1::encrypt(&public_key, test_case.expected_plaintext.as_bytes()).unwrap();
 					let rust_decrypted = EciesSecp256k1::decrypt(&private_key, &rust_encrypted).unwrap();
-					assert_eq!(
-						rust_decrypted,
-						test_case.expected_plaintext.as_bytes(),
-						"Failed {} round-trip encryption",
-						test_case.name
-					);
+					assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
 				}
-				"ed25519" => {
+				Algorithm::Ed25519 => {
 					let index = 0u32;
 					// Combine seed and index like the accounts module does
 					let mut indexed_seed = [0u8; 36];
@@ -928,49 +957,28 @@ mod tests {
 
 					// Test decryption of TypeScript data
 					let decrypted = EciesX25519::decrypt(&x25519_private, &encrypted_data).unwrap();
-					assert_eq!(
-						decrypted,
-						test_case.expected_plaintext.as_bytes(),
-						"Failed to decrypt {} TypeScript data",
-						test_case.name
-					);
+					assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
 
 					// Test round-trip encryption/decryption
 					let rust_encrypted =
 						EciesX25519::encrypt(&x25519_public, test_case.expected_plaintext.as_bytes()).unwrap();
 					let rust_decrypted = EciesX25519::decrypt(&x25519_private, &rust_encrypted).unwrap();
-					assert_eq!(
-						rust_decrypted,
-						test_case.expected_plaintext.as_bytes(),
-						"Failed {} round-trip encryption",
-						test_case.name
-					);
+					assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
 				}
-				"secp256r1" => {
+				Algorithm::Secp256r1 => {
 					let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
 					let public_key = private_key.as_public_key();
 
 					// Test decryption of TypeScript data
 					let decrypted = EciesSecp256r1::decrypt(&private_key, &encrypted_data).unwrap();
-					assert_eq!(
-						decrypted,
-						test_case.expected_plaintext.as_bytes(),
-						"Failed to decrypt {} TypeScript data",
-						test_case.name
-					);
+					assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
 
 					// Test round-trip encryption/decryption
 					let rust_encrypted =
 						EciesSecp256r1::encrypt(&public_key, test_case.expected_plaintext.as_bytes()).unwrap();
 					let rust_decrypted = EciesSecp256r1::decrypt(&private_key, &rust_encrypted).unwrap();
-					assert_eq!(
-						rust_decrypted,
-						test_case.expected_plaintext.as_bytes(),
-						"Failed {} round-trip encryption",
-						test_case.name
-					);
+					assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
 				}
-				_ => panic!("Unknown curve type: {}", test_case.curve_type),
 			}
 		}
 	}

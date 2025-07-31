@@ -101,22 +101,18 @@ mod tests {
 		let account_error = AccountError::InvalidPrefix;
 		let keeta_error: KeetaNetError = account_error.into();
 
-		if let KeetaNetError::Code { code, message } = keeta_error {
-			assert_eq!(code, "INVALID_PREFIX");
-			assert_eq!(message, "InvalidPrefix");
-		} else {
-			assert!(matches!(keeta_error, KeetaNetError::Code { .. }));
-		}
+		assert!(matches!(keeta_error, KeetaNetError::Code { 
+			code, 
+			message 
+		} if code == "INVALID_PREFIX" && message == "InvalidPrefix"));
 
 		// Test another error type
 		let account_error2 = AccountError::PassphraseWeak;
 		let keeta_error2: KeetaNetError = account_error2.into();
 
-		if let KeetaNetError::Code { code, message } = keeta_error2 {
-			assert_eq!(code, "PASSPHRASE_WEAK");
-			assert_eq!(message, "PassphraseWeak");
-		} else {
-			assert!(matches!(keeta_error2, KeetaNetError::Code { .. }));
-		}
+		assert!(matches!(keeta_error2, KeetaNetError::Code { 
+			code, 
+			message 
+		} if code == "PASSPHRASE_WEAK" && message == "PassphraseWeak"));
 	}
 }
