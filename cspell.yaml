@@ -24,6 +24,7 @@ words:
   - ED25519
   - BASEPOINT
   - ECDH
+  - FIPS
   - diffie
   - Keyable
   - bip39

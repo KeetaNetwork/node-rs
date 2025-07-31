@@ -5,6 +5,7 @@
 
 use hkdf::Hkdf;
 use sha2::{Sha256, Sha512};
+use sha3::Sha3_256;
 
 use crate::error::CryptoError;
 
@@ -15,6 +16,8 @@ pub enum KdfAlgorithm {
 	HkdfSha2_256,
 	/// HKDF with SHA2-512 (RFC 5869)
 	HkdfSha2_512,
+	/// HKDF with SHA3-256 (FIPS 202)
+	HkdfSha3_256,
 }
 
 impl KdfAlgorithm {
@@ -23,6 +26,7 @@ impl KdfAlgorithm {
 		match self {
 			KdfAlgorithm::HkdfSha2_256 => "hkdf-sha2-256",
 			KdfAlgorithm::HkdfSha2_512 => "hkdf-sha2-512",
+			KdfAlgorithm::HkdfSha3_256 => "hkdf-sha3-256",
 		}
 	}
 
@@ -31,6 +35,7 @@ impl KdfAlgorithm {
 		match self {
 			KdfAlgorithm::HkdfSha2_256 => 255 * 32, // 255 * hash_len for HKDF
 			KdfAlgorithm::HkdfSha2_512 => 255 * 64, // 255 * hash_len for HKDF
+			KdfAlgorithm::HkdfSha3_256 => 255 * 32, // 255 * hash_len for HKDF
 		}
 	}
 
@@ -70,6 +75,53 @@ impl KdfAlgorithm {
 
 				Ok(okm)
 			}
+			KdfAlgorithm::HkdfSha3_256 => {
+				let hk = Hkdf::<Sha3_256>::new(salt, ikm);
+				let mut okm = vec![0u8; output_length];
+				hk.expand(info, &mut okm)?;
+
+				Ok(okm)
+			}
+		}
+	}
+
+	/// Derive key material using expand-only (treating IKM as PRK)
+	///
+	/// This method treats the input key material as already-extracted PRK
+	/// and performs only the expand step. This is used for TypeScript compatibility
+	/// where the seed is treated directly as PRK material.
+	///
+	/// # Arguments
+	/// * `prk` - Pre-extracted key material (treated as PRK)
+	/// * `info` - Context/application-specific info
+	/// * `output_length` - Desired output length in bytes
+	///
+	/// # Returns
+	/// Derived key material of the specified length
+	pub fn expand_only(&self, prk: &[u8], info: &[u8], output_length: usize) -> Result<Vec<u8>, CryptoError> {
+		if output_length > self.max_output_length() {
+			return Err(CryptoError::InvalidLength);
+		}
+
+		match self {
+			KdfAlgorithm::HkdfSha2_256 => {
+				let hk = Hkdf::<Sha256>::from_prk(prk)?;
+				let mut okm = vec![0u8; output_length];
+				hk.expand(info, &mut okm)?;
+				Ok(okm)
+			}
+			KdfAlgorithm::HkdfSha2_512 => {
+				let hk = Hkdf::<Sha512>::from_prk(prk)?;
+				let mut okm = vec![0u8; output_length];
+				hk.expand(info, &mut okm)?;
+				Ok(okm)
+			}
+			KdfAlgorithm::HkdfSha3_256 => {
+				let hk = Hkdf::<Sha3_256>::from_prk(prk)?;
+				let mut okm = vec![0u8; output_length];
+				hk.expand(info, &mut okm)?;
+				Ok(okm)
+			}
 		}
 	}
 
@@ -94,49 +146,34 @@ impl KdfAlgorithm {
 
 		Ok(array)
 	}
-}
 
-/// Derive key material using HKDF-SHA2-256.
-///
-/// This function provides a simple interface for the most common KDF usage.
-/// Uses HKDF-SHA2-256 with no salt and empty info string.
-///
-/// # Arguments
-/// * `ikm` - Input Key Material
-/// * `output_length` - Desired output length in bytes
-///
-/// # Returns
-/// Derived key material
-pub fn derive_key(ikm: &[u8], output_length: usize) -> Result<Vec<u8>, CryptoError> {
-	KdfAlgorithm::HkdfSha2_256.derive(ikm, None, b"", output_length)
-}
+	/// Expand-only derivation as a fixed-size array
+	///
+	/// # Arguments
+	/// * `prk` - Pre-extracted key material
+	/// * `info` - Context/application-specific info
+	///
+	/// # Returns
+	/// Derived key material as a fixed-size array
+	pub fn expand_only_array<const N: usize>(&self, prk: &[u8], info: &[u8]) -> Result<[u8; N], CryptoError> {
+		let okm = self.expand_only(prk, info, N)?;
+		let mut array = [0u8; N];
+		array.copy_from_slice(&okm);
 
-/// Derive key material with full HKDF parameters.
-///
-/// # Arguments
-/// * `ikm` - Input Key Material
-/// * `salt` - Optional salt
-/// * `info` - Context/application-specific info
-/// * `output_length` - Desired output length
-///
-/// # Returns
-/// Derived key material
-pub fn derive_key_with_params(
-	ikm: &[u8],
-	salt: Option<&[u8]>,
-	info: &[u8],
-	output_length: usize,
-) -> Result<Vec<u8>, CryptoError> {
-	KdfAlgorithm::HkdfSha2_256.derive(ikm, salt, info, output_length)
+		Ok(array)
+	}
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
 
+	const ALL_ALGORITHMS: [KdfAlgorithm; 3] =
+		[KdfAlgorithm::HkdfSha2_256, KdfAlgorithm::HkdfSha2_512, KdfAlgorithm::HkdfSha3_256];
+
 	#[test]
 	fn test_kdf_algorithm_properties() {
-		let algorithms = [KdfAlgorithm::HkdfSha2_256, KdfAlgorithm::HkdfSha2_512];
+		let algorithms = ALL_ALGORITHMS;
 		for algo in algorithms {
 			// Test basic properties
 			assert!(!algo.name().is_empty());
@@ -157,7 +194,7 @@ mod tests {
 		let salt = Some(b"optional salt".as_slice());
 		let info = b"application info";
 
-		for algo in [KdfAlgorithm::HkdfSha2_256, KdfAlgorithm::HkdfSha2_512] {
+		for algo in ALL_ALGORITHMS {
 			// Test various output lengths
 			for &length in &[16, 32, 48, 64] {
 				let okm = algo.derive(ikm, salt, info, length).unwrap();
@@ -193,7 +230,7 @@ mod tests {
 		let salt = Some(b"salt".as_slice());
 		let info = b"info";
 
-		for algo in [KdfAlgorithm::HkdfSha2_256, KdfAlgorithm::HkdfSha2_512] {
+		for algo in ALL_ALGORITHMS {
 			// Test fixed-size array derivation
 			let array: [u8; 32] = algo.derive_array(ikm, salt, info).unwrap();
 			let vec_result = algo.derive(ikm, salt, info, 32).unwrap();
@@ -202,7 +239,6 @@ mod tests {
 			// Test different array sizes - they should have consistent prefixes
 			let array16: [u8; 16] = algo.derive_array(ikm, salt, info).unwrap();
 			let array64: [u8; 64] = algo.derive_array(ikm, salt, info).unwrap();
-
 			// HKDF produces consistent prefixes
 			assert_eq!(array16[..], array[..16]);
 			assert_eq!(array[..], array64[..32]);
@@ -216,26 +252,12 @@ mod tests {
 	}
 
 	#[test]
-	fn test_convenience_functions() {
-		let ikm = b"test input key material";
-
-		// Test derive_key
-		let key = derive_key(ikm, 32).unwrap();
-		assert_eq!(key.len(), 32);
-
-		// Test derive_key_with_params
-		let key_with_params = derive_key_with_params(ikm, Some(b"salt"), b"info", 32).unwrap();
-		assert_eq!(key_with_params.len(), 32);
-		assert_ne!(key, key_with_params);
-	}
-
-	#[test]
 	fn test_deterministic_derivation() {
 		let ikm = b"test input key material";
 		let salt = Some(b"salt".as_slice());
 		let info = b"info";
 
-		for algo in [KdfAlgorithm::HkdfSha2_256, KdfAlgorithm::HkdfSha2_512] {
+		for algo in ALL_ALGORITHMS {
 			// Multiple calls should produce identical results
 			let result1 = algo.derive(ikm, salt, info, 32).unwrap();
 			let result2 = algo.derive(ikm, salt, info, 32).unwrap();

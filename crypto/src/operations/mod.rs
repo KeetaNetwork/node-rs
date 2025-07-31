@@ -1,7 +1,7 @@
 //! Cryptographic operations module
 //!
 //! This module provides organized sub-modules for different types of
-//! cryptographic operations, similar to the algorithms module structure.
+//! cryptographic operations.
 
 #[cfg(feature = "encryption")]
 pub mod encryption;

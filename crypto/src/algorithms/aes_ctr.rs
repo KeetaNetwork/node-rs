@@ -1,12 +1,10 @@
 //! AES-CTR stream cipher implementation.
 //!
-//! This module provides AES-128-CTR symmetric encryption.
+//! This module provides AES-CTR symmetric encryption.
 
 use aes::Aes128;
-use ctr::{
-	cipher::{KeyIvInit, StreamCipher},
-	Ctr128BE,
-};
+use ctr::cipher::{KeyIvInit, StreamCipher};
+use ctr::Ctr128BE;
 use rand_core::{OsRng, TryRngCore};
 
 use crate::error::CryptoError;

@@ -31,24 +31,23 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use secrecy::{ExposeSecret, SecretBox};
 use x25519_dalek::PublicKey as DalekX25519PublicKey;
+use zeroize::Zeroize;
 
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::{Ecies, EciesX25519};
 #[cfg(feature = "encryption")]
 use crate::operations::encryption::AsymmetricEncryption;
+
 #[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
-use zeroize::Zeroize;
 
-use crate::{
-	error::CryptoError,
-	hash::{self, hash_default},
-	KeyDerivation, PrivateKey, PublicKey,
-};
+use crate::error::CryptoError;
+use crate::hash::{self, hash_default};
+use crate::{KeyDerivation, PrivateKey, PublicKey};
 
 /// Ed25519 private key wrapper.
 ///
@@ -115,7 +114,6 @@ impl TryFrom<&[u8]> for Ed25519PrivateKey {
 	}
 }
 
-// RustCrypto Keypair trait implementation (provides derive_public_key functionality)
 #[cfg(feature = "signature")]
 impl Keypair for Ed25519PrivateKey {
 	type VerifyingKey = Ed25519PublicKey;
@@ -125,7 +123,6 @@ impl Keypair for Ed25519PrivateKey {
 	}
 }
 
-// RustCrypto Signer trait implementation
 #[cfg(feature = "signature")]
 impl Signer<Signature> for Ed25519PrivateKey {
 	fn try_sign(&self, msg: &[u8]) -> Result<Signature, ::signature::Error> {
@@ -133,15 +130,13 @@ impl Signer<Signature> for Ed25519PrivateKey {
 	}
 }
 
-// CryptoSigner trait implementation (extends Signer<Signature>)
 #[cfg(feature = "signature")]
 impl CryptoSigner<Signature> for Ed25519PrivateKey {
 	fn has_private_key(&self) -> bool {
-		true // Private key always has access to private key material
+		true
 	}
 }
 
-// CryptoSignerWithOptions trait implementation
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Ed25519PrivateKey {
 	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
@@ -189,7 +184,6 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 	}
 }
 
-// RustCrypto Verifier trait implementation
 #[cfg(feature = "signature")]
 impl Verifier<Signature> for Ed25519PublicKey {
 	fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), ::signature::Error> {
@@ -197,7 +191,6 @@ impl Verifier<Signature> for Ed25519PublicKey {
 	}
 }
 
-// CryptoVerifier trait implementation
 #[cfg(feature = "signature")]
 impl CryptoVerifier<Signature> for Ed25519PublicKey {
 	fn public_key_bytes(&self) -> Vec<u8> {
@@ -209,7 +202,6 @@ impl CryptoVerifier<Signature> for Ed25519PublicKey {
 	}
 }
 
-// CryptoVerifierWithOptions trait implementation
 #[cfg(feature = "signature")]
 impl CryptoVerifierWithOptions<Signature> for Ed25519PublicKey {
 	fn verify_with_options(
@@ -224,7 +216,6 @@ impl CryptoVerifierWithOptions<Signature> for Ed25519PublicKey {
 	}
 }
 
-// AsymmetricEncryption implementation for Ed25519 (via X25519 conversion)
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Ed25519PrivateKey {
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -266,13 +257,13 @@ impl AsymmetricEncryption for Ed25519PublicKey {
 }
 
 impl Ed25519PublicKey {
-	/// Convert this Ed25519 public key to an X25519 public ke6y for ECDH
+	/// Convert this Ed25519 public key to an X25519 public key for ECDH
 	pub fn to_x25519(&self) -> Result<X25519PublicKey, CryptoError> {
 		ed25519_to_x25519_public(self)
 	}
 }
 
-/// X25519 private key for key exchange (ECDH)
+/// X25519 private key for key exchange (ECDH).
 ///
 /// This struct wraps the raw X25519 private key bytes and provides a safe
 /// interface for X25519 key exchange operations. X25519 keys are derived from
@@ -308,7 +299,7 @@ impl X25519PrivateKey {
 		X25519PublicKey::from(public_key)
 	}
 
-	/// Perform ECDH key exchange with another X25519 public key
+	/// Perform ECDH key exchange with another X25519 public key.
 	///
 	/// This method performs the Diffie-Hellman key exchange operation between
 	/// this private key and another party's public key, resulting in a shared
@@ -402,7 +393,7 @@ impl From<DalekX25519PublicKey> for X25519PublicKey {
 	}
 }
 
-/// Convert an Ed25519 private key to an X25519 private key
+/// Convert an Ed25519 private key to an X25519 private key.
 ///
 /// This function implements the standard conversion from Ed25519 to X25519 as
 /// used in many cryptographic libraries. It hashes the Ed25519 private key
@@ -431,7 +422,7 @@ pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X255
 	X25519PrivateKey::try_from(x25519_bytes.as_slice())
 }
 
-/// Convert an Ed25519 public key to an X25519 public key
+/// Convert an Ed25519 public key to an X25519 public key.
 ///
 /// This function converts an Ed25519 public key (point on Edwards curve) to an
 /// X25519 public key (point on Montgomery curve) using the bi-rational map.
@@ -461,7 +452,7 @@ pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519
 	Ok(X25519PublicKey { inner: x25519_public })
 }
 
-/// Ed25519 key derivation implementation
+/// Ed25519 key derivation implementation.
 ///
 /// This struct provides the KeyDerivation trait implementation for Ed25519.
 /// It uses a different derivation method than secp256k1.
@@ -510,7 +501,6 @@ impl KeyDerivation for Ed25519Derivation {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
 	use crate::algorithms::secp256k1::Secp256k1Derivation;
 	use crate::operations::signature::{CryptoSignerWithOptions, CryptoVerifierWithOptions, SigningOptions};
 
@@ -543,14 +533,12 @@ mod tests {
 
 		let key1 = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		let key2 = Ed25519Derivation::derive_from_seed(seed).unwrap();
-
 		assert_eq!(
 			SecretBox::<Vec<u8>>::from(&key1).expose_secret(),
 			SecretBox::<Vec<u8>>::from(&key2).expose_secret()
 		);
 
 		let (pub1, pub2) = (key1.as_public_key(), key2.as_public_key());
-
 		assert_eq!(Vec::<u8>::from(&pub1), Vec::<u8>::from(&pub2));
 	}
 

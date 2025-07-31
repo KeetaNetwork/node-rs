@@ -393,18 +393,27 @@ impl KeyPair for KeyECDSASECP256R1 {
 		}
 	}
 
-	fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
-		// ECIES encryption not yet implemented for secp256r1
-		Err(AccountError::EncryptionNotSupported)
+	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
+		// Use the crypto crate's AsymmetricEncryption implementation
+		if let Some(private_key) = &self.private_key {
+			private_key.encrypt(plaintext).map_err(|_| AccountError::EncryptionNotSupported)
+		} else {
+			// Parse the public key from the formatted string for encryption
+			let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+			let public_key = Secp256r1PublicKey::try_from(public_key_bytes.as_slice())?;
+
+			public_key.encrypt(plaintext).map_err(|_| AccountError::EncryptionNotSupported)
+		}
 	}
 
-	fn decrypt(&self, _ciphertext: &[u8]) -> Result<Vec<u8>, AccountError> {
-		// ECIES encryption not yet implemented for secp256r1
-		Err(AccountError::EncryptionNotSupported)
+	fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, AccountError> {
+		// Use the crypto crate's AsymmetricEncryption implementation
+		let private_key = self.private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
+		private_key.decrypt(ciphertext).map_err(|_| AccountError::EncryptionNotSupported)
 	}
 
 	fn supports_encryption(&self) -> bool {
-		false // ECIES not yet implemented for secp256r1
+		true // ECIES-secp256r1-AES256CBC is now implemented
 	}
 
 	fn signature_size(&self) -> usize {
@@ -3606,25 +3615,26 @@ mod tests {
 	}
 
 	#[test]
-	fn test_secp256r1_encryption_not_implemented() {
-		// Test that SECP256R1 encryption returns appropriate error
+	fn test_secp256r1_encryption_support() {
+		// Test that SECP256R1 encryption is now implemented
 		let test_seed = SecretBox::new(Box::new([99u8; 32]));
 		let test_data = b"Test encryption data";
 
-		// Encryption is not yet implemented for secp256r1
+		// Encryption is now implemented for secp256r1
 		let secp256r1_account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((test_seed, 0)),
 			KeyPairType::ECDSASECP256R1,
 		))
 		.unwrap();
-		assert!(!secp256r1_account.supports_encryption());
+		assert!(secp256r1_account.supports_encryption());
 
-		// This should fail with EncryptionNotSupported error
-		let encrypt_result = secp256r1_account.encrypt(test_data);
-		assert!(encrypt_result.is_err());
+		// This should now succeed
+		let ciphertext = secp256r1_account.encrypt(test_data).unwrap();
+		assert!(!ciphertext.is_empty());
 
-		let decrypt_result = secp256r1_account.decrypt(test_data);
-		assert!(decrypt_result.is_err());
+		// And we should be able to decrypt it back
+		let plaintext = secp256r1_account.decrypt(&ciphertext).unwrap();
+		assert_eq!(plaintext, test_data);
 	}
 
 	#[test]
@@ -3902,9 +3912,9 @@ mod tests {
 			KeyPairType::ECDSASECP256R1,
 		))
 		.unwrap();
-
-		assert!(matches!(secp256r1_account.encrypt(b"test"), Err(AccountError::EncryptionNotSupported)));
-		assert!(matches!(secp256r1_account.decrypt(b"test"), Err(AccountError::EncryptionNotSupported)));
+		assert!(secp256r1_account.encrypt(b"test").is_ok());
+		// Decryption with invalid data should fail
+		assert!(secp256r1_account.decrypt(b"invalid").is_err());
 
 		// Test identifier accounts don't support signing/verification
 		let test_data = b"test message";

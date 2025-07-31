@@ -10,27 +10,28 @@
 // Re-export algorithm-specific signature types
 pub use p256::ecdsa::Signature as Secp256r1Signature;
 
-#[cfg(feature = "signature")]
-use ::signature::{Keypair, Signer, Verifier};
-use p256::{
-	ecdsa::{Signature, SigningKey},
-	elliptic_curve::sec1::ToEncodedPoint,
-	SecretKey as P256SecretKey,
-};
+use p256::ecdsa::{Signature, SigningKey};
+use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::SecretKey as P256SecretKey;
 use secrecy::SecretBox;
 
-#[cfg(feature = "encryption")]
-use crate::operations::encryption::AsymmetricEncryption;
 #[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
+#[cfg(feature = "signature")]
+use ::signature::{Keypair, Signer, Verifier};
 
-use crate::{error::CryptoError, hash::hash_default, KeyDerivation, PrivateKey, PublicKey};
+#[cfg(feature = "encryption")]
+use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGeneration};
+#[cfg(feature = "encryption")]
+use aead::KeyInit;
 
-// Import for key derivation (matching SECP256K1)
-use hkdf;
-use sha3;
+use crate::algorithms::ecies::{Ecies, EciesSecp256r1};
+use crate::error::CryptoError;
+use crate::hash::hash_default;
+use crate::kdf::KdfAlgorithm;
+use crate::{KeyDerivation, PrivateKey, PublicKey};
 
 /// secp256r1 (NIST P-256) private key wrapper.
 ///
@@ -40,13 +41,14 @@ use sha3;
 /// ## Security Note
 ///
 /// The inner secret key is kept private and only accessible through the trait
-/// methods. Debug formatting will show "\[REDACTED\]" to prevent accidental
-/// key exposure.
+/// methods.
 #[derive(Clone)]
 pub struct Secp256r1PrivateKey {
 	inner: P256SecretKey,
 }
 
+/// Debug formatting will show "\[REDACTED\]" to prevent accidental
+/// key exposure.
 impl core::fmt::Debug for Secp256r1PrivateKey {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("Secp256r1PrivateKey").field("inner", &"[REDACTED]").finish()
@@ -100,7 +102,63 @@ impl TryFrom<&[u8]> for Secp256r1PrivateKey {
 	}
 }
 
-// RustCrypto Keypair trait implementation
+#[cfg(feature = "encryption")]
+impl Secp256r1PrivateKey {
+	/// Perform Elliptic Curve Diffie-Hellman (ECDH) with another public key.
+	///
+	/// # Arguments
+	/// * `other_public_key` - The other party's public key
+	///
+	/// # Returns
+	/// Shared secret as raw bytes
+	pub fn ecdh(&self, other_public_key: &Secp256r1PublicKey) -> Result<Vec<u8>, CryptoError> {
+		use p256::ecdh::diffie_hellman;
+
+		// Perform ECDH directly using the p256 function
+		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
+
+		// Return the raw bytes of the shared secret
+		Ok(shared_secret.raw_secret_bytes().to_vec())
+	}
+}
+
+#[cfg(feature = "encryption")]
+impl KeyGeneration for Secp256r1PrivateKey {
+	type Error = CryptoError;
+
+	fn generate_random() -> Result<Self, Self::Error> {
+		// Generate a random 32-byte seed and derive a key from it
+		use crate::utils::generate_random_seed;
+		use secrecy::ExposeSecret;
+		let random_seed = generate_random_seed()?;
+		Secp256r1Derivation::derive_from_seed(random_seed.expose_secret())
+	}
+}
+
+#[cfg(feature = "encryption")]
+impl KeyExchange for Secp256r1PrivateKey {
+	type PublicKey = Secp256r1PublicKey;
+	type SharedSecret = Vec<u8>;
+
+	fn ecdh(&self, other_public_key: &Self::PublicKey) -> Result<Self::SharedSecret, CryptoError> {
+		self.ecdh(other_public_key)
+	}
+
+	fn key_exchange(&self, their_public_key: &[u8]) -> Result<Self::SharedSecret, CryptoError> {
+		let public_key = Secp256r1PublicKey::try_from(their_public_key)?;
+		self.ecdh(&public_key)
+	}
+
+	fn derive_aead_key<A>(&self, shared_secret: &Self::SharedSecret) -> Result<A, CryptoError>
+	where
+		A: KeyInit,
+	{
+		// Use the shared secret directly as the key material
+		// For production use, you might want to use HKDF or similar KDF
+		A::new_from_slice(shared_secret.as_ref()).map_err(|_| CryptoError::KeyDerivationFailed)
+	}
+}
+
 #[cfg(feature = "signature")]
 impl Keypair for Secp256r1PrivateKey {
 	type VerifyingKey = Secp256r1PublicKey;
@@ -113,7 +171,6 @@ impl Keypair for Secp256r1PrivateKey {
 	}
 }
 
-// RustCrypto Signer trait implementation
 #[cfg(feature = "signature")]
 impl Signer<Signature> for Secp256r1PrivateKey {
 	fn try_sign(&self, msg: &[u8]) -> Result<Signature, ::signature::Error> {
@@ -123,14 +180,12 @@ impl Signer<Signature> for Secp256r1PrivateKey {
 	}
 }
 
-// CryptoSigner trait implementation
 impl CryptoSigner<Signature> for Secp256r1PrivateKey {
 	fn has_private_key(&self) -> bool {
-		true // Private key always has access to private key material
+		true
 	}
 }
 
-// CryptoSignerWithOptions trait implementation
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
@@ -173,7 +228,6 @@ impl TryFrom<&[u8]> for Secp256r1PublicKey {
 	}
 }
 
-// RustCrypto Verifier trait implementation
 #[cfg(feature = "signature")]
 impl Verifier<Signature> for Secp256r1PublicKey {
 	fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), ::signature::Error> {
@@ -194,7 +248,6 @@ impl CryptoVerifier<Signature> for Secp256r1PublicKey {
 	}
 }
 
-// CryptoVerifierWithOptions trait implementation
 #[cfg(feature = "signature")]
 impl CryptoVerifierWithOptions<Signature> for Secp256r1PublicKey {
 	fn verify_with_options(
@@ -210,41 +263,27 @@ impl CryptoVerifierWithOptions<Signature> for Secp256r1PublicKey {
 	}
 }
 
-// ECIES implementation for secp256r1 (similar to secp256k1 but with P-256 curve)
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Secp256r1PrivateKey {
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// Use ECIES encryption with our private key for decryption later
-		// For encryption, we need the corresponding public key
 		let public_key = self.as_public_key();
+
 		public_key.encrypt(plaintext)
 	}
 
 	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// NOTE: The ecies crate primarily supports secp256k1
-		// For secp256r1, we need to implement a different approach or use a different library
-		// For now, return an error to indicate this is not yet implemented
-		let _ = cipher_text; // Avoid unused warning
-		Err(CryptoError::UnsupportedAlgorithm {
-			algorithm: "ECIES encryption not yet implemented for secp256r1".to_string(),
-		})
+		EciesSecp256r1::decrypt(self, cipher_text)
 	}
 
 	fn algorithm_info(&self) -> &'static str {
-		"ECIES-secp256r1 (not yet implemented)"
+		"ECIES-secp256r1-AES256CBC"
 	}
 }
 
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Secp256r1PublicKey {
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// NOTE: The ecies crate primarily supports secp256k1
-		// For secp256r1, we need to implement a different approach or use a different library
-		// For now, return an error to indicate this is not yet implemented
-		let _ = plaintext; // Avoid unused warning
-		Err(CryptoError::UnsupportedAlgorithm {
-			algorithm: "ECIES encryption not yet implemented for secp256r1".to_string(),
-		})
+		EciesSecp256r1::encrypt(self, plaintext)
 	}
 
 	fn decrypt(&self, _cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -253,7 +292,7 @@ impl AsymmetricEncryption for Secp256r1PublicKey {
 	}
 
 	fn algorithm_info(&self) -> &'static str {
-		"ECIES-secp256r1 (not yet implemented)"
+		"ECIES-secp256r1-AES256CBC"
 	}
 }
 
@@ -272,8 +311,6 @@ impl KeyDerivation for Secp256r1Derivation {
 		// Try with the seed as-is first (index 0 case)
 		let mut attempt_seed = seed.to_vec();
 		for attempt in 0u32..1000 {
-			let mut key_bytes = [0u8; 32];
-
 			// For attempts > 0, append the attempt counter
 			if attempt > 0 {
 				// Remove any previous attempt counter and add the new one
@@ -281,13 +318,10 @@ impl KeyDerivation for Secp256r1Derivation {
 				attempt_seed.extend_from_slice(&attempt.to_be_bytes());
 			}
 
-			// Use HKDF expand-only, treating the seed(+attempt) buffer as PRK
-			let hkdf =
-				hkdf::Hkdf::<sha3::Sha3_256>::from_prk(&attempt_seed).map_err(|_| CryptoError::KeyDerivationFailed)?;
-			hkdf.expand(&[], &mut key_bytes).map_err(|_| CryptoError::KeyDerivationFailed)?;
-
-			// Try to create the secret key - this will fail if key_bytes is zero or >= curve order
+			// Use our KDF's expand-only method for TypeScript compatibility
+			let key_bytes = KdfAlgorithm::HkdfSha3_256.expand_only_array::<32>(&attempt_seed, &[])?;
 			if let Ok(secret_key) = P256SecretKey::from_slice(&key_bytes) {
+				// Try to create the secret key - this will fail if key_bytes is zero or >= curve order
 				return Ok(Secp256r1PrivateKey { inner: secret_key });
 			}
 
@@ -471,30 +505,31 @@ mod tests {
 
 	#[cfg(feature = "encryption")]
 	#[test]
-	fn test_encryption_not_implemented() {
+	fn test_ecies_encryption_decryption() {
 		let seed = b"test seed for ECIES encryption test";
 		let private_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
 		let public_key = private_key.as_public_key();
 		let message = b"Hello, ECIES encryption world!";
 
-		// Test encryption with private key - should delegate to public key and return error
-		let private_encrypt_result = private_key.encrypt(message);
-		assert!(private_encrypt_result.is_err());
-		assert!(matches!(private_encrypt_result.unwrap_err(), CryptoError::UnsupportedAlgorithm { .. }));
+		// Test encryption with public key
+		let encrypted = public_key.encrypt(message).unwrap();
+		assert!(!encrypted.is_empty());
+		assert_ne!(encrypted, message);
 
-		// Test encryption with public key - should return error since not implemented
-		let encrypt_result = public_key.encrypt(message);
-		assert!(encrypt_result.is_err());
-		assert!(matches!(encrypt_result.unwrap_err(), CryptoError::UnsupportedAlgorithm { .. }));
+		// Test decryption with private key
+		let decrypted = private_key.decrypt(&encrypted).unwrap();
+		assert_eq!(decrypted, message);
 
-		// Test decryption with private key - should also return error since not implemented
-		let dummy_cipher = vec![0u8; 64];
-		let decrypt_result = private_key.decrypt(&dummy_cipher);
-		assert!(decrypt_result.is_err());
-		assert!(matches!(decrypt_result.unwrap_err(), CryptoError::UnsupportedAlgorithm { .. }));
+		// Test encryption with private key - should delegate to public key
+		let encrypted2 = private_key.encrypt(message).unwrap();
+		let decrypted2 = private_key.decrypt(&encrypted2).unwrap();
+		assert_eq!(decrypted2, message);
 
-		// Test that public key cannot decrypt (different error)
-		let public_decrypt_result = public_key.decrypt(&dummy_cipher);
+		// Test that different encryptions produce different cipher texts
+		assert_ne!(encrypted, encrypted2);
+
+		// Test that public key cannot decrypt
+		let public_decrypt_result = public_key.decrypt(&encrypted);
 		assert!(public_decrypt_result.is_err());
 		assert!(matches!(public_decrypt_result.unwrap_err(), CryptoError::InvalidOperation));
 	}
@@ -508,9 +543,9 @@ mod tests {
 		let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
 		let public_key = private_key.as_public_key();
 		// Test algorithm_info for private key
-		assert_eq!(private_key.algorithm_info(), "ECIES-secp256r1 (not yet implemented)");
+		assert_eq!(private_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
 		// Test algorithm_info for public key
-		assert_eq!(public_key.algorithm_info(), "ECIES-secp256r1 (not yet implemented)");
+		assert_eq!(public_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
 	}
 
 	#[test]
@@ -550,10 +585,9 @@ mod tests {
 		let invalid_key = [0x01; 16]; // Invalid length
 		assert!(!Secp256r1Derivation::validate_key_material(&invalid_key));
 
-		// Test validate_key_material with invalid key (all zeros)
 		let zero_key = [0x00; 32]; // All zeros is invalid for secp256r1
+							 // Test validate_key_material with invalid key (all zeros)
 		assert!(!Secp256r1Derivation::validate_key_material(&zero_key));
-
 		// Test key_size
 		assert_eq!(Secp256r1Derivation::key_size(), 32);
 

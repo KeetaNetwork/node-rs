@@ -84,3 +84,9 @@ impl From<hkdf::InvalidLength> for CryptoError {
 		CryptoError::KeyDerivationFailed
 	}
 }
+
+impl From<hkdf::InvalidPrkLength> for CryptoError {
+	fn from(_: hkdf::InvalidPrkLength) -> Self {
+		CryptoError::KeyDerivationFailed
+	}
+}

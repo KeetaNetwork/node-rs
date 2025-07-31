@@ -33,7 +33,7 @@ pub use crate::utils::{
 // Hash functions and KDF
 // Hash functions and KDF
 pub use crate::hash::{hash, hash_array, hash_default, HashAlgorithm};
-pub use crate::kdf::{derive_key, derive_key_with_params, KdfAlgorithm};
+pub use crate::kdf::KdfAlgorithm;
 
 // RustCrypto traits when signature feature is enabled
 #[cfg(feature = "signature")]
@@ -64,5 +64,7 @@ pub use crate::operations::KeyExchange;
 pub use crate::algorithms::aes_ctr::Aes128CtrCipher;
 
 // ECIES implementations
+#[cfg(feature = "encryption")]
+pub use crate::algorithms::ecies::Ecies;
 #[cfg(feature = "encryption")]
 pub use crate::algorithms::ecies::{EciesSecp256k1, EciesX25519};

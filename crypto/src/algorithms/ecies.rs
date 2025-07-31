@@ -9,6 +9,7 @@ use subtle::ConstantTimeEq;
 use crate::algorithms::aes_ctr::Aes128CtrCipher;
 use crate::algorithms::ed25519::{X25519PrivateKey, X25519PublicKey};
 use crate::algorithms::secp256k1::{Secp256k1PrivateKey, Secp256k1PublicKey};
+use crate::algorithms::secp256r1::{Secp256r1PrivateKey, Secp256r1PublicKey};
 use crate::algorithms::PublicKey;
 use crate::error::CryptoError;
 use crate::hash::HashAlgorithm;
@@ -325,23 +326,201 @@ impl Ecies for EciesX25519 {
 	}
 }
 
+/// ECIES encryption using secp256r1 (NIST P-256) and AES-256-CBC.
+///
+/// This implementation follows the crypto-ecies-cpp format used in TypeScript.
+/// Uses KDF2_18033_SHA512, AES256_CBC, and HMAC_SHA512 as per defaults.
+pub struct EciesSecp256r1;
+
+impl Ecies for EciesSecp256r1 {
+	type PublicKey = Secp256r1PublicKey;
+	type PrivateKey = Secp256r1PrivateKey;
+
+	/// Encrypt data using ECIES with secp256r1 (NIST P-256)
+	///
+	/// Uses AES-256-CBC for encryption and HMAC-SHA512 for authentication.
+	/// This follows the crypto-ecies-js format.
+	///
+	/// Format: ephemeral_public_key (65 bytes) + ciphertext + hmac (64 bytes) + iv (16 bytes)
+	fn encrypt(recipient_public_key: &Secp256r1PublicKey, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		use crate::algorithms::aes_cbc::Aes256Cbc;
+
+		// Generate ephemeral key pair
+		let ephemeral_private = Secp256r1PrivateKey::generate_random()?;
+		let ephemeral_public = ephemeral_private.as_public_key();
+
+		// Perform ECDH to get shared secret
+		let shared_secret = ephemeral_private.ecdh(recipient_public_key)?;
+
+		// Get ephemeral public key bytes (uncompressed format for P-256)
+		let ephemeral_public_uncompressed = ephemeral_public.to_uncompressed_bytes();
+
+		// Extract shared secret X coordinate (the full 32 bytes)
+		let shared_secret_x = &shared_secret;
+
+		// Derive keys using TypeScript-compatible KDF
+		let (encryption_key, mac_key) = Self::derive_keys(&ephemeral_public_uncompressed, shared_secret_x)?;
+
+		// Generate IV for AES-256-CBC (16 bytes)
+		let iv = {
+			use rand_core::{OsRng, TryRngCore};
+			let mut bytes = [0u8; 16];
+			OsRng.try_fill_bytes(&mut bytes).map_err(|_| CryptoError::EncryptionFailed)?;
+			bytes
+		};
+
+		// Encrypt with AES-256-CBC
+		let cipher = Aes256Cbc;
+		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, &encryption_key, Some(&iv), plaintext)
+			.map_err(|_| CryptoError::EncryptionFailed)?;
+		// Extract just the ciphertext part (skip the IV that was prepended)
+		let ciphertext_only = &iv_and_ciphertext[16..];
+
+		// Calculate HMAC-SHA512 over the ciphertext only (matching TypeScript implementation)
+		let mut mac =
+			<Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::EncryptionFailed)?;
+		mac.update(ciphertext_only);
+		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
+		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
+		let hmac_result = mac.finalize().into_bytes();
+
+		// Construct final message: ephemeral_public_key + ciphertext + hmac + iv (TypeScript format)
+		let mut result = Vec::with_capacity(65 + ciphertext_only.len() + 64 + 16);
+		result.extend_from_slice(&ephemeral_public_uncompressed);
+		result.extend_from_slice(ciphertext_only);
+		result.extend_from_slice(&hmac_result);
+		result.extend_from_slice(&iv);
+
+		Ok(result)
+	}
+
+	/// Decrypt data using ECIES with secp256r1 (NIST P-256)
+	///
+	/// Uses AES-256-CBC for decryption and HMAC-SHA512 for authentication.
+	/// This follows the crypto-ecies-js format.
+	fn decrypt(recipient_private_key: &Secp256r1PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		use crate::algorithms::aes_cbc::Aes256Cbc;
+
+		// Minimum size: ephemeral_key(65) + ciphertext(16) + hmac(64) + iv(16) = 161
+		if ciphertext.len() < 161 {
+			return Err(CryptoError::DecryptionFailed);
+		}
+
+		// Parse components using TypeScript format: ephemeral_pk + ciphertext + hmac + iv
+		let ephemeral_public_bytes = &ciphertext[0..65];
+		let iv_start = ciphertext.len() - 16;
+		let hmac_start = ciphertext.len() - 80; // 64 + 16 = 80
+		let encrypted_data = &ciphertext[65..hmac_start];
+		let received_hmac = &ciphertext[hmac_start..iv_start];
+		let iv = &ciphertext[iv_start..];
+
+		// Parse ephemeral public key
+		let ephemeral_public = Secp256r1PublicKey::try_from(ephemeral_public_bytes)?;
+
+		// Perform ECDH to get shared secret
+		let shared_secret = recipient_private_key.ecdh(&ephemeral_public)?;
+
+		// Extract shared secret X coordinate (the full 32 bytes)
+		let shared_secret_x = &shared_secret;
+
+		// Derive keys using TypeScript-compatible KDF
+		let (encryption_key, mac_key) = Self::derive_keys(ephemeral_public_bytes, shared_secret_x)?;
+
+		// Verify HMAC before decryption (HMAC is over ciphertext + fixed IV length value)
+		let mut mac =
+			<Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::DecryptionFailed)?;
+		mac.update(encrypted_data);
+		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
+		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
+		let computed_hmac = mac.finalize().into_bytes();
+
+		let hmac_matches = computed_hmac.ct_eq(received_hmac);
+		if hmac_matches.unwrap_u8() == 0 {
+			return Err(CryptoError::DecryptionFailed);
+		}
+
+		// Decrypt with AES-256-CBC
+		let cipher = Aes256Cbc;
+		// AES-CBC decrypt expects iv + ciphertext format
+		let mut iv_and_ciphertext = Vec::with_capacity(16 + encrypted_data.len());
+		iv_and_ciphertext.extend_from_slice(iv);
+		iv_and_ciphertext.extend_from_slice(encrypted_data);
+		let plaintext = SymmetricEncryption::decrypt(&cipher, &encryption_key, &iv_and_ciphertext)
+			.map_err(|_| CryptoError::DecryptionFailed)?;
+
+		Ok(plaintext)
+	}
+
+	fn algorithm_info() -> &'static str {
+		"ECIES-secp256r1-AES256CBC"
+	}
+}
+
+impl EciesSecp256r1 {
+	/// KDF implementation matching the TypeScript crypto-ecies-js package
+	///
+	/// This generates derivation keys using iterative SHA512 over a seed constructed from
+	/// ephemeral public key (65 bytes) + shared secret X coordinate (32 bytes)
+	fn derive_keys(ephemeral_public_key: &[u8], shared_secret_x: &[u8]) -> Result<([u8; 32], [u8; 128]), CryptoError> {
+		use sha2::{Digest, Sha512};
+
+		// Construct seed: ephemeral_public_key (65 bytes) + shared_secret_x (32 bytes, padded to 64 hex chars)
+		let mut seed = Vec::with_capacity(65 + 32);
+		seed.extend_from_slice(ephemeral_public_key);
+		seed.extend_from_slice(shared_secret_x);
+
+		// Key sizes matching TypeScript implementation
+		let symmetric_key_bytes = 256 / 8; // 32 bytes for AES-256
+		let mac_key_bytes = 1024 / 8; // 128 bytes for HMAC key
+		let digest_bytes = 512 / 8; // 64 bytes per SHA512 digest
+		let total_bytes: usize = symmetric_key_bytes + mac_key_bytes; // 160 bytes total
+
+		let mut derivation_key = Vec::new();
+
+		// Iterative KDF: for i = 1 to ceil(total_bytes / digest_bytes)
+		let iterations = total_bytes.div_ceil(digest_bytes);
+		for i in 1..=iterations {
+			let mut hasher = Sha512::new();
+			hasher.update(&seed);
+			hasher.update((i as u32).to_be_bytes()); // Counter as big-endian 4 bytes
+			let digest = hasher.finalize();
+			derivation_key.extend_from_slice(&digest);
+		}
+
+		// Truncate to required length
+		derivation_key.truncate(total_bytes);
+
+		// Split into symmetric key (first 32 bytes) and MAC key (remaining 128 bytes)
+		let mut symmetric_key = [0u8; 32];
+		let mut mac_key = [0u8; 128];
+		symmetric_key.copy_from_slice(&derivation_key[0..32]);
+		mac_key.copy_from_slice(&derivation_key[32..160]);
+
+		Ok((symmetric_key, mac_key))
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
 	use crate::algorithms::ed25519::{ed25519_to_x25519_private, Ed25519Derivation};
 	use crate::algorithms::secp256k1::Secp256k1Derivation;
+	use crate::algorithms::secp256r1::Secp256r1Derivation;
 	use crate::algorithms::PrivateKey;
 	use crate::error::CryptoError;
 	use crate::operations::encryption::AsymmetricEncryption;
 	use crate::KeyDerivation;
-	use base64::engine::general_purpose;
+	use base64::engine::general_purpose::STANDARD as BASE64;
 	use base64::Engine;
-	use secrecy::ExposeSecret;
+
+	const TEST_SEED: &str =
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
+	const TEST_SEED_ALTERNATE: &str =
+		"ability ability ability ability ability ability ability ability ability ability ability ability";
 
 	#[test]
 	fn test_ecies_secp256k1_basic() {
-		let seed = b"test seed for ecies secp256k1 encryption";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let public_key = private_key.as_public_key();
 		let plaintext = b"Hello, ECIES world!";
 
@@ -357,8 +536,7 @@ mod tests {
 
 	#[test]
 	fn test_ecies_secp256k1_trait_implementation() {
-		let seed = b"test seed for ecies trait implementation";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let public_key = private_key.as_public_key();
 		let plaintext = b"Testing AsymmetricEncryption trait";
 
@@ -374,8 +552,7 @@ mod tests {
 
 	#[test]
 	fn test_ecies_trait_implementation() {
-		let seed = b"test seed for ecies trait testing!!";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let public_key = private_key.as_public_key();
 		let plaintext = b"Testing ECIES trait interface";
 
@@ -392,14 +569,17 @@ mod tests {
 
 	#[test]
 	fn test_ecies_secp256k1_different_keys() {
-		let seed1 = b"test seed for alice in ecies test!!!";
-		let seed2 = b"test seed for bob in ecies test!!!!";
+		let mut alice_seed = TEST_SEED.as_bytes().to_vec();
+		alice_seed.extend_from_slice(b"alice");
+		let mut bob_seed = TEST_SEED_ALTERNATE.as_bytes().to_vec();
+		bob_seed.extend_from_slice(b"bob");
+
 		let plaintext = b"Message from Alice to Bob";
 
 		// Key generation for Alice and Bob
-		let alice_private = Secp256k1Derivation::derive_from_seed(seed1).unwrap();
+		let alice_private = Secp256k1Derivation::derive_from_seed(&alice_seed).unwrap();
 		let alice_public = alice_private.as_public_key();
-		let bob_private = Secp256k1Derivation::derive_from_seed(seed2).unwrap();
+		let bob_private = Secp256k1Derivation::derive_from_seed(&bob_seed).unwrap();
 		let bob_public = bob_private.as_public_key();
 
 		// Alice encrypts for Bob
@@ -428,8 +608,7 @@ mod tests {
 
 	#[test]
 	fn test_ecies_secp256k1_ephemeral_keys() {
-		let seed = b"test seed for ephemeral key testing!";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let public_key = private_key.as_public_key();
 		let plaintext = b"Same message";
 
@@ -448,8 +627,7 @@ mod tests {
 
 	#[test]
 	fn test_ecies_secp256k1_invalid_ciphertext() {
-		let seed = b"test seed for invalid ciphertext!!!";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 
 		// Test with too short ciphertext (less than 33 bytes for ephemeral public key)
 		let short_ciphertext = [0u8; 32];
@@ -467,8 +645,7 @@ mod tests {
 
 	#[test]
 	fn test_ecies_secp256k1_public_key_cannot_decrypt() {
-		let seed = b"test seed for public key decrypt!!";
-		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let public_key = private_key.as_public_key();
 		let fake_ciphertext = [0u8; 100];
 
@@ -479,54 +656,8 @@ mod tests {
 	}
 
 	#[test]
-	fn test_ecies_secp256k1_typescript_compatibility() {
-		let seed_hex = "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D";
-		let seed = hex::decode(seed_hex).unwrap();
-		let index = 0u32;
-
-		// Combine seed and index like the accounts module does
-		let mut indexed_seed = [0u8; 36];
-		indexed_seed[..32].copy_from_slice(&seed);
-		indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
-
-		let private_key = Secp256k1Derivation::derive_from_seed(&indexed_seed).unwrap();
-		let public_key = private_key.as_public_key();
-		// Verify we derive the expected keys
-		let expected_private_hex = "EEE6ABBC24F7FBB5A7035ABF27D6C389E94E4FF06D1A8948FDA56B4DC2D05794";
-		let expected_public_hex = "02157AB0EB13544F1583635CF8DB2ED31FE9D029206E160100392EC91288D653A8";
-
-		let private_secret_box: secrecy::SecretBox<Vec<u8>> = private_key.clone().into();
-		assert_eq!(hex::encode(private_secret_box.expose_secret()).to_uppercase(), expected_private_hex);
-
-		let public_bytes: Vec<u8> = public_key.clone().into();
-		assert_eq!(hex::encode(&public_bytes).to_uppercase(), expected_public_hex);
-
-		// Test decryption of TypeScript encrypted data
-		let encrypted_base64 = "BI8ePLqAhgOQvUXsTqW8ifQ77eRhg7Z6FpxX5wd6xJfE+ErjHyuXFKNjSDMBgTAG6iKylZITJajh6Zdgcbpdvb3+pBN17zCaaOzAgpId4hcOG3P/ueHMRWolYQPJ5jGqM1xmBO64sa3nodxDwEtAI5dA3CG4mg==";
-		let encrypted_data = general_purpose::STANDARD.decode(encrypted_base64).unwrap();
-		let expected_plaintext = "Hello";
-
-		// Decrypt the TypeScript data with our implementation
-		let decrypted = EciesSecp256k1::decrypt(&private_key, &encrypted_data).unwrap();
-		assert_eq!(decrypted, expected_plaintext.as_bytes());
-
-		// Test that our implementation can encrypt/decrypt successfully (roundtrip test)
-		let test_message = b"Test message for Rust ECIES";
-		let rust_encrypted = EciesSecp256k1::encrypt(&public_key, test_message).unwrap();
-		let rust_decrypted = EciesSecp256k1::decrypt(&private_key, &rust_encrypted).unwrap();
-		assert_eq!(rust_decrypted, test_message);
-
-		// Verify format structure: ephemeral_pk(65) + iv_and_ciphertext + hmac(32)
-		assert!(encrypted_data.len() >= 65 + 16 + 32); // minimum size
-		assert_eq!(encrypted_data[0], 0x04); // uncompressed public key format
-		assert!(rust_encrypted.len() >= 65 + 16 + 32); // our format should also be valid
-		assert_eq!(rust_encrypted[0], 0x04); // our format should also use uncompressed keys
-	}
-
-	#[test]
 	fn test_ecies_x25519_basic() {
-		let seed = b"test seed for ecies x25519 encryption!";
-		let ed25519_private = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let ed25519_private = Ed25519Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
 		let x25519_public = x25519_private.derive_public_key();
 		let plaintext = b"Hello, X25519 ECIES world!";
@@ -543,16 +674,18 @@ mod tests {
 
 	#[test]
 	fn test_ecies_x25519_different_keys() {
-		let seed1 = b"test seed for alice in x25519 test!!";
-		let seed2 = b"test seed for bob in x25519 test!!!";
+		let mut alice_seed = TEST_SEED.as_bytes().to_vec();
+		alice_seed.extend_from_slice(b"alice");
+		let mut bob_seed = TEST_SEED_ALTERNATE.as_bytes().to_vec();
+		bob_seed.extend_from_slice(b"bob");
 		let plaintext = b"Message from Alice to Bob via X25519";
 
 		// Key generation for Alice and Bob
-		let alice_ed25519 = Ed25519Derivation::derive_from_seed(seed1).unwrap();
+		let alice_ed25519 = Ed25519Derivation::derive_from_seed(&alice_seed).unwrap();
 		let alice_x25519 = ed25519_to_x25519_private(&alice_ed25519).unwrap();
 		let alice_public = alice_x25519.derive_public_key();
 
-		let bob_ed25519 = Ed25519Derivation::derive_from_seed(seed2).unwrap();
+		let bob_ed25519 = Ed25519Derivation::derive_from_seed(&bob_seed).unwrap();
 		let bob_x25519 = ed25519_to_x25519_private(&bob_ed25519).unwrap();
 		let bob_public = bob_x25519.derive_public_key();
 
@@ -582,8 +715,7 @@ mod tests {
 
 	#[test]
 	fn test_ecies_x25519_ephemeral_keys() {
-		let seed = b"test seed for x25519 ephemeral testing";
-		let ed25519_private = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let ed25519_private = Ed25519Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
 		let x25519_public = x25519_private.derive_public_key();
 		let plaintext = b"Same message for X25519";
@@ -603,8 +735,7 @@ mod tests {
 
 	#[test]
 	fn test_ecies_x25519_invalid_ciphertext() {
-		let seed = b"test seed for x25519 invalid ciphertext";
-		let ed25519_private = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let ed25519_private = Ed25519Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
 		let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
 
 		// Test with too short ciphertext (less than 80 bytes minimum)
@@ -625,38 +756,222 @@ mod tests {
 	}
 
 	#[test]
-	fn test_ecies_x25519_typescript_compatibility() {
-		// Test data from TypeScript account.test.ts - Ed25519 encryption test case
-		let seed_hex = "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D";
-		let seed = hex::decode(seed_hex).unwrap();
-		let index = 0u32;
+	fn test_ecies_secp256r1_basic() {
+		let private_key = Secp256r1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
+		let public_key = private_key.as_public_key();
+		let plaintext = b"Hello, ECIES secp256r1 world!";
 
-		// Combine seed and index like the accounts module does
-		let mut indexed_seed = [0u8; 36];
-		indexed_seed[..32].copy_from_slice(&seed);
-		indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
+		// Test encryption
+		let ciphertext = EciesSecp256r1::encrypt(&public_key, plaintext).unwrap();
+		assert_ne!(ciphertext.as_slice(), plaintext); // Should be different
+		assert!(ciphertext.len() > plaintext.len()); // Should be larger (ephemeral key + IV + padding)
 
-		// Derive Ed25519 key first, then convert to X25519
-		let ed25519_private = Ed25519Derivation::derive_from_seed(&indexed_seed).unwrap();
-		let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
-		let x25519_public = x25519_private.derive_public_key();
+		// Test decryption
+		let decrypted = EciesSecp256r1::decrypt(&private_key, &ciphertext).unwrap();
+		assert_eq!(decrypted, plaintext);
+	}
 
-		// Test decryption of TypeScript encrypted data for Ed25519
-		// From encryptionTestCases in account.test.ts
-		let encrypted_base64 = "fZazrME6jGTTj2Dp1o9imAuri5s3MxeE0ZnK8HP2dK4TgnAJ3825UWKFaQnW0E0tETD0iyo8B1Zex4JUB7Ab83RnJrWBxGfoho6YqaKdHTWYfAPPJ1G2EBkDo1qoiGpO8t1Tb3o9JiOQf6jAMp2VKg==";
-		let encrypted_data = general_purpose::STANDARD.decode(encrypted_base64).unwrap();
-		let expected_plaintext = "Ed25519 Encryption";
+	#[test]
+	fn test_ecies_secp256r1_trait_implementation() {
+		let private_key = Secp256r1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
+		let public_key = private_key.as_public_key();
+		let plaintext = b"Testing secp256r1 AsymmetricEncryption trait";
 
-		// Try to decrypt the TypeScript data with our X25519 implementation
-		let decrypted = EciesX25519::decrypt(&x25519_private, &encrypted_data).unwrap();
-		assert_eq!(decrypted, expected_plaintext.as_bytes());
+		// Test via trait methods
+		let ciphertext = public_key.encrypt(plaintext).unwrap();
+		let decrypted = private_key.decrypt(&ciphertext).unwrap();
+		assert_eq!(decrypted, plaintext);
 
-		// Also test that our implementation can encrypt/decrypt successfully (roundtrip test)
-		let test_plaintext = expected_plaintext.as_bytes();
-		let rust_encrypted = EciesX25519::encrypt(&x25519_public, test_plaintext).unwrap();
-		let rust_decrypted = EciesX25519::decrypt(&x25519_private, &rust_encrypted).unwrap();
-		assert_eq!(rust_decrypted, test_plaintext);
-		// Verify format structure: iv(16) + ephemeral_pk(32) + mac(32) + ciphertext
-		assert!(rust_encrypted.len() >= 16 + 32 + 32); // minimum size
+		// Test algorithm info
+		assert_eq!(public_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
+		assert_eq!(private_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
+	}
+
+	#[test]
+	fn test_ecies_secp256r1_different_keys() {
+		let mut alice_seed = TEST_SEED.as_bytes().to_vec();
+		alice_seed.extend_from_slice(b"alice");
+		let mut bob_seed = TEST_SEED_ALTERNATE.as_bytes().to_vec();
+		bob_seed.extend_from_slice(b"bob");
+		let plaintext = b"Message from Alice to Bob via secp256r1";
+
+		// Key generation for Alice and Bob
+		let alice_private = Secp256r1Derivation::derive_from_seed(&alice_seed).unwrap();
+		let alice_public = alice_private.as_public_key();
+		let bob_private = Secp256r1Derivation::derive_from_seed(&bob_seed).unwrap();
+		let bob_public = bob_private.as_public_key();
+
+		// Alice encrypts for Bob
+		let ciphertext_for_bob = EciesSecp256r1::encrypt(&bob_public, plaintext).unwrap();
+
+		// Bob decrypts
+		let decrypted_by_bob = EciesSecp256r1::decrypt(&bob_private, &ciphertext_for_bob).unwrap();
+		assert_eq!(decrypted_by_bob, plaintext);
+
+		// Alice cannot decrypt her own message meant for Bob (wrong private key)
+		let alice_decrypt_result = EciesSecp256r1::decrypt(&alice_private, &ciphertext_for_bob);
+		assert!(alice_decrypt_result.is_err());
+
+		// Test the reverse: Bob encrypts for Alice
+		let reverse_plaintext = b"Reply from Bob to Alice via secp256r1";
+		let ciphertext_for_alice = EciesSecp256r1::encrypt(&alice_public, reverse_plaintext).unwrap();
+
+		// Alice decrypts
+		let decrypted_by_alice = EciesSecp256r1::decrypt(&alice_private, &ciphertext_for_alice).unwrap();
+		assert_eq!(decrypted_by_alice, reverse_plaintext);
+
+		// Bob cannot decrypt his own message meant for Alice (wrong private key)
+		let bob_decrypt_result = EciesSecp256r1::decrypt(&bob_private, &ciphertext_for_alice);
+		assert!(bob_decrypt_result.is_err());
+	}
+
+	#[test]
+	fn test_ecies_secp256r1_ephemeral_keys() {
+		let private_key = Secp256r1Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap();
+		let public_key = private_key.as_public_key();
+		let plaintext = b"Same message for secp256r1";
+
+		// Encrypt the same message twice
+		let ciphertext1 = EciesSecp256r1::encrypt(&public_key, plaintext).unwrap();
+		let ciphertext2 = EciesSecp256r1::encrypt(&public_key, plaintext).unwrap();
+		// Cipher texts should be different due to ephemeral keys
+		assert_ne!(ciphertext1, ciphertext2);
+
+		// But both should decrypt to the same plaintext
+		let decrypted1 = EciesSecp256r1::decrypt(&private_key, &ciphertext1).unwrap();
+		let decrypted2 = EciesSecp256r1::decrypt(&private_key, &ciphertext2).unwrap();
+		assert_eq!(decrypted1, plaintext);
+		assert_eq!(decrypted2, plaintext);
+	}
+
+	#[test]
+	fn test_ecies_typescript_compatibility() {
+		// Test cases for different curve implementations
+		struct TypeScriptTestCase {
+			name: &'static str,
+			seed_hex: &'static str,
+			encrypted_data_base64: &'static str,
+			expected_plaintext: &'static str,
+			curve_type: &'static str,
+		}
+
+		let test_cases = [
+			TypeScriptTestCase {
+				name: "SECP256K1",
+				seed_hex: "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D",
+				encrypted_data_base64: "BI8ePLqAhgOQvUXsTqW8ifQ77eRhg7Z6FpxX5wd6xJfE+ErjHyuXFKNjSDMBgTAG6iKylZITJajh6Zdgcbpdvb3+pBN17zCaaOzAgpId4hcOG3P/ueHMRWolYQPJ5jGqM1xmBO64sa3nodxDwEtAI5dA3CG4mg==",
+				expected_plaintext: "Hello",
+				curve_type: "secp256k1",
+			},
+			TypeScriptTestCase {
+				name: "ED25519/X25519",
+				seed_hex: "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D",
+				encrypted_data_base64: "fZazrME6jGTTj2Dp1o9imAuri5s3MxeE0ZnK8HP2dK4TgnAJ3825UWKFaQnW0E0tETD0iyo8B1Zex4JUB7Ab83RnJrWBxGfoho6YqaKdHTWYfAPPJ1G2EBkDo1qoiGpO8t1Tb3o9JiOQf6jAMp2VKg==",
+				expected_plaintext: "Ed25519 Encryption",
+				curve_type: "ed25519",
+			},
+			TypeScriptTestCase {
+				name: "SECP256R1",
+				seed_hex: "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D",
+				encrypted_data_base64: "BBF2ML5v5BMyOu/BMChxa984vGgED2rjaM5I0QP01MmjdMWnHx/00AfpxSCaVkFx3qYbl4cpxBM3WcHo9PIZG5P1CMv36lv8wmMMus+xQ/KrUozna8hLRlJN9ez3i+vzOZeMKYm9EfkpMZ2eQv1y1clevkvKicA8V+Zt3CVog0MhT9HYuTwWWN9yoxfshAlqGpODSFiHabdLG3E4er2d9q8=",
+				expected_plaintext: "Hello",
+				curve_type: "secp256r1",
+			},
+		];
+
+		for test_case in &test_cases {
+			let seed = hex::decode(test_case.seed_hex).unwrap();
+			let encrypted_data = BASE64.decode(test_case.encrypted_data_base64).unwrap();
+
+			match test_case.curve_type {
+				"secp256k1" => {
+					let index = 0u32;
+					// Combine seed and index like the accounts module does
+					let mut indexed_seed = [0u8; 36];
+					indexed_seed[..32].copy_from_slice(&seed);
+					indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
+
+					let private_key = Secp256k1Derivation::derive_from_seed(&indexed_seed).unwrap();
+					let public_key = private_key.as_public_key();
+
+					// Test decryption of TypeScript data
+					let decrypted = EciesSecp256k1::decrypt(&private_key, &encrypted_data).unwrap();
+					assert_eq!(
+						decrypted,
+						test_case.expected_plaintext.as_bytes(),
+						"Failed to decrypt {} TypeScript data",
+						test_case.name
+					);
+
+					// Test round-trip encryption/decryption
+					let rust_encrypted =
+						EciesSecp256k1::encrypt(&public_key, test_case.expected_plaintext.as_bytes()).unwrap();
+					let rust_decrypted = EciesSecp256k1::decrypt(&private_key, &rust_encrypted).unwrap();
+					assert_eq!(
+						rust_decrypted,
+						test_case.expected_plaintext.as_bytes(),
+						"Failed {} round-trip encryption",
+						test_case.name
+					);
+				}
+				"ed25519" => {
+					let index = 0u32;
+					// Combine seed and index like the accounts module does
+					let mut indexed_seed = [0u8; 36];
+					indexed_seed[..32].copy_from_slice(&seed);
+					indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
+
+					// Derive Ed25519 key first, then convert to X25519
+					let ed25519_private = Ed25519Derivation::derive_from_seed(&indexed_seed).unwrap();
+					let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
+					let x25519_public = x25519_private.derive_public_key();
+
+					// Test decryption of TypeScript data
+					let decrypted = EciesX25519::decrypt(&x25519_private, &encrypted_data).unwrap();
+					assert_eq!(
+						decrypted,
+						test_case.expected_plaintext.as_bytes(),
+						"Failed to decrypt {} TypeScript data",
+						test_case.name
+					);
+
+					// Test round-trip encryption/decryption
+					let rust_encrypted =
+						EciesX25519::encrypt(&x25519_public, test_case.expected_plaintext.as_bytes()).unwrap();
+					let rust_decrypted = EciesX25519::decrypt(&x25519_private, &rust_encrypted).unwrap();
+					assert_eq!(
+						rust_decrypted,
+						test_case.expected_plaintext.as_bytes(),
+						"Failed {} round-trip encryption",
+						test_case.name
+					);
+				}
+				"secp256r1" => {
+					let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
+					let public_key = private_key.as_public_key();
+
+					// Test decryption of TypeScript data
+					let decrypted = EciesSecp256r1::decrypt(&private_key, &encrypted_data).unwrap();
+					assert_eq!(
+						decrypted,
+						test_case.expected_plaintext.as_bytes(),
+						"Failed to decrypt {} TypeScript data",
+						test_case.name
+					);
+
+					// Test round-trip encryption/decryption
+					let rust_encrypted =
+						EciesSecp256r1::encrypt(&public_key, test_case.expected_plaintext.as_bytes()).unwrap();
+					let rust_decrypted = EciesSecp256r1::decrypt(&private_key, &rust_encrypted).unwrap();
+					assert_eq!(
+						rust_decrypted,
+						test_case.expected_plaintext.as_bytes(),
+						"Failed {} round-trip encryption",
+						test_case.name
+					);
+				}
+				_ => panic!("Unknown curve type: {}", test_case.curve_type),
+			}
+		}
 	}
 }

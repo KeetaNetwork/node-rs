@@ -122,7 +122,7 @@ fn test_account_from_seed_creation() {
 			KeyECDSASECP256R1,
 			test_index.encoded_public_key_ecdsa_secp256r1,
 			64,
-			false // TODO: Not yet implemented
+			true
 		);
 		test_account_creation!(
 			index,

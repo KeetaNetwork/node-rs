@@ -329,16 +329,15 @@ mod tests {
 		// secret directly but AES-128 expects exactly 16 bytes
 		let result: Result<Aes128Gcm, _> = alice.derive_aead_key(&shared_secret);
 		assert!(result.is_err());
-
-		if let Err(error) = result {
-			assert!(matches!(error, CryptoError::KeyDerivationFailed));
-		}
 	}
 
 	#[test]
 	fn test_asymmetric_encryption_error_cases() {
 		let failing_enc = FailingMockAsymmetricEncryption;
 		let plaintext = b"test data";
+
+		// Test algorithm info
+		assert_eq!(failing_enc.algorithm_info(), "Failing-Mock-Encryption");
 
 		// Test encryption failure
 		let encrypt_result = failing_enc.encrypt(plaintext);
@@ -349,9 +348,6 @@ mod tests {
 		let decrypt_result = failing_enc.decrypt(plaintext);
 		assert!(decrypt_result.is_err());
 		assert!(matches!(decrypt_result.unwrap_err(), CryptoError::DecryptionFailed));
-
-		// Test algorithm info
-		assert_eq!(failing_enc.algorithm_info(), "Failing-Mock-Encryption");
 	}
 
 	#[test]

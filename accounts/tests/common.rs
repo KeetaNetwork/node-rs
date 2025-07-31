@@ -136,3 +136,22 @@ where
 	))
 	.unwrap()
 }
+
+/// Helper function to create an account from a hex seed string for different key types
+#[allow(dead_code)]
+pub fn create_account_from_seed_hex<T>(key_type: KeyPairType, seed_hex: &str, index: u32) -> Account<T>
+where
+	T: accounts::KeyPair,
+	Account<T>: TryFrom<Accountable<T>, Error = accounts::AccountError>,
+{
+	// Convert hex string to bytes
+	let seed_bytes = hex::decode(seed_hex).expect("Invalid hex seed");
+	let mut seed_array = [0u8; 32];
+	seed_array.copy_from_slice(&seed_bytes[..32]);
+
+	Account::<T>::try_from(Accountable::KeyAndType(
+		Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
+		key_type,
+	))
+	.unwrap()
+}

@@ -1,6 +1,6 @@
 //! AES-CBC symmetric encryption implementation.
 //!
-//! This module provides AES-256-CBC encryption.
+//! This module provides AES-CBC encryption.
 
 use aes::Aes256;
 use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};

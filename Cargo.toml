@@ -12,6 +12,9 @@ authors = ["Tanveer Wahid <twahid@keeta.com>"]
 [workspace.dependencies.base32]
 version = "0.5.1"
 
+[workspace.dependencies.base64]
+version = "0.22.1"
+
 [workspace.dependencies.bip39-dict]
 version = "0.1.3"
 

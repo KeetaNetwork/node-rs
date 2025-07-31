@@ -1,6 +1,6 @@
 //! AES-GCM authenticated encryption implementation.
 //!
-//! This module provides AES-256-GCM AEAD.
+//! This module provides AES-GCM AEAD.
 
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm as AesGcmCipher, Key};

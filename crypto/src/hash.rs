@@ -302,7 +302,6 @@ mod tests {
 			let hash_default_result = hash_default(input);
 			let hash_none: [u8; 32] = hash(input, None).unwrap();
 			let hash_array_none: [u8; 32] = hash_array(input, None).unwrap();
-
 			assert_eq!(hash_default_result, hash_none);
 			assert_eq!(hash_default_result, hash_array_none);
 
@@ -320,7 +319,6 @@ mod tests {
 				let result1 = test_case.algorithm.hash(input);
 				let result2 = test_case.algorithm.hash(input);
 				let result3 = test_case.algorithm.hash(input);
-
 				assert_eq!(result1, result2);
 				assert_eq!(result2, result3);
 			}
@@ -348,6 +346,7 @@ mod tests {
 
 	#[test]
 	fn test_constants_and_compatibility() {
+		// Verify constants match expected values
 		assert_eq!(default_hash_algorithm(), "sha3-256");
 		assert_eq!(default_hash_algorithm_length(), 32);
 		assert_eq!(DEFAULT_HASH_ALGORITHM, HashAlgorithm::Sha3_256);

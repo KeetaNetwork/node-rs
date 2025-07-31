@@ -23,3 +23,6 @@ strum_macros.workspace = true
 secrecy.workspace = true
 zeroize = { version = "1.8.1", features = ["derive"] }
 rand_core = { version = "0.9.3", features = ["std", "os_rng"] }
+
+[dev-dependencies]
+base64.workspace = true
