@@ -12,15 +12,11 @@ pub mod signature;
 #[cfg(feature = "encryption")]
 pub use encryption::{AsymmetricEncryption, CryptoAead, KeyExchange};
 #[cfg(feature = "signature")]
-pub use signature::{CryptoSigner, CryptoVerifier};
+pub use signature::{CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions};
 
 // Re-export RustCrypto traits for convenience
 #[cfg(feature = "signature")]
-pub use signature::{DigestSigner, DigestVerifier, Error, RandomizedSigner, Signer, Verifier};
-
-// Re-export algorithm-specific signature types
-#[cfg(feature = "signature")]
-pub use signature::{Ed25519Signature, Secp256k1Signature};
+pub use signature::{DigestSigner, DigestVerifier, RandomizedSigner, SignatureError, Signer, Verifier};
 
 #[cfg(feature = "encryption")]
 pub use encryption::{Aead, AeadCore, AeadInPlace, KeyInit};

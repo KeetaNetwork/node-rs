@@ -9,6 +9,7 @@ pub mod algorithms;
 pub mod constants;
 pub mod error;
 pub mod hash;
+pub mod kdf;
 pub mod operations;
 pub mod prelude;
 pub mod utils;
@@ -25,7 +26,13 @@ pub use hash::{default_hash_algorithm, default_hash_algorithm_length, hash, hash
 pub use ::signature::Keypair;
 
 // Signature types and crypto operations
-pub use operations::{AsymmetricEncryption, CryptoAead, CryptoSigner, CryptoVerifier, KeyExchange};
+#[cfg(feature = "signature")]
+pub use operations::{
+	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, KeyExchange, SigningOptions,
+};
+
+#[cfg(feature = "encryption")]
+pub use operations::{AsymmetricEncryption, CryptoAead};
 
 // Algorithm-agnostic key types
 pub use algorithms::{AnyPrivateKey, AnyPublicKey};

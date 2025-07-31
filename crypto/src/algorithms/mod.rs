@@ -9,6 +9,16 @@ pub mod ed25519;
 pub mod secp256k1;
 pub mod secp256r1;
 
+// Encryption-related modules
+#[cfg(feature = "encryption")]
+pub mod aes_cbc;
+#[cfg(feature = "encryption")]
+pub mod aes_ctr;
+#[cfg(feature = "encryption")]
+pub mod aes_gcm;
+#[cfg(feature = "encryption")]
+pub mod ecies;
+#[cfg(feature = "encryption")]
 // Re-export algorithm implementations
 pub use ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 pub use secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
@@ -31,6 +41,11 @@ pub trait PrivateKey:
 pub trait PublicKey:
 	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>>
 {
+	/// Get uncompressed public key bytes.
+	///
+	/// # Returns
+	/// Returns the public key in uncompressed format
+	fn to_uncompressed_bytes(&self) -> Vec<u8>;
 }
 
 /// Enum to hold different key types

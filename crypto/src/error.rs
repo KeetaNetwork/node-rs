@@ -40,4 +40,47 @@ pub enum CryptoError {
 	/// Invalid operation for this key type
 	#[snafu(display("Invalid operation for this key type"))]
 	InvalidOperation,
+	/// Invalid key size provided
+	#[snafu(display("Invalid key size provided"))]
+	InvalidKeySize,
+	/// Invalid IV size provided
+	#[snafu(display("Invalid IV size provided"))]
+	InvalidIvSize,
+	/// Encryption not supported for this algorithm
+	#[snafu(display("Encryption not supported for this algorithm"))]
+	EncryptionNotSupported,
+}
+
+#[cfg(feature = "encryption")]
+impl From<cbc::cipher::InvalidLength> for CryptoError {
+	fn from(_: cbc::cipher::InvalidLength) -> Self {
+		CryptoError::InvalidKeySize
+	}
+}
+
+#[cfg(feature = "encryption")]
+impl From<cbc::cipher::inout::PadError> for CryptoError {
+	fn from(_: cbc::cipher::inout::PadError) -> Self {
+		CryptoError::DecryptionFailed
+	}
+}
+
+#[cfg(feature = "encryption")]
+impl From<cbc::cipher::inout::NotEqualError> for CryptoError {
+	fn from(_: cbc::cipher::inout::NotEqualError) -> Self {
+		CryptoError::DecryptionFailed
+	}
+}
+
+#[cfg(feature = "encryption")]
+impl From<cbc::cipher::block_padding::UnpadError> for CryptoError {
+	fn from(_: cbc::cipher::block_padding::UnpadError) -> Self {
+		CryptoError::DecryptionFailed
+	}
+}
+
+impl From<hkdf::InvalidLength> for CryptoError {
+	fn from(_: hkdf::InvalidLength) -> Self {
+		CryptoError::KeyDerivationFailed
+	}
 }

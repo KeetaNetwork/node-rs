@@ -1,9 +1,9 @@
 //! Integration tests for signature creation and verification
 
-use accounts::account::{KeyECDSASECP256K1, KeyPair, SigningOptions};
+use accounts::account::{AccountSigner, AccountVerifier, KeyECDSASECP256K1, KeyPair};
 use accounts::{AccountError, GenericAccount, KeyPairType, Keyable};
 use accounts::{KeyECDSASECP256R1, KeyED25519, KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};
-use crypto::hash_default;
+use crypto::{hash_default, SigningOptions};
 use secrecy::SecretBox;
 
 mod common;
@@ -80,28 +80,28 @@ fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = Acco
 	let account = T::try_from(Keyable::Seed((test_seed, 0))).unwrap();
 
 	let default_options = SigningOptions::default();
-	let signature_default = account.sign(message, Some(&default_options)).unwrap();
+	let signature_default = account.sign(message, Some(default_options)).unwrap();
 	let raw_options = SigningOptions::raw();
-	let signature_raw = account.sign(message, Some(&raw_options)).unwrap();
+	let signature_raw = account.sign(message, Some(raw_options)).unwrap();
 
 	assert_ne!(
 		signature_default, signature_raw,
 		"Different signing options should produce different signatures for {algorithm_type:?}"
 	);
 	assert!(
-		account.verify(message, &signature_default, Some(&default_options)).unwrap(),
+		account.verify(message, &signature_default, Some(default_options)).unwrap(),
 		"Default signature should verify with default options for {algorithm_type:?}"
 	);
 	assert!(
-		account.verify(message, &signature_raw, Some(&raw_options)).unwrap(),
+		account.verify(message, &signature_raw, Some(raw_options)).unwrap(),
 		"Raw signature should verify with raw options for {algorithm_type:?}"
 	);
 	assert!(
-		!account.verify(message, &signature_default, Some(&raw_options)).unwrap(),
+		!account.verify(message, &signature_default, Some(raw_options)).unwrap(),
 		"Default signature should not verify with raw options for {algorithm_type:?}"
 	);
 	assert!(
-		!account.verify(message, &signature_raw, Some(&default_options)).unwrap(),
+		!account.verify(message, &signature_raw, Some(default_options)).unwrap(),
 		"Raw signature should not verify with default options for {algorithm_type:?}"
 	);
 }
@@ -131,12 +131,12 @@ fn test_algorithm_validation() {
 
 		let default_options = SigningOptions::default();
 		let raw_options = SigningOptions::raw();
-		let sig_default = account.sign(test_data, Some(&default_options)).unwrap();
-		let sig_raw = account.sign(test_data, Some(&raw_options)).unwrap();
-		assert!(account.verify(test_data, &sig_default, Some(&default_options)).unwrap());
-		assert!(account.verify(test_data, &sig_raw, Some(&raw_options)).unwrap());
-		assert!(!account.verify(test_data, &sig_default, Some(&raw_options)).unwrap());
-		assert!(!account.verify(test_data, &sig_raw, Some(&default_options)).unwrap());
+		let sig_default = account.sign(test_data, Some(default_options)).unwrap();
+		let sig_raw = account.sign(test_data, Some(raw_options)).unwrap();
+		assert!(account.verify(test_data, &sig_default, Some(default_options)).unwrap());
+		assert!(account.verify(test_data, &sig_raw, Some(raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_default, Some(raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_raw, Some(default_options)).unwrap());
 
 		// Test ECDSA SECP256R1 with signing options
 		let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, index);
@@ -145,12 +145,12 @@ fn test_algorithm_validation() {
 		assert!(account.verify(test_data, &signature, None).unwrap());
 		assert!(!account.verify(wrong_data, &signature, None).unwrap());
 
-		let sig_default = account.sign(test_data, Some(&default_options)).unwrap();
-		let sig_raw = account.sign(test_data, Some(&raw_options)).unwrap();
-		assert!(account.verify(test_data, &sig_default, Some(&default_options)).unwrap());
-		assert!(account.verify(test_data, &sig_raw, Some(&raw_options)).unwrap());
-		assert!(!account.verify(test_data, &sig_default, Some(&raw_options)).unwrap());
-		assert!(!account.verify(test_data, &sig_raw, Some(&default_options)).unwrap());
+		let sig_default = account.sign(test_data, Some(default_options)).unwrap();
+		let sig_raw = account.sign(test_data, Some(raw_options)).unwrap();
+		assert!(account.verify(test_data, &sig_default, Some(default_options)).unwrap());
+		assert!(account.verify(test_data, &sig_raw, Some(raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_default, Some(raw_options)).unwrap());
+		assert!(!account.verify(test_data, &sig_raw, Some(default_options)).unwrap());
 
 		// Test ED25519 (no signing options)
 		let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, index);
@@ -177,11 +177,11 @@ fn test_default_signing_behavior() {
 	assert!(is_valid);
 
 	let default_options = SigningOptions::default();
-	let is_valid_with_options = account.verify(message, &signature, Some(&default_options)).unwrap();
+	let is_valid_with_options = account.verify(message, &signature, Some(default_options)).unwrap();
 	assert!(is_valid_with_options);
 
 	let raw_options = SigningOptions::raw();
-	let is_valid_raw = account.verify(message, &signature, Some(&raw_options)).unwrap();
+	let is_valid_raw = account.verify(message, &signature, Some(raw_options)).unwrap();
 	assert!(!is_valid_raw);
 }
 
@@ -198,7 +198,7 @@ fn test_cross_platform_signature_verification() {
 
 	let pre_hashed_message = hash_default(message).to_vec();
 	let raw_options = SigningOptions::raw();
-	let simulation_signature = account.sign(&pre_hashed_message, Some(&raw_options)).unwrap();
+	let simulation_signature = account.sign(&pre_hashed_message, Some(raw_options)).unwrap();
 
 	let verification_result = account.verify(message, &simulation_signature, None);
 	assert!(verification_result.is_ok());

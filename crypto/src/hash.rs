@@ -98,6 +98,7 @@ pub fn hash<const N: usize>(data: &[u8], algorithm: Option<HashAlgorithm>) -> Re
 	let hash_result = algo.hash(data);
 	let mut array = [0u8; N];
 	array.copy_from_slice(&hash_result[..N]);
+
 	Ok(array)
 }
 
@@ -116,6 +117,7 @@ pub fn hash_default(data: &[u8]) -> [u8; 32] {
 /// - SHA2-512: 64 bytes
 pub fn hash_array<const N: usize>(data: &[u8], algorithm: Option<HashAlgorithm>) -> Result<[u8; N], CryptoError> {
 	let algo = algorithm.unwrap_or(DEFAULT_HASH_ALGORITHM);
+
 	algo.hash_array::<N>(data)
 }
 

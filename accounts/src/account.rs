@@ -1,10 +1,5 @@
-use core::hash::{Hash, Hasher};
 use core::str::FromStr;
-use std::hash::DefaultHasher;
 
-use crypto::algorithms::Secp256r1Derivation;
-use crypto::operations::signature::Secp256r1Signature;
-use crypto::operations::{AsymmetricEncryption, Ed25519Signature, Secp256k1Signature, Signer, Verifier};
 use crypto::prelude::*;
 use secrecy::{ExposeSecret, SecretBox};
 use zeroize::Zeroize;
@@ -12,33 +7,6 @@ use zeroize::Zeroize;
 use crate::error::AccountError;
 use crate::utils::*;
 use crate::{HexSeedAndIndex, Index, PassphraseAndIndex, Seed, SeedAndIndex};
-
-/// Signing and verification options
-/// Default options are:
-/// - raw: false (will pre-hash the message
-/// - for_cert: false (use SEC format, not DER)
-#[derive(Debug, Clone, Default)]
-pub struct SigningOptions {
-	/// If true, use the raw message without hashing
-	/// If false, pre-hash the message before signing/verification
-	pub raw: bool,
-
-	/// For certificate processing
-	/// Currently used primarily for SECP256R1 DER encoding
-	pub for_cert: bool,
-}
-
-impl SigningOptions {
-	/// Create options for raw message processing (no pre-hashing)
-	pub fn raw() -> Self {
-		Self { raw: true, for_cert: false }
-	}
-
-	/// Create options for certificate processing
-	pub fn for_cert() -> Self {
-		Self { raw: false, for_cert: true }
-	}
-}
 
 /// Identifier key types (non-cryptographic)
 const IDENTIFIER_KEY_TYPES: &[KeyPairType] =
@@ -101,24 +69,7 @@ impl TryFrom<KeyPairType> for Algorithm {
 	}
 }
 
-/// Trait defining the interface for cryptographic key pairs.
-///
-/// Provides methods for key generation, derivation, and type identification.
-pub trait KeyPair: Send + Sync + TryFrom<Keyable, Error = AccountError> {
-	/// The key pair type for this implementation.
-	const KEY_PAIR_TYPE: KeyPairType;
-
-	/// Deterministically derives a private key from a seed and index.
-	///
-	/// Uses HKDF with retry logic to ensure the derived key is valid.
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError>;
-	/// Converts a private key into a formatted public key string.
-	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError>;
-	/// Returns the key pair type for this instance.
-	fn keypair_type(&self) -> KeyPairType {
-		Self::KEY_PAIR_TYPE
-	}
-
+pub trait AccountSigner {
 	/// Sign a message with the private key.
 	///
 	/// Returns the signature as a byte vector.
@@ -126,8 +77,12 @@ pub trait KeyPair: Send + Sync + TryFrom<Keyable, Error = AccountError> {
 	/// The options parameter controls message preprocessing:
 	/// - If options.raw = false (default): pre-hashes the message
 	/// - If options.raw = true: uses raw message
-	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError>;
+	fn sign(&self, _message: &[u8], _options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		Err(AccountError::NoIdentifierSign)
+	}
+}
 
+pub trait AccountVerifier {
 	/// Verify a signature against a message using the public key.
 	///
 	/// Returns true if the signature is valid, false otherwise.
@@ -135,7 +90,30 @@ pub trait KeyPair: Send + Sync + TryFrom<Keyable, Error = AccountError> {
 	/// The options parameter controls message preprocessing:
 	/// - If options.raw = false (default): pre-hashes the message
 	/// - If options.raw = true: uses raw message
-	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError>;
+	fn verify(
+		&self,
+		_message: &[u8],
+		_signature: &[u8],
+		_options: Option<SigningOptions>,
+	) -> Result<bool, AccountError> {
+		Err(AccountError::NoIdentifierVerify)
+	}
+}
+
+/// Trait defining the interface for cryptographic key pairs.
+///
+/// Provides methods for key generation, derivation, and type identification.
+pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyable, Error = AccountError> {
+	/// The key pair type for this implementation.
+	const KEY_PAIR_TYPE: KeyPairType;
+
+	/// Deterministically derives a private key from a seed and index.
+	///
+	/// Uses HKDF with retry logic to ensure the derived key is valid.
+	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError>;
+
+	/// Converts a private key into a formatted public key string.
+	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError>;
 
 	/// Encrypt data using the public key.
 	///
@@ -152,6 +130,11 @@ pub trait KeyPair: Send + Sync + TryFrom<Keyable, Error = AccountError> {
 
 	/// Get the signature size in bytes for this key type.
 	fn signature_size(&self) -> usize;
+
+	/// Returns the key pair type for this instance.
+	fn keypair_type(&self) -> KeyPairType {
+		Self::KEY_PAIR_TYPE
+	}
 }
 
 #[derive(Zeroize)]
@@ -179,13 +162,47 @@ pub enum Keyable {
 /// Private keys are stored securely and public keys are formatted as strings.
 #[derive(Clone)]
 pub struct KeyECDSASECP256K1 {
-	_private_key: Option<AnyPrivateKey>,
+	private_key: Option<Secp256k1PrivateKey>,
 	pub public_key: String,
 }
 
 impl core::fmt::Debug for KeyECDSASECP256K1 {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("KeyECDSASECP256K1").field("public_key", &self.public_key).finish()
+	}
+}
+
+impl AccountSigner for KeyECDSASECP256K1 {
+	fn sign(&self, message: &[u8], options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		let private_key = self.private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
+		let signature = private_key.sign_with_options(message, options.unwrap_or_default())?;
+
+		Ok(signature.to_bytes().to_vec())
+	}
+}
+
+impl AccountVerifier for KeyECDSASECP256K1 {
+	fn verify(&self, message: &[u8], signature: &[u8], options: Option<SigningOptions>) -> Result<bool, AccountError> {
+		// Parse the public key from the formatted string
+		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+		let public_key = Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
+
+		// Helper function to normalize signature S value for k256 compatibility
+		let normalize_signature = |sig: Secp256k1Signature| sig.normalize_s().unwrap_or(sig);
+
+		// Parse and normalize signature for k256 compatibility
+		// Handle both raw 64-byte format (from iOS/TypeScript) and DER format
+		let signature = if signature.len() == 64 {
+			// Raw format: try from_bytes first, fallback to try_from
+			Secp256k1Signature::from_bytes(signature.into())
+				.or_else(|_| Secp256k1Signature::try_from(signature))
+				.map(normalize_signature)?
+		} else {
+			// DER format or other
+			Secp256k1Signature::try_from(signature).map(normalize_signature)?
+		};
+
+		Ok(public_key.verify_with_options(message, &signature, options.unwrap_or_default()).is_ok())
 	}
 }
 
@@ -206,81 +223,26 @@ impl KeyPair for KeyECDSASECP256K1 {
 			let public_key = secp_key.as_public_key();
 			let public_key_bytes = Vec::<u8>::from(&public_key);
 
-			format_public_key(&public_key_bytes, crypto::Algorithm::Secp256k1)
+			format_public_key(&public_key_bytes, Algorithm::Secp256k1)
 		} else {
 			Err(AccountError::InvalidConstruction)
 		}
 	}
 
-	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
-		// Apply preprocessing based on options
-		let data = match options {
-			Some(opts) if opts.raw => message.to_vec(),
-			_ => hash_message(message),
-		};
-
-		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
-
-		if let AnyPrivateKey::Secp256k1(secp_key) = private_key {
-			let signature = secp_key.try_sign(&data)?;
-			// Convert signature to bytes - secp256k1 signatures are serializable
-			Ok(signature.to_bytes().to_vec())
-		} else {
-			Err(AccountError::InvalidKeyType)
-		}
-	}
-
-	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError> {
-		// Apply preprocessing based on options
-		let data = match options {
-			Some(opts) if opts.raw => message.to_vec(),
-			_ => hash_message(message),
-		};
-
-		// Parse the public key from the formatted string
-		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
-		let public_key = crypto::algorithms::secp256k1::Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
-
-		// Helper function to normalize signature S value for k256 compatibility
-		let normalize_signature = |sig: Secp256k1Signature| sig.normalize_s().unwrap_or(sig);
-
-		// Parse and normalize signature for k256 compatibility
-		// Handle both raw 64-byte format (from iOS/TypeScript) and DER format
-		let signature = if signature.len() == 64 {
-			// Raw format: try from_bytes first, fallback to try_from
-			Secp256k1Signature::from_bytes(signature.into())
-				.or_else(|_| Secp256k1Signature::try_from(signature))
-				.map(normalize_signature)
-				.map_err(|_| AccountError::InvalidConstruction)?
-		} else {
-			// DER format or other
-			Secp256k1Signature::try_from(signature)
-				.map(normalize_signature)
-				.map_err(|_| AccountError::InvalidConstruction)?
-		};
-
-		Ok(public_key.verify(&data, &signature).is_ok())
-	}
-
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
 		// Parse the public key from the formatted string for encryption
 		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
-		let public_key = crypto::algorithms::secp256k1::Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
-
-		use crypto::operations::AsymmetricEncryption;
+		let public_key = Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
 		let ciphertext = public_key.encrypt(plaintext)?;
+
 		Ok(ciphertext)
 	}
 
 	fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, AccountError> {
-		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
+		let private_key = self.private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
+		let plaintext = private_key.decrypt(ciphertext)?;
 
-		if let AnyPrivateKey::Secp256k1(secp_key) = private_key {
-			let plaintext = secp_key.decrypt(ciphertext)?;
-			Ok(plaintext)
-		} else {
-			Err(AccountError::InvalidKeyType)
-		}
+		Ok(plaintext)
 	}
 
 	fn supports_encryption(&self) -> bool {
@@ -304,19 +266,23 @@ impl TryFrom<Keyable> for KeyECDSASECP256K1 {
 					}
 					Keyable::Seed((seed, _)) => seed,
 					Keyable::HexSeed((seed, _)) => {
-						let decoded: [u8; 32] = hex::decode(seed.expose_secret())
-							.or(Err(AccountError::InvalidConstruction))?
-							.try_into()
-							.or(Err(AccountError::InvalidConstruction))?;
-						SecretBox::new(Box::new(decoded))
+						let decoded = hex::decode(seed.expose_secret())?;
+						let bytes: [u8; 32] = decoded.try_into().or(Err(AccountError::InvalidConstruction))?;
+
+						SecretBox::new(Box::new(bytes))
 					}
 					_ => unreachable!(),
 				};
 
-				let private_key = KeyECDSASECP256K1::seed_to_private_key(&seed, index)?;
-				let public_key_string = KeyECDSASECP256K1::derive_public_key_string(&private_key)?;
+				let any_private_key = KeyECDSASECP256K1::seed_to_private_key(&seed, index)?;
+				let public_key_string = KeyECDSASECP256K1::derive_public_key_string(&any_private_key)?;
 
-				(Some(private_key), public_key_string)
+				// Extract the specific key type from AnyPrivateKey
+				if let AnyPrivateKey::Secp256k1(secp_key) = any_private_key {
+					(Some(secp_key), public_key_string)
+				} else {
+					return Err(AccountError::InvalidKeyType);
+				}
 			}
 			Keyable::PublicKeyString(public_key_string) => {
 				// Validate the prefix first
@@ -328,53 +294,79 @@ impl TryFrom<Keyable> for KeyECDSASECP256K1 {
 				let (_, algorithm) = parse_public_key(&public_key_string)?;
 				if algorithm != Algorithm::Secp256k1 {
 					return Err(AccountError::InvalidKeyType);
+				} else {
+					(None, public_key_string.clone())
 				}
-
-				(None, public_key_string.clone())
 			}
 			Keyable::PublicKey(public_key_bytes) => {
 				// Validate key length for secp256k1 (should be 33 bytes compressed)
 				if public_key_bytes.len() != 33 && public_key_bytes.len() != 65 {
 					return Err(AccountError::InvalidConstruction);
+				} else {
+					// Create formatted string from raw public key bytes
+					let formatted = format_public_key(&public_key_bytes, Algorithm::Secp256k1)?;
+
+					(None, formatted)
 				}
-
-				// Create formatted string from raw public key bytes
-				let formatted = format_public_key(&public_key_bytes, Algorithm::Secp256k1)?;
-
-				(None, formatted)
 			}
 			Keyable::PrivateKey(private_key_bytes) => {
 				// Validate private key length (should be 32 bytes)
 				if private_key_bytes.len() != 32 {
 					return Err(AccountError::InvalidConstruction);
+				} else {
+					// Create private key from raw bytes
+					let private_key = Secp256k1PrivateKey::try_from(private_key_bytes.as_slice())?;
+					let any_private_key = AnyPrivateKey::Secp256k1(private_key.clone());
+					let public_key_string = KeyECDSASECP256K1::derive_public_key_string(&any_private_key)?;
+
+					(Some(private_key), public_key_string)
 				}
-
-				// Create private key from raw bytes
-				let private_key =
-					crypto::algorithms::secp256k1::Secp256k1PrivateKey::try_from(private_key_bytes.as_slice())?;
-				let any_private_key = AnyPrivateKey::Secp256k1(private_key);
-				let public_key_string = KeyECDSASECP256K1::derive_public_key_string(&any_private_key)?;
-
-				(Some(any_private_key), public_key_string)
 			}
-			Keyable::Identifier(_) => {
-				return Err(AccountError::InvalidIdentifierConstruction);
-			}
+			Keyable::Identifier(_) => return Err(AccountError::InvalidIdentifierConstruction),
 		};
 
-		Ok(KeyECDSASECP256K1 { _private_key: private_key, public_key })
+		Ok(KeyECDSASECP256K1 { private_key, public_key })
 	}
 }
 
 #[derive(Clone)]
 pub struct KeyECDSASECP256R1 {
-	_private_key: Option<AnyPrivateKey>,
+	private_key: Option<Secp256r1PrivateKey>,
 	pub public_key: String,
 }
 
 impl core::fmt::Debug for KeyECDSASECP256R1 {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("KeyECDSASECP256R1").field("public_key", &self.public_key).finish()
+	}
+}
+
+impl AccountSigner for KeyECDSASECP256R1 {
+	fn sign(&self, message: &[u8], options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		let private_key = self.private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
+		let signature = private_key.sign_with_options(message, options.unwrap_or_default())?;
+
+		Ok(signature.to_bytes().to_vec())
+	}
+}
+
+impl AccountVerifier for KeyECDSASECP256R1 {
+	fn verify(&self, message: &[u8], signature: &[u8], options: Option<SigningOptions>) -> Result<bool, AccountError> {
+		// Parse the public key from the formatted string
+		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+		let public_key = Secp256r1PublicKey::try_from(public_key_bytes.as_slice())?;
+
+		// Convert signature bytes to proper format
+		// Handle both raw 64-byte format (from iOS/TypeScript) and DER format
+		let signature = if signature.len() == 64 {
+			// Raw format: 32 bytes r + 32 bytes s
+			Secp256r1Signature::from_bytes(signature.into())?
+		} else {
+			// DER format or other
+			Secp256r1Signature::try_from(signature)?
+		};
+
+		Ok(public_key.verify_with_options(message, &signature, options.unwrap_or_default()).is_ok())
 	}
 }
 
@@ -395,52 +387,10 @@ impl KeyPair for KeyECDSASECP256R1 {
 			let public_key = secp_key.as_public_key();
 			let public_key_bytes = Vec::<u8>::from(&public_key);
 
-			format_public_key(&public_key_bytes, crypto::Algorithm::Secp256r1)
+			format_public_key(&public_key_bytes, Algorithm::Secp256r1)
 		} else {
 			Err(AccountError::InvalidConstruction)
 		}
-	}
-
-	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
-		// Apply preprocessing based on options
-		let data = match options {
-			Some(opts) if opts.raw => message.to_vec(),
-			_ => hash_message(message),
-		};
-
-		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
-
-		if let AnyPrivateKey::Secp256r1(secp_key) = private_key {
-			let signature = secp_key.try_sign(&data)?;
-			// Convert signature to bytes - secp256r1 signatures are serializable
-			Ok(signature.to_bytes().to_vec())
-		} else {
-			Err(AccountError::InvalidKeyType)
-		}
-	}
-
-	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError> {
-		// Apply preprocessing based on options
-		let data = match options {
-			Some(opts) if opts.raw => message.to_vec(),
-			_ => hash_message(message),
-		};
-
-		// Parse the public key from the formatted string
-		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
-		let public_key = crypto::algorithms::secp256r1::Secp256r1PublicKey::try_from(public_key_bytes.as_slice())?;
-
-		// Convert signature bytes to proper format
-		// Handle both raw 64-byte format (from iOS/TypeScript) and DER format
-		let signature = if signature.len() == 64 {
-			// Raw format: 32 bytes r + 32 bytes s
-			Secp256r1Signature::from_bytes(signature.into()).map_err(|_| AccountError::InvalidConstruction)?
-		} else {
-			// DER format or other
-			Secp256r1Signature::try_from(signature).map_err(|_| AccountError::InvalidConstruction)?
-		};
-
-		Ok(public_key.verify(&data, &signature).is_ok())
 	}
 
 	fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
@@ -473,26 +423,33 @@ impl TryFrom<Keyable> for KeyECDSASECP256R1 {
 						// Extract the passphrase from SecretBox and join the words
 						let passphrase_words = passphrase.expose_secret();
 						let passphrase_str = passphrase_words.join(" ");
+
 						seed_from_passphrase(&passphrase_str)?
 					}
 					Keyable::Seed((seed, _)) => seed,
 					Keyable::HexSeed((seed, _)) => {
-						let decoded =
-							hex::decode(seed.expose_secret()).map_err(|_| AccountError::InvalidConstruction)?;
+						let decoded = hex::decode(seed.expose_secret())?;
 						if decoded.len() != 32 {
 							return Err(AccountError::InvalidConstruction);
 						}
+
 						let mut seed_array = [0u8; 32];
 						seed_array.copy_from_slice(&decoded);
+
 						SecretBox::new(Box::new(seed_array))
 					}
 					_ => unreachable!(),
 				};
 
-				let private_key = KeyECDSASECP256R1::seed_to_private_key(&seed, index)?;
-				let public_key_string = KeyECDSASECP256R1::derive_public_key_string(&private_key)?;
+				let any_private_key = KeyECDSASECP256R1::seed_to_private_key(&seed, index)?;
+				let public_key_string = KeyECDSASECP256R1::derive_public_key_string(&any_private_key)?;
 
-				(Some(private_key), public_key_string)
+				// Extract the specific key type from AnyPrivateKey
+				if let AnyPrivateKey::Secp256r1(secp_key) = any_private_key {
+					(Some(secp_key), public_key_string)
+				} else {
+					return Err(AccountError::InvalidKeyType);
+				}
 			}
 			Keyable::PublicKeyString(public_key_string) => {
 				// Validate the prefix first
@@ -526,19 +483,18 @@ impl TryFrom<Keyable> for KeyECDSASECP256R1 {
 				}
 
 				// Create private key from raw bytes
-				let private_key =
-					crypto::algorithms::secp256r1::Secp256r1PrivateKey::try_from(private_key_bytes.as_slice())?;
-				let any_private_key = AnyPrivateKey::Secp256r1(private_key);
+				let private_key = Secp256r1PrivateKey::try_from(private_key_bytes.as_slice())?;
+				let any_private_key = AnyPrivateKey::Secp256r1(private_key.clone());
 				let public_key_string = KeyECDSASECP256R1::derive_public_key_string(&any_private_key)?;
 
-				(Some(any_private_key), public_key_string)
+				(Some(private_key), public_key_string)
 			}
 			Keyable::Identifier(_) => {
 				return Err(AccountError::InvalidIdentifierConstruction);
 			}
 		};
 
-		Ok(KeyECDSASECP256R1 { _private_key: private_key, public_key })
+		Ok(KeyECDSASECP256R1 { private_key, public_key })
 	}
 }
 
@@ -547,13 +503,42 @@ impl TryFrom<Keyable> for KeyECDSASECP256R1 {
 /// Provides Ed25519 digital signature algorithm support.
 #[derive(Clone)]
 pub struct KeyED25519 {
-	_private_key: Option<AnyPrivateKey>,
+	private_key: Option<Ed25519PrivateKey>,
 	pub public_key: String,
 }
 
 impl core::fmt::Debug for KeyED25519 {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("KeyED25519").field("public_key", &self.public_key).finish()
+	}
+}
+
+impl AccountSigner for KeyED25519 {
+	fn sign(&self, message: &[u8], options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		let private_key = self.private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
+		let signature = private_key.sign_with_options(message, options.unwrap_or_default())?;
+
+		Ok(signature.to_bytes().to_vec())
+	}
+}
+
+impl AccountVerifier for KeyED25519 {
+	fn verify(&self, message: &[u8], signature: &[u8], options: Option<SigningOptions>) -> Result<bool, AccountError> {
+		// Parse the public key from the formatted string
+		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+		let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_slice())?;
+
+		// Convert signature bytes to proper format - Ed25519 signatures are fixed 64 bytes
+		if signature.len() != 64 {
+			return Ok(false);
+		}
+
+		// Create signature from bytes
+		let mut sig_bytes = [0u8; 64];
+		sig_bytes.copy_from_slice(signature);
+		let signature = Ed25519Signature::from_bytes(&sig_bytes);
+
+		Ok(public_key.verify_with_options(message, &signature, options.unwrap_or_default()).is_ok())
 	}
 }
 
@@ -573,7 +558,7 @@ impl KeyPair for KeyED25519 {
 		if let AnyPrivateKey::Ed25519(ed_key) = key {
 			let public_key = ed_key.verifying_key();
 			let public_key_bytes = Vec::<u8>::from(&public_key);
-			let formatted_key = format_public_key(&public_key_bytes, crypto::Algorithm::Ed25519)?;
+			let formatted_key = format_public_key(&public_key_bytes, Algorithm::Ed25519)?;
 
 			Ok(formatted_key)
 		} else {
@@ -581,116 +566,27 @@ impl KeyPair for KeyED25519 {
 		}
 	}
 
-	fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
-		// Apply preprocessing based on options
-		let data = match options {
-			Some(opts) if opts.raw => message.to_vec(),
-			_ => hash_message(message),
-		};
-
-		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
-
-		if let AnyPrivateKey::Ed25519(ed_key) = private_key {
-			let signature = ed_key.try_sign(&data)?;
-			// Convert signature to bytes - Ed25519 signatures are 64 bytes
-			Ok(signature.to_bytes().to_vec())
-		} else {
-			Err(AccountError::InvalidKeyType)
-		}
-	}
-
-	fn verify(&self, message: &[u8], signature: &[u8], options: Option<&SigningOptions>) -> Result<bool, AccountError> {
-		// Apply preprocessing based on options
-		let data = match options {
-			Some(opts) if opts.raw => message.to_vec(),
-			_ => hash_message(message),
-		};
-
-		// Parse the public key from the formatted string
-		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
-		let public_key = crypto::algorithms::ed25519::Ed25519PublicKey::try_from(public_key_bytes.as_slice())?;
-
-		// Convert signature bytes to proper format - Ed25519 signatures are fixed 64 bytes
-		if signature.len() != 64 {
-			return Ok(false);
-		}
-
-		// Create signature from bytes
-		let mut sig_bytes = [0u8; 64];
-		sig_bytes.copy_from_slice(signature);
-		let signature = Ed25519Signature::from_bytes(&sig_bytes);
-
-		Ok(public_key.verify(&data, &signature).is_ok())
-	}
-
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
-		// Ed25519 encryption via X25519 key exchange
-		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
-
-		if let AnyPrivateKey::Ed25519(ed_key) = private_key {
-			// Convert Ed25519 to X25519 for key exchange
-			let x25519_private = ed_key.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
-
-			// Get the Ed25519 public key and convert to X25519
-			let ed25519_public = ed_key.as_public_key();
-			let x25519_public = ed25519_public.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
-
-			// Perform key exchange to get shared secret
-			let shared_secret = x25519_private.diffie_hellman(&x25519_public);
-
-			// Create encryption key from shared secret only (not plaintext)
-			let mut hasher = DefaultHasher::new();
-			shared_secret.hash(&mut hasher);
-			let hash = hasher.finish();
-
-			// Simple XOR-based encryption for demonstration
-			let mut result = plaintext.to_vec();
-			let key_bytes = hash.to_le_bytes();
-			for (i, byte) in result.iter_mut().enumerate() {
-				*byte ^= key_bytes[i % key_bytes.len()];
-			}
-
-			Ok(result)
+		// Use the crypto crate's AsymmetricEncryption implementation
+		if let Some(private_key) = &self.private_key {
+			private_key.encrypt(plaintext).map_err(|_| AccountError::EncryptionNotSupported)
 		} else {
-			Err(AccountError::InvalidKeyType)
+			// Parse the public key from the formatted string for encryption
+			let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+			let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_slice())?;
+
+			public_key.encrypt(plaintext).map_err(|_| AccountError::EncryptionNotSupported)
 		}
 	}
 
 	fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, AccountError> {
-		// Ed25519 decryption via X25519 key exchange (reverse of encrypt)
-		let private_key = self._private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
-
-		if let AnyPrivateKey::Ed25519(ed_key) = private_key {
-			// Convert Ed25519 to X25519 for key exchange
-			let x25519_private = ed_key.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
-
-			// Get the Ed25519 public key and convert to X25519
-			let ed25519_public = ed_key.as_public_key();
-			let x25519_public = ed25519_public.to_x25519().map_err(|_| AccountError::EncryptionNotSupported)?;
-
-			// Perform key exchange to get shared secret
-			let shared_secret = x25519_private.diffie_hellman(&x25519_public);
-
-			// Use the same key derivation as encrypt
-			let mut hasher = DefaultHasher::new();
-			shared_secret.hash(&mut hasher);
-			let hash = hasher.finish();
-
-			// Simple XOR-based decryption (same operation as encryption)
-			let mut result = ciphertext.to_vec();
-			let key_bytes = hash.to_le_bytes();
-			for (i, byte) in result.iter_mut().enumerate() {
-				*byte ^= key_bytes[i % key_bytes.len()];
-			}
-
-			Ok(result)
-		} else {
-			Err(AccountError::InvalidKeyType)
-		}
+		// Use the crypto crate's AsymmetricEncryption implementation
+		let private_key = self.private_key.as_ref().ok_or(AccountError::InvalidConstruction)?;
+		private_key.decrypt(ciphertext).map_err(|_| AccountError::EncryptionNotSupported)
 	}
 
 	fn supports_encryption(&self) -> bool {
-		true
+		true // ECIES-25519 via X25519 is now implemented
 	}
 
 	fn signature_size(&self) -> usize {
@@ -719,10 +615,15 @@ impl TryFrom<Keyable> for KeyED25519 {
 					_ => unreachable!(),
 				};
 
-				let private_key = KeyED25519::seed_to_private_key(&seed, index)?;
-				let public_key_string = KeyED25519::derive_public_key_string(&private_key)?;
+				let any_private_key = KeyED25519::seed_to_private_key(&seed, index)?;
+				let public_key_string = KeyED25519::derive_public_key_string(&any_private_key)?;
 
-				(Some(private_key), public_key_string)
+				// Extract the specific key type from AnyPrivateKey
+				if let AnyPrivateKey::Ed25519(ed_key) = any_private_key {
+					(Some(ed_key), public_key_string)
+				} else {
+					return Err(AccountError::InvalidKeyType);
+				}
 			}
 			Keyable::PublicKeyString(public_key_string) => {
 				// Validate the prefix first
@@ -756,19 +657,18 @@ impl TryFrom<Keyable> for KeyED25519 {
 				}
 
 				// Create private key from raw bytes
-				let private_key =
-					crypto::algorithms::ed25519::Ed25519PrivateKey::try_from(private_key_bytes.as_slice())?;
-				let any_private_key = AnyPrivateKey::Ed25519(private_key);
+				let private_key = Ed25519PrivateKey::try_from(private_key_bytes.as_slice())?;
+				let any_private_key = AnyPrivateKey::Ed25519(private_key.clone());
 				let public_key_string = KeyED25519::derive_public_key_string(&any_private_key)?;
 
-				(Some(any_private_key), public_key_string)
+				(Some(private_key), public_key_string)
 			}
 			Keyable::Identifier(_) => {
 				return Err(AccountError::InvalidIdentifierConstruction);
 			}
 		};
 
-		Ok(KeyED25519 { _private_key: private_key, public_key })
+		Ok(KeyED25519 { private_key, public_key })
 	}
 }
 
@@ -790,6 +690,9 @@ impl core::fmt::Debug for KeyNETWORK {
 	}
 }
 
+impl AccountSigner for KeyNETWORK {}
+impl AccountVerifier for KeyNETWORK {}
+
 impl KeyPair for KeyNETWORK {
 	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::NETWORK;
 
@@ -801,19 +704,6 @@ impl KeyPair for KeyNETWORK {
 
 	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
 		Err(AccountError::InvalidConstruction)
-	}
-
-	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::NoIdentifierSign)
-	}
-
-	fn verify(
-		&self,
-		_message: &[u8],
-		_signature: &[u8],
-		_options: Option<&SigningOptions>,
-	) -> Result<bool, AccountError> {
-		Err(AccountError::NoIdentifierVerify)
 	}
 
 	fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
@@ -881,6 +771,9 @@ impl core::fmt::Debug for KeyTOKEN {
 	}
 }
 
+impl AccountSigner for KeyTOKEN {}
+impl AccountVerifier for KeyTOKEN {}
+
 impl KeyPair for KeyTOKEN {
 	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::TOKEN;
 
@@ -892,19 +785,6 @@ impl KeyPair for KeyTOKEN {
 
 	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
 		Err(AccountError::InvalidConstruction)
-	}
-
-	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::NoIdentifierSign)
-	}
-
-	fn verify(
-		&self,
-		_message: &[u8],
-		_signature: &[u8],
-		_options: Option<&SigningOptions>,
-	) -> Result<bool, AccountError> {
-		Err(AccountError::NoIdentifierVerify)
 	}
 
 	fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
@@ -984,19 +864,6 @@ impl KeyPair for KeySTORAGE {
 		Err(AccountError::InvalidConstruction)
 	}
 
-	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::NoIdentifierSign)
-	}
-
-	fn verify(
-		&self,
-		_message: &[u8],
-		_signature: &[u8],
-		_options: Option<&SigningOptions>,
-	) -> Result<bool, AccountError> {
-		Err(AccountError::NoIdentifierVerify)
-	}
-
 	fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
 		Err(AccountError::EncryptionNotSupported)
 	}
@@ -1013,6 +880,9 @@ impl KeyPair for KeySTORAGE {
 		0 // Identifier keys don't produce signatures
 	}
 }
+
+impl AccountSigner for KeySTORAGE {}
+impl AccountVerifier for KeySTORAGE {}
 
 impl TryFrom<Keyable> for KeySTORAGE {
 	type Error = AccountError;
@@ -1061,6 +931,9 @@ impl core::fmt::Debug for KeyMULTISIG {
 	}
 }
 
+impl AccountSigner for KeyMULTISIG {}
+impl AccountVerifier for KeyMULTISIG {}
+
 impl KeyPair for KeyMULTISIG {
 	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::MULTISIG;
 
@@ -1071,19 +944,6 @@ impl KeyPair for KeyMULTISIG {
 
 	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
 		Err(AccountError::InvalidConstruction)
-	}
-
-	fn sign(&self, _message: &[u8], _options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::NoIdentifierSign)
-	}
-
-	fn verify(
-		&self,
-		_message: &[u8],
-		_signature: &[u8],
-		_options: Option<&SigningOptions>,
-	) -> Result<bool, AccountError> {
-		Err(AccountError::NoIdentifierVerify)
 	}
 
 	fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, AccountError> {
@@ -1213,7 +1073,7 @@ where
 	}
 
 	pub fn compute_seed_from_passphrase(passphrase: Vec<String>) -> Result<Seed, AccountError> {
-		seed_from_passphrase(passphrase.join(" ").as_str()).map_err(AccountError::from)
+		Ok(seed_from_passphrase(passphrase.join(" ").as_str())?)
 	}
 
 	pub fn generate_passphrase() -> Result<SecretBox<Vec<String>>, AccountError> {
@@ -1294,9 +1154,9 @@ where
 				{
 					return Err(AccountError::InvalidConstruction);
 				}
+
 				// Parse hex string to bytes
-				hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str))
-					.map_err(|_| AccountError::InvalidConstruction)?
+				hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str))?
 			}
 		};
 
@@ -1441,15 +1301,15 @@ where
 		match self.keypair_type() {
 			KeyPairType::ECDSASECP256K1 => {
 				let concrete_self = unsafe { &*(self as *const Self as *const Account<KeyECDSASECP256K1>) };
-				concrete_self.keypair._private_key.is_some()
+				concrete_self.keypair.private_key.is_some()
 			}
 			KeyPairType::ED25519 => {
 				let concrete_self = unsafe { &*(self as *const Self as *const Account<KeyED25519>) };
-				concrete_self.keypair._private_key.is_some()
+				concrete_self.keypair.private_key.is_some()
 			}
 			KeyPairType::ECDSASECP256R1 => {
 				let concrete_self = unsafe { &*(self as *const Self as *const Account<KeyECDSASECP256R1>) };
-				concrete_self.keypair._private_key.is_some()
+				concrete_self.keypair.private_key.is_some()
 			}
 			// Identifier types never have private keys
 			KeyPairType::NETWORK | KeyPairType::TOKEN | KeyPairType::STORAGE | KeyPairType::MULTISIG => false,
@@ -1472,7 +1332,7 @@ where
 	/// Sign a message with the account's private key.
 	///
 	/// Returns the signature as a byte vector.y)
-	pub fn sign(&self, message: &[u8], options: Option<&SigningOptions>) -> Result<Vec<u8>, AccountError> {
+	pub fn sign(&self, message: &[u8], options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		self.keypair.sign(message, options)
 	}
 
@@ -1483,7 +1343,7 @@ where
 		&self,
 		message: &[u8],
 		signature: &[u8],
-		options: Option<&SigningOptions>,
+		options: Option<SigningOptions>,
 	) -> Result<bool, AccountError> {
 		self.keypair.verify(message, signature, options)
 	}
@@ -2298,10 +2158,10 @@ mod tests {
 			assert_eq!(secp256k1_account.keypair.public_key, secp256k1_from_pubkey.keypair.public_key);
 			assert_eq!(ed25519_account.keypair.public_key, ed25519_from_pubkey.keypair.public_key);
 			// Verify the accounts from public key strings don't have private keys
-			assert!(secp256k1_account.keypair._private_key.is_some());
-			assert!(secp256k1_from_pubkey.keypair._private_key.is_none());
-			assert!(ed25519_account.keypair._private_key.is_some());
-			assert!(ed25519_from_pubkey.keypair._private_key.is_none());
+			assert!(secp256k1_account.keypair.private_key.is_some());
+			assert!(secp256k1_from_pubkey.keypair.private_key.is_none());
+			assert!(ed25519_account.keypair.private_key.is_some());
+			assert!(ed25519_from_pubkey.keypair.private_key.is_none());
 		}
 	}
 
@@ -3238,7 +3098,7 @@ mod tests {
 		let seed_array: [u8; 32] = [0u8; 32]; // Use a simple seed for this test
 		let seed = SecretBox::new(Box::new(seed_array));
 
-		// Cryptographic key types should support encryption
+		// ECDSA secp256k1 supports ECIES encryption
 		let ecdsa_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed, 0)),
 			KeyPairType::ECDSASECP256K1,
@@ -3249,10 +3109,11 @@ mod tests {
 		let seed_array2: [u8; 32] = [1u8; 32]; // Different seed
 		let seed2 = SecretBox::new(Box::new(seed_array2));
 
+		// Ed25519 encryption using ECIES-25519 via X25519 key conversion
 		let ed25519_account =
 			Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed2, 0)), KeyPairType::ED25519))
 				.unwrap();
-		assert!(ed25519_account.supports_encryption());
+		assert!(ed25519_account.supports_encryption()); // ECIES-25519 now implemented
 
 		// Identifier key types should not support encryption
 		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();

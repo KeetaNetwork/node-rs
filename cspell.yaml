@@ -18,6 +18,7 @@ words:
   - rustup
   - tyblocks
   - github
+  - ECDSASECP
   - ECDSASECP256K1
   - ECDSASECP256R1
   - ED25519
@@ -25,7 +26,6 @@ words:
   - ECDH
   - diffie
   - Keyable
-  - KeyPairType
   - bip39
   - pbkdf2
   - hkdf
@@ -35,11 +35,16 @@ words:
   - secp
   - ecdsa
   - ecies
+  - pkcs
+  - decryptor
+  - encryptor
   - secp256k1
   - ciphertext
   - zeroization
+  - keystream
   - passphrase
   - hexseed
+  - unpad
   - pubkey
   - keypair
   - rng
@@ -48,7 +53,6 @@ words:
   - Sha256
   - base32
   - hexdigit
-  - FromAccountable
   - Accountable
   - KeyECDSASECP256K1
   - KeyECDSASECP256R1

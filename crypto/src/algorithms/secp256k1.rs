@@ -7,10 +7,11 @@
 //! - **Private keys**: 32 bytes, in range [1, n-1] where n is the curve order
 //! - **Public keys**: 33 bytes compressed format (0x02/0x03 prefix + 32 bytes)
 
+// Re-export algorithm-specific signature types
+pub use k256::ecdsa::Signature as Secp256k1Signature;
+
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
-#[cfg(feature = "encryption")]
-use ecies;
 use k256::{
 	ecdsa::{Signature, SigningKey},
 	elliptic_curve::sec1::ToEncodedPoint,
@@ -19,11 +20,18 @@ use k256::{
 use secrecy::SecretBox;
 
 #[cfg(feature = "encryption")]
-use crate::operations::encryption::AsymmetricEncryption;
-#[cfg(feature = "signature")]
-use crate::operations::signature::{CryptoSigner, CryptoVerifier};
+use crate::algorithms::ecies::Ecies;
+#[cfg(feature = "encryption")]
+use crate::algorithms::ecies::EciesSecp256k1;
+#[cfg(feature = "encryption")]
+use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGeneration, KeyInit};
 
-use crate::{error::CryptoError, KeyDerivation, PrivateKey, PublicKey};
+#[cfg(feature = "signature")]
+use crate::operations::signature::{
+	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
+};
+
+use crate::{error::CryptoError, hash::hash_default, KeyDerivation, PrivateKey, PublicKey};
 
 /// secp256k1 private key wrapper.
 ///
@@ -94,6 +102,60 @@ impl TryFrom<&[u8]> for Secp256k1PrivateKey {
 	}
 }
 
+impl Secp256k1PrivateKey {
+	/// Perform ECDH key exchange with another public key
+	///
+	/// Returns the shared secret as raw bytes (32 bytes for secp256k1)
+	pub fn ecdh(&self, other_public_key: &Secp256k1PublicKey) -> Result<Vec<u8>, CryptoError> {
+		use k256::ecdh::diffie_hellman;
+
+		// Perform ECDH directly using the k256 function
+		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
+
+		// Return the raw bytes of the shared secret
+		Ok(shared_secret.raw_secret_bytes().to_vec())
+	}
+}
+
+// KeyGeneration trait implementation
+#[cfg(feature = "encryption")]
+impl KeyGeneration for Secp256k1PrivateKey {
+	type Error = CryptoError;
+
+	fn generate_random() -> Result<Self, Self::Error> {
+		// Generate a random 32-byte seed and derive a key from it
+		use crate::utils::generate_random_seed;
+		use secrecy::ExposeSecret;
+		let random_seed = generate_random_seed()?;
+		Secp256k1Derivation::derive_from_seed(random_seed.expose_secret())
+	}
+}
+
+// KeyExchange trait implementation
+#[cfg(feature = "encryption")]
+impl KeyExchange for Secp256k1PrivateKey {
+	type PublicKey = Secp256k1PublicKey;
+	type SharedSecret = Vec<u8>;
+
+	fn ecdh(&self, other_public_key: &Self::PublicKey) -> Result<Self::SharedSecret, CryptoError> {
+		self.ecdh(other_public_key)
+	}
+
+	fn key_exchange(&self, their_public_key: &[u8]) -> Result<Self::SharedSecret, CryptoError> {
+		let public_key = Secp256k1PublicKey::try_from(their_public_key)?;
+		self.ecdh(&public_key)
+	}
+
+	fn derive_aead_key<A>(&self, shared_secret: &Self::SharedSecret) -> Result<A, CryptoError>
+	where
+		A: KeyInit,
+	{
+		// Use the shared secret directly as the key material
+		// For production use, you might want to use HKDF or similar KDF
+		A::new_from_slice(shared_secret.as_ref()).map_err(|_| CryptoError::KeyDerivationFailed)
+	}
+}
+
 // RustCrypto Keypair trait implementation
 #[cfg(feature = "signature")]
 impl Keypair for Secp256k1PrivateKey {
@@ -124,7 +186,22 @@ impl CryptoSigner<Signature> for Secp256k1PrivateKey {
 	}
 }
 
-impl PublicKey for Secp256k1PublicKey {}
+// CryptoSignerWithOptions trait implementation
+#[cfg(feature = "signature")]
+impl CryptoSignerWithOptions<Signature> for Secp256k1PrivateKey {
+	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
+		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let signing_key = SigningKey::from(&self.inner);
+
+		signing_key.try_sign(&data)
+	}
+}
+
+impl PublicKey for Secp256k1PublicKey {
+	fn to_uncompressed_bytes(&self) -> Vec<u8> {
+		self.inner.to_encoded_point(false).as_bytes().to_vec()
+	}
+}
 
 impl From<Secp256k1PublicKey> for Vec<u8> {
 	fn from(key: Secp256k1PublicKey) -> Self {
@@ -173,33 +250,47 @@ impl CryptoVerifier<Signature> for Secp256k1PublicKey {
 	}
 }
 
-// ECIES implementation for secp256k1
+// CryptoVerifierWithOptions trait implementation
+#[cfg(feature = "signature")]
+impl CryptoVerifierWithOptions<Signature> for Secp256k1PublicKey {
+	fn verify_with_options(
+		&self,
+		message: &[u8],
+		signature: &Signature,
+		options: SigningOptions,
+	) -> Result<(), ::signature::Error> {
+		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let verifying_key = k256::ecdsa::VerifyingKey::from(&self.inner);
+
+		verifying_key.verify(&data, signature)
+	}
+}
+
+// ECIES implementation for secp256k1 using our custom implementation
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Secp256k1PrivateKey {
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// Use ECIES encryption with our private key for decryption later
-		// For encryption, we need the corresponding public key
+		// Use the public key for encryption
 		let public_key = self.as_public_key();
+
 		public_key.encrypt(plaintext)
 	}
 
 	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// Use ECIES decryption with our private key
-		let private_key_bytes = self.inner.to_bytes();
-		ecies::decrypt(private_key_bytes.as_slice(), cipher_text).map_err(|_| CryptoError::DecryptionFailed)
+		// Use our custom ECIES implementation
+		EciesSecp256k1::decrypt(self, cipher_text)
 	}
 
 	fn algorithm_info(&self) -> &'static str {
-		"ECIES-secp256k1"
+		"ECIES-secp256k1-AES128CTR"
 	}
 }
 
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Secp256k1PublicKey {
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// Use ECIES encryption with the public key
-		let public_key_bytes = Vec::<u8>::from(self);
-		ecies::encrypt(&public_key_bytes, plaintext).map_err(|_| CryptoError::EncryptionFailed)
+		// Use our custom ECIES implementation
+		EciesSecp256k1::encrypt(self, plaintext)
 	}
 
 	fn decrypt(&self, _cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -208,7 +299,7 @@ impl AsymmetricEncryption for Secp256k1PublicKey {
 	}
 
 	fn algorithm_info(&self) -> &'static str {
-		"ECIES-secp256k1"
+		"ECIES-secp256k1-AES128CTR"
 	}
 }
 
@@ -274,7 +365,9 @@ impl KeyDerivation for Secp256k1Derivation {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::operations::signature::{CryptoSigner, CryptoVerifier};
+	use crate::operations::signature::{
+		CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
+	};
 	use secrecy::ExposeSecret;
 
 	#[cfg(feature = "signature")]
@@ -437,10 +530,10 @@ mod tests {
 		let public_key = private_key.as_public_key();
 
 		// Test algorithm_info for private key
-		assert_eq!(private_key.algorithm_info(), "ECIES-secp256k1");
+		assert_eq!(private_key.algorithm_info(), "ECIES-secp256k1-AES128CTR");
 
 		// Test algorithm_info for public key
-		assert_eq!(public_key.algorithm_info(), "ECIES-secp256k1");
+		assert_eq!(public_key.algorithm_info(), "ECIES-secp256k1-AES128CTR");
 	}
 
 	#[cfg(feature = "encryption")]
@@ -531,5 +624,62 @@ mod tests {
 		assert!(debug_string.contains("[REDACTED]"));
 		// Make sure no actual key bytes are shown
 		assert!(!debug_string.contains("SecretKey"));
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_crypto_signer_with_options() {
+		let seed = b"test seed for signer with options";
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let message = b"test message for signing with options";
+
+		// Test with default options (pre-hash)
+		let default_options = SigningOptions::default();
+		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+
+		// Test with raw options (no pre-hash)
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+
+		// Test with cert options (pre-hash, but for_cert flag set)
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+		// Signatures should be different when using different message processing
+		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
+		// Default and cert should be the same since they both pre-hash
+		assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
+
+		// Verify that the regular signing (which pre-hashes) matches default options
+		let regular_signature = private_key.try_sign(message).unwrap();
+		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes()); // Different because regular signing doesn't pre-hash message
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_crypto_verifier_with_options() {
+		let seed = b"test seed for verifier with options";
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+		let message = b"test message for verification with options";
+
+		// Test verification with matching options
+		let default_options = SigningOptions::default();
+		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_default, default_options).is_ok());
+
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_raw, raw_options).is_ok());
+
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_cert, cert_options).is_ok());
+		// Test verification failure with mismatched options
+		assert!(public_key.verify_with_options(message, &signature_raw, default_options).is_err());
+		assert!(public_key.verify_with_options(message, &signature_default, raw_options).is_err());
+
+		// Test verification failure with wrong message
+		let wrong_message = b"wrong message";
+		assert!(public_key.verify_with_options(wrong_message, &signature_default, default_options).is_err());
 	}
 }

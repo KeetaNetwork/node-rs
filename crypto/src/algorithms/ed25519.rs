@@ -24,16 +24,31 @@
 //! ### Method 2: Public Key Conversion (Bi-rational Map)
 //! 1. Convert the Ed25519 public key directly using the bi-rational map
 
+// Re-export algorithm-specific signature types
+pub use ed25519_dalek::Signature as Ed25519Signature;
+
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use secrecy::{ExposeSecret, SecretBox};
 use x25519_dalek::PublicKey as DalekX25519PublicKey;
 
+#[cfg(feature = "encryption")]
+use crate::algorithms::ecies::{Ecies, EciesX25519};
+#[cfg(feature = "encryption")]
+use crate::operations::encryption::AsymmetricEncryption;
+#[cfg(feature = "signature")]
+use crate::operations::signature::{
+	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
+};
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
 use zeroize::Zeroize;
 
-use crate::{error::CryptoError, hash, KeyDerivation, PrivateKey, PublicKey};
+use crate::{
+	error::CryptoError,
+	hash::{self, hash_default},
+	KeyDerivation, PrivateKey, PublicKey,
+};
 
 /// Ed25519 private key wrapper.
 ///
@@ -118,6 +133,24 @@ impl Signer<Signature> for Ed25519PrivateKey {
 	}
 }
 
+// CryptoSigner trait implementation (extends Signer<Signature>)
+#[cfg(feature = "signature")]
+impl CryptoSigner<Signature> for Ed25519PrivateKey {
+	fn has_private_key(&self) -> bool {
+		true // Private key always has access to private key material
+	}
+}
+
+// CryptoSignerWithOptions trait implementation
+#[cfg(feature = "signature")]
+impl CryptoSignerWithOptions<Signature> for Ed25519PrivateKey {
+	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
+		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+
+		self.inner.try_sign(&data)
+	}
+}
+
 impl Ed25519PrivateKey {
 	/// Convert this Ed25519 private key to an X25519 private key for ECDH
 	pub fn to_x25519(&self) -> Result<X25519PrivateKey, CryptoError> {
@@ -125,7 +158,12 @@ impl Ed25519PrivateKey {
 	}
 }
 
-impl PublicKey for Ed25519PublicKey {}
+impl PublicKey for Ed25519PublicKey {
+	// TODO Verify
+	fn to_uncompressed_bytes(&self) -> Vec<u8> {
+		self.inner.to_bytes().to_vec()
+	}
+}
 
 impl From<Ed25519PublicKey> for Vec<u8> {
 	fn from(key: Ed25519PublicKey) -> Self {
@@ -156,6 +194,74 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 impl Verifier<Signature> for Ed25519PublicKey {
 	fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), ::signature::Error> {
 		self.inner.verify(msg, signature)
+	}
+}
+
+// CryptoVerifier trait implementation
+#[cfg(feature = "signature")]
+impl CryptoVerifier<Signature> for Ed25519PublicKey {
+	fn public_key_bytes(&self) -> Vec<u8> {
+		self.into()
+	}
+
+	fn public_key_string(&self) -> Result<String, CryptoError> {
+		Ok(hex::encode(self.public_key_bytes()))
+	}
+}
+
+// CryptoVerifierWithOptions trait implementation
+#[cfg(feature = "signature")]
+impl CryptoVerifierWithOptions<Signature> for Ed25519PublicKey {
+	fn verify_with_options(
+		&self,
+		message: &[u8],
+		signature: &Signature,
+		options: SigningOptions,
+	) -> Result<(), ::signature::Error> {
+		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+
+		self.inner.verify(&data, signature)
+	}
+}
+
+// AsymmetricEncryption implementation for Ed25519 (via X25519 conversion)
+#[cfg(feature = "encryption")]
+impl AsymmetricEncryption for Ed25519PrivateKey {
+	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		// For encryption, we need the corresponding public key
+		let public_key = self.as_public_key();
+
+		public_key.encrypt(plaintext)
+	}
+
+	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		// Convert Ed25519 private key to X25519 for decryption
+		let x25519_private = self.to_x25519()?;
+
+		EciesX25519::decrypt(&x25519_private, cipher_text)
+	}
+
+	fn algorithm_info(&self) -> &'static str {
+		"ECIES-Ed25519-via-X25519-AES128CTR"
+	}
+}
+
+#[cfg(feature = "encryption")]
+impl AsymmetricEncryption for Ed25519PublicKey {
+	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		// Convert Ed25519 public key to X25519 for encryption
+		let x25519_public = self.to_x25519()?;
+
+		EciesX25519::encrypt(&x25519_public, plaintext)
+	}
+
+	fn decrypt(&self, _cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		// Public keys cannot decrypt
+		Err(CryptoError::InvalidOperation)
+	}
+
+	fn algorithm_info(&self) -> &'static str {
+		"ECIES-Ed25519-via-X25519-AES128CTR"
 	}
 }
 
@@ -406,6 +512,7 @@ mod tests {
 	use super::*;
 
 	use crate::algorithms::secp256k1::Secp256k1Derivation;
+	use crate::operations::signature::{CryptoSignerWithOptions, CryptoVerifierWithOptions, SigningOptions};
 
 	#[test]
 	fn test_ed25519_key_derivation() {
@@ -592,7 +699,6 @@ mod tests {
 		// Test verifying_key method from Keypair trait
 		let verifying_key = private_key.verifying_key();
 		let public_key = private_key.as_public_key();
-
 		// Both should produce the same public key bytes
 		assert_eq!(Vec::<u8>::from(&verifying_key), Vec::<u8>::from(&public_key));
 	}
@@ -606,7 +712,6 @@ mod tests {
 		// Test validate_key_material with invalid key (wrong length)
 		let invalid_key = [0x01; 16]; // Invalid length
 		assert!(!Ed25519Derivation::validate_key_material(&invalid_key));
-
 		// Test key_size
 		assert_eq!(Ed25519Derivation::key_size(), ed25519_dalek::SECRET_KEY_LENGTH);
 		assert_eq!(Ed25519Derivation::key_size(), 32);
@@ -639,7 +744,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_ed25519_serialization_roundtrips() {
+	fn test_ed25519_serialization_round_trips() {
 		let seed = b"test seed for ed25519 serialization!!";
 		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		let public_key = private_key.as_public_key();
@@ -669,7 +774,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_x25519_serialization_roundtrips() {
+	fn test_x25519_serialization_round_trips() {
 		let seed = b"test seed for x25519 serialization!!!";
 		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		let x25519_private = ed25519_key.to_x25519().unwrap();
@@ -749,5 +854,64 @@ mod tests {
 		let secret_box_owned: SecretBox<Vec<u8>> = x25519_private.into();
 		assert_eq!(secret_box_owned.expose_secret().len(), 32);
 		assert_eq!(secret_box_owned.expose_secret(), &private_bytes.to_vec());
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_ed25519_crypto_signer_with_options() {
+		let seed = b"test seed for ed25519 signer with options";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let message = b"test message for ed25519 signing with options";
+
+		// Test with default options (pre-hash)
+		let default_options = SigningOptions::default();
+		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+
+		// Test with raw options (no pre-hash)
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+
+		// Test with cert options (pre-hash, but for_cert flag set)
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+
+		// Signatures should be different when using different message processing
+		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
+		// Default and cert should be the same since they both pre-hash
+		assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
+
+		// Verify that the regular signing (which pre-hashes) matches default options
+		let regular_signature = private_key.try_sign(message).unwrap();
+		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes());
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_ed25519_crypto_verifier_with_options() {
+		let seed = b"test seed for ed25519 verifier with options";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+		let message = b"test message for ed25519 verification with options";
+
+		// Test verification with matching options
+		let default_options = SigningOptions::default();
+		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_default, default_options).is_ok());
+
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_raw, raw_options).is_ok());
+
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+		assert!(public_key.verify_with_options(message, &signature_cert, cert_options).is_ok());
+
+		// Test verification failure with mismatched options
+		assert!(public_key.verify_with_options(message, &signature_raw, default_options).is_err());
+		assert!(public_key.verify_with_options(message, &signature_default, raw_options).is_err());
+
+		// Test verification failure with wrong message
+		let wrong_message = b"wrong message";
+		assert!(public_key.verify_with_options(wrong_message, &signature_default, default_options).is_err());
 	}
 }

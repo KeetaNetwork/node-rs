@@ -6,12 +6,7 @@
 use crate::error::CryptoError;
 
 // Re-export key RustCrypto signature traits for easier use
-pub use signature::{DigestSigner, DigestVerifier, Error, RandomizedSigner, Signer, Verifier};
-
-// Re-export algorithm-specific signature types
-pub use ed25519_dalek::Signature as Ed25519Signature;
-pub use k256::ecdsa::Signature as Secp256k1Signature;
-pub use p256::ecdsa::Signature as Secp256r1Signature;
+pub use signature::{DigestSigner, DigestVerifier, Error as SignatureError, RandomizedSigner, Signer, Verifier};
 
 /// Core cryptographic signing operations
 ///
@@ -32,6 +27,63 @@ pub trait CryptoVerifier<S>: Verifier<S> {
 
 	/// Get the formatted public key string
 	fn public_key_string(&self) -> Result<String, CryptoError>;
+}
+
+/// Signing and verification options for cryptographic operations
+///
+/// Default options are:
+/// - raw: false (will pre-hash the message)
+/// - for_cert: false (use SEC format, not DER)
+#[derive(Debug, Copy, Clone, Default)]
+pub struct SigningOptions {
+	/// If true, use the raw message without hashing
+	/// If false, pre-hash the message before signing/verification
+	pub raw: bool,
+
+	/// For certificate processing
+	/// Currently used primarily for SECP256R1 DER encoding
+	pub for_cert: bool,
+}
+
+impl SigningOptions {
+	/// Create options for raw message processing (no pre-hashing)
+	pub fn raw() -> Self {
+		Self { raw: true, for_cert: false }
+	}
+
+	/// Create options for certificate processing
+	pub fn for_cert() -> Self {
+		Self { raw: false, for_cert: true }
+	}
+}
+
+/// Extended signing operations with configurable options
+///
+/// This trait provides signing operations with additional configuration
+/// options for message preprocessing and encoding formats.
+pub trait CryptoSignerWithOptions<S>: CryptoSigner<S> {
+	/// Sign a message with the specified options
+	///
+	/// The options parameter controls message preprocessing:
+	/// - If options.raw = false (default): pre-hashes the message
+	/// - If options.raw = true: uses raw message
+	/// - options.for_cert: controls encoding format for certificates
+	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<S, SignatureError>;
+}
+
+/// Extended verification operations with configurable options
+///
+/// This trait provides verification operations with additional configuration
+/// options for message preprocessing and encoding formats.
+pub trait CryptoVerifierWithOptions<S>: CryptoVerifier<S> {
+	/// Verify a signature against a message using the specified options
+	///
+	/// The options parameter controls message preprocessing:
+	/// - If options.raw = false (default): pre-hashes the message
+	/// - If options.raw = true: uses raw message
+	/// - options.for_cert: controls encoding format for certificates
+	fn verify_with_options(&self, message: &[u8], signature: &S, options: SigningOptions)
+		-> Result<(), SignatureError>;
 }
 
 #[cfg(test)]
@@ -81,7 +133,7 @@ mod tests {
 	}
 
 	impl Signer<MockSignature> for MockSigner {
-		fn try_sign(&self, _msg: &[u8]) -> Result<MockSignature, signature::Error> {
+		fn try_sign(&self, _msg: &[u8]) -> Result<MockSignature, SignatureError> {
 			Ok(MockSignature([1u8; 32]))
 		}
 	}
@@ -89,6 +141,28 @@ mod tests {
 	impl CryptoSigner<MockSignature> for MockSigner {
 		fn has_private_key(&self) -> bool {
 			true
+		}
+	}
+
+	impl CryptoSignerWithOptions<MockSignature> for MockSigner {
+		fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<MockSignature, SignatureError> {
+			// Mock implementation: use different signature based on options
+			let mut signature_bytes = [1u8; 32];
+
+			if options.raw {
+				signature_bytes[0] = 0xAA; // Mark as raw
+			}
+
+			if options.for_cert {
+				signature_bytes[1] = 0xCC; // Mark as cert
+			}
+
+			// Include message length in signature for test validation
+			if !message.is_empty() {
+				signature_bytes[2] = (message.len() % 256) as u8;
+			}
+
+			Ok(MockSignature(signature_bytes))
 		}
 	}
 
@@ -105,6 +179,40 @@ mod tests {
 
 		fn public_key_string(&self) -> Result<String, CryptoError> {
 			Ok("02030405".to_string())
+		}
+	}
+
+	impl CryptoVerifierWithOptions<MockSignature> for MockVerifier {
+		fn verify_with_options(
+			&self,
+			message: &[u8],
+			signature: &MockSignature,
+			options: SigningOptions,
+		) -> Result<(), SignatureError> {
+			// Mock implementation: validate signature was created with matching options
+			let sig_bytes = signature.as_ref();
+
+			// Check if signature was marked for raw processing
+			let expected_raw_marker = if options.raw { 0xAA } else { 0x01 };
+			if sig_bytes[0] != expected_raw_marker {
+				return Err(signature::Error::new());
+			}
+
+			// Check if signature was marked for cert processing
+			let expected_cert_marker = if options.for_cert { 0xCC } else { 0x01 };
+			if sig_bytes[1] != expected_cert_marker {
+				return Err(signature::Error::new());
+			}
+
+			// Validate message length matches what was encoded in signature
+			if !message.is_empty() {
+				let expected_len = (message.len() % 256) as u8;
+				if sig_bytes[2] != expected_len {
+					return Err(signature::Error::new());
+				}
+			}
+
+			Ok(())
 		}
 	}
 
@@ -223,5 +331,117 @@ mod tests {
 		let crypto_verifier: &dyn CryptoVerifier<MockSignature> = &verifier;
 		assert!(!crypto_verifier.public_key_bytes().is_empty());
 		assert!(crypto_verifier.public_key_string().is_ok());
+	}
+
+	#[test]
+	fn test_signing_options() {
+		// Test default options
+		let default_opts = SigningOptions::default();
+		assert!(!default_opts.raw);
+		assert!(!default_opts.for_cert);
+
+		// Test raw options
+		let raw_opts = SigningOptions::raw();
+		assert!(raw_opts.raw);
+		assert!(!raw_opts.for_cert);
+
+		// Test cert options
+		let cert_opts = SigningOptions::for_cert();
+		assert!(!cert_opts.raw);
+		assert!(cert_opts.for_cert);
+
+		// Test custom options
+		let custom_opts = SigningOptions { raw: true, for_cert: true };
+		assert!(custom_opts.raw);
+		assert!(custom_opts.for_cert);
+	}
+
+	#[test]
+	fn test_crypto_signer_with_options() {
+		let signer = MockSigner;
+		let message = b"test message for options";
+
+		// Test with default options
+		let default_opts = SigningOptions::default();
+		let signature = signer.sign_with_options(message, default_opts).unwrap();
+		let sig_bytes = signature.as_ref();
+		assert_eq!(sig_bytes[0], 0x01); // Not raw
+		assert_eq!(sig_bytes[1], 0x01); // Not cert
+		assert_eq!(sig_bytes[2], (message.len() % 256) as u8); // Message length
+
+		// Test with raw options
+		let raw_opts = SigningOptions::raw();
+		let signature = signer.sign_with_options(message, raw_opts).unwrap();
+		let sig_bytes = signature.as_ref();
+		assert_eq!(sig_bytes[0], 0xAA); // Raw marker
+		assert_eq!(sig_bytes[1], 0x01); // Not cert
+		assert_eq!(sig_bytes[2], (message.len() % 256) as u8); // Message length
+
+		// Test with cert options
+		let cert_opts = SigningOptions::for_cert();
+		let signature = signer.sign_with_options(message, cert_opts).unwrap();
+		let sig_bytes = signature.as_ref();
+		assert_eq!(sig_bytes[0], 0x01); // Not raw
+		assert_eq!(sig_bytes[1], 0xCC); // Cert marker
+		assert_eq!(sig_bytes[2], (message.len() % 256) as u8); // Message length
+
+		// Test with both raw and cert options
+		let both_opts = SigningOptions { raw: true, for_cert: true };
+		let signature = signer.sign_with_options(message, both_opts).unwrap();
+		let sig_bytes = signature.as_ref();
+		assert_eq!(sig_bytes[0], 0xAA); // Raw marker
+		assert_eq!(sig_bytes[1], 0xCC); // Cert marker
+		assert_eq!(sig_bytes[2], (message.len() % 256) as u8); // Message length
+	}
+
+	#[test]
+	fn test_crypto_verifier_with_options() {
+		let signer = MockSigner;
+		let verifier = MockVerifier;
+		let message = b"test message for verification options";
+
+		// Test successful verification with matching options
+		let default_options = SigningOptions::default();
+		let signature = signer.sign_with_options(message, default_options).unwrap();
+		assert!(verifier.verify_with_options(message, &signature, default_options).is_ok());
+
+		let raw_options = SigningOptions::raw();
+		let signature = signer.sign_with_options(message, raw_options).unwrap();
+		assert!(verifier.verify_with_options(message, &signature, raw_options).is_ok());
+
+		let cert_options = SigningOptions::for_cert();
+		let signature = signer.sign_with_options(message, cert_options).unwrap();
+		assert!(verifier.verify_with_options(message, &signature, cert_options).is_ok());
+
+		// Test verification failure with mismatched options
+		let signature_raw = signer.sign_with_options(message, raw_options).unwrap();
+		assert!(verifier.verify_with_options(message, &signature_raw, default_options).is_err());
+
+		let signature_cert = signer.sign_with_options(message, cert_options).unwrap();
+		assert!(verifier.verify_with_options(message, &signature_cert, default_options).is_err());
+
+		// Test verification failure with wrong message
+		let other_message = b"different message";
+		let signature = signer.sign_with_options(message, default_options).unwrap();
+		assert!(verifier.verify_with_options(other_message, &signature, default_options).is_err());
+	}
+
+	#[test]
+	fn test_extended_traits_trait_object_compatibility() {
+		// Test that our extended traits can be used as trait objects
+		let signer = MockSigner;
+		let verifier = MockVerifier;
+
+		// Test CryptoSignerWithOptions as trait object
+		let crypto_signer_with_opts: &dyn CryptoSignerWithOptions<MockSignature> = &signer;
+		let options = SigningOptions::default();
+		let message = b"trait object test";
+
+		let signature = crypto_signer_with_opts.sign_with_options(message, options).unwrap();
+		assert_eq!(signature.as_ref().len(), 32);
+
+		// Test CryptoVerifierWithOptions as trait object
+		let crypto_verifier_with_opts: &dyn CryptoVerifierWithOptions<MockSignature> = &verifier;
+		assert!(crypto_verifier_with_opts.verify_with_options(message, &signature, options).is_ok());
 	}
 }

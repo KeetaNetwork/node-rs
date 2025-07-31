@@ -1,6 +1,9 @@
-use crypto::CryptoError;
+use hex::FromHexError;
 use keetanet_error::KeetaNetError;
 use strum_macros::AsRefStr;
+
+use crypto::operations::SignatureError;
+use crypto::CryptoError;
 
 #[derive(Debug, AsRefStr, Clone, PartialEq, Eq)]
 pub enum AccountError {
@@ -42,8 +45,11 @@ impl From<AccountError> for KeetaNetError {
 	}
 }
 
-// Import signature::Error through the crypto crate's re-exports
-use crypto::operations::Error as SignatureError;
+impl From<FromHexError> for AccountError {
+	fn from(_err: FromHexError) -> Self {
+		AccountError::InvalidConstruction
+	}
+}
 
 impl From<CryptoError> for AccountError {
 	fn from(err: CryptoError) -> Self {
@@ -59,7 +65,10 @@ impl From<CryptoError> for AccountError {
 			CryptoError::EncryptionFailed => AccountError::InvalidConstruction,
 			CryptoError::DecryptionFailed => AccountError::InvalidConstruction,
 			CryptoError::InvalidOperation => AccountError::InvalidConstruction,
+			CryptoError::EncryptionNotSupported => AccountError::EncryptionNotSupported,
 			CryptoError::InternalError { .. } => AccountError::InvalidConstruction,
+			CryptoError::InvalidKeySize => AccountError::InvalidKeyType,
+			CryptoError::InvalidIvSize => AccountError::InvalidConstruction,
 		}
 	}
 }
