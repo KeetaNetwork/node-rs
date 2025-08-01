@@ -2767,14 +2767,10 @@ mod tests {
 
 	#[test]
 	fn test_debug_trait_implementation() {
-		fn test_debug_format_contains_expected_fields(debug_output: &str, key_type_name: &str, prefix: Option<&str>) {
+		fn test_debug_format_contains_expected_fields(debug_output: &str, key_type_name: &str) {
 			assert!(debug_output.contains(key_type_name));
 			assert!(debug_output.contains("public_key"));
 			assert!(!debug_output.contains("private_key"));
-
-			if let Some(expected_prefix) = prefix {
-				assert!(debug_output.contains(expected_prefix));
-			}
 		}
 
 		// Test Debug trait for all account types
@@ -2784,15 +2780,15 @@ mod tests {
 					// Cryptographic account types
 					KeyPairType::ECDSASECP256K1 if test_data.supports_crypto => {
 						let account = create_test_account::<KeyECDSASECP256K1>(Some(test_case.hex_seed.into()));
-						test_debug_format_contains_expected_fields(&format!("{account:?}"), "ECDSASECP256K1", None);
+						test_debug_format_contains_expected_fields(&format!("{account:?}"), "ECDSASECP256K1");
 					}
 					KeyPairType::ECDSASECP256R1 if test_data.supports_crypto => {
 						let account = create_test_account::<KeyECDSASECP256R1>(Some(test_case.hex_seed.into()));
-						test_debug_format_contains_expected_fields(&format!("{account:?}"), "ECDSASECP256R1", None);
+						test_debug_format_contains_expected_fields(&format!("{account:?}"), "ECDSASECP256R1");
 					}
 					KeyPairType::ED25519 if test_data.supports_crypto => {
 						let account = create_test_account::<KeyED25519>(Some(test_case.hex_seed.into()));
-						test_debug_format_contains_expected_fields(&format!("{account:?}"), "ED25519", None);
+						test_debug_format_contains_expected_fields(&format!("{account:?}"), "ED25519");
 					}
 					// Identifier account types
 					KeyPairType::NETWORK if test_data.is_identifier => {
@@ -3406,43 +3402,28 @@ mod tests {
 					let account = create_test_account::<KeyECDSASECP256K1>(keyable);
 					assert_eq!(account.supports_encryption(), supports_encryption);
 
-					if supports_encryption {
-						let encrypted = account.encrypt(test_data).unwrap();
-						assert_ne!(encrypted.as_slice(), test_data);
-						let decrypted = account.decrypt(&encrypted).unwrap();
-						assert_eq!(decrypted.as_slice(), test_data);
-					} else {
-						assert!(account.encrypt(test_data).is_err());
-						assert!(account.decrypt(test_data).is_err());
-					}
+					let encrypted = account.encrypt(test_data).unwrap();
+					assert_ne!(encrypted.as_slice(), test_data);
+					let decrypted = account.decrypt(&encrypted).unwrap();
+					assert_eq!(decrypted.as_slice(), test_data);
 				}
 				KeyPairType::ED25519 => {
 					let account = create_test_account::<KeyED25519>(keyable);
 					assert_eq!(account.supports_encryption(), supports_encryption);
 
-					if supports_encryption {
-						let encrypted = account.encrypt(test_data).unwrap();
-						assert_ne!(encrypted.as_slice(), test_data);
-						let decrypted = account.decrypt(&encrypted).unwrap();
-						assert_eq!(decrypted.as_slice(), test_data);
-					} else {
-						assert!(account.encrypt(test_data).is_err());
-						assert!(account.decrypt(test_data).is_err());
-					}
+					let encrypted = account.encrypt(test_data).unwrap();
+					assert_ne!(encrypted.as_slice(), test_data);
+					let decrypted = account.decrypt(&encrypted).unwrap();
+					assert_eq!(decrypted.as_slice(), test_data);
 				}
 				KeyPairType::ECDSASECP256R1 => {
 					let account = create_test_account::<KeyECDSASECP256R1>(keyable);
 					assert_eq!(account.supports_encryption(), supports_encryption);
 
-					if supports_encryption {
-						let encrypted = account.encrypt(test_data).unwrap();
-						assert_ne!(encrypted.as_slice(), test_data);
-						let decrypted = account.decrypt(&encrypted).unwrap();
-						assert_eq!(decrypted.as_slice(), test_data);
-					} else {
-						assert!(account.encrypt(test_data).is_err());
-						assert!(account.decrypt(test_data).is_err());
-					}
+					let encrypted = account.encrypt(test_data).unwrap();
+					assert_ne!(encrypted.as_slice(), test_data);
+					let decrypted = account.decrypt(&encrypted).unwrap();
+					assert_eq!(decrypted.as_slice(), test_data);
 				}
 				KeyPairType::NETWORK => {
 					let account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
