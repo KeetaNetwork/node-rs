@@ -15,6 +15,7 @@ pub use account::{
 pub use error::AccountError;
 
 use secrecy::SecretBox;
+use zeroize::Zeroize;
 
 /// A 256-bit seed used for key derivation.
 pub type Seed = SecretBox<[u8; 32]>;
@@ -22,6 +23,31 @@ pub type Seed = SecretBox<[u8; 32]>;
 pub type HexSeed = SecretBox<String>;
 /// A passphrase used for key derivation, stored securely.
 pub type Passphrase = SecretBox<Vec<String>>;
+
+/// Trait for converting types into their corresponding SecretBox wrapped versions.
+pub trait IntoSecret<T: Zeroize> {
+	/// Convert the value into a SecretBox.
+	fn into_secret(self) -> SecretBox<T>;
+}
+
+impl IntoSecret<[u8; 32]> for [u8; 32] {
+	fn into_secret(self) -> Seed {
+		SecretBox::new(Box::new(self))
+	}
+}
+
+impl IntoSecret<String> for String {
+	fn into_secret(self) -> HexSeed {
+		SecretBox::new(Box::new(self))
+	}
+}
+
+impl IntoSecret<Vec<String>> for Vec<String> {
+	fn into_secret(self) -> Passphrase {
+		SecretBox::new(Box::new(self))
+	}
+}
+
 /// An index used to derive keys from a seed.
 pub type Index = u32;
 
@@ -31,3 +57,30 @@ pub type PassphraseAndIndex = (Passphrase, Index);
 pub type HexSeedAndIndex = (HexSeed, Index);
 /// Type alias for a seed and its derivation index.
 pub type SeedAndIndex = (Seed, Index);
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use secrecy::ExposeSecret;
+
+	#[test]
+	fn test_into_secret_for_seed() {
+		let seed_array = [1u8; 32];
+		let seed: Seed = seed_array.into_secret();
+		assert_eq!(*seed.expose_secret(), seed_array);
+	}
+
+	#[test]
+	fn test_into_secret_for_hex_seed() {
+		let hex_string = "deadbeef".to_string();
+		let hex_seed: HexSeed = hex_string.clone().into_secret();
+		assert_eq!(*hex_seed.expose_secret(), hex_string);
+	}
+
+	#[test]
+	fn test_into_secret_for_passphrase() {
+		let passphrase_vec = vec!["word1".to_string(), "word2".to_string()];
+		let passphrase: Passphrase = passphrase_vec.clone().into_secret();
+		assert_eq!(*passphrase.expose_secret(), passphrase_vec);
+	}
+}

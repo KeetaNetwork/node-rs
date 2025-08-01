@@ -83,6 +83,16 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorith
 	Ok((public_key_bytes, algorithm))
 }
 
+/// Create an identifier key from seed and index
+pub(crate) fn create_identifier_key(seed: &Seed, index: Index, prefix: &str) -> Result<(String, String), AccountError> {
+	let seed_buffer = combine_seed_and_index(seed, index);
+	let hash_result: [u8; 32] = crypto::hash_array(&seed_buffer, None)?;
+	let identifier = hex::encode(&hash_result[..16]); // Use first 16 bytes as identifier
+	let public_key = format!("{prefix}_{identifier}");
+
+	Ok((identifier, public_key))
+}
+
 #[cfg(test)]
 mod tests {
 	use secrecy::{ExposeSecret, SecretBox};
@@ -101,6 +111,19 @@ mod tests {
 		assert_eq!(combined[33], 0x34);
 		assert_eq!(combined[34], 0x56);
 		assert_eq!(combined[35], 0x78);
+	}
+
+	#[test]
+	fn test_create_identifier_key() {
+		let seed_data = [1u8; 32];
+		let seed = SecretBox::new(Box::new(seed_data));
+		let index = 42;
+
+		let result = create_identifier_key(&seed, index, "test").unwrap();
+		let (identifier, public_key) = result;
+		assert_eq!(identifier.len(), 32); // 16 bytes as hex = 32 chars
+		assert!(public_key.starts_with("test_"));
+		assert!(public_key.ends_with(&identifier));
 	}
 
 	#[test]
