@@ -69,7 +69,6 @@ impl From<CryptoError> for AccountError {
 			CryptoError::InternalError { .. } => AccountError::InvalidConstruction,
 			CryptoError::InvalidKeySize => AccountError::InvalidKeyType,
 			CryptoError::InvalidIvSize => AccountError::InvalidConstruction,
-			CryptoError::CertificateError { .. } => AccountError::InvalidConstruction,
 		}
 	}
 }

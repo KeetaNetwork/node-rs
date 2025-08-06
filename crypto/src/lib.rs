@@ -47,11 +47,3 @@ pub use operations::{
 pub use operations::KeyExchange;
 #[cfg(feature = "encryption")]
 pub use operations::{AsymmetricEncryption, CryptoAead};
-
-// X.509 certificate operations when feature is enabled // TODO
-#[cfg(feature = "x509")]
-pub mod asn1;
-#[cfg(feature = "x509")]
-pub mod x509;
-#[cfg(feature = "x509")]
-pub use x509::error::CertificateError;

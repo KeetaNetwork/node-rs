@@ -1,15 +1,15 @@
 //! X.509 certificate handling module
 //!
-//! This module provides functionality for creating, parsing, and validating
-//! X.509 certificates.
+//! This module provides functionality for creating, parsing, signing, and
+//! validating X.509 certificates.
 
-use der::asn1::{Any, Ia5String, SetOfVec};
-use der::oid::ObjectIdentifier;
-use der::Sequence;
+use der::asn1::ObjectIdentifier;
+use der::asn1::{Any, SetOfVec};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+pub mod asn1;
 pub mod certificates;
 pub mod error;
 pub mod oids;
@@ -40,13 +40,12 @@ pub enum AttributeValue {
 
 /// Attribute type and value pair
 /// Coverage: `Sequence` generated code causes false negative.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Sequence)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, der::Sequence)]
 pub struct AttributeTypeAndValue {
 	pub attribute_type: ObjectIdentifier,
 	pub attribute_value: Any,
 }
 
-/// Implement ValueOrd for AttributeTypeAndValue to enable DerOrd (required for SetOfVec)
 impl der::ValueOrd for AttributeTypeAndValue {
 	fn value_cmp(&self, other: &Self) -> der::Result<core::cmp::Ordering> {
 		// First compare by attribute type (OID)
@@ -72,6 +71,7 @@ pub struct NameValuePair {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::asn1::Ia5String;
 	use der::{Decode, Encode};
 
 	#[test]

@@ -1,8 +1,5 @@
 use snafu::Snafu;
 
-#[cfg(feature = "x509")]
-use crate::CertificateError;
-
 /// Errors that can occur during cryptographic operations.
 #[derive(Debug, Snafu, Clone, PartialEq)]
 #[snafu(visibility(pub))]
@@ -52,10 +49,6 @@ pub enum CryptoError {
 	/// Encryption not supported for this algorithm
 	#[snafu(display("Encryption not supported for this algorithm"))]
 	EncryptionNotSupported,
-	/// Certificate operation error
-	#[cfg(feature = "x509")]
-	#[snafu(display("Certificate error: {source}"))]
-	CertificateError { source: CertificateError },
 }
 
 impl From<hkdf::InvalidLength> for CryptoError {
@@ -98,13 +91,6 @@ impl From<cbc::cipher::block_padding::UnpadError> for CryptoError {
 	}
 }
 
-#[cfg(feature = "x509")]
-impl From<crate::x509::error::CertificateError> for CryptoError {
-	fn from(source: crate::x509::error::CertificateError) -> Self {
-		CryptoError::CertificateError { source }
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -113,8 +99,6 @@ mod tests {
 	use crate::algorithms::aes_cbc::Aes256Cbc;
 	#[cfg(feature = "encryption")]
 	use crate::operations::encryption::SymmetricEncryption;
-	#[cfg(feature = "x509")]
-	use crate::x509::error::CertificateError;
 	#[cfg(feature = "encryption")]
 	use aes::Aes256;
 	#[cfg(feature = "encryption")]
@@ -210,26 +194,5 @@ mod tests {
 		let unpad_error = cbc::cipher::block_padding::UnpadError;
 		let crypto_error: CryptoError = unpad_error.into();
 		assert_eq!(crypto_error, CryptoError::DecryptionFailed);
-	}
-
-	#[cfg(feature = "x509")]
-	#[test]
-	fn test_certificate_error_conversion() {
-		let cert_error = CertificateError::InvalidCertificate;
-		let crypto_error: CryptoError = cert_error.clone().into();
-
-		// Test that the conversion creates the correct variant
-		assert_eq!(crypto_error, CryptoError::CertificateError { source: cert_error });
-	}
-
-	#[cfg(feature = "x509")]
-	#[test]
-	fn test_certificate_error_display() {
-		let cert_error = CertificateError::ValidationFailed { reason: "expired".to_string() };
-		assert_eq!(cert_error.to_string(), "Certificate validation failed: expired");
-
-		let crypto_error: CryptoError = cert_error.into();
-		assert!(crypto_error.to_string().contains("Certificate error:"));
-		assert!(crypto_error.to_string().contains("Certificate validation failed: expired"));
 	}
 }

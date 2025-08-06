@@ -1,0 +1,53 @@
+[package]
+name = "x509"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+# ASN.1 and DER encoding
+[dependencies.der]
+workspace = true
+
+# Date/time handling
+[dependencies.chrono]
+workspace = true
+
+# Error handling
+[dependencies.snafu]
+workspace = true
+
+# Encoding utilities
+[dependencies.base64]
+workspace = true
+
+# Hex encoding/decoding
+[dependencies.hex]
+version = "0.4"
+
+# Cryptographic hashing
+[dependencies.sha1]
+version = "0.10.6"
+
+# Serialization (optional)
+[dependencies.serde]
+workspace = true
+optional = true
+
+[dependencies.serde_json]
+version = "1.0.133"
+optional = true
+
+# Local dependencies
+[dependencies.keetanet-error]
+path = "../keetanet-error"
+
+[dependencies.crypto]
+path = "../crypto"
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "dep:serde_json"]
+
+[dev-dependencies]
+hex-literal.workspace = true

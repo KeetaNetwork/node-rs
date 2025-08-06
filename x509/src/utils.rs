@@ -1,10 +1,10 @@
+use crypto::HashAlgorithm;
 use der::asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString, SetOfVec};
 use der::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
 
-use crate::hash::HashAlgorithm;
-use crate::x509::error::CertificateError;
-use crate::x509::oids;
-use crate::x509::{AttributeTypeAndValue, DistinguishedName, NameValuePair};
+use crate::error::CertificateError;
+use crate::oids;
+use crate::{AttributeTypeAndValue, DistinguishedName, NameValuePair};
 
 /// Create a Distinguished Name from name-value pairs.
 ///
@@ -15,10 +15,8 @@ use crate::x509::{AttributeTypeAndValue, DistinguishedName, NameValuePair};
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(feature = "x509")]
-/// # {
-/// use crypto::x509::utils::create_dn;
-/// use crypto::x509::oids;
+/// use x509::utils::create_dn;
+/// use x509::oids;
 ///
 /// let pairs = &[
 ///     (oids::CN, "example.com"),
@@ -26,7 +24,6 @@ use crate::x509::{AttributeTypeAndValue, DistinguishedName, NameValuePair};
 /// ];
 ///
 /// let dn = create_dn(pairs).unwrap();
-/// # }
 /// ```
 pub fn create_dn(pairs: &[(&str, &str)]) -> Result<DistinguishedName, CertificateError> {
 	let mut dn = Vec::new();
@@ -53,17 +50,14 @@ pub fn create_dn(pairs: &[(&str, &str)]) -> Result<DistinguishedName, Certificat
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(feature = "x509")]
-/// # {
-/// use crypto::x509::utils::generate_key_identifier;
-/// use crypto::asn1::BitString;
+/// use x509::utils::generate_key_identifier;
+/// use x509::asn1::BitString;
 ///
 /// let public_key_bytes = &[0x04, 0x01, 0x02, 0x03]; // Example public key
 /// let bit_string = BitString::new(0, public_key_bytes).unwrap();
 ///
 /// let key_id = generate_key_identifier(&bit_string).unwrap();
 /// assert_eq!(key_id.len(), 20); // SHA-1 produces 20 bytes
-/// # }
 /// ```
 pub fn generate_key_identifier(public_key: &BitString) -> Result<Vec<u8>, CertificateError> {
 	let key_bytes = public_key.raw_bytes();
@@ -80,10 +74,10 @@ pub fn generate_key_identifier(public_key: &BitString) -> Result<Vec<u8>, Certif
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(all(feature = "x509", feature = "serde"))]
+/// # #[cfg(feature = "serde")]
 /// # {
-/// use crypto::x509::utils::{create_dn, dn_to_name_value_pairs};
-/// use crypto::x509::oids;
+/// use x509::utils::{create_dn, dn_to_name_value_pairs};
+/// use x509::oids;
 ///
 /// let pairs = &[(oids::CN, "example.com"), (oids::O, "Example Org")];
 /// let dn = create_dn(pairs).unwrap();
@@ -131,10 +125,10 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(all(feature = "x509", feature = "serde"))]
+/// # #[cfg(feature = "serde")]
 /// # {
-/// use crypto::x509::utils::name_value_pairs_to_dn;
-/// use crypto::x509::NameValuePair;
+/// use x509::utils::name_value_pairs_to_dn;
+/// use x509::NameValuePair;
 ///
 /// let pairs = vec![
 ///     NameValuePair { name: "commonName".to_string(), value: "example.com".to_string() },
@@ -181,9 +175,7 @@ pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedNa
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(feature = "x509")]
-/// # {
-/// use crypto::x509::utils::parse_key_identifier;
+/// use x509::utils::parse_key_identifier;
 ///
 /// // Example OCTET STRING: tag (0x04) + length (0x14) + 20 bytes of key ID
 /// let extension_bytes = &[0x04, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -191,7 +183,6 @@ pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedNa
 ///
 /// let key_id = parse_key_identifier(extension_bytes).unwrap();
 /// assert_eq!(key_id.len(), 20);
-/// # }
 /// ```
 pub fn parse_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 	// Subject Key Identifier is an OCTET STRING
@@ -210,9 +201,7 @@ pub fn parse_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(feature = "x509")]
-/// # {
-/// use crypto::x509::utils::parse_authority_key_identifier;
+/// use x509::utils::parse_authority_key_identifier;
 ///
 /// // Example Authority Key Identifier: SEQUENCE + [0] IMPLICIT KeyIdentifier
 /// let extension_bytes = &[0x30, 0x16, 0x80, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
@@ -220,7 +209,6 @@ pub fn parse_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 ///
 /// let key_id = parse_authority_key_identifier(extension_bytes).unwrap();
 /// assert_eq!(key_id.len(), 20);
-/// # }
 /// ```
 pub fn parse_authority_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 	let mut reader = SliceReader::new(bytes).ok()?;
@@ -263,11 +251,9 @@ pub fn parse_authority_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(feature = "x509")]
-/// # {
-/// use crypto::x509::utils::create_dn;
-/// use crypto::x509::utils::dn_to_string;
-/// use crypto::x509::oids;
+/// use x509::utils::create_dn;
+/// use x509::utils::dn_to_string;
+/// use x509::oids;
 ///
 /// let pairs = &[(oids::CN, "example.com"), (oids::O, "Example Org")];
 /// let dn = create_dn(pairs).unwrap();
@@ -275,7 +261,6 @@ pub fn parse_authority_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 /// let dn_string = dn_to_string(&dn);
 /// assert!(dn_string.contains("example.com"));
 /// assert!(dn_string.contains("Example Org"));
-/// # }
 /// ```
 pub fn dn_to_string(dn: &DistinguishedName) -> String {
 	dn.iter()
@@ -296,9 +281,9 @@ pub fn dn_to_string(dn: &DistinguishedName) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::x509::oids;
-	use crate::x509::DistinguishedName;
-	use der::asn1::BitString;
+	use crate::asn1::BitString;
+	use crate::oids;
+	use crate::DistinguishedName;
 
 	#[test]
 	fn test_create_dn() {
@@ -407,7 +392,7 @@ mod tests {
 		assert_ne!(key_id, key_id2);
 
 		// Test with empty public key
-		let empty_key = BitString::new(0, &[]).unwrap();
+		let empty_key = BitString::new(0, []).unwrap();
 		let empty_key_id = generate_key_identifier(&empty_key).unwrap();
 		assert_eq!(empty_key_id.len(), 20);
 	}
@@ -500,18 +485,16 @@ mod tests {
 		assert_eq!(multi_dn.len(), 7);
 
 		// Verify each attribute
-		let expected_oids = vec![
-			oids::CN,            // CN
-			oids::O,             // O
-			oids::OU,            // OU
-			oids::C,             // C
-			oids::L,             // L
-			oids::ST,            // ST
-			oids::EMAIL_ADDRESS, // Email
+		let expected = [
+			(oids::CN, "example.com"),
+			(oids::O, "Example Org"),
+			(oids::OU, "IT Dept"),
+			(oids::C, "US"),
+			(oids::L, "SF"),
+			(oids::ST, "CA"),
+			(oids::EMAIL_ADDRESS, "admin@example.com"),
 		];
-
-		let expected_values = vec!["example.com", "Example Org", "IT Dept", "US", "SF", "CA", "admin@example.com"];
-		for (i, (expected_oid, expected_value)) in expected_oids.iter().zip(expected_values.iter()).enumerate() {
+		for (i, (expected_oid, expected_value)) in expected.iter().enumerate() {
 			assert_eq!(multi_dn[i].len(), 1);
 			assert_eq!(multi_dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
 			let ia5_string: Ia5String = multi_dn[i].get(0).unwrap().attribute_value.decode_as().unwrap();
