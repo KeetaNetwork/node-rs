@@ -39,6 +39,8 @@ use crate::algorithms::ecies::{Ecies, EciesX25519};
 use crate::operations::encryption::AsymmetricEncryption;
 
 #[cfg(feature = "signature")]
+use crate::hash::hash_default;
+#[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
@@ -46,7 +48,7 @@ use crate::operations::signature::{
 use ::signature::{Keypair, Signer, Verifier};
 
 use crate::error::CryptoError;
-use crate::hash::{self, hash_default};
+use crate::hash;
 use crate::{KeyDerivation, PrivateKey, PublicKey};
 
 /// Ed25519 private key wrapper.
@@ -140,7 +142,11 @@ impl CryptoSigner<Signature> for Ed25519PrivateKey {
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Ed25519PrivateKey {
 	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
-		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let data = if options.raw {
+			message.to_vec()
+		} else {
+			hash_default(message).to_vec()
+		};
 
 		self.inner.try_sign(&data)
 	}
@@ -210,7 +216,11 @@ impl CryptoVerifierWithOptions<Signature> for Ed25519PublicKey {
 		signature: &Signature,
 		options: SigningOptions,
 	) -> Result<(), ::signature::Error> {
-		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let data = if options.raw {
+			message.to_vec()
+		} else {
+			hash_default(message).to_vec()
+		};
 
 		self.inner.verify(&data, signature)
 	}
@@ -500,11 +510,14 @@ impl KeyDerivation for Ed25519Derivation {
 
 #[cfg(test)]
 mod tests {
+	use std::collections::HashMap;
+
 	use super::*;
 	use crate::algorithms::secp256k1::Secp256k1Derivation;
-	use crate::operations::signature::{CryptoSignerWithOptions, CryptoVerifierWithOptions, SigningOptions};
-	use std::collections::HashMap;
 	use x25519_dalek::PublicKey as DalekX25519PublicKey;
+
+	#[cfg(feature = "signature")]
+	use crate::operations::signature::{CryptoSignerWithOptions, CryptoVerifierWithOptions, SigningOptions};
 
 	#[test]
 	fn test_ed25519_key_derivation() {

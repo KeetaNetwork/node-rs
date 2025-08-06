@@ -21,19 +21,6 @@ pub use error::CryptoError;
 // Hash functions
 pub use hash::{default_hash_algorithm, default_hash_algorithm_length, hash, hash_array, hash_default, HashAlgorithm};
 
-// Keypair trait when signature feature is enabled
-#[cfg(feature = "signature")]
-pub use ::signature::Keypair;
-
-// Signature types and crypto operations
-#[cfg(feature = "signature")]
-pub use operations::{
-	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, KeyExchange, SigningOptions,
-};
-
-#[cfg(feature = "encryption")]
-pub use operations::{AsymmetricEncryption, CryptoAead};
-
 // Algorithm-agnostic key types
 pub use algorithms::{AnyPrivateKey, AnyPublicKey};
 
@@ -43,6 +30,28 @@ pub use algorithms::ed25519::{
 	X25519PrivateKey, X25519PublicKey,
 };
 pub use algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
+pub use algorithms::secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey};
 
 // Utility functions
 pub use utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
+// Keypair trait when signature feature is enabled
+#[cfg(feature = "signature")]
+pub use ::signature::Keypair;
+#[cfg(feature = "signature")]
+pub use operations::{
+	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
+};
+
+// Signature types and crypto operations
+#[cfg(feature = "encryption")]
+pub use operations::KeyExchange;
+#[cfg(feature = "encryption")]
+pub use operations::{AsymmetricEncryption, CryptoAead};
+
+// X.509 certificate operations when feature is enabled // TODO
+#[cfg(feature = "x509")]
+pub mod asn1;
+#[cfg(feature = "x509")]
+pub mod x509;
+#[cfg(feature = "x509")]
+pub use x509::error::CertificateError;

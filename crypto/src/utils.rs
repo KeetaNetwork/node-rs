@@ -5,9 +5,8 @@ use pbkdf2;
 use rand_core::TryRngCore;
 use secrecy::SecretBox;
 use sha3;
-use signature::Keypair;
 
-use crate::algorithms::{Ed25519Derivation, KeyDerivation, Secp256k1Derivation};
+use crate::algorithms::{Ed25519Derivation, KeyDerivation, PrivateKey, Secp256k1Derivation};
 use crate::constants::*;
 use crate::error::CryptoError;
 use crate::{Algorithm, AnyPrivateKey, AnyPublicKey};
@@ -90,13 +89,13 @@ pub fn create_keypair_from_seed(
 	match algorithm {
 		Algorithm::Secp256k1 => {
 			let private_key = Secp256k1Derivation::derive_from_seed(seed)?;
-			let public_key = private_key.verifying_key();
+			let public_key = private_key.as_public_key();
 
 			Ok((AnyPrivateKey::Secp256k1(private_key), AnyPublicKey::Secp256k1(public_key)))
 		}
 		Algorithm::Ed25519 => {
 			let private_key = Ed25519Derivation::derive_from_seed(seed)?;
-			let public_key = private_key.verifying_key();
+			let public_key = private_key.as_public_key();
 
 			Ok((AnyPrivateKey::Ed25519(private_key), AnyPublicKey::Ed25519(public_key)))
 		}

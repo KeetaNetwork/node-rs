@@ -2,6 +2,7 @@
 //!
 //! This module provides a flexible abstraction over different hash algorithms.
 
+use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use sha3::{Digest, Sha3_256};
 
@@ -17,6 +18,10 @@ pub enum HashAlgorithm {
 	Sha2_256,
 	/// SHA2-512
 	Sha2_512,
+	/// SHA-1
+	/// For X.509 Subject Key Identifier per RFC 5280
+	/// See: https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2
+	Sha1,
 }
 
 impl HashAlgorithm {
@@ -26,6 +31,7 @@ impl HashAlgorithm {
 			HashAlgorithm::Sha3_256 => "sha3-256",
 			HashAlgorithm::Sha2_256 => "sha2-256",
 			HashAlgorithm::Sha2_512 => "sha2-512",
+			HashAlgorithm::Sha1 => "sha1",
 		}
 	}
 
@@ -35,6 +41,7 @@ impl HashAlgorithm {
 			HashAlgorithm::Sha3_256 => 32,
 			HashAlgorithm::Sha2_256 => 32,
 			HashAlgorithm::Sha2_512 => 64,
+			HashAlgorithm::Sha1 => 20,
 		}
 	}
 
@@ -53,6 +60,11 @@ impl HashAlgorithm {
 			}
 			HashAlgorithm::Sha2_512 => {
 				let mut hasher = Sha512::new();
+				hasher.update(data);
+				hasher.finalize().to_vec()
+			}
+			HashAlgorithm::Sha1 => {
+				let mut hasher = Sha1::new();
 				hasher.update(data);
 				hasher.finalize().to_vec()
 			}
@@ -171,6 +183,14 @@ mod tests {
 			expected_empty: "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
 			expected_test_data: "0e1e21ecf105ec853d24d728867ad70613c21663a4693074b2a3619c1bd39d66b588c33723bb466c72424e80e3ca63c249078ab347bab9428500e7ee43059d0d",
 		},
+		HashTestCase {
+			algorithm: HashAlgorithm::Sha1,
+			name: "sha1",
+			length: 20,
+			expected_hello_world: "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
+			expected_empty: "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+			expected_test_data: "f48dd853820860816c75d54d0f584dc863327a7c",
+		},
 	];
 
 	const TEST_INPUTS: &[(&[u8], &str)] =
@@ -219,7 +239,15 @@ mod tests {
 		for test_case in HASH_TEST_CASES {
 			for &(input, _) in TEST_INPUTS {
 				// Test valid array length (matching algorithm's output size)
-				if test_case.length == 32 {
+				if test_case.length == 20 {
+					let array: [u8; 20] = test_case.algorithm.hash_array(input).unwrap();
+					let vec_result = test_case.algorithm.hash(input);
+					assert_eq!(array.to_vec(), vec_result);
+
+					// Test invalid array length
+					let invalid: Result<[u8; 16], CryptoError> = test_case.algorithm.hash_array(input);
+					assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
+				} else if test_case.length == 32 {
 					let array: [u8; 32] = test_case.algorithm.hash_array(input).unwrap();
 					let vec_result = test_case.algorithm.hash(input);
 					assert_eq!(array.to_vec(), vec_result);
@@ -246,8 +274,13 @@ mod tests {
 			let full_hash = test_case.algorithm.hash(b"test data");
 
 			// Test various truncation lengths
-			let test_lengths: Vec<usize> =
-				(1..=test_case.length).step_by(if test_case.length == 64 { 8 } else { 4 }).collect();
+			let test_lengths: Vec<usize> = (1..=test_case.length)
+				.step_by(if test_case.length == 64 {
+					8
+				} else {
+					4
+				})
+				.collect();
 
 			for &length in &test_lengths {
 				let truncated = test_case.algorithm.hash_truncated(b"test data", length).unwrap();
@@ -270,7 +303,15 @@ mod tests {
 		for test_case in HASH_TEST_CASES {
 			for &(input, _) in TEST_INPUTS {
 				// Test main hash function with appropriate const generic
-				if test_case.length == 32 {
+				if test_case.length == 20 {
+					let result: [u8; 20] = hash(input, Some(test_case.algorithm)).unwrap();
+					let expected = test_case.algorithm.hash(input);
+					assert_eq!(result.to_vec(), expected);
+
+					// Test truncation
+					let truncated: [u8; 16] = hash(input, Some(test_case.algorithm)).unwrap();
+					assert_eq!(truncated[..], expected[..16]);
+				} else if test_case.length == 32 {
 					let result: [u8; 32] = hash(input, Some(test_case.algorithm)).unwrap();
 					let expected = test_case.algorithm.hash(input);
 					assert_eq!(result.to_vec(), expected);
@@ -336,7 +377,11 @@ mod tests {
 
 		// Test with different algorithms
 		for test_case in HASH_TEST_CASES {
-			if test_case.length == 32 {
+			if test_case.length == 20 {
+				let hash_result: [u8; 20] = hash(test_data, Some(test_case.algorithm)).unwrap();
+				let hash_array_result: [u8; 20] = hash_array(test_data, Some(test_case.algorithm)).unwrap();
+				assert_eq!(hash_result, hash_array_result);
+			} else if test_case.length == 32 {
 				let hash_result: [u8; 32] = hash(test_data, Some(test_case.algorithm)).unwrap();
 				let hash_array_result: [u8; 32] = hash_array(test_data, Some(test_case.algorithm)).unwrap();
 				assert_eq!(hash_result, hash_array_result);

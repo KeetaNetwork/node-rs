@@ -16,6 +16,8 @@ use p256::SecretKey as P256SecretKey;
 use secrecy::SecretBox;
 
 #[cfg(feature = "signature")]
+use crate::hash::hash_default;
+#[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
@@ -23,13 +25,13 @@ use crate::operations::signature::{
 use ::signature::{Keypair, Signer, Verifier};
 
 #[cfg(feature = "encryption")]
+use crate::algorithms::ecies::{Ecies, EciesSecp256r1};
+#[cfg(feature = "encryption")]
 use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGeneration};
 #[cfg(feature = "encryption")]
 use aead::KeyInit;
 
-use crate::algorithms::ecies::{Ecies, EciesSecp256r1};
 use crate::error::CryptoError;
-use crate::hash::hash_default;
 use crate::kdf::KdfAlgorithm;
 use crate::{KeyDerivation, PrivateKey, PublicKey};
 
@@ -179,6 +181,7 @@ impl Signer<Signature> for Secp256r1PrivateKey {
 	}
 }
 
+#[cfg(feature = "signature")]
 impl CryptoSigner<Signature> for Secp256r1PrivateKey {
 	fn has_private_key(&self) -> bool {
 		true
@@ -188,7 +191,11 @@ impl CryptoSigner<Signature> for Secp256r1PrivateKey {
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
-		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let data = if options.raw {
+			message.to_vec()
+		} else {
+			hash_default(message).to_vec()
+		};
 		let signing_key = SigningKey::from(&self.inner);
 
 		signing_key.try_sign(&data)
@@ -255,7 +262,11 @@ impl CryptoVerifierWithOptions<Signature> for Secp256r1PublicKey {
 		signature: &Signature,
 		options: SigningOptions,
 	) -> Result<(), ::signature::Error> {
-		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let data = if options.raw {
+			message.to_vec()
+		} else {
+			hash_default(message).to_vec()
+		};
 		let verifying_key = p256::ecdsa::VerifyingKey::from(&self.inner);
 
 		verifying_key.verify(&data, signature)

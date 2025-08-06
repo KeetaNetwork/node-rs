@@ -17,3 +17,10 @@ max_width = 120
 
 # Soft limit: Encourage keeping lines under 80 characters when possible
 use_small_heuristics = "Max"
+
+# Control structures formatting
+# -----------------------------
+# Always use block form for if-else chains
+single_line_if_else_max_width = 0
+# Control when to use single line for let-else
+single_line_let_else_max_width = 0

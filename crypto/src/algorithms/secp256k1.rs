@@ -10,13 +10,11 @@
 // Re-export algorithm-specific signature types
 pub use k256::ecdsa::Signature as Secp256k1Signature;
 
-#[cfg(feature = "signature")]
-use ::signature::{Keypair, Signer, Verifier};
 use k256::ecdh::diffie_hellman;
-use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use k256::ecdsa::{Signature, SigningKey};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey as K256SecretKey;
-use secrecy::{ExposeSecret, SecretBox};
+use secrecy::SecretBox;
 
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::Ecies;
@@ -24,15 +22,23 @@ use crate::algorithms::ecies::Ecies;
 use crate::algorithms::ecies::EciesSecp256k1;
 #[cfg(feature = "encryption")]
 use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGeneration, KeyInit};
+#[cfg(feature = "encryption")]
+use crate::utils::generate_random_seed;
+#[cfg(feature = "encryption")]
+use secrecy::ExposeSecret;
 
+#[cfg(feature = "signature")]
+use crate::hash::hash_default;
 #[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
+#[cfg(feature = "signature")]
+use ::signature::{Keypair, Signer, Verifier};
+#[cfg(feature = "signature")]
+use k256::ecdsa::VerifyingKey;
 
-use crate::hash::hash_default;
 use crate::kdf::KdfAlgorithm;
-use crate::utils::generate_random_seed;
 use crate::{error::CryptoError, KeyDerivation, PrivateKey, PublicKey};
 
 /// secp256k1 private key wrapper.
@@ -174,6 +180,7 @@ impl Signer<Signature> for Secp256k1PrivateKey {
 	}
 }
 
+#[cfg(feature = "signature")]
 impl CryptoSigner<Signature> for Secp256k1PrivateKey {
 	fn has_private_key(&self) -> bool {
 		true
@@ -183,7 +190,11 @@ impl CryptoSigner<Signature> for Secp256k1PrivateKey {
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Secp256k1PrivateKey {
 	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
-		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let data = if options.raw {
+			message.to_vec()
+		} else {
+			hash_default(message).to_vec()
+		};
 		let signing_key = SigningKey::from(&self.inner);
 
 		signing_key.try_sign(&data)
@@ -250,7 +261,11 @@ impl CryptoVerifierWithOptions<Signature> for Secp256k1PublicKey {
 		signature: &Signature,
 		options: SigningOptions,
 	) -> Result<(), ::signature::Error> {
-		let data = if options.raw { message.to_vec() } else { hash_default(message).to_vec() };
+		let data = if options.raw {
+			message.to_vec()
+		} else {
+			hash_default(message).to_vec()
+		};
 		let verifying_key = VerifyingKey::from(&self.inner);
 
 		verifying_key.verify(&data, signature)
@@ -346,11 +361,12 @@ impl KeyDerivation for Secp256k1Derivation {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use secrecy::ExposeSecret;
+
+	#[cfg(feature = "signature")]
 	use crate::operations::signature::{
 		CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 	};
-	use secrecy::ExposeSecret;
-
 	#[cfg(feature = "signature")]
 	use ::signature::{Signer, Verifier};
 

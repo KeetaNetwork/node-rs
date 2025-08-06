@@ -33,6 +33,10 @@ features = ["std"]
 version = "0.12.2"
 features = ["hmac", "parallel", "sha2", "std"]
 
+[dependencies.sha1]
+version = "0.10.6"
+features = ["asm"]
+
 [dependencies.sha2]
 version = "0.10.9"
 features = ["asm", "asm-aarch64", "sha2-asm"]
@@ -96,9 +100,11 @@ optional = true
 version = "0.10.3"
 features = ["std"]
 
-[dependencies.chacha20poly1305]
-version = "0.10.1"
-features = ["std"]
+# X.509 certificate handling
+[dependencies.x509-cert]
+version = "0.2.5"
+features = ["std", "pem", "signature"]
+optional = true
 
 # Utilities
 [dependencies.bip39-dict]
@@ -118,12 +124,28 @@ version = "0.22"
 [dependencies.hex]
 workspace = true
 
+[dependencies.der]
+workspace = true
+optional = true
+
+[dependencies.chrono]
+workspace = true
+optional = true
+
+[dependencies.serde]
+workspace = true
+optional = true
+
+[dependencies.serde_json]
+version = "1.0.133"
+optional = true
+
 # Local dependencies
 [dependencies.keetanet-error]
 path = "../keetanet-error"
 
 [features]
-default = ["signature", "encryption"]
+default = ["signature", "encryption", "x509", "serde"]
 signature = ["dep:signature"]
 encryption = [
 	"dep:aead",
@@ -134,6 +156,8 @@ encryption = [
 	"dep:rand",
 	"dep:subtle",
 ]
+x509 = ["dep:x509-cert", "dep:der", "dep:chrono"]
+serde = ["dep:serde", "dep:serde_json"]
 
 [dev-dependencies]
 hex-literal.workspace = true

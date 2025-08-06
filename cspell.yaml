@@ -18,6 +18,7 @@ words:
   - rustup
   - tyblocks
   - github
+  - chrono
   - ECDSASECP
   - ECDSASECP256K1
   - ECDSASECP256R1
@@ -37,6 +38,8 @@ words:
   - ecdsa
   - ecies
   - pkcs
+  - spki
+  - extn
   - decryptor
   - encryptor
   - secp256k1
@@ -58,3 +61,7 @@ words:
   - KeyECDSASECP256K1
   - KeyECDSASECP256R1
   - KEYTYPE
+  - oids
+  - oid
+  - ocsp
+  - Datelike

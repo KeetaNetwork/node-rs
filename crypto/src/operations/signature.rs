@@ -193,13 +193,21 @@ mod tests {
 			let sig_bytes = signature.as_ref();
 
 			// Check if signature was marked for raw processing
-			let expected_raw_marker = if options.raw { 0xAA } else { 0x01 };
+			let expected_raw_marker = if options.raw {
+				0xAA
+			} else {
+				0x01
+			};
 			if sig_bytes[0] != expected_raw_marker {
 				return Err(signature::Error::new());
 			}
 
 			// Check if signature was marked for cert processing
-			let expected_cert_marker = if options.for_cert { 0xCC } else { 0x01 };
+			let expected_cert_marker = if options.for_cert {
+				0xCC
+			} else {
+				0x01
+			};
 			if sig_bytes[1] != expected_cert_marker {
 				return Err(signature::Error::new());
 			}
