@@ -5,6 +5,7 @@
 
 use der::asn1::ObjectIdentifier;
 use der::asn1::{Any, SetOfVec};
+use der::Sequence;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -40,7 +41,7 @@ pub enum AttributeValue {
 
 /// Attribute type and value pair
 /// Coverage: `Sequence` generated code causes false negative.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, der::Sequence)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Sequence)]
 pub struct AttributeTypeAndValue {
 	pub attribute_type: ObjectIdentifier,
 	pub attribute_value: Any,
@@ -70,9 +71,12 @@ pub struct NameValuePair {
 
 #[cfg(test)]
 mod tests {
+	use core::cmp::Ordering;
+
+	use der::{Decode, Encode, ValueOrd};
+
 	use super::*;
 	use crate::asn1::Ia5String;
-	use der::{Decode, Encode};
 
 	#[test]
 	fn test_attribute_value() {
@@ -87,6 +91,60 @@ mod tests {
 		let debug_str = format!("{value:?}");
 		assert!(debug_str.contains("PrintableString"));
 		assert!(debug_str.contains("test"));
+
+		// Test all variants
+		let variants = [
+			AttributeValue::PrintableString("printable".to_string()),
+			AttributeValue::Utf8String("utf8".to_string()),
+			AttributeValue::T61String("t61".to_string()),
+			AttributeValue::BmpString("bmp".to_string()),
+			AttributeValue::UniversalString("universal".to_string()),
+			AttributeValue::IA5String("ia5".to_string()),
+			AttributeValue::NumericString("123".to_string()),
+		];
+
+		for variant in &variants {
+			let cloned = variant.clone();
+			assert_eq!(variant, &cloned);
+
+			let debug_str = format!("{variant:?}");
+			assert!(!debug_str.is_empty());
+		}
+	}
+
+	#[test]
+	fn test_attribute_type_and_value_value_ord() {
+		let test_cases = [
+			("1.2.3.4", "value1", "1.2.3.5", "value1", Ordering::Less),
+			("1.2.3.4", "value1", "1.2.3.4", "value2", Ordering::Less),
+			("1.2.3.4", "value1", "1.2.3.4", "value1", Ordering::Equal),
+			("1.2.3.5", "value1", "1.2.3.4", "value1", Ordering::Greater),
+		];
+
+		for (oid1_str, value1_str, oid2_str, value2_str, expected) in test_cases {
+			let oid1 = ObjectIdentifier::new(oid1_str).unwrap();
+			let oid2 = ObjectIdentifier::new(oid2_str).unwrap();
+
+			let ia5_string1 = Ia5String::new(value1_str).unwrap();
+			let ia5_string2 = Ia5String::new(value2_str).unwrap();
+
+			let attribute_value = Any::encode_from(&ia5_string1).unwrap();
+			let attr1 = AttributeTypeAndValue { attribute_type: oid1, attribute_value };
+			let attribute_value = Any::encode_from(&ia5_string2).unwrap();
+			let attr2 = AttributeTypeAndValue { attribute_type: oid2, attribute_value };
+
+			let result = attr1.value_cmp(&attr2).unwrap();
+			assert_eq!(result, expected);
+		}
+
+		// Test self-comparison
+		let attribute_type = ObjectIdentifier::new("1.2.3.4").unwrap();
+		let ia5_string = Ia5String::new("value").unwrap();
+		let attribute_value = Any::encode_from(&ia5_string).unwrap();
+		let attr = AttributeTypeAndValue { attribute_type, attribute_value };
+
+		let result = attr.value_cmp(&attr).unwrap();
+		assert_eq!(result, Ordering::Equal);
 	}
 
 	#[test]
@@ -100,7 +158,7 @@ mod tests {
 
 		for (oid_str, value_bytes) in test_cases {
 			let attribute_type = ObjectIdentifier::new(oid_str).unwrap();
-			let value_str = std::str::from_utf8(value_bytes).unwrap();
+			let value_str = core::str::from_utf8(value_bytes).unwrap();
 			let ia5_string = Ia5String::new(value_str).unwrap();
 			let attribute_value = Any::encode_from(&ia5_string).unwrap();
 			let attr = AttributeTypeAndValue { attribute_type, attribute_value: attribute_value.clone() };
@@ -142,6 +200,7 @@ mod tests {
 		let der_bytes = attr.to_der().unwrap();
 		let decoded = AttributeTypeAndValue::from_der(&der_bytes).unwrap();
 		assert_eq!(attr, decoded);
+
 		let decoded_ia5: Ia5String = attr.attribute_value.decode_as().unwrap();
 		assert_eq!(decoded_ia5.as_str().len(), 100);
 

@@ -1,6 +1,6 @@
 //! Common test utilities and data shared across integration tests
 
-use std::convert::TryFrom;
+use core::convert::TryFrom;
 
 use accounts::{Account, Accountable, KeyPairType, Keyable};
 use secrecy::SecretBox;

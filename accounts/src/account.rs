@@ -1394,11 +1394,11 @@ macro_rules! cast_and_get_public_key_string {
 }
 
 // Display blanket implementation for Account types
-impl<KEYTYPE> std::fmt::Display for Account<KEYTYPE>
+impl<KEYTYPE> core::fmt::Display for Account<KEYTYPE>
 where
 	KEYTYPE: KeyPair + Clone,
 {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		let public_key_string = match self.keypair_type() {
 			KeyPairType::ECDSASECP256K1 => cast_and_get_public_key_string!(self, KeyECDSASECP256K1),
 			KeyPairType::ED25519 => cast_and_get_public_key_string!(self, KeyED25519),

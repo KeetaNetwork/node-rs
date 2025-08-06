@@ -35,6 +35,7 @@ pub fn create_dn(pairs: &[(&str, &str)]) -> Result<DistinguishedName, Certificat
 
 		let attr = AttributeTypeAndValue { attribute_type, attribute_value };
 		let rdn = SetOfVec::from_iter(vec![attr])?;
+
 		dn.push(rdn);
 	}
 
@@ -272,6 +273,7 @@ pub fn dn_to_string(dn: &DistinguishedName) -> String {
 			} else {
 				String::from_utf8_lossy(attr.attribute_value.value()).to_string()
 			};
+
 			format!("{}={}", attr.attribute_type, value)
 		})
 		.collect::<Vec<_>>()
@@ -313,6 +315,7 @@ mod tests {
 		for (i, (expected_oid, expected_value)) in multi_pairs.iter().enumerate() {
 			assert_eq!(multi_dn[i].len(), 1);
 			assert_eq!(multi_dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
+
 			let ia5_string: Ia5String = multi_dn[i].get(0).unwrap().attribute_value.decode_as().unwrap();
 			assert_eq!(ia5_string.as_str(), *expected_value);
 		}
@@ -321,8 +324,10 @@ mod tests {
 		let special_pairs = &[(oids::CN, "test with spaces"), (oids::O, "Org,with=special;chars")];
 		let special_dn = create_dn(special_pairs).unwrap();
 		assert_eq!(special_dn.len(), 2);
+
 		let ia5_string1: Ia5String = special_dn[0].get(0).unwrap().attribute_value.decode_as().unwrap();
 		assert_eq!(ia5_string1.as_str(), "test with spaces");
+
 		let ia5_string2: Ia5String = special_dn[1].get(0).unwrap().attribute_value.decode_as().unwrap();
 		assert_eq!(ia5_string2.as_str(), "Org,with=special;chars");
 
@@ -336,13 +341,13 @@ mod tests {
 	fn test_dn_to_string() {
 		// Test with empty DN
 		let empty_dn: DistinguishedName = Vec::new();
-		let empty_string = super::dn_to_string(&empty_dn);
+		let empty_string = dn_to_string(&empty_dn);
 		assert_eq!(empty_string, "");
 
 		// Test with single attribute
 		let single_pairs = &[(oids::CN, "single.example.com")];
 		let single_dn = create_dn(single_pairs).unwrap();
-		let single_string = super::dn_to_string(&single_dn);
+		let single_string = dn_to_string(&single_dn);
 		assert_eq!(single_string, "2.5.4.3=single.example.com");
 		assert!(!single_string.contains(", ")); // No comma for single attribute
 
@@ -356,7 +361,7 @@ mod tests {
 
 		// Verify all components are present
 		let multi_dn = create_dn(multi_pairs).unwrap();
-		let multi_string = super::dn_to_string(&multi_dn);
+		let multi_string = dn_to_string(&multi_dn);
 		assert!(multi_string.contains("example.com"));
 		assert!(multi_string.contains("Example Organization"));
 		assert!(multi_string.contains("IT Department"));

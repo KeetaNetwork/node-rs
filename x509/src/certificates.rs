@@ -3,7 +3,7 @@
 //! This module provides functionality for working with X.509 certificates,
 //! including parsing, validation, and generation of certificate requests.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
@@ -176,11 +176,11 @@ impl Extension {
 					name.push(san_entry.len() as u8);
 					name.extend_from_slice(san_entry.as_bytes());
 					name
-				} else if san_entry.parse::<std::net::IpAddr>().is_ok() {
+				} else if san_entry.parse::<core::net::IpAddr>().is_ok() {
 					// IP Address [7] IMPLICIT OCTET STRING
-					let ip_bytes = if let Ok(ip) = san_entry.parse::<std::net::Ipv4Addr>() {
+					let ip_bytes = if let Ok(ip) = san_entry.parse::<core::net::Ipv4Addr>() {
 						ip.octets().to_vec()
-					} else if let Ok(ip) = san_entry.parse::<std::net::Ipv6Addr>() {
+					} else if let Ok(ip) = san_entry.parse::<core::net::Ipv6Addr>() {
 						ip.octets().to_vec()
 					} else {
 						san_entry.as_bytes().to_vec() // fallback
@@ -1068,7 +1068,7 @@ impl Certificate {
 		// Split into 64-character lines
 		let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
 		for chunk in base64_content.as_bytes().chunks(64) {
-			pem.push_str(std::str::from_utf8(chunk).unwrap());
+			pem.push_str(core::str::from_utf8(chunk).unwrap());
 			pem.push('\n');
 		}
 		pem.push_str("-----END CERTIFICATE-----\n");
@@ -1585,7 +1585,7 @@ impl Certificate {
 	/// Assert that a valid certificate graph can be constructed from the given certificates
 	pub fn assert_can_construct_valid_graph(
 		&self,
-		additional_certs: &std::collections::HashSet<Certificate>,
+		additional_certs: &HashSet<Certificate>,
 	) -> Result<(), CertificateError> {
 		// Check for duplicates (including this certificate)
 		let mut all_certs = additional_certs.clone();
@@ -1595,7 +1595,7 @@ impl Certificate {
 		all_certs.insert(self.clone());
 
 		// Build a map of subject DN (as hex string) -> certificate for quick lookup
-		let mut subject_map: std::collections::HashMap<String, &Certificate> = std::collections::HashMap::new();
+		let mut subject_map: HashMap<String, &Certificate> = HashMap::new();
 		for cert in &all_certs {
 			// Use hex encoding of the DER bytes of the DN as the key
 			if let Ok(dn_der) = <DistinguishedName as der::Encode>::to_der(&cert.tbs_certificate.subject) {
@@ -1605,7 +1605,7 @@ impl Certificate {
 		}
 
 		// Check for orphans (certificates that don't connect to any chain)
-		let mut reachable = std::collections::HashSet::new();
+		let mut reachable = HashSet::new();
 		let mut to_visit = vec![self];
 
 		while let Some(current) = to_visit.pop() {
@@ -1639,14 +1639,14 @@ impl Certificate {
 		}
 
 		// Check for cycles using DFS
-		let mut visited = std::collections::HashSet::new();
-		let mut rec_stack = std::collections::HashSet::new();
+		let mut visited = HashSet::new();
+		let mut rec_stack = HashSet::new();
 
 		fn has_cycle(
 			cert: &Certificate,
-			subject_map: &std::collections::HashMap<String, &Certificate>,
-			visited: &mut std::collections::HashSet<String>,
-			rec_stack: &mut std::collections::HashSet<String>,
+			subject_map: &HashMap<String, &Certificate>,
+			visited: &mut HashSet<String>,
+			rec_stack: &mut HashSet<String>,
 		) -> Result<bool, CertificateError> {
 			// Use hex encoding of the DN as the key
 			let subject_key =
@@ -1819,11 +1819,12 @@ impl TryFrom<&AlgorithmIdentifier> for Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+	use chrono::{TimeZone, Utc};
+
 	use super::*;
 	use crate::asn1::{BitString, Uint};
 	use crate::oids;
 	use crate::utils;
-	use chrono::{TimeZone, Utc};
 
 	// Test data from TypeScript tests - CA certificate
 	const CA_CERT_PEM: &str = r#"-----BEGIN CERTIFICATE-----
