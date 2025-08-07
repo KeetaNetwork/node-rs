@@ -252,6 +252,7 @@ dependencies = [
  "bip39-dict",
  "cbc",
  "chrono",
+ "crypto-bigint 0.6.1",
  "ctr",
  "curve25519-dalek",
  "der",
@@ -285,6 +286,20 @@ checksum = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76"
 dependencies = [
  "generic-array",
  "rand_core 0.6.4",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "crypto-bigint"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96272c2ff28b807e09250b180ad1fb7889a3258f7455759b5c3c58b719467130"
+dependencies = [
+ "der",
+ "num-traits",
+ "rand_core 0.6.4",
+ "serdect",
  "subtle",
  "zeroize",
 ]
@@ -430,7 +445,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
 dependencies = [
  "base16ct",
- "crypto-bigint",
+ "crypto-bigint 0.5.5",
  "digest",
  "ff",
  "generic-array",
@@ -931,6 +946,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serdect"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f42f67da2385b51a5f9652db9c93d78aeaf7610bf5ec366080b6de810604af53"
+dependencies = [
+ "base16ct",
+ "serde",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1258,7 +1283,6 @@ dependencies = [
  "keetanet-error",
  "serde",
  "serde_json",
- "sha1",
  "snafu",
 ]
 

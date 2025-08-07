@@ -6,6 +6,7 @@
 //! - Support for multiple algorithms (secp256k1, Ed25519)
 
 pub mod algorithms;
+pub mod bigint;
 pub mod constants;
 pub mod error;
 pub mod hash;

@@ -104,6 +104,10 @@ features = ["std"]
 [dependencies.bip39-dict]
 version = "0.1.3"
 
+[dependencies.crypto-bigint]
+version = "0.6.1"
+features = ["serde", "der", "zeroize"]
+
 [dependencies.secrecy]
 version = "0.10.3"
 features = ["serde"]

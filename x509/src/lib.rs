@@ -79,65 +79,64 @@ mod tests {
 	use crate::asn1::Ia5String;
 
 	#[test]
-	fn test_attribute_value() {
-		let value1 = AttributeValue::PrintableString("test".to_string());
-		let value2 = value1.clone();
-		assert_eq!(value1, value2);
+	fn test_attribute_value_variants() {
+		macro_rules! test_attribute_value_variant {
+			($variant:ident, $value:expr) => {
+				let value = AttributeValue::$variant($value.to_string());
+				let cloned = value.clone();
+				assert_eq!(value, cloned);
 
-		let value3 = AttributeValue::Utf8String("test".to_string());
-		assert_ne!(value1, value3);
-
-		let value = AttributeValue::PrintableString("test".to_string());
-		let debug_str = format!("{value:?}");
-		assert!(debug_str.contains("PrintableString"));
-		assert!(debug_str.contains("test"));
-
-		// Test all variants
-		let variants = [
-			AttributeValue::PrintableString("printable".to_string()),
-			AttributeValue::Utf8String("utf8".to_string()),
-			AttributeValue::T61String("t61".to_string()),
-			AttributeValue::BmpString("bmp".to_string()),
-			AttributeValue::UniversalString("universal".to_string()),
-			AttributeValue::IA5String("ia5".to_string()),
-			AttributeValue::NumericString("123".to_string()),
-		];
-
-		for variant in &variants {
-			let cloned = variant.clone();
-			assert_eq!(variant, &cloned);
-
-			let debug_str = format!("{variant:?}");
-			assert!(!debug_str.is_empty());
+				let debug_str = format!("{value:?}");
+				assert!(debug_str.contains(stringify!($variant)));
+				assert!(debug_str.contains($value));
+			};
 		}
+
+		test_attribute_value_variant!(PrintableString, "printable");
+		test_attribute_value_variant!(Utf8String, "utf8");
+		test_attribute_value_variant!(T61String, "t61");
+		test_attribute_value_variant!(BmpString, "bmp");
+		test_attribute_value_variant!(UniversalString, "universal");
+		test_attribute_value_variant!(IA5String, "ia5");
+		test_attribute_value_variant!(NumericString, "123");
+	}
+
+	#[test]
+	fn test_attribute_value_inequality() {
+		let value1 = AttributeValue::PrintableString("test".to_string());
+		let value2 = AttributeValue::Utf8String("test".to_string());
+		assert_ne!(value1, value2);
 	}
 
 	#[test]
 	fn test_attribute_type_and_value_value_ord() {
-		let test_cases = [
-			("1.2.3.4", "value1", "1.2.3.5", "value1", Ordering::Less),
-			("1.2.3.4", "value1", "1.2.3.4", "value2", Ordering::Less),
-			("1.2.3.4", "value1", "1.2.3.4", "value1", Ordering::Equal),
-			("1.2.3.5", "value1", "1.2.3.4", "value1", Ordering::Greater),
-		];
+		macro_rules! test_value_ord_case {
+			($oid1:expr, $value1:expr, $oid2:expr, $value2:expr, $expected:expr) => {
+				let oid1 = ObjectIdentifier::new($oid1).unwrap();
+				let oid2 = ObjectIdentifier::new($oid2).unwrap();
 
-		for (oid1_str, value1_str, oid2_str, value2_str, expected) in test_cases {
-			let oid1 = ObjectIdentifier::new(oid1_str).unwrap();
-			let oid2 = ObjectIdentifier::new(oid2_str).unwrap();
+				let ia5_string1 = Ia5String::new($value1).unwrap();
+				let ia5_string2 = Ia5String::new($value2).unwrap();
 
-			let ia5_string1 = Ia5String::new(value1_str).unwrap();
-			let ia5_string2 = Ia5String::new(value2_str).unwrap();
+				let attribute_value1 = Any::encode_from(&ia5_string1).unwrap();
+				let attr1 = AttributeTypeAndValue { attribute_type: oid1, attribute_value: attribute_value1 };
 
-			let attribute_value = Any::encode_from(&ia5_string1).unwrap();
-			let attr1 = AttributeTypeAndValue { attribute_type: oid1, attribute_value };
-			let attribute_value = Any::encode_from(&ia5_string2).unwrap();
-			let attr2 = AttributeTypeAndValue { attribute_type: oid2, attribute_value };
+				let attribute_value2 = Any::encode_from(&ia5_string2).unwrap();
+				let attr2 = AttributeTypeAndValue { attribute_type: oid2, attribute_value: attribute_value2 };
 
-			let result = attr1.value_cmp(&attr2).unwrap();
-			assert_eq!(result, expected);
+				let result = attr1.value_cmp(&attr2).unwrap();
+				assert_eq!(result, $expected);
+			};
 		}
 
-		// Test self-comparison
+		test_value_ord_case!("1.2.3.4", "value1", "1.2.3.5", "value1", Ordering::Less);
+		test_value_ord_case!("1.2.3.4", "value1", "1.2.3.4", "value2", Ordering::Less);
+		test_value_ord_case!("1.2.3.4", "value1", "1.2.3.4", "value1", Ordering::Equal);
+		test_value_ord_case!("1.2.3.5", "value1", "1.2.3.4", "value1", Ordering::Greater);
+	}
+
+	#[test]
+	fn test_attribute_type_and_value_self_comparison() {
 		let attribute_type = ObjectIdentifier::new("1.2.3.4").unwrap();
 		let ia5_string = Ia5String::new("value").unwrap();
 		let attribute_value = Any::encode_from(&ia5_string).unwrap();
@@ -148,49 +147,55 @@ mod tests {
 	}
 
 	#[test]
-	fn test_attribute_type_and_value() {
-		let test_cases: &[(&str, &[u8])] = &[
-			("1.2.3.4", b"basic value"),
-			("2.5.4.3", b"Common Name"),
-			("1.2.840.113549.1.9.1", b"test@example.com"),
-			("2.16.840.1.101.3.4.2.1", b""), // Empty value
-		];
+	fn test_attribute_type_and_value_creation() {
+		macro_rules! test_attribute_creation {
+			($oid:expr, $value_bytes:expr) => {
+				let attribute_type = ObjectIdentifier::new($oid).unwrap();
+				let value_str = core::str::from_utf8($value_bytes).unwrap();
+				let ia5_string = Ia5String::new(value_str).unwrap();
+				let attribute_value = Any::encode_from(&ia5_string).unwrap();
+				let attr = AttributeTypeAndValue { attribute_type, attribute_value: attribute_value.clone() };
 
-		for (oid_str, value_bytes) in test_cases {
-			let attribute_type = ObjectIdentifier::new(oid_str).unwrap();
-			let value_str = core::str::from_utf8(value_bytes).unwrap();
-			let ia5_string = Ia5String::new(value_str).unwrap();
-			let attribute_value = Any::encode_from(&ia5_string).unwrap();
-			let attr = AttributeTypeAndValue { attribute_type, attribute_value: attribute_value.clone() };
+				assert_eq!(attr.attribute_type.to_string(), $oid);
 
-			// Test creation and field access
-			assert_eq!(attr.attribute_type.to_string(), *oid_str);
-			let decoded_ia5: Ia5String = attr.attribute_value.decode_as().unwrap();
-			assert_eq!(decoded_ia5.as_str(), value_str);
-			assert_eq!(attr.attribute_value.value(), attribute_value.value());
+				let decoded_ia5: Ia5String = attr.attribute_value.decode_as().unwrap();
+				assert_eq!(decoded_ia5.as_str(), value_str);
+				assert_eq!(attr.attribute_value.value(), attribute_value.value());
 
-			// Test clone and equality
-			let cloned = attr.clone();
-			assert_eq!(attr, cloned);
+				let cloned = attr.clone();
+				assert_eq!(attr, cloned);
 
-			// Test inequality with different OID
-			let attribute_type = ObjectIdentifier::new("1.2.3.5").unwrap();
-			let different_attr = AttributeTypeAndValue { attribute_type, attribute_value };
-			assert_ne!(attr, different_attr);
+				let der_bytes = attr.to_der().unwrap();
+				assert!(!der_bytes.is_empty());
 
-			// Test DER encoding/decoding roundtrip
-			let der_bytes = attr.to_der().unwrap();
-			assert!(!der_bytes.is_empty());
+				let decoded = AttributeTypeAndValue::from_der(&der_bytes).unwrap();
+				assert_eq!(attr, decoded);
 
-			let decoded = AttributeTypeAndValue::from_der(&der_bytes).unwrap();
-			assert_eq!(attr, decoded);
-
-			// Test debug formatting
-			let debug_str = format!("{attr:?}");
-			assert!(debug_str.contains("AttributeTypeAndValue"));
+				let debug_str = format!("{attr:?}");
+				assert!(debug_str.contains("AttributeTypeAndValue"));
+			};
 		}
 
-		// Test with large value - use a valid string for IA5String
+		test_attribute_creation!("1.2.3.4", b"basic value");
+		test_attribute_creation!("2.5.4.3", b"Common Name");
+		test_attribute_creation!("1.2.840.113549.1.9.1", b"test@example.com");
+		test_attribute_creation!("2.16.840.1.101.3.4.2.1", b"");
+	}
+
+	#[test]
+	fn test_attribute_type_and_value_inequality() {
+		let attribute_type = ObjectIdentifier::new("1.2.3.4").unwrap();
+		let ia5_string = Ia5String::new("value").unwrap();
+		let attribute_value = Any::encode_from(&ia5_string).unwrap();
+		let attr = AttributeTypeAndValue { attribute_type, attribute_value: attribute_value.clone() };
+
+		let different_oid = ObjectIdentifier::new("1.2.3.5").unwrap();
+		let different_attr = AttributeTypeAndValue { attribute_type: different_oid, attribute_value };
+		assert_ne!(attr, different_attr);
+	}
+
+	#[test]
+	fn test_attribute_type_and_value_large_value() {
 		let large_value = "x".repeat(100);
 		let attribute_type = ObjectIdentifier::new("1.2.3.4").unwrap();
 		let ia5_string = Ia5String::new(&large_value).unwrap();
@@ -204,62 +209,63 @@ mod tests {
 		let decoded_ia5: Ia5String = attr.attribute_value.decode_as().unwrap();
 		assert_eq!(decoded_ia5.as_str().len(), 100);
 
-		// Test equality trait
+		// Test self equality
 		assert_eq!(attr, attr);
-		assert!(attr == attr);
 	}
 
 	#[test]
-	fn test_distinguished_name() {
+	fn test_distinguished_name_single_rdn() {
 		let attribute_type = ObjectIdentifier::new("1.2.3.4").unwrap();
 		let ia5_string = Ia5String::new("test").unwrap();
 		let attribute_value = Any::encode_from(&ia5_string).unwrap();
 		let attr = AttributeTypeAndValue { attribute_type, attribute_value };
 
-		// Create a DN with one RDN containing one attribute
 		let rdn = SetOfVec::from_iter([attr.clone()]).unwrap();
 		let dn: DistinguishedName = vec![rdn];
+
 		assert_eq!(dn.len(), 1);
 		assert_eq!(dn[0].len(), 1);
 		assert_eq!(*dn[0].get(0).unwrap(), attr);
+	}
 
-		// Test empty DN
-		let empty_dn: DistinguishedName = Vec::new();
-		assert!(empty_dn.is_empty());
+	#[test]
+	fn test_distinguished_name_multiple_rdn() {
+		let attribute_type = ObjectIdentifier::new("1.2.3.4").unwrap();
+		let ia5_string1 = Ia5String::new("test").unwrap();
+		let attribute_value = Any::encode_from(&ia5_string1).unwrap();
+		let attr1 = AttributeTypeAndValue { attribute_type, attribute_value };
 
-		// Test DN with multiple RDNs
 		let attribute_type = ObjectIdentifier::new("2.5.4.3").unwrap();
 		let ia5_string2 = Ia5String::new("CN=Test").unwrap();
 		let attribute_value = Any::encode_from(&ia5_string2).unwrap();
 		let attr2 = AttributeTypeAndValue { attribute_type, attribute_value };
-		let rdn1 = SetOfVec::from_iter([attr.clone()]).unwrap();
+
+		let rdn1 = SetOfVec::from_iter([attr1.clone()]).unwrap();
 		let rdn2 = SetOfVec::from_iter([attr2.clone()]).unwrap();
 		let multi_dn: DistinguishedName = vec![rdn1, rdn2];
+
 		assert_eq!(multi_dn.len(), 2);
-		assert_eq!(*multi_dn[0].get(0).unwrap(), attr);
+		assert_eq!(*multi_dn[0].get(0).unwrap(), attr1);
 		assert_eq!(*multi_dn[1].get(0).unwrap(), attr2);
 	}
 
 	#[cfg(feature = "serde")]
 	#[test]
-	fn test_name_value_pair() {
+	fn test_name_value_pair_serde() {
 		let name = "commonName".to_string();
 		let value = "Test Certificate".to_string();
 		let pair = NameValuePair { name, value };
 
-		// Test clone
+		assert_eq!(pair.name, "commonName");
+		assert_eq!(pair.value, "Test Certificate");
+
 		let cloned = pair.clone();
 		assert_eq!(pair.name, cloned.name);
 		assert_eq!(pair.value, cloned.value);
 
-		// Test debug formatting
 		let debug_str = format!("{pair:?}");
 		assert!(debug_str.contains("NameValuePair"));
 		assert!(debug_str.contains("commonName"));
 		assert!(debug_str.contains("Test Certificate"));
-
-		// Test field access
-		assert_eq!(pair.name, "commonName");
-		assert_eq!(pair.value, "Test Certificate");
 	}
 }

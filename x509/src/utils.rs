@@ -280,6 +280,59 @@ pub fn dn_to_string(dn: &DistinguishedName) -> String {
 		.join(", ")
 }
 
+/// Helper function to parse DER length encoding.
+/// Returns (content_length, header_length) if successful.
+///
+/// # Example
+///
+/// ```rust
+/// use x509::utils::parse_der_length;
+///
+/// // Short form: SEQUENCE with 5 bytes of content
+/// let short_form = &[0x30, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05];
+/// let (content_len, header_len) = parse_der_length(short_form).unwrap();
+/// assert_eq!(content_len, 5);
+/// assert_eq!(header_len, 2);
+///
+/// // Long form: SEQUENCE with 256 bytes of content
+/// let long_form = &[0x30, 0x82, 0x01, 0x00]; // 0x82 = long form with 2 bytes, 0x0100 = 256
+/// let (content_len, header_len) = parse_der_length(long_form).unwrap();
+/// assert_eq!(content_len, 256);
+/// assert_eq!(header_len, 4);
+/// ```
+pub fn parse_der_length(data: &[u8]) -> Option<(usize, usize)> {
+	if data.is_empty() {
+		return None;
+	}
+
+	// Skip the tag byte (should be 0x30 for SEQUENCE)
+	if data[0] != 0x30 {
+		return None;
+	}
+
+	if data.len() < 2 {
+		return None;
+	}
+
+	let length_byte = data[1];
+	if length_byte & 0x80 == 0 {
+		// Short form: length is in the single byte
+		Some((length_byte as usize, 2))
+	} else {
+		// Long form: length is encoded in the following bytes
+		let length_bytes = (length_byte & 0x7F) as usize;
+		if length_bytes == 0 || data.len() < 2 + length_bytes {
+			return None;
+		}
+
+		// Compute the content length by folding over the length bytes
+		let content_length =
+			(0..length_bytes).map(|i| data[2 + i] as usize).fold(0usize, |acc, byte| (acc << 8) | byte);
+
+		Some((content_length, 2 + length_bytes))
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -289,117 +342,229 @@ mod tests {
 
 	#[test]
 	fn test_create_dn() {
-		// Test with empty pairs
-		let empty_pairs: &[(&str, &str)] = &[];
-		let empty_dn = create_dn(empty_pairs).unwrap();
-		assert_eq!(empty_dn.len(), 0);
-
-		// Test with single attribute
-		let single_pairs = &[(oids::CN, "single.example.com")];
-		let single_dn = create_dn(single_pairs).unwrap();
-		assert_eq!(single_dn.len(), 1);
-		assert_eq!(single_dn[0].len(), 1);
-		assert_eq!(single_dn[0].get(0).unwrap().attribute_type.to_string(), oids::CN);
-
-		// Test with multiple attributes
-		let multi_pairs = &[
-			(oids::CN, "example.com"),
-			(oids::O, "Example Organization"),
-			(oids::OU, "IT Department"),
-			(oids::C, "US"),
+		// Test cases: (input_pairs, expected_length, should_succeed)
+		let test_cases = [
+			// Valid cases
+			(&[][..], 0, true),                                 // Empty pairs
+			(&[(oids::CN, "single.example.com")][..], 1, true), // Single attribute
+			(
+				&[
+					(oids::CN, "example.com"),
+					(oids::O, "Example Organization"),
+					(oids::OU, "IT Department"),
+					(oids::C, "US"),
+				][..],
+				4,
+				true,
+			), // Multiple attributes
+			(&[(oids::CN, "test with spaces"), (oids::O, "Org,with=special;chars")][..], 2, true), // Special characters
+			// Invalid case
+			(&[("invalid.oid", "value")][..], 0, false), // Invalid OID
 		];
-		let multi_dn = create_dn(multi_pairs).unwrap();
-		assert_eq!(multi_dn.len(), 4);
 
-		// Verify each attribute is correctly stored
-		for (i, (expected_oid, expected_value)) in multi_pairs.iter().enumerate() {
-			assert_eq!(multi_dn[i].len(), 1);
-			assert_eq!(multi_dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
+		for (pairs, expected_len, should_succeed) in test_cases {
+			let result = create_dn(pairs);
 
-			let ia5_string: Ia5String = multi_dn[i].get(0).unwrap().attribute_value.decode_as().unwrap();
-			assert_eq!(ia5_string.as_str(), *expected_value);
+			if should_succeed {
+				let dn = result.unwrap();
+				assert_eq!(dn.len(), expected_len, "Failed for pairs: {pairs:?}");
+
+				// Verify each attribute is correctly stored
+				for (i, (expected_oid, expected_value)) in pairs.iter().enumerate() {
+					assert_eq!(dn[i].len(), 1);
+					assert_eq!(dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
+
+					let ia5_string: Ia5String = dn[i].get(0).unwrap().attribute_value.decode_as().unwrap();
+					assert_eq!(ia5_string.as_str(), *expected_value);
+				}
+			} else {
+				assert!(result.is_err(), "Expected error for pairs: {pairs:?}");
+			}
 		}
-
-		// Test with special characters
-		let special_pairs = &[(oids::CN, "test with spaces"), (oids::O, "Org,with=special;chars")];
-		let special_dn = create_dn(special_pairs).unwrap();
-		assert_eq!(special_dn.len(), 2);
-
-		let ia5_string1: Ia5String = special_dn[0].get(0).unwrap().attribute_value.decode_as().unwrap();
-		assert_eq!(ia5_string1.as_str(), "test with spaces");
-
-		let ia5_string2: Ia5String = special_dn[1].get(0).unwrap().attribute_value.decode_as().unwrap();
-		assert_eq!(ia5_string2.as_str(), "Org,with=special;chars");
-
-		// Test with invalid OID (should return an error)
-		let invalid_pairs = &[("invalid.oid", "value")];
-		let result = create_dn(invalid_pairs);
-		assert!(result.is_err());
 	}
 
 	#[test]
 	fn test_dn_to_string() {
-		// Test with empty DN
-		let empty_dn: DistinguishedName = Vec::new();
-		let empty_string = dn_to_string(&empty_dn);
-		assert_eq!(empty_string, "");
-
-		// Test with single attribute
-		let single_pairs = &[(oids::CN, "single.example.com")];
-		let single_dn = create_dn(single_pairs).unwrap();
-		let single_string = dn_to_string(&single_dn);
-		assert_eq!(single_string, "2.5.4.3=single.example.com");
-		assert!(!single_string.contains(", ")); // No comma for single attribute
-
-		// Test with multiple common DN attributes
-		let multi_pairs = &[
-			(oids::CN, "example.com"),
-			(oids::O, "Example Organization"),
-			(oids::OU, "IT Department"),
-			(oids::C, "US"),
+		// Test cases: (input_pairs, expected_contains, should_not_contain)
+		let test_cases = [
+			// Empty DN
+			(&[][..], vec![], vec![", "]),
+			// Single attribute
+			(&[(oids::CN, "single.example.com")][..], vec!["2.5.4.3=single.example.com"], vec![", "]),
+			// Multiple attributes
+			(
+				&[
+					(oids::CN, "example.com"),
+					(oids::O, "Example Organization"),
+					(oids::OU, "IT Department"),
+					(oids::C, "US"),
+				][..],
+				vec!["example.com", "Example Organization", "IT Department", "US", "2.5.4.3=", "2.5.4.10=", ", "],
+				vec![],
+			),
+			// Special characters
+			(
+				&[(oids::CN, "test with spaces"), (oids::O, "Org,with=special;chars")][..],
+				vec!["test with spaces", "Org,with=special;chars", ", "],
+				vec![],
+			),
 		];
 
-		// Verify all components are present
-		let multi_dn = create_dn(multi_pairs).unwrap();
-		let multi_string = dn_to_string(&multi_dn);
-		assert!(multi_string.contains("example.com"));
-		assert!(multi_string.contains("Example Organization"));
-		assert!(multi_string.contains("IT Department"));
-		assert!(multi_string.contains("US"));
-		assert!(multi_string.contains("2.5.4.3=")); // CN OID
-		assert!(multi_string.contains("2.5.4.10=")); // O OID
-		assert!(multi_string.contains(", ")); // Comma-separated format
+		for (pairs, should_contain, should_not_contain) in test_cases {
+			let dn = if pairs.is_empty() {
+				Vec::new()
+			} else {
+				create_dn(pairs).unwrap()
+			};
 
-		// Test with special characters in values
-		let special_pairs = &[(oids::CN, "test with spaces"), (oids::O, "Org,with=special;chars")];
-		let special_dn = create_dn(special_pairs).unwrap();
-		let special_string = super::dn_to_string(&special_dn);
-		assert!(special_string.contains("test with spaces"));
-		assert!(special_string.contains("Org,with=special;chars"));
-		assert!(special_string.contains(", ")); // Should still be comma-separated
+			let dn_string = dn_to_string(&dn);
+
+			for expected in should_contain {
+				assert!(dn_string.contains(expected), "DN string '{dn_string}' should contain '{expected}'");
+			}
+
+			for unexpected in should_not_contain {
+				assert!(!dn_string.contains(unexpected), "DN string '{dn_string}' should not contain '{unexpected}'");
+			}
+		}
 	}
 
 	#[test]
 	fn test_generate_key_identifier() {
-		// Test with basic public key data
-		// Should be exactly 20 bytes (SHA-1 output)
-		let public_key_bytes = &[0x04, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-		let bit_string = BitString::new(0, public_key_bytes).unwrap();
-		let key_id = generate_key_identifier(&bit_string).unwrap();
-		assert_eq!(key_id.len(), 20);
+		// Test cases: (input_bytes, description)
+		let test_cases = [
+			(&[0x04, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08][..], "basic public key"),
+			(&[0x04, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18][..], "different public key"),
+			(&[][..], "empty public key"),
+			(&[0x30, 0x59, 0x30, 0x13][..], "realistic key prefix"),
+		];
 
-		// Test with different public key data should produce different result
-		let public_key_bytes = &[0x04, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18];
-		let bit_string = BitString::new(0, public_key_bytes).unwrap();
-		let key_id2 = generate_key_identifier(&bit_string).unwrap();
-		assert_eq!(key_id2.len(), 20);
-		// Different inputs should produce different outputs
-		assert_ne!(key_id, key_id2);
+		let mut previous_hashes = Vec::new();
 
-		// Test with empty public key
-		let empty_key = BitString::new(0, []).unwrap();
-		let empty_key_id = generate_key_identifier(&empty_key).unwrap();
-		assert_eq!(empty_key_id.len(), 20);
+		for (key_bytes, description) in test_cases {
+			let bit_string = BitString::new(0, key_bytes).unwrap();
+			let key_id = generate_key_identifier(&bit_string).unwrap();
+
+			// SHA-1 always produces 20 bytes
+			assert_eq!(key_id.len(), 20, "Hash length should be 20 for {description}");
+
+			// Different inputs should produce different outputs (except for identical inputs)
+			for (i, prev_hash) in previous_hashes.iter().enumerate() {
+				if key_bytes != test_cases[i].0 {
+					assert_ne!(
+						&key_id, prev_hash,
+						"Different inputs should produce different hashes: {} vs {}",
+						description, test_cases[i].1
+					);
+				}
+			}
+
+			previous_hashes.push(key_id);
+		}
+	}
+
+	#[test]
+	fn test_parse_key_identifier() {
+		// Test cases: (input_data, expected_result)
+		let test_cases = [
+			// Valid cases
+			(
+				&[
+					0x04, 0x14, // OCTET STRING, length 20
+					0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+					0x11, 0x12, 0x13, 0x14,
+				][..],
+				Some(vec![
+					0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+					0x11, 0x12, 0x13, 0x14,
+				]),
+			),
+			(&[0x04, 0x04, 0xAA, 0xBB, 0xCC, 0xDD][..], Some(vec![0xAA, 0xBB, 0xCC, 0xDD])),
+			(&[0x04, 0x00][..], Some(vec![])), // Empty key identifier
+			// Invalid cases
+			(&[0x05, 0x04, 0x01, 0x02, 0x03, 0x04][..], None), // Wrong tag (not OCTET STRING)
+			(&[0x04][..], None),                               // Too short (missing length)
+			(&[0x04, 0x10, 0x01, 0x02][..], None),             // Length longer than remaining bytes
+			(&[][..], None),                                   // Empty input
+		];
+
+		for (input, expected) in test_cases {
+			assert_eq!(parse_key_identifier(input), expected, "Failed for input: {input:02x?}");
+		}
+	}
+
+	#[test]
+	fn test_parse_authority_key_identifier() {
+		// Test cases: (input_data, expected_result)
+		let test_cases = [
+			// Valid cases
+			(
+				&[
+					0x30, 0x16, // SEQUENCE, length 22
+					0x80, 0x14, // [0] IMPLICIT, length 20
+					0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+					0x11, 0x12, 0x13, 0x14,
+				][..],
+				Some(vec![
+					0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+					0x11, 0x12, 0x13, 0x14,
+				]),
+			),
+			(
+				&[
+					0x30, 0x06, // SEQUENCE, length 6
+					0x80, 0x04, // [0] IMPLICIT, length 4
+					0xAA, 0xBB, 0xCC, 0xDD,
+				][..],
+				Some(vec![0xAA, 0xBB, 0xCC, 0xDD]),
+			),
+			(
+				&[
+					0x30, 0x02, // SEQUENCE, length 2
+					0x80, 0x00, // [0] IMPLICIT, length 0
+				][..],
+				Some(vec![]), // Empty key identifier
+			),
+			// Invalid cases
+			(&[0x04, 0x06, 0x80, 0x04, 0x01, 0x02, 0x03, 0x04][..], None), // Wrong tag (not SEQUENCE)
+			(&[0x30, 0x02, 0x81, 0x00][..], None),                         // No [0] tag inside SEQUENCE ([1] instead)
+			(&[0x30, 0x16, 0x80][..], None),                               // Too short for SEQUENCE
+			(&[0x30, 0x06, 0x80, 0x10, 0x01, 0x02][..], None),             // Length mismatch
+			(&[][..], None),                                               // Empty input
+			(&[0x30, 0x01, 0x80][..], None),                               // SEQUENCE too short for proper parsing
+		];
+
+		for (input, expected) in test_cases {
+			assert_eq!(parse_authority_key_identifier(input), expected, "Failed for input: {input:02x?}");
+		}
+	}
+
+	#[test]
+	fn test_parse_der_length() {
+		// Test cases: (input_data, expected_result)
+		let test_cases = [
+			// Short form cases
+			(&[0x30, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05][..], Some((5, 2))),
+			(&[0x30, 0x7F][..], Some((127, 2))), // Maximum short form
+			(&[0x30, 0x00][..], Some((0, 2))),   // Zero length
+			// Long form cases
+			(&[0x30, 0x81, 0x80][..], Some((128, 3))),               // 1 byte length
+			(&[0x30, 0x82, 0x01, 0x00][..], Some((256, 4))),         // 2 byte length
+			(&[0x30, 0x83, 0x01, 0x00, 0x00][..], Some((65536, 5))), // 3 byte length
+			// Real certificate data example
+			(&[0x30, 0x82, 0x03, 0x8a, 0x30, 0x82, 0x02, 0x72][..], Some((906, 4))),
+			// Invalid cases
+			(&[][..], None),                 // Empty data
+			(&[0x31, 0x05][..], None),       // Wrong tag
+			(&[0x30][..], None),             // Missing length byte
+			(&[0x30, 0x82][..], None),       // Long form missing bytes
+			(&[0x30, 0x82, 0x01][..], None), // Long form incomplete
+			(&[0x30, 0x80][..], None),       // Invalid long form (length=0)
+		];
+
+		for (input, expected) in test_cases {
+			assert_eq!(parse_der_length(input), expected, "Failed for input: {input:02x?}");
+		}
 	}
 
 	#[test]
@@ -545,121 +710,5 @@ mod tests {
 				assert_eq!(original_attr.attribute_value.value(), reconstructed_attr.attribute_value.value());
 			}
 		}
-	}
-
-	#[test]
-	fn test_parse_key_identifier() {
-		// Test valid OCTET STRING
-		let valid_bytes = &[
-			0x04, 0x14, // OCTET STRING, length 20
-			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
-			0x13, 0x14,
-		];
-
-		let key_id = parse_key_identifier(valid_bytes).unwrap();
-		assert_eq!(key_id.len(), 20);
-		assert_eq!(
-			key_id,
-			&[
-				0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11,
-				0x12, 0x13, 0x14
-			]
-		);
-
-		// Test with different length
-		let short_bytes = &[0x04, 0x04, 0xAA, 0xBB, 0xCC, 0xDD];
-		let short_key_id = parse_key_identifier(short_bytes).unwrap();
-		assert_eq!(short_key_id.len(), 4);
-		assert_eq!(short_key_id, &[0xAA, 0xBB, 0xCC, 0xDD]);
-
-		// Test with empty key identifier
-		let empty_bytes = &[0x04, 0x00];
-		let empty_key_id = parse_key_identifier(empty_bytes).unwrap();
-		assert_eq!(empty_key_id.len(), 0);
-
-		// Test invalid cases
-
-		// Wrong tag (not OCTET STRING)
-		let wrong_tag = &[0x05, 0x04, 0x01, 0x02, 0x03, 0x04];
-		assert!(parse_key_identifier(wrong_tag).is_none());
-
-		// Too short (missing length)
-		let too_short = &[0x04];
-		assert!(parse_key_identifier(too_short).is_none());
-
-		// Length longer than remaining bytes
-		let bad_length = &[0x04, 0x10, 0x01, 0x02]; // Claims 16 bytes but only has 2
-		assert!(parse_key_identifier(bad_length).is_none());
-
-		// Empty input
-		let empty_input = &[];
-		assert!(parse_key_identifier(empty_input).is_none());
-	}
-
-	#[test]
-	fn test_parse_authority_key_identifier() {
-		// Test valid Authority Key Identifier with [0] KeyIdentifier
-		let valid_bytes = &[
-			0x30, 0x16, // SEQUENCE, length 22
-			0x80, 0x14, // [0] IMPLICIT, length 20
-			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
-			0x13, 0x14,
-		];
-
-		let key_id = parse_authority_key_identifier(valid_bytes).unwrap();
-		assert_eq!(key_id.len(), 20);
-		assert_eq!(
-			key_id,
-			&[
-				0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11,
-				0x12, 0x13, 0x14
-			]
-		);
-
-		// Test with shorter key identifier
-		let short_bytes = &[
-			0x30, 0x06, // SEQUENCE, length 6
-			0x80, 0x04, // [0] IMPLICIT, length 4
-			0xAA, 0xBB, 0xCC, 0xDD,
-		];
-
-		let short_key_id = parse_authority_key_identifier(short_bytes).unwrap();
-		assert_eq!(short_key_id.len(), 4);
-		assert_eq!(short_key_id, &[0xAA, 0xBB, 0xCC, 0xDD]);
-
-		// Test with empty key identifier
-		let empty_key_bytes = &[
-			0x30, 0x02, // SEQUENCE, length 2
-			0x80, 0x00, // [0] IMPLICIT, length 0
-		];
-
-		let empty_key_id = parse_authority_key_identifier(empty_key_bytes).unwrap();
-		assert_eq!(empty_key_id.len(), 0);
-
-		// Test invalid cases
-
-		// Wrong tag (not SEQUENCE)
-		let wrong_tag = &[0x04, 0x06, 0x80, 0x04, 0x01, 0x02, 0x03, 0x04];
-		assert!(parse_authority_key_identifier(wrong_tag).is_none());
-
-		// No [0] tag inside SEQUENCE
-		let no_key_id = &[0x30, 0x02, 0x81, 0x00]; // [1] instead of [0]
-		assert!(parse_authority_key_identifier(no_key_id).is_none());
-
-		// Too short for SEQUENCE
-		let too_short = &[0x30, 0x16, 0x80]; // Missing length and data
-		assert!(parse_authority_key_identifier(too_short).is_none());
-
-		// Length mismatch
-		let bad_length = &[0x30, 0x06, 0x80, 0x10, 0x01, 0x02]; // Claims 16 bytes but only has 2
-		assert!(parse_authority_key_identifier(bad_length).is_none());
-
-		// Empty input
-		let empty_input = &[];
-		assert!(parse_authority_key_identifier(empty_input).is_none());
-
-		// SEQUENCE but too short for proper parsing
-		let short_sequence = &[0x30, 0x01, 0x80];
-		assert!(parse_authority_key_identifier(short_sequence).is_none());
 	}
 }

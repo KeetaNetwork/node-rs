@@ -25,10 +25,6 @@ workspace = true
 [dependencies.hex]
 version = "0.4"
 
-# Cryptographic hashing
-[dependencies.sha1]
-version = "0.10.6"
-
 # Serialization (optional)
 [dependencies.serde]
 workspace = true
