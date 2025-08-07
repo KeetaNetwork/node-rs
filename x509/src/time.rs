@@ -37,7 +37,7 @@ impl TryFrom<DateTime<Utc>> for Time {
 		// Per RFC 5280 Section 4.1.2.5:
 		// - UTCTime: Represents years 1950-2049 (YY >= 50 -> 19YY, YY < 50 -> 20YY)
 		// - GeneralizedTime: Used for dates outside the UTCTime range (before 1950 or 2050+)
-		// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5.1
+		// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5.1>
 		if datetime.year() >= 1950 && datetime.year() < 2050 {
 			// Use UtcTime for dates from 1950 to 2049 (inclusive)
 			// We need to convert via SystemTime since the der crate requires it

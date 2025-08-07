@@ -22,18 +22,16 @@ use serde::{Deserialize, Serialize};
 use crate::error::CertificateError;
 use crate::oids;
 use crate::time::Time;
-use crate::utils::{
-	dn_to_string, generate_key_identifier, parse_authority_key_identifier, parse_der_length, parse_key_identifier,
-};
+use crate::utils::{dn_to_string, generate_key_identifier, parse_der_length};
 use crate::DistinguishedName;
 
 #[cfg(feature = "serde")]
-use crate::utils::dn_to_name_value_pairs;
+use crate::utils::{dn_to_name_value_pairs, parse_authority_key_identifier, parse_key_identifier};
 #[cfg(feature = "serde")]
 use crate::NameValuePair;
 
 /// Basic Constraints extension according to RFC 5280 Section 4.2.1.9.
-/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
 ///
 /// BasicConstraints ::= SEQUENCE {
 ///     cA                      BOOLEAN DEFAULT FALSE,
@@ -51,7 +49,7 @@ pub struct BasicConstraints {
 }
 
 /// Certificate extension according to RFC 5280 Section 4.2.
-/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2>
 ///
 /// Extension ::= SEQUENCE {
 ///     extnID                  OBJECT IDENTIFIER,
@@ -80,7 +78,7 @@ impl Extension {
 	}
 
 	/// Create a basic constraints extension according to RFC 5280 Section 4.2.1.9.
-	/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
 	///
 	/// BasicConstraints ::= SEQUENCE {
 	///     cA                      BOOLEAN DEFAULT FALSE,
@@ -110,7 +108,7 @@ impl Extension {
 	}
 
 	/// Create a key usage extension according to RFC 5280 Section 4.2.1.3.
-	/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3>
 	///
 	/// KeyUsage ::= BIT STRING {
 	///     digitalSignature        (0),
@@ -131,7 +129,7 @@ impl Extension {
 	}
 
 	/// Create an extended key usage extension according to RFC 5280 Section 4.2.1.12.
-	/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.12
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.12>
 	///
 	/// ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
 	/// KeyPurposeId ::= OBJECT IDENTIFIER
@@ -154,18 +152,18 @@ impl Extension {
 	}
 
 	/// Create a subject alternative name according to RFC 5280 Section 4.2.1.6.
-	/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.6
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.6>
 	///
 	/// GeneralName ::= CHOICE {
-	///     otherName                       [0] OtherName,
-	///     rfc822Name                      [1] IA5String,
-	///     dNSName                         [2] IA5String,
-	///     x400Address                     [3] ORAddress,
-	///     directoryName                   [4] Name,
-	///     ediPartyName                    [5] EDIPartyName,
-	///     uniformResourceIdentifier       [6] IA5String,
-	///     iPAddress                       [7] OCTET STRING,
-	///     registeredID                    [8] OBJECT IDENTIFIER
+	///     otherName                       \[0\] OtherName,
+	///     rfc822Name                      \[1\] IA5String,
+	///     dNSName                         \[2\] IA5String,
+	///     x400Address                     \[3\] ORAddress,
+	///     directoryName                   \[4\] Name,
+	///     ediPartyName                    \[5\] EDIPartyName,
+	///     uniformResourceIdentifier       \[6\] IA5String,
+	///     iPAddress                       \[7\] OCTET STRING,
+	///     registeredID                    \[8\] OBJECT IDENTIFIER
 	/// }
 	pub fn subject_alt_name(san_entries: Vec<&str>) -> Result<Self, CertificateError> {
 		// Properly encode SEQUENCE of GeneralNames
@@ -219,7 +217,7 @@ impl Extension {
 	}
 
 	/// Create a subject key identifier extension according to RFC 5280 Section 4.2.1.2.
-	/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2>
 	///
 	/// SubjectKeyIdentifier ::= KeyIdentifier
 	/// KeyIdentifier ::= OCTET STRING
@@ -228,12 +226,12 @@ impl Extension {
 	}
 
 	/// Create an authority key identifier extension according to RFC 5280 Section 4.2.1.1.
-	/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
 	///
 	/// AuthorityKeyIdentifier ::= SEQUENCE {
-	///     keyIdentifier             [0] KeyIdentifier           OPTIONAL,
-	///     authorityCertIssuer       [1] GeneralNames            OPTIONAL,
-	///     authorityCertSerialNumber [2] CertificateSerialNumber OPTIONAL
+	///     keyIdentifier             \[0\] KeyIdentifier           OPTIONAL,
+	///     authorityCertIssuer       \[1\] GeneralNames            OPTIONAL,
+	///     authorityCertSerialNumber \[2\] CertificateSerialNumber OPTIONAL
 	/// }
 	/// KeyIdentifier ::= OCTET STRING
 	pub fn authority_key_identifier(key_id: &[u8]) -> Result<Self, CertificateError> {
@@ -248,7 +246,7 @@ impl Extension {
 }
 
 /// Algorithm identifier according to RFC 5280 Section 4.1.1.2.
-/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.1.2
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.1.2>
 ///
 /// AlgorithmIdentifier ::= SEQUENCE {
 ///     algorithm               OBJECT IDENTIFIER,
@@ -264,7 +262,7 @@ pub struct AlgorithmIdentifier {
 }
 
 /// Public key information structure according to RFC 5280 Section 4.1.
-/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.1
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1>
 ///
 /// SubjectPublicKeyInfo ::= SEQUENCE {
 ///     algorithm              AlgorithmIdentifier,
@@ -277,7 +275,7 @@ pub struct SubjectPublicKeyInfo {
 }
 
 /// Certificate validity period according to RFC 5280 Section 4.1.2.5.
-/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5>
 #[derive(Debug, Clone, PartialEq, Eq, Sequence)]
 pub struct Validity {
 	pub not_before: Time,
@@ -285,19 +283,19 @@ pub struct Validity {
 }
 
 /// TBS Certificate structure according to RFC 5280 Section 4.1.2.
-/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2>
 ///
 /// TBSCertificate  ::=  SEQUENCE  {
-///     version         [0]  EXPLICIT Version DEFAULT v1,
+///     version         \[0\]  EXPLICIT Version DEFAULT v1,
 ///     serialNumber         CertificateSerialNumber,
 ///     signature            AlgorithmIdentifier,
 ///     issuer               Name,
 ///     validity             Validity,
 ///     subject              Name,
 ///     subjectPublicKeyInfo SubjectPublicKeyInfo,
-///     issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
-///     subjectUniqueID [2]  IMPLICIT UniqueIdentifier OPTIONAL,
-///     extensions      [3]  EXPLICIT Extensions OPTIONAL
+///     issuerUniqueID  \[1\]  IMPLICIT UniqueIdentifier OPTIONAL,
+///     subjectUniqueID \[2\]  IMPLICIT UniqueIdentifier OPTIONAL,
+///     extensions      \[3\]  EXPLICIT Extensions OPTIONAL
 /// }
 #[derive(Debug, Clone, PartialEq, Eq, Sequence)]
 pub struct TbsCertificate {
@@ -318,7 +316,7 @@ pub struct TbsCertificate {
 }
 
 /// Complete X.509 Certificate structure according to RFC 5280 Section 4.1.
-/// See https://datatracker.ietf.org/doc/html/rfc5280#section-4.1
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1>
 ///
 /// Certificate  ::=  SEQUENCE  {
 ///     tbsCertificate       TBSCertificate,
@@ -1224,7 +1222,7 @@ impl Certificate {
 	/// Check if this is a CA certificate (has Basic Constraints CA=true)
 	///
 	/// Parses the Basic Constraints according to RFC 5280 Section 4.2.1.9
-	/// See: https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
 	///
 	/// BasicConstraints ::= SEQUENCE {
 	///     cA                      BOOLEAN DEFAULT FALSE,

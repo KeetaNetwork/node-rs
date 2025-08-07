@@ -3,8 +3,12 @@ use der::asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString, SetOfV
 use der::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
 
 use crate::error::CertificateError;
+use crate::{AttributeTypeAndValue, DistinguishedName};
+
+#[cfg(feature = "serde")]
 use crate::oids;
-use crate::{AttributeTypeAndValue, DistinguishedName, NameValuePair};
+#[cfg(feature = "serde")]
+use crate::NameValuePair;
 
 /// Create a Distinguished Name from name-value pairs.
 ///
@@ -197,7 +201,7 @@ pub fn parse_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 ///
 /// This function extracts the key identifier from an Authority Key Identifier
 /// extension by parsing the ASN.1 SEQUENCE structure and looking for the
-/// [0] IMPLICIT KeyIdentifier component using proper DER decoding.
+/// \[0\] IMPLICIT KeyIdentifier component using proper DER decoding.
 ///
 /// # Example
 ///
@@ -338,6 +342,8 @@ mod tests {
 	use super::*;
 	use crate::asn1::BitString;
 	use crate::oids;
+
+	#[cfg(feature = "serde")]
 	use crate::DistinguishedName;
 
 	#[test]

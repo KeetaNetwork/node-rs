@@ -34,7 +34,14 @@ make check
 ### Testing
 
 ```bash
+# Test defaults with all features
 make test
+
+# Test all features individually from packages with features
+make test-feat
+
+# Test everything
+make test-all
 ```
 
 ### Code Coverage
@@ -49,6 +56,13 @@ make coverage
 ```bash
 # Format code and run clippy
 make do-lint
+```
+
+### Documentation
+
+```bash
+# Generate documentation and open it
+make do-docs
 ```
 
 ### Other Commands

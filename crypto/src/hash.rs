@@ -20,7 +20,7 @@ pub enum HashAlgorithm {
 	Sha2_512,
 	/// SHA-1
 	/// For X.509 Subject Key Identifier per RFC 5280
-	/// See: https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2>
 	Sha1,
 }
 

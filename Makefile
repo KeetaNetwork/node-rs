@@ -1,4 +1,4 @@
-.PHONY: build clean do-lint do-lint-ci test all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer
 
 # Project name
 PROJ_NAME := node-rs
@@ -38,8 +38,16 @@ clean:
 	rm -rf target/
 	rm -rf build/
 
+# Generate documentation without dependencies and open it
+do-docs:
+	cargo doc --no-deps --document-private-items --all-features --open
+
+# Generate documentation without opening it (for CI)
+do-docs-ci:
+	cargo doc --no-deps --document-private-items --all-features
+
 # Lint code
-do-lint:
+do-lint: do-docs-ci
 	cargo clippy --fix --allow-staged --allow-dirty
 	cargo fmt
 
@@ -48,10 +56,20 @@ do-lint-ci:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --all-features -- -D warnings
 
+# Test crate packages features
+test-feat:
+	cargo test -p crypto --no-default-features --features signature
+	cargo test -p crypto --no-default-features --features encryption
+	cargo test -p x509 --no-default-features --features serde
+	cargo test -p crypto -p x509 --all-features
+	cargo test -p crypto -p x509 --no-default-features
+
 # Run tests with host system's default target
 test:
 	# Use a shell script to unset CARGO_BUILD_TARGET and run tests
 	sh -c 'unset CARGO_BUILD_TARGET; cargo test --all-features --workspace'
+
+test-all: test test-feat
 
 # Set up coverage tools (internal helper target)
 coverage-setup:
@@ -164,8 +182,11 @@ help:
 	@echo "  make release      - Build in release mode"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make check        - Check compilation without building"
+	@echo "  make do-docs      - Generate and open documentation"
 	@echo "  make do-lint      - Lint code with clippy and format (with fixes)"
-	@echo "  make test         - Run tests"
+	@echo "  make test         - Run tests (includes all crypto feature combinations)"
+	@echo "  make test-feat    - Run crypto crate tests with specific features"
+	@echo "  make test-all     - Run all tests including feature tests"
 	@echo "  make audit        - Run security audit"
 	@echo "  make docs         - Generate and open documentation"
 	@echo "  make coverage     - Generate code coverage report (HTML + LCOV)"
@@ -173,5 +194,6 @@ help:
 	@echo "  make all          - Clean, build, and test"
 	@echo ""
 	@echo "CI Commands:"
-	@echo "  make do-lint-ci  - Lint code for CI (check only, no fixes)"
+	@echo "  make do-lint-ci   - Lint code for CI (check only, no fixes)"
+	@echo "  make do-docs-ci   - Generate documentation without opening it"
 	@echo "  make coverage-ci  - Generate LCOV coverage report for CI/SonarCloud"

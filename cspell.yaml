@@ -19,6 +19,7 @@ words:
   - tyblocks
   - github
   - chrono
+  - serde
   - ECDSASECP
   - ECDSASECP256K1
   - ECDSASECP256R1
