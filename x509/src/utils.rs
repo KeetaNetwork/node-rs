@@ -330,8 +330,9 @@ pub fn parse_der_length(data: &[u8]) -> Option<(usize, usize)> {
 		}
 
 		// Compute the content length by folding over the length bytes
-		let content_length =
-			(0..length_bytes).map(|i| data[2 + i] as usize).fold(0usize, |acc, byte| (acc << 8) | byte);
+		let content_length = (0..length_bytes)
+			.map(|i| data[2 + i] as usize)
+			.fold(0usize, |acc, byte| (acc << 8) | byte);
 
 		Some((content_length, 2 + length_bytes))
 	}
@@ -380,7 +381,12 @@ mod tests {
 					assert_eq!(dn[i].len(), 1);
 					assert_eq!(dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
 
-					let ia5_string: Ia5String = dn[i].get(0).unwrap().attribute_value.decode_as().unwrap();
+					let ia5_string: Ia5String = dn[i]
+						.get(0)
+						.unwrap()
+						.attribute_value
+						.decode_as()
+						.unwrap();
 					assert_eq!(ia5_string.as_str(), *expected_value);
 				}
 			} else {
@@ -642,8 +648,20 @@ mod tests {
 		let single_dn = name_value_pairs_to_dn(&single_pairs).unwrap();
 		assert_eq!(single_dn.len(), 1);
 		assert_eq!(single_dn[0].len(), 1);
-		assert_eq!(single_dn[0].get(0).unwrap().attribute_type.to_string(), oids::CN);
-		let ia5_string: Ia5String = single_dn[0].get(0).unwrap().attribute_value.decode_as().unwrap();
+		assert_eq!(
+			single_dn[0]
+				.get(0)
+				.unwrap()
+				.attribute_type
+				.to_string(),
+			oids::CN
+		);
+		let ia5_string: Ia5String = single_dn[0]
+			.get(0)
+			.unwrap()
+			.attribute_value
+			.decode_as()
+			.unwrap();
 		assert_eq!(ia5_string.as_str(), "example.com");
 
 		// Test with multiple pairs using both common names and short forms
@@ -672,8 +690,20 @@ mod tests {
 		];
 		for (i, (expected_oid, expected_value)) in expected.iter().enumerate() {
 			assert_eq!(multi_dn[i].len(), 1);
-			assert_eq!(multi_dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
-			let ia5_string: Ia5String = multi_dn[i].get(0).unwrap().attribute_value.decode_as().unwrap();
+			assert_eq!(
+				multi_dn[i]
+					.get(0)
+					.unwrap()
+					.attribute_type
+					.to_string(),
+				*expected_oid
+			);
+			let ia5_string: Ia5String = multi_dn[i]
+				.get(0)
+				.unwrap()
+				.attribute_value
+				.decode_as()
+				.unwrap();
 			assert_eq!(ia5_string.as_str(), *expected_value);
 		}
 
@@ -681,8 +711,20 @@ mod tests {
 		let oid_pairs = vec![NameValuePair { name: oids::CN.to_string(), value: "direct_oid.com".to_string() }];
 		let oid_dn = name_value_pairs_to_dn(&oid_pairs).unwrap();
 		assert_eq!(oid_dn.len(), 1);
-		assert_eq!(oid_dn[0].get(0).unwrap().attribute_type.to_string(), oids::CN);
-		let ia5_string: Ia5String = oid_dn[0].get(0).unwrap().attribute_value.decode_as().unwrap();
+		assert_eq!(
+			oid_dn[0]
+				.get(0)
+				.unwrap()
+				.attribute_type
+				.to_string(),
+			oids::CN
+		);
+		let ia5_string: Ia5String = oid_dn[0]
+			.get(0)
+			.unwrap()
+			.attribute_value
+			.decode_as()
+			.unwrap();
 		assert_eq!(ia5_string.as_str(), "direct_oid.com");
 
 		// Test with invalid OID

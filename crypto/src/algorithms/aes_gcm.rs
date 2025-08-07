@@ -105,12 +105,16 @@ mod tests {
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Test encryption
-		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let ciphertext = aes_gcm
+			.encrypt(&nonce, plaintext.as_ref())
+			.unwrap();
 		assert_ne!(ciphertext.as_slice(), plaintext); // Should be different
 		assert!(ciphertext.len() > plaintext.len()); // Should include tag
 
 		// Test decryption
-		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref()).unwrap();
+		let decrypted = aes_gcm
+			.decrypt(&nonce, ciphertext.as_ref())
+			.unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -148,13 +152,21 @@ mod tests {
 
 		// Encrypt the same plaintext with different nonces
 		// Should be different due to different nonces
-		let ciphertext1 = aes_gcm.encrypt(&nonce1, plaintext.as_ref()).unwrap();
-		let ciphertext2 = aes_gcm.encrypt(&nonce2, plaintext.as_ref()).unwrap();
+		let ciphertext1 = aes_gcm
+			.encrypt(&nonce1, plaintext.as_ref())
+			.unwrap();
+		let ciphertext2 = aes_gcm
+			.encrypt(&nonce2, plaintext.as_ref())
+			.unwrap();
 		assert_ne!(ciphertext1, ciphertext2);
 
 		// But both should decrypt to the same plaintext
-		let decrypted1 = aes_gcm.decrypt(&nonce1, ciphertext1.as_ref()).unwrap();
-		let decrypted2 = aes_gcm.decrypt(&nonce2, ciphertext2.as_ref()).unwrap();
+		let decrypted1 = aes_gcm
+			.decrypt(&nonce1, ciphertext1.as_ref())
+			.unwrap();
+		let decrypted2 = aes_gcm
+			.decrypt(&nonce2, ciphertext2.as_ref())
+			.unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
 	}
@@ -167,7 +179,9 @@ mod tests {
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Encrypt data
-		let mut ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let mut ciphertext = aes_gcm
+			.encrypt(&nonce, plaintext.as_ref())
+			.unwrap();
 		// Tamper with the ciphertext (modify the last byte)
 		let last_idx = ciphertext.len() - 1;
 		ciphertext[last_idx] ^= 0x01;
@@ -211,10 +225,14 @@ mod tests {
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Should handle empty plaintext correctly
-		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let ciphertext = aes_gcm
+			.encrypt(&nonce, plaintext.as_ref())
+			.unwrap();
 		assert_eq!(ciphertext.len(), 16); // tag only
 
-		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref()).unwrap();
+		let decrypted = aes_gcm
+			.decrypt(&nonce, ciphertext.as_ref())
+			.unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -226,10 +244,14 @@ mod tests {
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Should handle large data efficiently
-		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let ciphertext = aes_gcm
+			.encrypt(&nonce, plaintext.as_ref())
+			.unwrap();
 		assert_eq!(ciphertext.len(), 8192 + 16); // data + tag
 
-		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref()).unwrap();
+		let decrypted = aes_gcm
+			.decrypt(&nonce, ciphertext.as_ref())
+			.unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 

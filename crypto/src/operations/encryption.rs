@@ -358,7 +358,9 @@ mod tests {
 		let plaintext = b"test";
 		let ciphertext = asymmetric_encryption.encrypt(plaintext).unwrap();
 
-		let decrypted = asymmetric_encryption.decrypt(&ciphertext).unwrap();
+		let decrypted = asymmetric_encryption
+			.decrypt(&ciphertext)
+			.unwrap();
 		assert_eq!(decrypted, plaintext);
 		assert!(!asymmetric_encryption.algorithm_info().is_empty());
 	}

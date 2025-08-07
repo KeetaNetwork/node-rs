@@ -18,6 +18,11 @@ max_width = 120
 # Soft limit: Encourage keeping lines under 80 characters when possible
 use_small_heuristics = "Max"
 
+# Method chain formatting
+# ----------------------
+# Setting to 1 forces method chains to be multi-line for readability
+chain_width = 50
+
 # Control structures formatting
 # -----------------------------
 # Always use block form for if-else chains

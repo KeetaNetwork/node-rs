@@ -53,7 +53,9 @@ pub struct Secp256r1PrivateKey {
 /// key exposure.
 impl core::fmt::Debug for Secp256r1PrivateKey {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		f.debug_struct("Secp256r1PrivateKey").field("inner", &"[REDACTED]").finish()
+		f.debug_struct("Secp256r1PrivateKey")
+			.field("inner", &"[REDACTED]")
+			.finish()
 	}
 }
 
@@ -204,7 +206,10 @@ impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 
 impl PublicKey for Secp256r1PublicKey {
 	fn to_uncompressed_bytes(&self) -> Vec<u8> {
-		self.inner.to_encoded_point(false).as_bytes().to_vec()
+		self.inner
+			.to_encoded_point(false)
+			.as_bytes()
+			.to_vec()
 	}
 }
 
@@ -212,7 +217,10 @@ impl From<Secp256r1PublicKey> for Vec<u8> {
 	fn from(key: Secp256r1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
 		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner.to_encoded_point(true).as_bytes().to_vec()
+		key.inner
+			.to_encoded_point(true)
+			.as_bytes()
+			.to_vec()
 	}
 }
 
@@ -220,7 +228,10 @@ impl From<&Secp256r1PublicKey> for Vec<u8> {
 	fn from(key: &Secp256r1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
 		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner.to_encoded_point(true).as_bytes().to_vec()
+		key.inner
+			.to_encoded_point(true)
+			.as_bytes()
+			.to_vec()
 	}
 }
 
@@ -603,11 +614,15 @@ mod tests {
 
 		// Test key_exchange with public key bytes
 		let public_key2_bytes: Vec<u8> = (&public_key2).into();
-		let shared_secret1_bytes = private_key1.key_exchange(&public_key2_bytes).unwrap();
+		let shared_secret1_bytes = private_key1
+			.key_exchange(&public_key2_bytes)
+			.unwrap();
 		assert_eq!(shared_secret1, shared_secret1_bytes);
 
 		let public_key1_bytes: Vec<u8> = (&public_key1).into();
-		let shared_secret2_bytes = private_key2.key_exchange(&public_key1_bytes).unwrap();
+		let shared_secret2_bytes = private_key2
+			.key_exchange(&public_key1_bytes)
+			.unwrap();
 		assert_eq!(shared_secret2, shared_secret2_bytes);
 
 		// Test that different key pairs produce different shared secrets
@@ -661,7 +676,9 @@ mod tests {
 		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
 
 		// Test that all characters are valid hex
-		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
+		assert!(public_key_string
+			.chars()
+			.all(|c| c.is_ascii_hexdigit()));
 	}
 
 	#[cfg(feature = "signature")]
@@ -678,13 +695,17 @@ mod tests {
 
 		// Test that verification fails with wrong message
 		let wrong_message = b"Wrong message";
-		assert!(public_key.verify(wrong_message, &signature).is_err());
+		assert!(public_key
+			.verify(wrong_message, &signature)
+			.is_err());
 
 		// Test that verification fails with wrong key
 		let wrong_seed = b"wrong seed for signature operations";
 		let wrong_private_key = Secp256r1Derivation::derive_from_seed(wrong_seed).unwrap();
 		let wrong_public_key = wrong_private_key.as_public_key();
-		assert!(wrong_public_key.verify(message, &signature).is_err());
+		assert!(wrong_public_key
+			.verify(message, &signature)
+			.is_err());
 
 		// Also test the old test case
 		let seed2 = b"test seed for secp256r1 sign verify!";
@@ -698,7 +719,9 @@ mod tests {
 
 		// Verify with wrong message should fail
 		let wrong_message2 = b"Hello, wrong world!";
-		assert!(public_key2.verify(wrong_message2, &signature2).is_err());
+		assert!(public_key2
+			.verify(wrong_message2, &signature2)
+			.is_err());
 	}
 
 	#[cfg(feature = "signature")]
@@ -731,15 +754,21 @@ mod tests {
 
 		// Test with default options (pre-hash)
 		let default_options = SigningOptions::default();
-		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+		let signature_default = private_key
+			.sign_with_options(message, default_options)
+			.unwrap();
 
 		// Test with raw options (no pre-hash)
 		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+		let signature_raw = private_key
+			.sign_with_options(message, raw_options)
+			.unwrap();
 
 		// Test with cert options (pre-hash, but for_cert flag set)
 		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+		let signature_cert = private_key
+			.sign_with_options(message, cert_options)
+			.unwrap();
 
 		// Signatures should be different when using different message processing
 		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
@@ -761,23 +790,41 @@ mod tests {
 
 		// Test verification with matching options
 		let default_options = SigningOptions::default();
-		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_default, default_options).is_ok());
+		let signature_default = private_key
+			.sign_with_options(message, default_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_default, default_options)
+			.is_ok());
 
 		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_raw, raw_options).is_ok());
+		let signature_raw = private_key
+			.sign_with_options(message, raw_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_raw, raw_options)
+			.is_ok());
 
 		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_cert, cert_options).is_ok());
+		let signature_cert = private_key
+			.sign_with_options(message, cert_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_cert, cert_options)
+			.is_ok());
 
 		// Test verification failure with mismatched options
-		assert!(public_key.verify_with_options(message, &signature_raw, default_options).is_err());
-		assert!(public_key.verify_with_options(message, &signature_default, raw_options).is_err());
+		assert!(public_key
+			.verify_with_options(message, &signature_raw, default_options)
+			.is_err());
+		assert!(public_key
+			.verify_with_options(message, &signature_default, raw_options)
+			.is_err());
 
 		// Test verification failure with wrong message
 		let wrong_message = b"wrong message";
-		assert!(public_key.verify_with_options(wrong_message, &signature_default, default_options).is_err());
+		assert!(public_key
+			.verify_with_options(wrong_message, &signature_default, default_options)
+			.is_err());
 	}
 }

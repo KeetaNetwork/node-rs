@@ -135,8 +135,9 @@ impl Ecies for EciesSecp256k1 {
 		let iv = Aes128CtrCipher::generate_iv();
 		// Encrypt with AES-128-CTR
 		let cipher = Aes128CtrCipher::new();
-		let ciphertext_only =
-			cipher.encrypt_with_iv(&encryption_key, &iv, plaintext).map_err(|_| CryptoError::EncryptionFailed)?;
+		let ciphertext_only = cipher
+			.encrypt_with_iv(&encryption_key, &iv, plaintext)
+			.map_err(|_| CryptoError::EncryptionFailed)?;
 
 		// Create ciphertext with IV prepended (matches ecies-geth aes128CtrEncrypt)
 		let mut cipher_with_iv = Vec::with_capacity(16 + ciphertext_only.len());
@@ -198,8 +199,9 @@ impl Ecies for EciesSecp256k1 {
 		let encrypted_data = &cipher_with_iv[16..];
 		// Decrypt with AES-128-CTR
 		let cipher = Aes128CtrCipher::new();
-		let plaintext =
-			cipher.decrypt_with_iv(&encryption_key, iv, encrypted_data).map_err(|_| CryptoError::DecryptionFailed)?;
+		let plaintext = cipher
+			.decrypt_with_iv(&encryption_key, iv, encrypted_data)
+			.map_err(|_| CryptoError::DecryptionFailed)?;
 
 		Ok(plaintext)
 	}
@@ -228,7 +230,9 @@ impl Ecies for EciesX25519 {
 		let ephemeral_private_bytes = {
 			use rand_core::{OsRng, TryRngCore};
 			let mut bytes = [0u8; 32];
-			OsRng.try_fill_bytes(&mut bytes).map_err(|_| CryptoError::EncryptionFailed)?;
+			OsRng
+				.try_fill_bytes(&mut bytes)
+				.map_err(|_| CryptoError::EncryptionFailed)?;
 			bytes
 		};
 
@@ -248,7 +252,9 @@ impl Ecies for EciesX25519 {
 		let iv = {
 			use rand_core::{OsRng, TryRngCore};
 			let mut bytes = [0u8; 16];
-			OsRng.try_fill_bytes(&mut bytes).map_err(|_| CryptoError::EncryptionFailed)?;
+			OsRng
+				.try_fill_bytes(&mut bytes)
+				.map_err(|_| CryptoError::EncryptionFailed)?;
 			bytes
 		};
 
@@ -374,7 +380,9 @@ impl Ecies for EciesSecp256r1 {
 		let iv = {
 			use rand_core::{OsRng, TryRngCore};
 			let mut bytes = [0u8; 16];
-			OsRng.try_fill_bytes(&mut bytes).map_err(|_| CryptoError::EncryptionFailed)?;
+			OsRng
+				.try_fill_bytes(&mut bytes)
+				.map_err(|_| CryptoError::EncryptionFailed)?;
 			bytes
 		};
 
@@ -871,14 +879,24 @@ mod tests {
 		// Set a valid ephemeral public key (uncompressed secp256k1 point)
 		malformed_ciphertext[0] = 0x04; // Uncompressed point marker
 								  // Fill with some valid-looking point data
-		for (i, item) in malformed_ciphertext.iter_mut().enumerate().take(65).skip(1) {
+		for (i, item) in malformed_ciphertext
+			.iter_mut()
+			.enumerate()
+			.take(65)
+			.skip(1)
+		{
 			*item = (i % 256) as u8;
 		}
 
 		// Put some data in the cipher_with_iv section but make it too short
 		malformed_ciphertext = vec![0u8; 112]; // Make it exactly at the boundary
 		malformed_ciphertext[0] = 0x04;
-		for (i, item) in malformed_ciphertext.iter_mut().enumerate().take(65).skip(1) {
+		for (i, item) in malformed_ciphertext
+			.iter_mut()
+			.enumerate()
+			.take(65)
+			.skip(1)
+		{
 			*item = (i % 256) as u8;
 		}
 
@@ -920,7 +938,9 @@ mod tests {
 
 		for test_case in &test_cases {
 			let seed = hex::decode(test_case.seed_hex).unwrap();
-			let encrypted_data = BASE64.decode(test_case.encrypted_data_base64).unwrap();
+			let encrypted_data = BASE64
+				.decode(test_case.encrypted_data_base64)
+				.unwrap();
 
 			match test_case.algorithm {
 				Algorithm::Secp256k1 => {

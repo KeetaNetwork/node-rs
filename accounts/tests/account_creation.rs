@@ -32,8 +32,20 @@ const INVALID_PREFIX_ADDRESSES: &[&str] = &[
 #[test]
 fn test_account_from_public_key_parsing() {
 	let check_passes = [
-		(TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key, KeyPairType::ECDSASECP256K1, false),
-		(TEST_PUBLIC_ACCOUNT.ecdsa_secp256r1.encoded_public_key, KeyPairType::ECDSASECP256R1, false),
+		(
+			TEST_PUBLIC_ACCOUNT
+				.ecdsa_secp256k1
+				.encoded_public_key,
+			KeyPairType::ECDSASECP256K1,
+			false,
+		),
+		(
+			TEST_PUBLIC_ACCOUNT
+				.ecdsa_secp256r1
+				.encoded_public_key,
+			KeyPairType::ECDSASECP256R1,
+			false,
+		),
 		(TEST_PUBLIC_ACCOUNT.ed25519.encoded_public_key, KeyPairType::ED25519, false),
 		(TEST_PUBLIC_ACCOUNT.network.encoded_public_key, KeyPairType::NETWORK, true),
 		(TEST_PUBLIC_ACCOUNT.token.encoded_public_key, KeyPairType::TOKEN, true),
@@ -67,7 +79,9 @@ fn test_invalid_public_key_parsing() {
 	macro_rules! test_invalid_key {
 		($invalid_key:expr, $account_type:ty) => {
 			assert!(
-				$invalid_key.parse::<Account<$account_type>>().is_err(),
+				$invalid_key
+					.parse::<Account<$account_type>>()
+					.is_err(),
 				"Invalid key {} should not parse as {}",
 				$invalid_key,
 				stringify!($account_type)
@@ -179,12 +193,27 @@ fn test_cross_platform_account_compatibility() {
 	// Macro to test public key parsing
 	macro_rules! test_public_key_parsing {
 		($encoded_key:expr, $account_type:ty) => {
-			assert!($encoded_key.parse::<Account<$account_type>>().is_ok(), "Failed to parse public key");
+			assert!(
+				$encoded_key
+					.parse::<Account<$account_type>>()
+					.is_ok(),
+				"Failed to parse public key"
+			);
 		};
 	}
 
-	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key, KeyECDSASECP256K1);
-	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.ecdsa_secp256r1.encoded_public_key, KeyECDSASECP256R1);
+	test_public_key_parsing!(
+		TEST_PUBLIC_ACCOUNT
+			.ecdsa_secp256k1
+			.encoded_public_key,
+		KeyECDSASECP256K1
+	);
+	test_public_key_parsing!(
+		TEST_PUBLIC_ACCOUNT
+			.ecdsa_secp256r1
+			.encoded_public_key,
+		KeyECDSASECP256R1
+	);
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.ed25519.encoded_public_key, KeyED25519);
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.network.encoded_public_key, KeyNETWORK);
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.token.encoded_public_key, KeyTOKEN);

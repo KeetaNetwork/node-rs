@@ -41,7 +41,9 @@ impl Aes128CtrCipher {
 	/// Generate a random IV for CTR mode
 	pub fn generate_iv() -> [u8; 16] {
 		let mut iv = [0u8; 16];
-		OsRng.try_fill_bytes(&mut iv).expect("Failed to generate random IV");
+		OsRng
+			.try_fill_bytes(&mut iv)
+			.expect("Failed to generate random IV");
 
 		iv
 	}
@@ -224,12 +226,16 @@ mod tests {
 		let plaintext = b"Test with specific IV";
 
 		// Test encryption with specific IV
-		let ciphertext = cipher.encrypt_with_iv(&key, &iv, plaintext).unwrap();
+		let ciphertext = cipher
+			.encrypt_with_iv(&key, &iv, plaintext)
+			.unwrap();
 		assert_ne!(ciphertext.as_slice(), plaintext);
 		assert_eq!(ciphertext.len(), plaintext.len()); // CTR preserves length
 
 		// Test decryption with same IV
-		let decrypted = cipher.decrypt_with_iv(&key, &iv, &ciphertext).unwrap();
+		let decrypted = cipher
+			.decrypt_with_iv(&key, &iv, &ciphertext)
+			.unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -242,13 +248,21 @@ mod tests {
 
 		// Encrypt the same plaintext with the same IV twice
 		// Should be identical (deterministic with same key + IV)
-		let ciphertext1 = cipher.encrypt_with_iv(&key, &iv, plaintext).unwrap();
-		let ciphertext2 = cipher.encrypt_with_iv(&key, &iv, plaintext).unwrap();
+		let ciphertext1 = cipher
+			.encrypt_with_iv(&key, &iv, plaintext)
+			.unwrap();
+		let ciphertext2 = cipher
+			.encrypt_with_iv(&key, &iv, plaintext)
+			.unwrap();
 		assert_eq!(ciphertext1, ciphertext2);
 
 		// Both should decrypt correctly
-		let decrypted1 = cipher.decrypt_with_iv(&key, &iv, &ciphertext1).unwrap();
-		let decrypted2 = cipher.decrypt_with_iv(&key, &iv, &ciphertext2).unwrap();
+		let decrypted1 = cipher
+			.decrypt_with_iv(&key, &iv, &ciphertext1)
+			.unwrap();
+		let decrypted2 = cipher
+			.decrypt_with_iv(&key, &iv, &ciphertext2)
+			.unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
 	}
@@ -333,14 +347,22 @@ mod tests {
 		let plaintext1 = b"short";
 		let plaintext2 = b"a much longer plaintext message";
 
-		let ciphertext1 = cipher.encrypt_with_iv(&key, &iv, plaintext1).unwrap();
-		let ciphertext2 = cipher.encrypt_with_iv(&key, &iv, plaintext2).unwrap();
+		let ciphertext1 = cipher
+			.encrypt_with_iv(&key, &iv, plaintext1)
+			.unwrap();
+		let ciphertext2 = cipher
+			.encrypt_with_iv(&key, &iv, plaintext2)
+			.unwrap();
 		assert_eq!(ciphertext1.len(), plaintext1.len());
 		assert_eq!(ciphertext2.len(), plaintext2.len());
 
 		// Verify decryption works correctly
-		let decrypted1 = cipher.decrypt_with_iv(&key, &iv, &ciphertext1).unwrap();
-		let decrypted2 = cipher.decrypt_with_iv(&key, &iv, &ciphertext2).unwrap();
+		let decrypted1 = cipher
+			.decrypt_with_iv(&key, &iv, &ciphertext1)
+			.unwrap();
+		let decrypted2 = cipher
+			.decrypt_with_iv(&key, &iv, &ciphertext2)
+			.unwrap();
 		assert_eq!(decrypted1, plaintext1);
 		assert_eq!(decrypted2, plaintext2);
 	}

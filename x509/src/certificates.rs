@@ -26,6 +26,8 @@ use crate::utils::{dn_to_string, generate_key_identifier, parse_der_length};
 use crate::DistinguishedName;
 
 #[cfg(feature = "serde")]
+use crate::asn1::utils::*;
+#[cfg(feature = "serde")]
 use crate::utils::{dn_to_name_value_pairs, parse_authority_key_identifier, parse_key_identifier};
 #[cfg(feature = "serde")]
 use crate::NameValuePair;
@@ -37,7 +39,7 @@ use crate::NameValuePair;
 ///     cA                      BOOLEAN DEFAULT FALSE,
 ///     pathLenConstraint       INTEGER (0..MAX) OPTIONAL
 /// }
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Sequence)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BasicConstraints {
 	/// Indicates if this is a CA certificate
@@ -45,6 +47,7 @@ pub struct BasicConstraints {
 	pub ca: bool,
 	/// Optional path length constraint
 	#[asn1(optional = "true")]
+	#[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
 	pub path_len_constraint: Option<u32>,
 }
 
@@ -57,24 +60,241 @@ pub struct BasicConstraints {
 ///     extnValue               OCTET STRING
 /// }
 #[derive(Debug, Clone, PartialEq, Eq, Sequence)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Extension {
 	/// Extension ID (OID)
-	pub id: ObjectIdentifier,
+	#[cfg_attr(feature = "serde", serde(serialize_with = "serialize_oid", deserialize_with = "deserialize_oid"))]
+	pub oid: ObjectIdentifier,
 	/// Indicates if this extension is critical
-	#[asn1(optional = "true")]
-	pub critical: Option<bool>,
+	#[asn1(default = "Default::default")]
+	#[cfg_attr(feature = "serde", serde(default))]
+	pub critical: bool,
 	/// Extension value as an OctetString
+	#[cfg_attr(
+		feature = "serde",
+		serde(serialize_with = "serialize_octet_string", deserialize_with = "deserialize_octet_string")
+	)]
 	pub value: OctetString,
 }
 
+/// Builder for creating X.509 certificate extensions.
+#[derive(Debug, Clone, Default)]
+pub struct ExtensionBuilder {
+	oid: Option<String>,
+	critical: bool,
+	value: Option<Vec<u8>>,
+}
+
+impl ExtensionBuilder {
+	/// Create a new extension builder.
+	pub fn new() -> Self {
+		Self::default()
+	}
+
+	/// Set the extension OID.
+	pub fn with_oid(mut self, oid: &str) -> Self {
+		self.oid = Some(oid.to_string());
+		self
+	}
+
+	/// Mark the extension as critical.
+	pub fn critical(mut self) -> Self {
+		self.critical = true;
+		self
+	}
+
+	/// Mark the extension as non-critical (default).
+	pub fn non_critical(mut self) -> Self {
+		self.critical = false;
+		self
+	}
+
+	/// Set whether the extension is critical.
+	pub fn with_critical(mut self, critical: bool) -> Self {
+		self.critical = critical;
+		self
+	}
+
+	/// Set the extension value directly.
+	pub fn with_value(mut self, value: &[u8]) -> Self {
+		self.value = Some(value.to_vec());
+		self
+	}
+
+	/// Create a basic constraints extension.
+	pub fn for_basic_constraints(is_ca: bool, path_length: Option<u8>) -> Self {
+		Self::new()
+			.with_oid(oids::BASIC_CONSTRAINTS)
+			.with_critical(true)
+			.with_basic_constraints_value(is_ca, path_length)
+	}
+
+	/// Create a key usage extension.
+	pub fn for_key_usage(key_usage_bits: u16) -> Self {
+		Self::new()
+			.with_oid(oids::KEY_USAGE)
+			.critical()
+			.with_key_usage_value(key_usage_bits)
+	}
+
+	/// Create an extended key usage extension.
+	pub fn for_extended_key_usage(ext_key_use: Vec<&str>) -> Self {
+		Self::new()
+			.with_oid(oids::EXTENDED_KEY_USAGE)
+			.non_critical()
+			.with_extended_key_usage_value(ext_key_use)
+	}
+
+	/// Create a subject alternative name extension.
+	pub fn for_subject_alt_name(san_entries: Vec<&str>) -> Self {
+		Self::new()
+			.with_oid(oids::SUBJECT_ALT_NAME)
+			.non_critical()
+			.with_subject_alt_name_value(san_entries)
+	}
+
+	/// Create a subject key identifier extension.
+	pub fn for_subject_key_identifier(key_id: &[u8]) -> Self {
+		Self::new()
+			.with_oid(oids::SUBJECT_KEY_IDENTIFIER)
+			.non_critical()
+			.with_value(key_id)
+	}
+
+	/// Create an authority key identifier extension.
+	pub fn for_authority_key_identifier(key_id: &[u8]) -> Self {
+		Self::new()
+			.with_oid(oids::AUTHORITY_KEY_IDENTIFIER)
+			.non_critical()
+			.with_authority_key_identifier_value(key_id)
+	}
+
+	/// Set basic constraints extension value.
+	fn with_basic_constraints_value(mut self, is_ca: bool, path_length: Option<u8>) -> Self {
+		let mut value = vec![0x30]; // SEQUENCE
+		if is_ca {
+			if let Some(path_len) = path_length {
+				let content = vec![0x01, 0x01, 0xFF, 0x02, 0x01, path_len];
+				value.push(content.len() as u8);
+				value.extend_from_slice(&content);
+			} else {
+				let content = vec![0x01, 0x01, 0xFF];
+				value.push(content.len() as u8);
+				value.extend_from_slice(&content);
+			}
+		} else {
+			value.push(0x00);
+		}
+		self.value = Some(value);
+		self
+	}
+
+	/// Set key usage extension value.
+	fn with_key_usage_value(mut self, key_usage_bits: u16) -> Self {
+		let bytes = key_usage_bits.to_be_bytes();
+		let value = vec![0x03, 0x02, 0x00, bytes[1]];
+		self.value = Some(value);
+		self
+	}
+
+	/// Set extended key usage extension value.
+	fn with_extended_key_usage_value(mut self, ext_key_use: Vec<&str>) -> Self {
+		let mut value = vec![0x30]; // SEQUENCE
+		let mut content = Vec::new();
+
+		for eku_oid in ext_key_use {
+			if let Ok(oid) = ObjectIdentifier::new(eku_oid) {
+				if let Ok(oid_der) = oid.to_der() {
+					content.extend_from_slice(&oid_der);
+				}
+			}
+		}
+
+		value.push(content.len() as u8);
+		value.extend_from_slice(&content);
+		self.value = Some(value);
+		self
+	}
+
+	/// Set subject alternative name extension value.
+	fn with_subject_alt_name_value(mut self, san_entries: Vec<&str>) -> Self {
+		let general_names: Vec<Vec<u8>> = san_entries
+			.iter()
+			.map(|&san_entry| {
+				if san_entry.contains('@') {
+					let mut name = vec![0x81]; // [1] IMPLICIT
+					name.push(san_entry.len() as u8);
+					name.extend_from_slice(san_entry.as_bytes());
+					name
+				} else if san_entry.parse::<core::net::IpAddr>().is_ok() {
+					let ip_bytes = if let Ok(ip) = san_entry.parse::<core::net::Ipv4Addr>() {
+						ip.octets().to_vec()
+					} else if let Ok(ip) = san_entry.parse::<core::net::Ipv6Addr>() {
+						ip.octets().to_vec()
+					} else {
+						san_entry.as_bytes().to_vec()
+					};
+
+					let mut name = vec![0x87]; // [7] IMPLICIT
+					name.push(ip_bytes.len() as u8);
+					name.extend_from_slice(&ip_bytes);
+					name
+				} else if san_entry.starts_with("http://") || san_entry.starts_with("https://") {
+					let mut name = vec![0x86]; // [6] IMPLICIT
+					name.push(san_entry.len() as u8);
+					name.extend_from_slice(san_entry.as_bytes());
+					name
+				} else {
+					let mut name = vec![0x82]; // [2] IMPLICIT (DNS Name)
+					name.push(san_entry.len() as u8);
+					name.extend_from_slice(san_entry.as_bytes());
+					name
+				}
+			})
+			.collect();
+
+		let content: Vec<u8> = general_names.into_iter().flatten().collect();
+		let mut value = vec![0x30]; // SEQUENCE
+		value.push(content.len() as u8);
+		value.extend_from_slice(&content);
+		self.value = Some(value);
+		self
+	}
+
+	/// Set authority key identifier extension value.
+	fn with_authority_key_identifier_value(mut self, key_id: &[u8]) -> Self {
+		let mut auth_key_id_der = vec![0x30]; // SEQUENCE
+		let key_id_with_tag = [&[0x80], key_id].concat(); // [0] IMPLICIT
+		auth_key_id_der.push(key_id_with_tag.len() as u8);
+		auth_key_id_der.extend_from_slice(&key_id_with_tag);
+		self.value = Some(auth_key_id_der);
+		self
+	}
+
+	/// Build the extension.
+	pub fn build(self) -> Result<Extension, CertificateError> {
+		let oid = self
+			.oid
+			.ok_or(CertificateError::MissingField { field: "oid".to_string() })?;
+		let value = self
+			.value
+			.ok_or(CertificateError::MissingField { field: "value".to_string() })?;
+		Extension::new(&oid, &value, self.critical)
+	}
+}
+
 impl Extension {
+	/// Create a new extension builder.
+	pub fn builder() -> ExtensionBuilder {
+		ExtensionBuilder::new()
+	}
+
 	/// Create a new extension.
 	pub fn new(oid: &str, value: &[u8], critical: bool) -> Result<Self, CertificateError> {
-		let id = ObjectIdentifier::new(oid)?;
-		let critical = Some(critical);
+		let oid = ObjectIdentifier::new(oid)?;
 		let value = OctetString::new(value)?;
 
-		Ok(Self { id, critical, value })
+		Ok(Self { oid, critical, value })
 	}
 
 	/// Create a basic constraints extension according to RFC 5280 Section 4.2.1.9.
@@ -166,11 +386,11 @@ impl Extension {
 	///     registeredID                    \[8\] OBJECT IDENTIFIER
 	/// }
 	pub fn subject_alt_name(san_entries: Vec<&str>) -> Result<Self, CertificateError> {
-		// Properly encode SEQUENCE of GeneralNames
+		// Encode SEQUENCE of GeneralNames
 		let general_names: Vec<Vec<u8>> = san_entries
 			.iter()
 			.map(|&san_entry| {
-				// For now, detect the type and encode appropriately
+				// Detect the type and encode appropriately
 				if san_entry.contains('@') {
 					// Email address [1] IMPLICIT UTF8String
 					let mut name = vec![0x81]; // [1] IMPLICIT
@@ -198,6 +418,8 @@ impl Extension {
 					name.extend_from_slice(san_entry.as_bytes());
 					name
 				} else {
+					// Default to DNS Name
+					// TODO Should we care about other types?
 					// DNS Name [2] IMPLICIT UTF8String (default)
 					let mut name = vec![0x82]; // [2] IMPLICIT
 					name.push(san_entry.len() as u8);
@@ -358,7 +580,10 @@ impl CertificateWithOptions {
 		let certificate = Certificate::from_pem(pem_data)?;
 		let options = opts.unwrap_or_default();
 
-		let chain = options.store.as_ref().map(|store| certificate.verify_chain(store));
+		let chain = options
+			.store
+			.as_ref()
+			.map(|store| certificate.verify_chain(store));
 
 		Ok(Self { certificate, options, chain })
 	}
@@ -558,28 +783,17 @@ impl TryFrom<Vec<u8>> for CertificateWithOptions {
 
 /// Base extensions commonly found in certificates.
 #[cfg(feature = "serde")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct BaseExtensions {
 	/// Basic Constraints extension
 	#[serde(skip_serializing_if = "Option::is_none")]
-	pub basic_constraints: Option<BasicConstraintsJson>,
+	pub basic_constraints: Option<BasicConstraints>,
 	/// Subject Key Identifier extension
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub subject_key_identifier: Option<String>,
 	/// Authority Key Identifier extension  
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub authority_key_identifier: Option<String>,
-}
-
-/// JSON representation of Basic Constraints.
-#[cfg(feature = "serde")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BasicConstraintsJson {
-	/// If this is a CA certificate
-	pub ca: bool,
-	/// Path length constraint (if present)
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub path_len_constraint: Option<u32>,
 }
 
 /// JSON-serializable certificate information.
@@ -621,19 +835,7 @@ pub struct CertificateJson {
 	#[serde(rename = "$chain", skip_serializing_if = "Option::is_none")]
 	pub chain_field: Option<Vec<CertificateJson>>,
 	/// Extensions information (all extensions as raw data)
-	pub extensions: Vec<ExtensionJson>,
-}
-
-/// JSON-serializable extension information.
-#[cfg(feature = "serde")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionJson {
-	/// Extension OID
-	pub oid: String,
-	/// Is this extension critical?
-	pub critical: bool,
-	/// Extension value as hex string
-	pub value: String,
+	pub extensions: Vec<Extension>,
 }
 
 /// Certificate builder for creating new certificates.
@@ -955,13 +1157,24 @@ impl CertificateBuilder {
 			.subject_public_key
 			.as_ref()
 			.ok_or(CertificateError::MissingField { field: "subject_public_key".to_string() })?;
-		let subject_dn =
-			self.subject_dn.as_ref().ok_or(CertificateError::MissingField { field: "subject_dn".to_string() })?;
-		let issuer_dn =
-			self.issuer_dn.as_ref().ok_or(CertificateError::MissingField { field: "issuer_dn".to_string() })?;
-		let valid_from = self.valid_from.ok_or(CertificateError::MissingField { field: "valid_from".to_string() })?;
-		let valid_to = self.valid_to.ok_or(CertificateError::MissingField { field: "valid_to".to_string() })?;
-		let serial = self.serial.as_ref().ok_or(CertificateError::MissingField { field: "serial".to_string() })?;
+		let subject_dn = self
+			.subject_dn
+			.as_ref()
+			.ok_or(CertificateError::MissingField { field: "subject_dn".to_string() })?;
+		let issuer_dn = self
+			.issuer_dn
+			.as_ref()
+			.ok_or(CertificateError::MissingField { field: "issuer_dn".to_string() })?;
+		let valid_from = self
+			.valid_from
+			.ok_or(CertificateError::MissingField { field: "valid_from".to_string() })?;
+		let valid_to = self
+			.valid_to
+			.ok_or(CertificateError::MissingField { field: "valid_to".to_string() })?;
+		let serial = self
+			.serial
+			.as_ref()
+			.ok_or(CertificateError::MissingField { field: "serial".to_string() })?;
 
 		let mut extensions = self.extensions.clone();
 
@@ -1021,16 +1234,13 @@ impl CertificateBuilder {
 			extensions.push(Extension::subject_key_identifier(&subject_key_id)?);
 		}
 
-		// Authority Key Identifier extension (if we have an issuer public key)
-		if let Some(issuer_dn) = &self.issuer_dn {
-			if let Some(subject_dn) = &self.subject_dn {
-				// For self-signed certificates, use the subject public key
-				if issuer_dn == subject_dn {
-					if let Some(subject_public_key) = &self.subject_public_key {
-						let authority_key_id = generate_key_identifier(&subject_public_key.public_key)?;
-						extensions.push(Extension::authority_key_identifier(&authority_key_id)?);
-					}
-				}
+		// Authority Key Identifier extension (for self-signed certificates)
+		if let (Some(issuer_dn), Some(subject_dn), Some(subject_public_key)) =
+			(&self.issuer_dn, &self.subject_dn, &self.subject_public_key)
+		{
+			if issuer_dn == subject_dn {
+				let authority_key_id = generate_key_identifier(&subject_public_key.public_key)?;
+				extensions.push(Extension::authority_key_identifier(&authority_key_id)?);
 			}
 		}
 
@@ -1213,7 +1423,9 @@ impl Certificate {
 	pub fn get_extension(&self, oid: &str) -> Option<&Extension> {
 		if let Some(ref extensions) = self.tbs_certificate.extensions {
 			let target_oid = ObjectIdentifier::new(oid).ok()?;
-			extensions.iter().find(|ext| ext.id == target_oid)
+			extensions
+				.iter()
+				.find(|ext| ext.oid == target_oid)
 		} else {
 			None
 		}
@@ -1251,7 +1463,10 @@ impl Certificate {
 		}
 
 		// Get the TBS certificate DER bytes for verification
-		let tbs_der = self.tbs_certificate.to_der().map_err(CertificateError::from)?;
+		let tbs_der = self
+			.tbs_certificate
+			.to_der()
+			.map_err(CertificateError::from)?;
 		// Extract signature bytes
 		let signature_bytes = self.signature.raw_bytes();
 
@@ -1268,8 +1483,9 @@ impl Certificate {
 					return Ok(false);
 				}
 
-				let sig_array: [u8; 64] =
-					signature_bytes.try_into().map_err(|_| CertificateError::InvalidCertificate)?;
+				let sig_array: [u8; 64] = signature_bytes
+					.try_into()
+					.map_err(|_| CertificateError::InvalidCertificate)?;
 				let signature = Ed25519Signature::from_bytes(&sig_array);
 
 				// Ed25519 signatures are always over the raw message (no pre-hashing)
@@ -1289,8 +1505,9 @@ impl Certificate {
 				if signature_bytes.len() != 64 {
 					return Ok(false);
 				}
-				let sig_array: [u8; 64] =
-					signature_bytes.try_into().map_err(|_| CertificateError::InvalidCertificate)?;
+				let sig_array: [u8; 64] = signature_bytes
+					.try_into()
+					.map_err(|_| CertificateError::InvalidCertificate)?;
 				let signature = Secp256r1Signature::from_bytes((&sig_array).into())
 					.map_err(|_| CertificateError::InvalidCertificate)?;
 
@@ -1311,8 +1528,9 @@ impl Certificate {
 				if signature_bytes.len() != 64 {
 					return Ok(false);
 				}
-				let sig_array: [u8; 64] =
-					signature_bytes.try_into().map_err(|_| CertificateError::InvalidCertificate)?;
+				let sig_array: [u8; 64] = signature_bytes
+					.try_into()
+					.map_err(|_| CertificateError::InvalidCertificate)?;
 				let signature = Secp256k1Signature::from_bytes((&sig_array).into())
 					.map_err(|_| CertificateError::InvalidCertificate)?;
 
@@ -1392,7 +1610,8 @@ impl Certificate {
 			return false;
 		}
 
-		self.verify_signature(&issuer.tbs_certificate.subject_public_key_info).unwrap_or(false)
+		self.verify_signature(&issuer.tbs_certificate.subject_public_key_info)
+			.unwrap_or(false)
 	}
 
 	/// Get the issuer certificate using the provided certificate store
@@ -1413,7 +1632,10 @@ impl Certificate {
 			Some(self.clone())
 		} else {
 			// Look for the issuer in the store by matching subject DN
-			store.all_certificates().find(|cert| cert.tbs_certificate.subject == self.tbs_certificate.issuer).cloned()
+			store
+				.all_certificates()
+				.find(|cert| cert.tbs_certificate.subject == self.tbs_certificate.issuer)
+				.cloned()
 		}
 	}
 
@@ -1458,14 +1680,11 @@ impl Certificate {
 
 		if let Some(extensions) = &self.tbs_certificate.extensions {
 			for ext in extensions {
-				match ext.id.to_string().as_str() {
+				match ext.oid.to_string().as_str() {
 					// Basic Constraints
 					oids::BASIC_CONSTRAINTS => {
 						if let Ok(constraints) = BasicConstraints::from_der(ext.value.as_bytes()) {
-							base_extensions.basic_constraints = Some(BasicConstraintsJson {
-								ca: constraints.ca,
-								path_len_constraint: constraints.path_len_constraint,
-							});
+							base_extensions.basic_constraints = Some(constraints);
 						}
 					}
 					// Subject Key Identifier
@@ -1517,11 +1736,7 @@ impl Certificate {
 			.as_ref()
 			.map(|exts| {
 				exts.iter()
-					.map(|ext| ExtensionJson {
-						oid: ext.id.to_string(),
-						critical: ext.critical.unwrap_or(false),
-						value: hex::encode(ext.value.as_bytes()),
-					})
+					.map(|ext| Extension { oid: ext.oid, critical: ext.critical, value: ext.value.clone() })
 					.collect()
 			})
 			.unwrap_or_default();
@@ -1570,8 +1785,9 @@ impl Certificate {
 			}
 
 			// Look for the issuer in the store
-			let issuer =
-				store.all_certificates().find(|cert| cert.tbs_certificate.subject == current.tbs_certificate.issuer);
+			let issuer = store
+				.all_certificates()
+				.find(|cert| cert.tbs_certificate.subject == current.tbs_certificate.issuer);
 
 			if let Some(issuer_cert) = issuer {
 				chain.push(issuer_cert.clone());
@@ -1602,7 +1818,10 @@ impl Certificate {
 		let chain = self.verify_chain(store);
 
 		// Check if the chain ends with a trusted root
-		chain.last().map(|root_cert| store.root.contains(root_cert)).unwrap_or(false)
+		chain
+			.last()
+			.map(|root_cert| store.root.contains(root_cert))
+			.unwrap_or(false)
 	}
 
 	/// Assert that a valid certificate graph can be constructed from the given certificates
@@ -1917,7 +2136,8 @@ FmnXzDU=
 	];
 
 	fn get_cert_moment() -> DateTime<Utc> {
-		Utc.timestamp_opt(CERT_MOMENT_TIMESTAMP, 0).unwrap()
+		Utc.timestamp_opt(CERT_MOMENT_TIMESTAMP, 0)
+			.unwrap()
 	}
 
 	fn get_ca_cert() -> Certificate {
@@ -1966,7 +2186,10 @@ FmnXzDU=
 			assert!(tbs.extensions.is_some());
 
 			if let Some(extensions) = &tbs.extensions {
-				let extension_oids: Vec<String> = extensions.iter().map(|ext| ext.id.to_string()).collect();
+				let extension_oids: Vec<String> = extensions
+					.iter()
+					.map(|ext| ext.oid.to_string())
+					.collect();
 				assert!(extension_oids.contains(&oids::BASIC_CONSTRAINTS.to_string()));
 				assert!(extension_oids.contains(&oids::KEY_USAGE.to_string()));
 				assert!(extension_oids.contains(&oids::SUBJECT_KEY_IDENTIFIER.to_string()));
@@ -2136,7 +2359,10 @@ FmnXzDU=
 				let cert = Certificate::from_pem($pem).unwrap();
 				let extensions = cert.tbs_certificate.extensions.unwrap();
 
-				let found_oids: Vec<String> = extensions.iter().map(|ext| ext.id.to_string()).collect();
+				let found_oids: Vec<String> = extensions
+					.iter()
+					.map(|ext| ext.oid.to_string())
+					.collect();
 				for expected_oid in $expected_oids {
 					assert!(found_oids.contains(&expected_oid.to_string()));
 				}
@@ -2214,7 +2440,10 @@ FmnXzDU=
 			assert!(tbs.extensions.is_some());
 
 			if let Some(extensions) = &tbs.extensions {
-				let extension_oids: Vec<String> = extensions.iter().map(|ext| ext.id.to_string()).collect();
+				let extension_oids: Vec<String> = extensions
+					.iter()
+					.map(|ext| ext.oid.to_string())
+					.collect();
 				assert!(extension_oids.contains(&oids::BASIC_CONSTRAINTS.to_string()));
 				assert!(extension_oids.contains(&oids::KEY_USAGE.to_string()));
 				assert!(extension_oids.contains(&oids::SUBJECT_KEY_IDENTIFIER.to_string()));
@@ -2247,8 +2476,8 @@ FmnXzDU=
 
 		// Test CertificateBuilder.extension
 		let ext = Extension::new("1.2.3.4", &[0x01, 0x02], true).unwrap();
-		assert_eq!(ext.id.to_string(), "1.2.3.4");
-		assert_eq!(ext.critical, Some(true));
+		assert_eq!(ext.oid.to_string(), "1.2.3.4");
+		assert!(ext.critical);
 
 		// Test CertificateWithOptions constructor
 		let cert_with_opts = CertificateWithOptions::new(CA_CERT_PEM, None).unwrap();
@@ -2285,8 +2514,20 @@ FmnXzDU=
 		assert!(user_with_chain.get_issuer_certificate().is_some());
 		assert!(user_with_chain.get_root_certificate().is_some());
 		assert_eq!(user_with_chain.chain_length(), 1);
-		assert_eq!(user_with_chain.get_issuer_certificate().unwrap().subject(), ca_cert.subject());
-		assert_eq!(user_with_chain.get_root_certificate().unwrap().subject(), ca_cert.subject());
+		assert_eq!(
+			user_with_chain
+				.get_issuer_certificate()
+				.unwrap()
+				.subject(),
+			ca_cert.subject()
+		);
+		assert_eq!(
+			user_with_chain
+				.get_root_certificate()
+				.unwrap()
+				.subject(),
+			ca_cert.subject()
+		);
 	}
 
 	#[test]
@@ -2339,7 +2580,9 @@ FmnXzDU=
 		assert!(empty_result.is_err());
 
 		let cert_with_opts = CertificateWithOptions::try_from(pem_data).unwrap();
-		let cert_with_trust = cert_with_opts.with_trusted(true).with_chain(vec![base_cert]);
+		let cert_with_trust = cert_with_opts
+			.with_trusted(true)
+			.with_chain(vec![base_cert]);
 		assert!(cert_with_trust.is_trusted());
 		assert_eq!(cert_with_trust.chain_length(), 1);
 	}
@@ -2466,34 +2709,34 @@ FmnXzDU=
 		// Test subject alternative name extension
 		let san_entries = vec!["example.com", "192.168.1.1", "user@example.com", "https://example.com"];
 		let san_ext = Extension::subject_alt_name(san_entries).unwrap();
-		assert_eq!(san_ext.id.to_string(), oids::SUBJECT_ALT_NAME);
-		assert!(!san_ext.critical.unwrap_or(false));
+		assert_eq!(san_ext.oid.to_string(), oids::SUBJECT_ALT_NAME);
+		assert!(!san_ext.critical);
 
 		// Test extended key usage extension
 		let eku_entries = vec![oids::SERVER_AUTH, oids::CLIENT_AUTH];
 		let eku_ext = Extension::extended_key_usage(eku_entries).unwrap();
-		assert_eq!(eku_ext.id.to_string(), oids::EXTENDED_KEY_USAGE);
-		assert!(!eku_ext.critical.unwrap_or(false));
+		assert_eq!(eku_ext.oid.to_string(), oids::EXTENDED_KEY_USAGE);
+		assert!(!eku_ext.critical);
 
 		// Test basic constraints for CA certificate
 		let bc_ca_ext = Extension::basic_constraints(true, Some(5)).unwrap();
-		assert_eq!(bc_ca_ext.id.to_string(), oids::BASIC_CONSTRAINTS);
-		assert!(bc_ca_ext.critical.unwrap_or(false));
+		assert_eq!(bc_ca_ext.oid.to_string(), oids::BASIC_CONSTRAINTS);
+		assert!(bc_ca_ext.critical);
 
 		// Test basic constraints for end entity certificate
 		let bc_ee_ext = Extension::basic_constraints(false, None).unwrap();
-		assert_eq!(bc_ee_ext.id.to_string(), oids::BASIC_CONSTRAINTS);
-		assert!(bc_ee_ext.critical.unwrap_or(false));
+		assert_eq!(bc_ee_ext.oid.to_string(), oids::BASIC_CONSTRAINTS);
+		assert!(bc_ee_ext.critical);
 
 		// Test key usage extension
 		let ku_ext = Extension::key_usage(0x0186).unwrap(); // digital signature + key cert sign + crl sign
-		assert_eq!(ku_ext.id.to_string(), oids::KEY_USAGE);
-		assert!(ku_ext.critical.unwrap_or(false));
+		assert_eq!(ku_ext.oid.to_string(), oids::KEY_USAGE);
+		assert!(ku_ext.critical);
 
 		// Test custom extension
 		let custom_ext = Extension::new("1.2.3.4", &[0x01, 0x02, 0x03], true).unwrap();
-		assert_eq!(custom_ext.id.to_string(), "1.2.3.4");
-		assert!(custom_ext.critical.unwrap_or(false));
+		assert_eq!(custom_ext.oid.to_string(), "1.2.3.4");
+		assert!(custom_ext.critical);
 	}
 
 	#[test]

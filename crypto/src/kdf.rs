@@ -245,7 +245,9 @@ mod tests {
 
 			// But different salt/info should produce different results
 			let array_diff_salt: [u8; 32] = algo.derive_array(ikm, None, info).unwrap();
-			let array_diff_info: [u8; 32] = algo.derive_array(ikm, salt, b"different").unwrap();
+			let array_diff_info: [u8; 32] = algo
+				.derive_array(ikm, salt, b"different")
+				.unwrap();
 			assert_ne!(array, array_diff_salt);
 			assert_ne!(array, array_diff_info);
 		}
@@ -289,8 +291,12 @@ mod tests {
 		let info = b"info";
 
 		// Different algorithms should produce different results
-		let sha256_result = KdfAlgorithm::HkdfSha2_256.derive(ikm, salt, info, 32).unwrap();
-		let sha512_result = KdfAlgorithm::HkdfSha2_512.derive(ikm, salt, info, 32).unwrap();
+		let sha256_result = KdfAlgorithm::HkdfSha2_256
+			.derive(ikm, salt, info, 32)
+			.unwrap();
+		let sha512_result = KdfAlgorithm::HkdfSha2_512
+			.derive(ikm, salt, info, 32)
+			.unwrap();
 		assert_ne!(sha256_result, sha512_result);
 	}
 
@@ -306,9 +312,13 @@ mod tests {
 		combined.extend_from_slice(&shared_secret);
 
 		// Derive key using our KDF
-		let derived_key = KdfAlgorithm::HkdfSha2_256.derive_array::<32>(&combined, None, b"").unwrap();
+		let derived_key = KdfAlgorithm::HkdfSha2_256
+			.derive_array::<32>(&combined, None, b"")
+			.unwrap();
 		// Should be deterministic - test with the generic derive function
-		let derived_key2 = KdfAlgorithm::HkdfSha2_256.derive(&combined, None, b"", 32).unwrap();
+		let derived_key2 = KdfAlgorithm::HkdfSha2_256
+			.derive(&combined, None, b"", 32)
+			.unwrap();
 		assert_eq!(derived_key.to_vec(), derived_key2);
 		assert_eq!(derived_key.len(), 32);
 	}

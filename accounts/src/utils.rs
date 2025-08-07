@@ -54,7 +54,9 @@ pub(crate) fn format_public_key(public_key_bytes: &[u8], algorithm: Algorithm) -
 /// Parse a formatted public key string
 pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorithm), AccountError> {
 	// Remove "keeta_" prefix
-	let encoded = formatted_key.strip_prefix("keeta_").ok_or(AccountError::InvalidPrefix)?;
+	let encoded = formatted_key
+		.strip_prefix("keeta_")
+		.ok_or(AccountError::InvalidPrefix)?;
 
 	// Decode base32
 	let decoded = base32::decode(base32::Alphabet::Rfc4648Lower { padding: false }, encoded)

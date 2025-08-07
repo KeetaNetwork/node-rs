@@ -65,14 +65,28 @@ fn test_identifier_generation() {
 
 #[test]
 fn test_account_comparison() {
-	let account1 =
-		TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key.parse::<Account<KeyECDSASECP256K1>>().unwrap();
-	let account2 =
-		TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key.parse::<Account<KeyECDSASECP256K1>>().unwrap();
+	let account1 = TEST_PUBLIC_ACCOUNT
+		.ecdsa_secp256k1
+		.encoded_public_key
+		.parse::<Account<KeyECDSASECP256K1>>()
+		.unwrap();
+	let account2 = TEST_PUBLIC_ACCOUNT
+		.ecdsa_secp256k1
+		.encoded_public_key
+		.parse::<Account<KeyECDSASECP256K1>>()
+		.unwrap();
 
-	assert!(account1.compare_public_key(TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key));
+	assert!(account1.compare_public_key(
+		TEST_PUBLIC_ACCOUNT
+			.ecdsa_secp256k1
+			.encoded_public_key
+	));
 	assert!(account1.compare_account(&account2)); // Same public keys
-	assert!(!account1.compare_public_key(TEST_PUBLIC_ACCOUNT.ecdsa_secp256r1.encoded_public_key));
+	assert!(!account1.compare_public_key(
+		TEST_PUBLIC_ACCOUNT
+			.ecdsa_secp256r1
+			.encoded_public_key
+	));
 }
 
 #[test]

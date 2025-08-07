@@ -69,7 +69,9 @@ pub struct Ed25519PrivateKey {
 
 impl core::fmt::Debug for Ed25519PrivateKey {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		f.debug_struct("Ed25519PrivateKey").field("inner", &"[REDACTED]").finish()
+		f.debug_struct("Ed25519PrivateKey")
+			.field("inner", &"[REDACTED]")
+			.finish()
 	}
 }
 
@@ -108,8 +110,9 @@ impl TryFrom<&[u8]> for Ed25519PrivateKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] =
-			bytes.try_into().map_err(|_| CryptoError::InvalidPrivateKey)?;
+		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] = bytes
+			.try_into()
+			.map_err(|_| CryptoError::InvalidPrivateKey)?;
 		let signing_key = SigningKey::from_bytes(&bytes_array);
 
 		Ok(Ed25519PrivateKey { inner: signing_key })
@@ -182,8 +185,9 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] =
-			bytes.try_into().map_err(|_| CryptoError::InvalidPublicKey)?;
+		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] = bytes
+			.try_into()
+			.map_err(|_| CryptoError::InvalidPublicKey)?;
 		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
 
 		Ok(Ed25519PublicKey { inner: verifying_key })
@@ -285,7 +289,9 @@ pub struct X25519PrivateKey {
 
 impl core::fmt::Debug for X25519PrivateKey {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		f.debug_struct("X25519PrivateKey").field("bytes", &"[REDACTED]").finish()
+		f.debug_struct("X25519PrivateKey")
+			.field("bytes", &"[REDACTED]")
+			.finish()
 	}
 }
 
@@ -356,7 +362,9 @@ impl TryFrom<&[u8]> for X25519PrivateKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::InvalidPrivateKey)?;
+		let bytes_array: [u8; 32] = bytes
+			.try_into()
+			.map_err(|_| CryptoError::InvalidPrivateKey)?;
 
 		Ok(X25519PrivateKey { bytes: SecretBox::new(Box::new(bytes_array)) })
 	}
@@ -378,7 +386,9 @@ impl TryFrom<&[u8]> for X25519PublicKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; 32] = bytes.try_into().map_err(|_| CryptoError::InvalidPublicKey)?;
+		let bytes_array: [u8; 32] = bytes
+			.try_into()
+			.map_err(|_| CryptoError::InvalidPublicKey)?;
 		let public_key = DalekX25519PublicKey::from(bytes_array);
 
 		Ok(X25519PublicKey { inner: public_key })
@@ -451,7 +461,9 @@ pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519
 		CompressedEdwardsY::from_slice(&ed25519_bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
 
 	// Decompress to get the Edwards point
-	let edwards_point = compressed_edwards.decompress().ok_or(CryptoError::InvalidPublicKey)?;
+	let edwards_point = compressed_edwards
+		.decompress()
+		.ok_or(CryptoError::InvalidPublicKey)?;
 	// Convert Edwards point to Montgomery point using the bi-rational map
 	let montgomery_point = edwards_point.to_montgomery();
 	// Get the Montgomery point bytes
@@ -684,13 +696,17 @@ mod tests {
 
 		// Test that verification fails with wrong message
 		let wrong_message = b"Wrong message";
-		assert!(public_key.verify(wrong_message, &signature).is_err());
+		assert!(public_key
+			.verify(wrong_message, &signature)
+			.is_err());
 
 		// Test that verification fails with wrong key
 		let wrong_seed = b"wrong seed for ed25519 signatures!!";
 		let wrong_private_key = Ed25519Derivation::derive_from_seed(wrong_seed).unwrap();
 		let wrong_public_key = wrong_private_key.as_public_key();
-		assert!(wrong_public_key.verify(message, &signature).is_err());
+		assert!(wrong_public_key
+			.verify(message, &signature)
+			.is_err());
 	}
 
 	#[cfg(feature = "signature")]
@@ -868,15 +884,21 @@ mod tests {
 
 		// Test with default options (pre-hash)
 		let default_options = SigningOptions::default();
-		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
+		let signature_default = private_key
+			.sign_with_options(message, default_options)
+			.unwrap();
 
 		// Test with raw options (no pre-hash)
 		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+		let signature_raw = private_key
+			.sign_with_options(message, raw_options)
+			.unwrap();
 
 		// Test with cert options (pre-hash, but for_cert flag set)
 		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
+		let signature_cert = private_key
+			.sign_with_options(message, cert_options)
+			.unwrap();
 
 		// Signatures should be different when using different message processing
 		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
@@ -898,24 +920,42 @@ mod tests {
 
 		// Test verification with matching options
 		let default_options = SigningOptions::default();
-		let signature_default = private_key.sign_with_options(message, default_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_default, default_options).is_ok());
+		let signature_default = private_key
+			.sign_with_options(message, default_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_default, default_options)
+			.is_ok());
 
 		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_raw, raw_options).is_ok());
+		let signature_raw = private_key
+			.sign_with_options(message, raw_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_raw, raw_options)
+			.is_ok());
 
 		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key.sign_with_options(message, cert_options).unwrap();
-		assert!(public_key.verify_with_options(message, &signature_cert, cert_options).is_ok());
+		let signature_cert = private_key
+			.sign_with_options(message, cert_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_cert, cert_options)
+			.is_ok());
 
 		// Test verification failure with mismatched options
-		assert!(public_key.verify_with_options(message, &signature_raw, default_options).is_err());
-		assert!(public_key.verify_with_options(message, &signature_default, raw_options).is_err());
+		assert!(public_key
+			.verify_with_options(message, &signature_raw, default_options)
+			.is_err());
+		assert!(public_key
+			.verify_with_options(message, &signature_default, raw_options)
+			.is_err());
 
 		// Test verification failure with wrong message
 		let wrong_message = b"wrong message";
-		assert!(public_key.verify_with_options(wrong_message, &signature_default, default_options).is_err());
+		assert!(public_key
+			.verify_with_options(wrong_message, &signature_default, default_options)
+			.is_err());
 	}
 
 	#[cfg(feature = "signature")]
@@ -938,7 +978,9 @@ mod tests {
 		assert_eq!(public_key_string.len(), 64); // 32 bytes * 2 hex chars per byte
 		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
 		// Verify the string is valid hex
-		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
+		assert!(public_key_string
+			.chars()
+			.all(|c| c.is_ascii_hexdigit()));
 
 		// Test that we can decode the hex string back to the original bytes
 		let decoded_bytes = hex::decode(&public_key_string).unwrap();

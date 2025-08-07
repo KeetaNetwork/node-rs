@@ -62,11 +62,15 @@ mod tests {
 		let time_1980 = Time::try_from(datetime_1980).unwrap();
 		assert!(matches!(time_1980, Time::UtcTime(_)));
 
-		let datetime_2000 = Utc.with_ymd_and_hms(2000, 6, 15, 12, 30, 45).unwrap();
+		let datetime_2000 = Utc
+			.with_ymd_and_hms(2000, 6, 15, 12, 30, 45)
+			.unwrap();
 		let time_2000 = Time::try_from(datetime_2000).unwrap();
 		assert!(matches!(time_2000, Time::UtcTime(_)));
 
-		let datetime_2049 = Utc.with_ymd_and_hms(2049, 12, 31, 23, 59, 59).unwrap();
+		let datetime_2049 = Utc
+			.with_ymd_and_hms(2049, 12, 31, 23, 59, 59)
+			.unwrap();
 		let time_2049 = Time::try_from(datetime_2049).unwrap();
 		assert!(matches!(time_2049, Time::UtcTime(_)));
 	}
@@ -77,14 +81,18 @@ mod tests {
 		let time_2050 = Time::try_from(datetime_2050).unwrap();
 		assert!(matches!(time_2050, Time::GeneralizedTime(_)));
 
-		let datetime_2100 = Utc.with_ymd_and_hms(2100, 7, 4, 16, 20, 30).unwrap();
+		let datetime_2100 = Utc
+			.with_ymd_and_hms(2100, 7, 4, 16, 20, 30)
+			.unwrap();
 		let time_2100 = Time::try_from(datetime_2100).unwrap();
 		assert!(matches!(time_2100, Time::GeneralizedTime(_)));
 	}
 
 	#[test]
 	fn test_datetime_from_time_conversion() {
-		let original_datetime = Utc.with_ymd_and_hms(2023, 8, 15, 14, 30, 0).unwrap();
+		let original_datetime = Utc
+			.with_ymd_and_hms(2023, 8, 15, 14, 30, 0)
+			.unwrap();
 		let time = Time::try_from(original_datetime).unwrap();
 
 		let converted_datetime: DateTime<Utc> = time.into();
@@ -93,7 +101,9 @@ mod tests {
 
 	#[test]
 	fn test_datetime_from_time_reference_conversion() {
-		let original_datetime = Utc.with_ymd_and_hms(1995, 3, 20, 9, 15, 30).unwrap();
+		let original_datetime = Utc
+			.with_ymd_and_hms(1995, 3, 20, 9, 15, 30)
+			.unwrap();
 		let time = Time::try_from(original_datetime).unwrap();
 
 		let converted_datetime: DateTime<Utc> = (&time).into();
@@ -131,7 +141,9 @@ mod tests {
 		assert!(matches!(time_1980, Time::UtcTime(_)));
 
 		// Year 2049 should use UtcTime
-		let year_2049 = Utc.with_ymd_and_hms(2049, 12, 31, 23, 59, 59).unwrap();
+		let year_2049 = Utc
+			.with_ymd_and_hms(2049, 12, 31, 23, 59, 59)
+			.unwrap();
 		let time_2049 = Time::try_from(year_2049).unwrap();
 		assert!(matches!(time_2049, Time::UtcTime(_)));
 

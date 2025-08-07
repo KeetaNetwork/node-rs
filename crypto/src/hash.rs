@@ -116,7 +116,9 @@ pub fn hash<const N: usize>(data: &[u8], algorithm: Option<HashAlgorithm>) -> Re
 
 /// Hash some data using the default algorithm, returning the full hash
 pub fn hash_default(data: &[u8]) -> [u8; 32] {
-	DEFAULT_HASH_ALGORITHM.hash_array::<32>(data).expect("SHA3-256 should always produce 32 bytes")
+	DEFAULT_HASH_ALGORITHM
+		.hash_array::<32>(data)
+		.expect("SHA3-256 should always produce 32 bytes")
 }
 
 /// Hash some data using an optional algorithm, returning a fixed-size array
@@ -212,7 +214,10 @@ mod tests {
 
 		// Verify different algorithms produce different results
 		let test_data = b"hello world";
-		let results: Vec<_> = HASH_TEST_CASES.iter().map(|tc| tc.algorithm.hash(test_data)).collect();
+		let results: Vec<_> = HASH_TEST_CASES
+			.iter()
+			.map(|tc| tc.algorithm.hash(test_data))
+			.collect();
 		for i in 0..results.len() {
 			for j in i + 1..results.len() {
 				assert_ne!(
@@ -283,17 +288,25 @@ mod tests {
 				.collect();
 
 			for &length in &test_lengths {
-				let truncated = test_case.algorithm.hash_truncated(b"test data", length).unwrap();
+				let truncated = test_case
+					.algorithm
+					.hash_truncated(b"test data", length)
+					.unwrap();
 				assert_eq!(truncated.len(), length);
 				assert_eq!(truncated, &full_hash[..length]);
 			}
 
 			// Test invalid truncation length
-			let invalid = test_case.algorithm.hash_truncated(b"test data", test_case.length + 1);
+			let invalid = test_case
+				.algorithm
+				.hash_truncated(b"test data", test_case.length + 1);
 			assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
 
 			// Test zero-length truncation
-			let zero_length = test_case.algorithm.hash_truncated(b"test data", 0).unwrap();
+			let zero_length = test_case
+				.algorithm
+				.hash_truncated(b"test data", 0)
+				.unwrap();
 			assert!(zero_length.is_empty());
 		}
 	}
@@ -347,7 +360,9 @@ mod tests {
 			assert_eq!(hash_default_result, hash_array_none);
 
 			// Should match explicit SHA3-256
-			let explicit_sha3 = HashAlgorithm::Sha3_256.hash_array::<32>(input).unwrap();
+			let explicit_sha3 = HashAlgorithm::Sha3_256
+				.hash_array::<32>(input)
+				.unwrap();
 			assert_eq!(hash_default_result, explicit_sha3);
 		}
 	}

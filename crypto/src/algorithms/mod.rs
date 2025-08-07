@@ -237,7 +237,8 @@ mod tests {
 		}
 
 		fn create_any_public_key(&self, base_seed: &[u8]) -> AnyPublicKey {
-			self.create_any_private_key(base_seed).derive_public_key()
+			self.create_any_private_key(base_seed)
+				.derive_public_key()
 		}
 	}
 

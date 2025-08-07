@@ -50,11 +50,17 @@ pub struct AttributeTypeAndValue {
 impl der::ValueOrd for AttributeTypeAndValue {
 	fn value_cmp(&self, other: &Self) -> der::Result<core::cmp::Ordering> {
 		// First compare by attribute type (OID)
-		match self.attribute_type.value_cmp(&other.attribute_type)? {
+		match self
+			.attribute_type
+			.value_cmp(&other.attribute_type)?
+		{
 			core::cmp::Ordering::Equal => {
 				// If OIDs are equal, compare by the raw bytes of the Any value
 				// The Any value already contains the properly encoded DER bytes
-				Ok(self.attribute_value.value().cmp(other.attribute_value.value()))
+				Ok(self
+					.attribute_value
+					.value()
+					.cmp(other.attribute_value.value()))
 			}
 			other => Ok(other),
 		}
@@ -112,17 +118,16 @@ mod tests {
 	fn test_attribute_type_and_value_value_ord() {
 		macro_rules! test_value_ord_case {
 			($oid1:expr, $value1:expr, $oid2:expr, $value2:expr, $expected:expr) => {
-				let oid1 = ObjectIdentifier::new($oid1).unwrap();
-				let oid2 = ObjectIdentifier::new($oid2).unwrap();
-
 				let ia5_string1 = Ia5String::new($value1).unwrap();
 				let ia5_string2 = Ia5String::new($value2).unwrap();
 
-				let attribute_value1 = Any::encode_from(&ia5_string1).unwrap();
-				let attr1 = AttributeTypeAndValue { attribute_type: oid1, attribute_value: attribute_value1 };
+				let attribute_type = ObjectIdentifier::new($oid1).unwrap();
+				let attribute_value = Any::encode_from(&ia5_string1).unwrap();
+				let attr1 = AttributeTypeAndValue { attribute_type, attribute_value };
 
-				let attribute_value2 = Any::encode_from(&ia5_string2).unwrap();
-				let attr2 = AttributeTypeAndValue { attribute_type: oid2, attribute_value: attribute_value2 };
+				let attribute_type = ObjectIdentifier::new($oid2).unwrap();
+				let attribute_value = Any::encode_from(&ia5_string2).unwrap();
+				let attr2 = AttributeTypeAndValue { attribute_type, attribute_value };
 
 				let result = attr1.value_cmp(&attr2).unwrap();
 				assert_eq!(result, $expected);

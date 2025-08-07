@@ -296,7 +296,9 @@ mod tests {
 		let signature = signer.try_sign(message).unwrap();
 
 		// Test verification failure
-		assert!(failing_verifier.verify(message, &signature).is_err());
+		assert!(failing_verifier
+			.verify(message, &signature)
+			.is_err());
 
 		// Test empty public key bytes
 		let empty_bytes = failing_verifier.public_key_bytes();
@@ -371,7 +373,9 @@ mod tests {
 
 		// Test with default options
 		let default_opts = SigningOptions::default();
-		let signature = signer.sign_with_options(message, default_opts).unwrap();
+		let signature = signer
+			.sign_with_options(message, default_opts)
+			.unwrap();
 		let sig_bytes = signature.as_ref();
 		assert_eq!(sig_bytes[0], 0x01); // Not raw
 		assert_eq!(sig_bytes[1], 0x01); // Not cert
@@ -379,7 +383,9 @@ mod tests {
 
 		// Test with raw options
 		let raw_opts = SigningOptions::raw();
-		let signature = signer.sign_with_options(message, raw_opts).unwrap();
+		let signature = signer
+			.sign_with_options(message, raw_opts)
+			.unwrap();
 		let sig_bytes = signature.as_ref();
 		assert_eq!(sig_bytes[0], 0xAA); // Raw marker
 		assert_eq!(sig_bytes[1], 0x01); // Not cert
@@ -387,7 +393,9 @@ mod tests {
 
 		// Test with cert options
 		let cert_opts = SigningOptions::for_cert();
-		let signature = signer.sign_with_options(message, cert_opts).unwrap();
+		let signature = signer
+			.sign_with_options(message, cert_opts)
+			.unwrap();
 		let sig_bytes = signature.as_ref();
 		assert_eq!(sig_bytes[0], 0x01); // Not raw
 		assert_eq!(sig_bytes[1], 0xCC); // Cert marker
@@ -395,7 +403,9 @@ mod tests {
 
 		// Test with both raw and cert options
 		let both_opts = SigningOptions { raw: true, for_cert: true };
-		let signature = signer.sign_with_options(message, both_opts).unwrap();
+		let signature = signer
+			.sign_with_options(message, both_opts)
+			.unwrap();
 		let sig_bytes = signature.as_ref();
 		assert_eq!(sig_bytes[0], 0xAA); // Raw marker
 		assert_eq!(sig_bytes[1], 0xCC); // Cert marker
@@ -410,28 +420,52 @@ mod tests {
 
 		// Test successful verification with matching options
 		let default_options = SigningOptions::default();
-		let signature = signer.sign_with_options(message, default_options).unwrap();
-		assert!(verifier.verify_with_options(message, &signature, default_options).is_ok());
+		let signature = signer
+			.sign_with_options(message, default_options)
+			.unwrap();
+		assert!(verifier
+			.verify_with_options(message, &signature, default_options)
+			.is_ok());
 
 		let raw_options = SigningOptions::raw();
-		let signature = signer.sign_with_options(message, raw_options).unwrap();
-		assert!(verifier.verify_with_options(message, &signature, raw_options).is_ok());
+		let signature = signer
+			.sign_with_options(message, raw_options)
+			.unwrap();
+		assert!(verifier
+			.verify_with_options(message, &signature, raw_options)
+			.is_ok());
 
 		let cert_options = SigningOptions::for_cert();
-		let signature = signer.sign_with_options(message, cert_options).unwrap();
-		assert!(verifier.verify_with_options(message, &signature, cert_options).is_ok());
+		let signature = signer
+			.sign_with_options(message, cert_options)
+			.unwrap();
+		assert!(verifier
+			.verify_with_options(message, &signature, cert_options)
+			.is_ok());
 
 		// Test verification failure with mismatched options
-		let signature_raw = signer.sign_with_options(message, raw_options).unwrap();
-		assert!(verifier.verify_with_options(message, &signature_raw, default_options).is_err());
+		let signature_raw = signer
+			.sign_with_options(message, raw_options)
+			.unwrap();
+		assert!(verifier
+			.verify_with_options(message, &signature_raw, default_options)
+			.is_err());
 
-		let signature_cert = signer.sign_with_options(message, cert_options).unwrap();
-		assert!(verifier.verify_with_options(message, &signature_cert, default_options).is_err());
+		let signature_cert = signer
+			.sign_with_options(message, cert_options)
+			.unwrap();
+		assert!(verifier
+			.verify_with_options(message, &signature_cert, default_options)
+			.is_err());
 
 		// Test verification failure with wrong message
 		let other_message = b"different message";
-		let signature = signer.sign_with_options(message, default_options).unwrap();
-		assert!(verifier.verify_with_options(other_message, &signature, default_options).is_err());
+		let signature = signer
+			.sign_with_options(message, default_options)
+			.unwrap();
+		assert!(verifier
+			.verify_with_options(other_message, &signature, default_options)
+			.is_err());
 	}
 
 	#[test]
@@ -445,11 +479,15 @@ mod tests {
 		let options = SigningOptions::default();
 		let message = b"trait object test";
 
-		let signature = crypto_signer_with_opts.sign_with_options(message, options).unwrap();
+		let signature = crypto_signer_with_opts
+			.sign_with_options(message, options)
+			.unwrap();
 		assert_eq!(signature.as_ref().len(), 32);
 
 		// Test CryptoVerifierWithOptions as trait object
 		let crypto_verifier_with_opts: &dyn CryptoVerifierWithOptions<MockSignature> = &verifier;
-		assert!(crypto_verifier_with_opts.verify_with_options(message, &signature, options).is_ok());
+		assert!(crypto_verifier_with_opts
+			.verify_with_options(message, &signature, options)
+			.is_ok());
 	}
 }

@@ -61,7 +61,9 @@ pub fn generate_random_passphrase(
 	let word_count = words.len() as u32;
 	let passphrase: Result<Vec<String>, CryptoError> = (0..24)
 		.map(|_| {
-			let idx = rand_core::OsRng.try_next_u32().map_err(|_| create_rng_error())?;
+			let idx = rand_core::OsRng
+				.try_next_u32()
+				.map_err(|_| create_rng_error())?;
 			let word = words[(idx % word_count) as usize];
 
 			String::from_str(word).map_err(|_| create_string_conversion_error())
@@ -76,7 +78,9 @@ pub fn generate_random_passphrase(
 pub fn generate_random_seed() -> Result<SecretBox<[u8; 32]>, CryptoError> {
 	let mut seed_buffer = [0u8; 32];
 
-	rand_core::OsRng.try_fill_bytes(&mut seed_buffer).map_err(|_| create_seed_generation_error())?;
+	rand_core::OsRng
+		.try_fill_bytes(&mut seed_buffer)
+		.map_err(|_| create_seed_generation_error())?;
 
 	Ok(SecretBox::new(Box::new(seed_buffer)))
 }
