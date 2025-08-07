@@ -16,6 +16,9 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey as K256SecretKey;
 use secrecy::SecretBox;
 
+#[cfg(feature = "signature")]
+use k256::ecdsa::signature::hazmat::PrehashSigner;
+
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::Ecies;
 #[cfg(feature = "encryption")]
@@ -35,8 +38,6 @@ use crate::operations::signature::{
 };
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
-#[cfg(feature = "signature")]
-use k256::ecdsa::VerifyingKey;
 
 use crate::kdf::KdfAlgorithm;
 use crate::{error::CryptoError, KeyDerivation, PrivateKey, PublicKey};
@@ -63,19 +64,6 @@ impl core::fmt::Debug for Secp256k1PrivateKey {
 			.field("inner", &"[REDACTED]")
 			.finish()
 	}
-}
-
-/// secp256k1 public key wrapper.
-///
-/// This struct wraps the k256 PublicKey and provides the PublicKey trait
-/// implementation. secp256k1 public keys are stored in compressed format
-/// (33 bytes: 0x02/0x03 prefix + 32 bytes).
-///
-/// Public keys can be safely displayed, serialized, and shared as they contain
-/// no secret information.
-#[derive(Clone, Debug)]
-pub struct Secp256k1PublicKey {
-	inner: k256::PublicKey,
 }
 
 impl PrivateKey for Secp256k1PrivateKey {
@@ -161,6 +149,24 @@ impl KeyExchange for Secp256k1PrivateKey {
 	}
 }
 
+#[cfg(feature = "encryption")]
+impl AsymmetricEncryption for Secp256k1PrivateKey {
+	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		// Use the public key for encryption
+		let public_key = self.as_public_key();
+
+		public_key.encrypt(plaintext)
+	}
+
+	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		EciesSecp256k1::decrypt(self, cipher_text)
+	}
+
+	fn algorithm_info(&self) -> &'static str {
+		"ECIES-secp256k1-AES128CTR"
+	}
+}
+
 #[cfg(feature = "signature")]
 impl Keypair for Secp256k1PrivateKey {
 	type VerifyingKey = Secp256k1PublicKey;
@@ -192,15 +198,38 @@ impl CryptoSigner<Signature> for Secp256k1PrivateKey {
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Secp256k1PrivateKey {
 	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
-		let data = if options.raw {
-			message.to_vec()
-		} else {
-			hash_default(message).to_vec()
-		};
 		let signing_key = SigningKey::from(&self.inner);
 
-		signing_key.try_sign(&data)
+		if options.raw {
+			// For raw signing, treat the message as a pre-computed hash
+			// and use prehash signing to avoid double hashing
+			if message.len() != 32 {
+				return Err(::signature::Error::new());
+			}
+			signing_key.sign_prehash(message)
+		} else if options.for_cert {
+			// For certificate signing, explicitly use SHA3-256
+			let data = crate::HashAlgorithm::Sha3_256.hash(message);
+			signing_key.sign_prehash(&data)
+		} else {
+			// For regular signing, use the default hash algorithm
+			let data = hash_default(message).to_vec();
+			signing_key.sign_prehash(&data)
+		}
 	}
+}
+
+/// secp256k1 public key wrapper.
+///
+/// This struct wraps the k256 PublicKey and provides the PublicKey trait
+/// implementation. secp256k1 public keys are stored in compressed format
+/// (33 bytes: 0x02/0x03 prefix + 32 bytes).
+///
+/// Public keys can be safely displayed, serialized, and shared as they contain
+/// no secret information.
+#[derive(Clone, Debug)]
+pub struct Secp256k1PublicKey {
+	inner: k256::PublicKey,
 }
 
 impl PublicKey for Secp256k1PublicKey {
@@ -244,6 +273,14 @@ impl TryFrom<&[u8]> for Secp256k1PublicKey {
 	}
 }
 
+#[cfg(feature = "der")]
+impl From<Secp256k1PublicKey> for asn1::ObjectIdentifier {
+	fn from(_public_key: Secp256k1PublicKey) -> Self {
+		// This should never fail as we are using a constant known OID
+		asn1::ObjectIdentifier::new(asn1::oids::SECP256K1).expect("Failed to create OID for secp256k1")
+	}
+}
+
 #[cfg(feature = "signature")]
 impl Verifier<Signature> for Secp256k1PublicKey {
 	fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), ::signature::Error> {
@@ -272,32 +309,30 @@ impl CryptoVerifierWithOptions<Signature> for Secp256k1PublicKey {
 		signature: &Signature,
 		options: SigningOptions,
 	) -> Result<(), ::signature::Error> {
-		let data = if options.raw {
-			message.to_vec()
-		} else {
-			hash_default(message).to_vec()
-		};
+		use k256::ecdsa::{signature::hazmat::PrehashVerifier, VerifyingKey};
+
 		let verifying_key = VerifyingKey::from(&self.inner);
 
-		verifying_key.verify(&data, signature)
-	}
-}
+		if options.raw {
+			// For raw verification, treat the message as a pre-computed hash
+			// and use prehash verification to avoid double hashing
+			if message.len() != 32 {
+				return Err(::signature::Error::new());
+			}
+			verifying_key.verify_prehash(message, signature)
+		} else {
+			// For non-raw verification, hash the message first
+			let data = if options.for_cert {
+				// For certificates, we need to use SHA3-256
+				crate::HashAlgorithm::Sha3_256.hash(message)
+			} else {
+				// For regular verification, use default hash
+				hash_default(message).to_vec()
+			};
 
-#[cfg(feature = "encryption")]
-impl AsymmetricEncryption for Secp256k1PrivateKey {
-	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// Use the public key for encryption
-		let public_key = self.as_public_key();
-
-		public_key.encrypt(plaintext)
-	}
-
-	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		EciesSecp256k1::decrypt(self, cipher_text)
-	}
-
-	fn algorithm_info(&self) -> &'static str {
-		"ECIES-secp256k1-AES128CTR"
+			// Use prehash verification since we've already computed the hash
+			verifying_key.verify_prehash(&data, signature)
+		}
 	}
 }
 
@@ -592,8 +627,10 @@ mod tests {
 
 		// Test with raw options (no pre-hash)
 		let raw_options = SigningOptions::raw();
+		// Use a different 32-byte hash to make it truly different
+		let different_hash = [0x42u8; 32]; // Different from hash_default(message)
 		let signature_raw = private_key
-			.sign_with_options(message, raw_options)
+			.sign_with_options(&different_hash, raw_options)
 			.unwrap();
 
 		// Test with cert options (pre-hash, but for_cert flag set)
@@ -628,12 +665,14 @@ mod tests {
 			.verify_with_options(message, &signature_default, default_options)
 			.is_ok());
 
+		// For raw options, we need to use a pre-computed hash (32 bytes)
 		let raw_options = SigningOptions::raw();
+		let pre_computed_hash = hash_default(message);
 		let signature_raw = private_key
-			.sign_with_options(message, raw_options)
+			.sign_with_options(&pre_computed_hash, raw_options)
 			.unwrap();
 		assert!(public_key
-			.verify_with_options(message, &signature_raw, raw_options)
+			.verify_with_options(&pre_computed_hash, &signature_raw, raw_options)
 			.is_ok());
 
 		let cert_options = SigningOptions::for_cert();
@@ -643,9 +682,10 @@ mod tests {
 		assert!(public_key
 			.verify_with_options(message, &signature_cert, cert_options)
 			.is_ok());
+
 		// Test verification failure with mismatched options
 		assert!(public_key
-			.verify_with_options(message, &signature_raw, default_options)
+			.verify_with_options(&pre_computed_hash, &signature_raw, default_options)
 			.is_err());
 		assert!(public_key
 			.verify_with_options(message, &signature_default, raw_options)
@@ -771,5 +811,17 @@ mod tests {
 		assert!(aead_result.is_err());
 		// Test that it specifically returns EncryptionNotSupported
 		assert!(matches!(aead_result, Err(CryptoError::EncryptionNotSupported)));
+	}
+
+	#[cfg(feature = "der")]
+	#[test]
+	fn test_oid_conversion() {
+		let seed = b"test seed for secp256k1 oid conversion";
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+
+		// Test conversion to ObjectIdentifier
+		let oid: asn1::ObjectIdentifier = public_key.into();
+		assert_eq!(oid.to_string(), asn1::oids::SECP256K1);
 	}
 }

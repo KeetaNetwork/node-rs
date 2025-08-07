@@ -70,6 +70,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "asn1"
+version = "0.1.0"
+dependencies = [
+ "der",
+ "hex",
+ "serde",
+ "serde_json",
+ "snafu",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -247,6 +258,7 @@ dependencies = [
  "aead",
  "aes",
  "aes-gcm",
+ "asn1",
  "base32",
  "base64",
  "bip39-dict",
@@ -255,7 +267,6 @@ dependencies = [
  "crypto-bigint 0.6.1",
  "ctr",
  "curve25519-dalek",
- "der",
  "ed25519-dalek",
  "hex",
  "hex-literal",
@@ -1274,6 +1285,7 @@ dependencies = [
 name = "x509"
 version = "0.1.0"
 dependencies = [
+ "asn1",
  "base64",
  "chrono",
  "crypto",

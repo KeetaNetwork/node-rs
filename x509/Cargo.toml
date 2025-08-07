@@ -41,6 +41,9 @@ path = "../keetanet-error"
 [dependencies.crypto]
 path = "../crypto"
 
+[dependencies.asn1]
+path = "../asn1"
+
 [features]
 default = ["serde"]
 serde = ["dep:serde", "dep:serde_json"]

@@ -1,0 +1,20 @@
+[package]
+name = "asn1"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+der = { workspace = true }
+snafu = { workspace = true }
+hex = { workspace = true }
+
+[dependencies.serde]
+workspace = true
+optional = true
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]

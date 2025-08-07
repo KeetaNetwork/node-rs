@@ -96,7 +96,12 @@ fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = Acco
 		.sign(message, Some(default_options))
 		.unwrap();
 	let raw_options = SigningOptions::raw();
-	let signature_raw = account.sign(message, Some(raw_options)).unwrap();
+	// For raw signing, we need to provide a 32-byte hash
+	// Use a different hash to ensure signatures are different
+	let different_hash = [0x42u8; 32];
+	let signature_raw = account
+		.sign(&different_hash, Some(raw_options))
+		.unwrap();
 
 	assert_ne!(
 		signature_default, signature_raw,
@@ -110,7 +115,7 @@ fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = Acco
 	);
 	assert!(
 		account
-			.verify(message, &signature_raw, Some(raw_options))
+			.verify(&different_hash, &signature_raw, Some(raw_options))
 			.unwrap(),
 		"Raw signature should verify with raw options for {algorithm_type:?}"
 	);
@@ -160,14 +165,17 @@ fn test_algorithm_validation() {
 		let sig_default = account
 			.sign(test_data, Some(default_options))
 			.unwrap();
+		// For raw signing, we need to provide a 32-byte hash
+		// Use a different hash to ensure signatures are different
+		let different_hash = [0x42u8; 32];
 		let sig_raw = account
-			.sign(test_data, Some(raw_options))
+			.sign(&different_hash, Some(raw_options))
 			.unwrap();
 		assert!(account
 			.verify(test_data, &sig_default, Some(default_options))
 			.unwrap());
 		assert!(account
-			.verify(test_data, &sig_raw, Some(raw_options))
+			.verify(&different_hash, &sig_raw, Some(raw_options))
 			.unwrap());
 		assert!(!account
 			.verify(test_data, &sig_default, Some(raw_options))
@@ -191,13 +199,13 @@ fn test_algorithm_validation() {
 			.sign(test_data, Some(default_options))
 			.unwrap();
 		let sig_raw = account
-			.sign(test_data, Some(raw_options))
+			.sign(&different_hash, Some(raw_options))
 			.unwrap();
 		assert!(account
 			.verify(test_data, &sig_default, Some(default_options))
 			.unwrap());
 		assert!(account
-			.verify(test_data, &sig_raw, Some(raw_options))
+			.verify(&different_hash, &sig_raw, Some(raw_options))
 			.unwrap());
 		assert!(!account
 			.verify(test_data, &sig_default, Some(raw_options))

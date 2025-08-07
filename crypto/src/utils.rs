@@ -109,6 +109,116 @@ pub fn create_keypair_from_seed(
 	}
 }
 
+/// Parse DER-encoded ECDSA signature to extract r,s components.
+///
+/// DER format: SEQUENCE { r INTEGER, s INTEGER }
+/// This matches the TypeScript signatureFromDERRaw implementation
+/// and converts to exactly 32-byte arrays for secp256r1/secp256k1 compatibility.
+///
+/// This function is only available when the "der" feature is enabled.
+///
+/// # Example
+///
+/// ```rust
+/// # #[cfg(feature = "der")]
+/// # {
+/// use crypto::utils::parse_der_ecdsa_signature;
+///
+/// // Example DER-encoded ECDSA signature (minimal valid structure)
+/// let der_sig = &[
+///     0x30, 0x44,             // SEQUENCE, 68 bytes
+///     0x02, 0x20,             // INTEGER, 32 bytes (r)
+///     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+///     0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+///     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+///     0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+///     0x02, 0x20,             // INTEGER, 32 bytes (s)
+///     0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+///     0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+///     0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+///     0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
+/// ];
+///
+/// let (r, s) = parse_der_ecdsa_signature(der_sig).unwrap();
+/// assert_eq!(r.len(), 32);
+/// assert_eq!(s.len(), 32);
+/// # }
+/// ```
+#[cfg(feature = "der")]
+pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]), CryptoError> {
+	if der_bytes.len() < 8 || der_bytes[0] != 0x30 {
+		return Err(CryptoError::InvalidInput);
+	}
+
+	let seq_len = der_bytes[1] as usize;
+	if seq_len + 2 > der_bytes.len() {
+		return Err(CryptoError::InvalidInput);
+	}
+
+	let mut pos = 2;
+
+	// Parse r INTEGER
+	if pos >= der_bytes.len() || der_bytes[pos] != 0x02 {
+		return Err(CryptoError::InvalidInput);
+	}
+	pos += 1;
+
+	if pos >= der_bytes.len() {
+		return Err(CryptoError::InvalidInput);
+	}
+	let r_len = der_bytes[pos] as usize;
+	pos += 1;
+
+	if pos + r_len > der_bytes.len() {
+		return Err(CryptoError::InvalidInput);
+	}
+	let r_bytes = &der_bytes[pos..pos + r_len];
+	pos += r_len;
+
+	// Parse s INTEGER
+	if pos >= der_bytes.len() || der_bytes[pos] != 0x02 {
+		return Err(CryptoError::InvalidInput);
+	}
+	pos += 1;
+
+	if pos >= der_bytes.len() {
+		return Err(CryptoError::InvalidInput);
+	}
+	let s_len = der_bytes[pos] as usize;
+	pos += 1;
+
+	if pos + s_len > der_bytes.len() {
+		return Err(CryptoError::InvalidInput);
+	}
+	let s_bytes = &der_bytes[pos..pos + s_len];
+
+	// Convert to exactly 32-byte arrays like TypeScript does
+	let mut r_array = [0u8; 32];
+	let mut s_array = [0u8; 32];
+
+	// Handle r value: truncate from left if > 32 bytes, pad on left if < 32 bytes
+	if r_bytes.len() > 32 {
+		// TypeScript: sigSECValue.slice(-32) - take last 32 bytes
+		r_array.copy_from_slice(&r_bytes[r_bytes.len() - 32..]);
+	} else {
+		// Pad on the left with zeros
+		let start = 32 - r_bytes.len();
+		r_array[start..].copy_from_slice(r_bytes);
+	}
+
+	// Handle s value: truncate from left if > 32 bytes, pad on left if < 32 bytes
+	if s_bytes.len() > 32 {
+		// TypeScript: sigSECValue.slice(-32) - take last 32 bytes
+		s_array.copy_from_slice(&s_bytes[s_bytes.len() - 32..]);
+	} else {
+		// Pad on the left with zeros
+		let start = 32 - s_bytes.len();
+		s_array[start..].copy_from_slice(s_bytes);
+	}
+
+	Ok((r_array, s_array))
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -201,5 +311,39 @@ mod tests {
 		assert!(matches!(create_rng_error(), CryptoError::InternalError { .. }));
 		assert!(matches!(create_seed_generation_error(), CryptoError::InternalError { .. }));
 		assert!(matches!(create_string_conversion_error(), CryptoError::InternalError { .. }));
+	}
+
+	#[test]
+	#[cfg(feature = "der")]
+	fn test_parse_der_ecdsa_signature() {
+		// Valid DER-encoded ECDSA signature
+		let valid_der = [
+			0x30, 0x44, // SEQUENCE, length 68
+			0x02, 0x20, // INTEGER, length 32 (r)
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,
+			0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x02,
+			0x20, // INTEGER, length 32 (s)
+			0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32,
+			0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40,
+		];
+
+		let result = parse_der_ecdsa_signature(&valid_der);
+		assert!(result.is_ok());
+
+		let (r, s) = result.unwrap();
+		assert_eq!(r.len(), 32);
+		assert_eq!(s.len(), 32);
+
+		// Check that r and s values are correctly extracted
+		assert_eq!(r[0], 0x01);
+		assert_eq!(r[31], 0x20);
+		assert_eq!(s[0], 0x21);
+		assert_eq!(s[31], 0x40);
+
+		// Test invalid cases
+		assert!(parse_der_ecdsa_signature(&[]).is_err()); // Empty input
+		assert!(parse_der_ecdsa_signature(&[0x31, 0x44]).is_err()); // Wrong tag
+		assert!(parse_der_ecdsa_signature(&[0x30, 0x44]).is_err()); // Too short
+		assert!(parse_der_ecdsa_signature(&[0x30, 0x02, 0x05]).is_err()); // Invalid structure
 	}
 }

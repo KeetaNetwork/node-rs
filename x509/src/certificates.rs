@@ -3,19 +3,23 @@
 //! This module provides functionality for working with X.509 certificates,
 //! including parsing, validation, and generation of certificate requests.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use asn1::{AlgorithmIdentifier, SubjectPublicKeyInfo};
+use asn1::{BitString, ObjectIdentifier, OctetString, Sequence, Uint};
+use asn1::{Decode, Encode};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
 use crypto::bigint::U256;
 use crypto::prelude::SigningOptions;
 use crypto::prelude::{CryptoVerifierWithOptions, Ed25519PublicKey, Secp256k1PublicKey, Secp256r1PublicKey};
 use crypto::prelude::{Ed25519Signature, Secp256k1Signature, Secp256r1Signature};
+use crypto::utils::parse_der_ecdsa_signature;
 use crypto::HashAlgorithm;
-use der::asn1::{Any, BitString, ObjectIdentifier, OctetString, Uint};
-use der::{Decode, Encode, Sequence};
 use hex;
 
+#[cfg(feature = "serde")]
+use asn1::utils::*;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -25,8 +29,6 @@ use crate::time::Time;
 use crate::utils::{dn_to_string, generate_key_identifier, parse_der_length};
 use crate::DistinguishedName;
 
-#[cfg(feature = "serde")]
-use crate::asn1::utils::*;
 #[cfg(feature = "serde")]
 use crate::utils::{dn_to_name_value_pairs, parse_authority_key_identifier, parse_key_identifier};
 #[cfg(feature = "serde")]
@@ -77,6 +79,16 @@ pub struct Extension {
 	pub value: OctetString,
 }
 
+impl Extension {
+	/// Create a new extension.
+	pub fn new(oid: &str, value: &[u8], critical: bool) -> Result<Self, CertificateError> {
+		let oid = ObjectIdentifier::new(oid)?;
+		let value = OctetString::new(value)?;
+
+		Ok(Self { oid, critical, value })
+	}
+}
+
 /// Builder for creating X.509 certificate extensions.
 #[derive(Debug, Clone, Default)]
 pub struct ExtensionBuilder {
@@ -91,6 +103,102 @@ impl ExtensionBuilder {
 		Self::default()
 	}
 
+	/// Create a basic constraints extension according to RFC 5280 Section 4.2.1.9.
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
+	///
+	/// BasicConstraints ::= SEQUENCE {
+	///     cA                      BOOLEAN DEFAULT FALSE,
+	///     pathLenConstraint       INTEGER (0..MAX) OPTIONAL
+	/// }
+	pub fn for_basic_constraints(is_ca: bool, path_length: Option<u8>) -> Self {
+		Self::new()
+			.with_oid(oids::BASIC_CONSTRAINTS)
+			.with_critical(true)
+			.with_basic_constraints_value(is_ca, path_length)
+	}
+
+	/// Create a key usage extension according to RFC 5280 Section 4.2.1.3.
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3>
+	///
+	/// KeyUsage ::= BIT STRING {
+	///     digitalSignature        (0),
+	///     nonRepudiation          (1),
+	///     keyEncipherment         (2),
+	///     dataEncipherment        (3),
+	///     keyAgreement            (4),
+	///     keyCertSign             (5),
+	///     cRLSign                 (6),
+	///     encipherOnly            (7),
+	///     decipherOnly            (8)
+	/// }
+	pub fn for_key_usage(key_usage_bits: u16) -> Self {
+		Self::new()
+			.with_oid(oids::KEY_USAGE)
+			.with_key_usage_value(key_usage_bits)
+			.as_critical()
+	}
+
+	/// Create an extended key usage extension according to RFC 5280 Section 4.2.1.12.
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.12>
+	///
+	/// ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
+	/// KeyPurposeId ::= OBJECT IDENTIFIER
+	pub fn for_extended_key_usage(ext_key_use: Vec<&str>) -> Self {
+		Self::new()
+			.with_oid(oids::EXTENDED_KEY_USAGE)
+			.with_extended_key_usage_value(ext_key_use)
+			.as_non_critical()
+	}
+
+	/// Create a subject alternative name according to RFC 5280 Section 4.2.1.6.
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.6>
+	///
+	/// GeneralName ::= CHOICE {
+	///     otherName                       \[0\] OtherName,
+	///     rfc822Name                      \[1\] IA5String,
+	///     dNSName                         \[2\] IA5String,
+	///     x400Address                     \[3\] ORAddress,
+	///     directoryName                   \[4\] Name,
+	///     ediPartyName                    \[5\] EDIPartyName,
+	///     uniformResourceIdentifier       \[6\] IA5String,
+	///     iPAddress                       \[7\] OCTET STRING,
+	///     registeredID                    \[8\] OBJECT IDENTIFIER
+	/// }
+	pub fn for_subject_alt_name(san_entries: Vec<&str>) -> Self {
+		Self::new()
+			.with_oid(oids::SUBJECT_ALT_NAME)
+			.with_subject_alt_name_value(san_entries)
+			.as_non_critical()
+	}
+
+	/// Create a subject key identifier extension according to RFC 5280 Section 4.2.1.2.
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2>
+	///
+	/// SubjectKeyIdentifier ::= KeyIdentifier
+	/// KeyIdentifier ::= OCTET STRING
+	pub fn for_subject_key_identifier(key_id: &[u8]) -> Self {
+		Self::new()
+			.with_oid(oids::SUBJECT_KEY_IDENTIFIER)
+			.with_value(key_id)
+			.as_non_critical()
+	}
+
+	/// Create an authority key identifier extension according to RFC 5280 Section 4.2.1.1.
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
+	///
+	/// AuthorityKeyIdentifier ::= SEQUENCE {
+	///     keyIdentifier             \[0\] KeyIdentifier           OPTIONAL,
+	///     authorityCertIssuer       \[1\] GeneralNames            OPTIONAL,
+	///     authorityCertSerialNumber \[2\] CertificateSerialNumber OPTIONAL
+	/// }
+	/// KeyIdentifier ::= OCTET STRING
+	pub fn for_authority_key_identifier(key_id: &[u8]) -> Self {
+		Self::new()
+			.with_oid(oids::AUTHORITY_KEY_IDENTIFIER)
+			.with_authority_key_identifier_value(key_id)
+			.as_non_critical()
+	}
+
 	/// Set the extension OID.
 	pub fn with_oid(mut self, oid: &str) -> Self {
 		self.oid = Some(oid.to_string());
@@ -98,13 +206,13 @@ impl ExtensionBuilder {
 	}
 
 	/// Mark the extension as critical.
-	pub fn critical(mut self) -> Self {
+	pub fn as_critical(mut self) -> Self {
 		self.critical = true;
 		self
 	}
 
 	/// Mark the extension as non-critical (default).
-	pub fn non_critical(mut self) -> Self {
+	pub fn as_non_critical(mut self) -> Self {
 		self.critical = false;
 		self
 	}
@@ -119,54 +227,6 @@ impl ExtensionBuilder {
 	pub fn with_value(mut self, value: &[u8]) -> Self {
 		self.value = Some(value.to_vec());
 		self
-	}
-
-	/// Create a basic constraints extension.
-	pub fn for_basic_constraints(is_ca: bool, path_length: Option<u8>) -> Self {
-		Self::new()
-			.with_oid(oids::BASIC_CONSTRAINTS)
-			.with_critical(true)
-			.with_basic_constraints_value(is_ca, path_length)
-	}
-
-	/// Create a key usage extension.
-	pub fn for_key_usage(key_usage_bits: u16) -> Self {
-		Self::new()
-			.with_oid(oids::KEY_USAGE)
-			.critical()
-			.with_key_usage_value(key_usage_bits)
-	}
-
-	/// Create an extended key usage extension.
-	pub fn for_extended_key_usage(ext_key_use: Vec<&str>) -> Self {
-		Self::new()
-			.with_oid(oids::EXTENDED_KEY_USAGE)
-			.non_critical()
-			.with_extended_key_usage_value(ext_key_use)
-	}
-
-	/// Create a subject alternative name extension.
-	pub fn for_subject_alt_name(san_entries: Vec<&str>) -> Self {
-		Self::new()
-			.with_oid(oids::SUBJECT_ALT_NAME)
-			.non_critical()
-			.with_subject_alt_name_value(san_entries)
-	}
-
-	/// Create a subject key identifier extension.
-	pub fn for_subject_key_identifier(key_id: &[u8]) -> Self {
-		Self::new()
-			.with_oid(oids::SUBJECT_KEY_IDENTIFIER)
-			.non_critical()
-			.with_value(key_id)
-	}
-
-	/// Create an authority key identifier extension.
-	pub fn for_authority_key_identifier(key_id: &[u8]) -> Self {
-		Self::new()
-			.with_oid(oids::AUTHORITY_KEY_IDENTIFIER)
-			.non_critical()
-			.with_authority_key_identifier_value(key_id)
 	}
 
 	/// Set basic constraints extension value.
@@ -185,6 +245,7 @@ impl ExtensionBuilder {
 		} else {
 			value.push(0x00);
 		}
+
 		self.value = Some(value);
 		self
 	}
@@ -193,6 +254,7 @@ impl ExtensionBuilder {
 	fn with_key_usage_value(mut self, key_usage_bits: u16) -> Self {
 		let bytes = key_usage_bits.to_be_bytes();
 		let value = vec![0x03, 0x02, 0x00, bytes[1]];
+
 		self.value = Some(value);
 		self
 	}
@@ -212,6 +274,7 @@ impl ExtensionBuilder {
 
 		value.push(content.len() as u8);
 		value.extend_from_slice(&content);
+
 		self.value = Some(value);
 		self
 	}
@@ -245,6 +308,9 @@ impl ExtensionBuilder {
 					name.extend_from_slice(san_entry.as_bytes());
 					name
 				} else {
+					// Default to DNS Name
+					// TODO Should we care about other types?
+					// DNS Name [2] IMPLICIT UTF8String (default)
 					let mut name = vec![0x82]; // [2] IMPLICIT (DNS Name)
 					name.push(san_entry.len() as u8);
 					name.extend_from_slice(san_entry.as_bytes());
@@ -257,6 +323,7 @@ impl ExtensionBuilder {
 		let mut value = vec![0x30]; // SEQUENCE
 		value.push(content.len() as u8);
 		value.extend_from_slice(&content);
+
 		self.value = Some(value);
 		self
 	}
@@ -267,6 +334,7 @@ impl ExtensionBuilder {
 		let key_id_with_tag = [&[0x80], key_id].concat(); // [0] IMPLICIT
 		auth_key_id_der.push(key_id_with_tag.len() as u8);
 		auth_key_id_der.extend_from_slice(&key_id_with_tag);
+
 		self.value = Some(auth_key_id_der);
 		self
 	}
@@ -279,221 +347,9 @@ impl ExtensionBuilder {
 		let value = self
 			.value
 			.ok_or(CertificateError::MissingField { field: "value".to_string() })?;
+
 		Extension::new(&oid, &value, self.critical)
 	}
-}
-
-impl Extension {
-	/// Create a new extension builder.
-	pub fn builder() -> ExtensionBuilder {
-		ExtensionBuilder::new()
-	}
-
-	/// Create a new extension.
-	pub fn new(oid: &str, value: &[u8], critical: bool) -> Result<Self, CertificateError> {
-		let oid = ObjectIdentifier::new(oid)?;
-		let value = OctetString::new(value)?;
-
-		Ok(Self { oid, critical, value })
-	}
-
-	/// Create a basic constraints extension according to RFC 5280 Section 4.2.1.9.
-	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
-	///
-	/// BasicConstraints ::= SEQUENCE {
-	///     cA                      BOOLEAN DEFAULT FALSE,
-	///     pathLenConstraint       INTEGER (0..MAX) OPTIONAL
-	/// }
-	pub fn basic_constraints(is_ca: bool, path_length: Option<u8>) -> Result<Self, CertificateError> {
-		let mut value = vec![0x30]; // SEQUENCE
-
-		if is_ca {
-			if let Some(path_len) = path_length {
-				// SEQUENCE { BOOLEAN TRUE, INTEGER path_length }
-				let content = vec![0x01, 0x01, 0xFF, 0x02, 0x01, path_len];
-				value.push(content.len() as u8);
-				value.extend_from_slice(&content);
-			} else {
-				// SEQUENCE { BOOLEAN TRUE }
-				let content = vec![0x01, 0x01, 0xFF];
-				value.push(content.len() as u8);
-				value.extend_from_slice(&content);
-			}
-		} else {
-			// Empty SEQUENCE for end-entity certificates
-			value.push(0x00);
-		}
-
-		Self::new(oids::BASIC_CONSTRAINTS, &value, true)
-	}
-
-	/// Create a key usage extension according to RFC 5280 Section 4.2.1.3.
-	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3>
-	///
-	/// KeyUsage ::= BIT STRING {
-	///     digitalSignature        (0),
-	///     nonRepudiation          (1),
-	///     keyEncipherment         (2),
-	///     dataEncipherment        (3),
-	///     keyAgreement            (4),
-	///     keyCertSign             (5),
-	///     cRLSign                 (6),
-	///     encipherOnly            (7),
-	///     decipherOnly            (8)
-	/// }
-	pub fn key_usage(key_usage_bits: u16) -> Result<Self, CertificateError> {
-		let bytes = key_usage_bits.to_be_bytes();
-		let value = vec![0x03, 0x02, 0x00, bytes[1]];
-
-		Self::new(oids::KEY_USAGE, &value, true)
-	}
-
-	/// Create an extended key usage extension according to RFC 5280 Section 4.2.1.12.
-	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.12>
-	///
-	/// ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
-	/// KeyPurposeId ::= OBJECT IDENTIFIER
-	pub fn extended_key_usage(ext_key_use: Vec<&str>) -> Result<Self, CertificateError> {
-		let mut value = vec![0x30]; // SEQUENCE
-		let mut content = Vec::new();
-
-		for eku_oid in ext_key_use {
-			if let Ok(oid) = ObjectIdentifier::new(eku_oid) {
-				if let Ok(oid_der) = oid.to_der() {
-					content.extend_from_slice(&oid_der);
-				}
-			}
-		}
-
-		value.push(content.len() as u8);
-		value.extend_from_slice(&content);
-
-		Self::new(oids::EXTENDED_KEY_USAGE, &value, false)
-	}
-
-	/// Create a subject alternative name according to RFC 5280 Section 4.2.1.6.
-	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.6>
-	///
-	/// GeneralName ::= CHOICE {
-	///     otherName                       \[0\] OtherName,
-	///     rfc822Name                      \[1\] IA5String,
-	///     dNSName                         \[2\] IA5String,
-	///     x400Address                     \[3\] ORAddress,
-	///     directoryName                   \[4\] Name,
-	///     ediPartyName                    \[5\] EDIPartyName,
-	///     uniformResourceIdentifier       \[6\] IA5String,
-	///     iPAddress                       \[7\] OCTET STRING,
-	///     registeredID                    \[8\] OBJECT IDENTIFIER
-	/// }
-	pub fn subject_alt_name(san_entries: Vec<&str>) -> Result<Self, CertificateError> {
-		// Encode SEQUENCE of GeneralNames
-		let general_names: Vec<Vec<u8>> = san_entries
-			.iter()
-			.map(|&san_entry| {
-				// Detect the type and encode appropriately
-				if san_entry.contains('@') {
-					// Email address [1] IMPLICIT UTF8String
-					let mut name = vec![0x81]; // [1] IMPLICIT
-					name.push(san_entry.len() as u8);
-					name.extend_from_slice(san_entry.as_bytes());
-					name
-				} else if san_entry.parse::<core::net::IpAddr>().is_ok() {
-					// IP Address [7] IMPLICIT OCTET STRING
-					let ip_bytes = if let Ok(ip) = san_entry.parse::<core::net::Ipv4Addr>() {
-						ip.octets().to_vec()
-					} else if let Ok(ip) = san_entry.parse::<core::net::Ipv6Addr>() {
-						ip.octets().to_vec()
-					} else {
-						san_entry.as_bytes().to_vec() // fallback
-					};
-
-					let mut name = vec![0x87]; // [7] IMPLICIT
-					name.push(ip_bytes.len() as u8);
-					name.extend_from_slice(&ip_bytes);
-					name
-				} else if san_entry.starts_with("http://") || san_entry.starts_with("https://") {
-					// URI [6] IMPLICIT UTF8String
-					let mut name = vec![0x86]; // [6] IMPLICIT
-					name.push(san_entry.len() as u8);
-					name.extend_from_slice(san_entry.as_bytes());
-					name
-				} else {
-					// Default to DNS Name
-					// TODO Should we care about other types?
-					// DNS Name [2] IMPLICIT UTF8String (default)
-					let mut name = vec![0x82]; // [2] IMPLICIT
-					name.push(san_entry.len() as u8);
-					name.extend_from_slice(san_entry.as_bytes());
-					name
-				}
-			})
-			.collect();
-
-		// Build the SEQUENCE of GeneralNames
-		let content: Vec<u8> = general_names.into_iter().flatten().collect();
-		let mut value = vec![0x30]; // SEQUENCE
-		value.push(content.len() as u8);
-		value.extend_from_slice(&content);
-
-		Self::new(oids::SUBJECT_ALT_NAME, &value, false)
-	}
-
-	/// Create a subject key identifier extension according to RFC 5280 Section 4.2.1.2.
-	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2>
-	///
-	/// SubjectKeyIdentifier ::= KeyIdentifier
-	/// KeyIdentifier ::= OCTET STRING
-	pub fn subject_key_identifier(key_id: &[u8]) -> Result<Self, CertificateError> {
-		Self::new(oids::SUBJECT_KEY_IDENTIFIER, key_id, false)
-	}
-
-	/// Create an authority key identifier extension according to RFC 5280 Section 4.2.1.1.
-	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
-	///
-	/// AuthorityKeyIdentifier ::= SEQUENCE {
-	///     keyIdentifier             \[0\] KeyIdentifier           OPTIONAL,
-	///     authorityCertIssuer       \[1\] GeneralNames            OPTIONAL,
-	///     authorityCertSerialNumber \[2\] CertificateSerialNumber OPTIONAL
-	/// }
-	/// KeyIdentifier ::= OCTET STRING
-	pub fn authority_key_identifier(key_id: &[u8]) -> Result<Self, CertificateError> {
-		// Authority Key Identifier: SEQUENCE { [0] IMPLICIT KeyIdentifier OPTIONAL }
-		let mut auth_key_id_der = vec![0x30]; // SEQUENCE
-		let key_id_with_tag = [&[0x80], key_id].concat(); // [0] IMPLICIT
-		auth_key_id_der.push(key_id_with_tag.len() as u8);
-		auth_key_id_der.extend_from_slice(&key_id_with_tag);
-
-		Self::new(oids::AUTHORITY_KEY_IDENTIFIER, &auth_key_id_der, false)
-	}
-}
-
-/// Algorithm identifier according to RFC 5280 Section 4.1.1.2.
-/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.1.2>
-///
-/// AlgorithmIdentifier ::= SEQUENCE {
-///     algorithm               OBJECT IDENTIFIER,
-///     parameters              ANY OPTIONAL
-/// }
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
-pub struct AlgorithmIdentifier {
-	/// Algorithm OID
-	pub algorithm: ObjectIdentifier,
-	/// Raw ASN.1 parameters - can be NULL, absent, or any other type
-	#[asn1(optional = "true")]
-	pub parameters: Option<Any>,
-}
-
-/// Public key information structure according to RFC 5280 Section 4.1.
-/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1>
-///
-/// SubjectPublicKeyInfo ::= SEQUENCE {
-///     algorithm              AlgorithmIdentifier,
-///     subjectPublicKey       BIT STRING
-/// }
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
-pub struct SubjectPublicKeyInfo {
-	pub algorithm: AlgorithmIdentifier,
-	pub public_key: BitString,
 }
 
 /// Certificate validity period according to RFC 5280 Section 4.1.2.5.
@@ -619,6 +475,12 @@ impl CertificateWithOptions {
 		} else {
 			None
 		}
+	}
+
+	/// Get the issuer's public key from the chain.
+	pub fn get_issuer_public_key(&self) -> Option<&SubjectPublicKeyInfo> {
+		self.get_issuer_certificate()
+			.map(|cert| &cert.tbs_certificate.subject_public_key_info)
 	}
 
 	/// Get all certificates (main certificate + chain).
@@ -1020,7 +882,7 @@ impl CertificateBuilder {
 
 	/// Add a basic constraints extension.
 	pub fn basic_constraints(mut self, is_ca: bool, path_length: Option<u8>) -> Self {
-		if let Ok(extension) = Extension::basic_constraints(is_ca, path_length) {
+		if let Ok(extension) = ExtensionBuilder::for_basic_constraints(is_ca, path_length).build() {
 			self.extensions.push(extension);
 		}
 
@@ -1029,7 +891,7 @@ impl CertificateBuilder {
 
 	/// Add a key usage extension.
 	pub fn key_usage(mut self, key_usage_bits: u16) -> Self {
-		if let Ok(extension) = Extension::key_usage(key_usage_bits) {
+		if let Ok(extension) = ExtensionBuilder::for_key_usage(key_usage_bits).build() {
 			self.extensions.push(extension);
 		}
 
@@ -1038,7 +900,7 @@ impl CertificateBuilder {
 
 	/// Add an extended key usage extension.
 	pub fn extended_key_usage(mut self, ext_key_use: Vec<&str>) -> Self {
-		if let Ok(extension) = Extension::extended_key_usage(ext_key_use) {
+		if let Ok(extension) = ExtensionBuilder::for_extended_key_usage(ext_key_use).build() {
 			self.extensions.push(extension);
 		}
 
@@ -1047,7 +909,7 @@ impl CertificateBuilder {
 
 	/// Add a subject alternative name extension.
 	pub fn subject_alt_name(mut self, san_entries: Vec<&str>) -> Self {
-		if let Ok(extension) = Extension::subject_alt_name(san_entries) {
+		if let Ok(extension) = ExtensionBuilder::for_subject_alt_name(san_entries).build() {
 			self.extensions.push(extension);
 		}
 
@@ -1212,7 +1074,7 @@ impl CertificateBuilder {
 
 		// Basic Constraints extension
 		if let Some(is_ca) = self.is_ca {
-			extensions.push(Extension::basic_constraints(is_ca, None)?);
+			extensions.push(ExtensionBuilder::for_basic_constraints(is_ca, None).build()?);
 		}
 
 		// Key Usage extension
@@ -1225,13 +1087,13 @@ impl CertificateBuilder {
 				0xC0 // Bits 0,1 (digitalSignature, nonRepudiation)
 			};
 
-			extensions.push(Extension::key_usage(key_usage_bits)?);
+			extensions.push(ExtensionBuilder::for_key_usage(key_usage_bits).build()?);
 		}
 
 		// Subject Key Identifier extension
 		if let Some(subject_public_key) = &self.subject_public_key {
-			let subject_key_id = generate_key_identifier(&subject_public_key.public_key)?;
-			extensions.push(Extension::subject_key_identifier(&subject_key_id)?);
+			let subject_key_id = generate_key_identifier(&subject_public_key.subject_public_key)?;
+			extensions.push(ExtensionBuilder::for_subject_key_identifier(&subject_key_id).build()?);
 		}
 
 		// Authority Key Identifier extension (for self-signed certificates)
@@ -1239,8 +1101,8 @@ impl CertificateBuilder {
 			(&self.issuer_dn, &self.subject_dn, &self.subject_public_key)
 		{
 			if issuer_dn == subject_dn {
-				let authority_key_id = generate_key_identifier(&subject_public_key.public_key)?;
-				extensions.push(Extension::authority_key_identifier(&authority_key_id)?);
+				let authority_key_id = generate_key_identifier(&subject_public_key.subject_public_key)?;
+				extensions.push(ExtensionBuilder::for_authority_key_identifier(&authority_key_id).build()?);
 			}
 		}
 
@@ -1457,38 +1319,42 @@ impl Certificate {
 	/// This method verifies that the certificate was signed by the provided
 	/// public key according to RFC 5280 certificate validation requirements.
 	pub fn verify_signature(&self, issuer_public_key: &SubjectPublicKeyInfo) -> Result<bool, CertificateError> {
-		// Check that signature algorithms match
-		if self.signature_algorithm.algorithm != issuer_public_key.algorithm.algorithm {
+		let cert_sig_oid = &self.signature_algorithm.algorithm;
+		let key_alg_oid = &issuer_public_key.algorithm.algorithm;
+
+		let is_compatible = match cert_sig_oid.to_string().as_str() {
+			oids::ECDSA_WITH_SHA3_256 | oids::ECDSA_WITH_SHA256 => key_alg_oid.to_string() == oids::EC_PUBLIC_KEY,
+			oids::ED25519 => key_alg_oid.to_string() == oids::ED25519,
+			_ => false,
+		};
+
+		if !is_compatible {
 			return Ok(false);
 		}
 
-		// Get the TBS certificate DER bytes for verification
 		let tbs_der = self
 			.tbs_certificate
 			.to_der()
 			.map_err(CertificateError::from)?;
-		// Extract signature bytes
+
 		let signature_bytes = self.signature.raw_bytes();
 
-		// Determine algorithm and verify signature
 		let signature_oid = &self.signature_algorithm.algorithm;
 		match signature_oid.to_string().as_str() {
-			// Ed25519 signature
 			oids::ED25519 => {
-				let public_key = Ed25519PublicKey::try_from(issuer_public_key.public_key.raw_bytes())
-					.map_err(|_| CertificateError::InvalidCertificate)?;
-
-				// Ed25519 signatures are 64 bytes
 				if signature_bytes.len() != 64 {
 					return Ok(false);
 				}
+
+				let public_key_bytes = issuer_public_key.subject_public_key.raw_bytes();
+				let public_key =
+					Ed25519PublicKey::try_from(public_key_bytes).map_err(|_| CertificateError::InvalidCertificate)?;
 
 				let sig_array: [u8; 64] = signature_bytes
 					.try_into()
 					.map_err(|_| CertificateError::InvalidCertificate)?;
 				let signature = Ed25519Signature::from_bytes(&sig_array);
 
-				// Ed25519 signatures are always over the raw message (no pre-hashing)
 				let options = SigningOptions::raw();
 				public_key
 					.verify_with_options(&tbs_der, &signature, options)
@@ -1496,12 +1362,82 @@ impl Certificate {
 					.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)
 			}
 
-			// ECDSA with SHA-256 (secp256r1)
+			oids::ECDSA_WITH_SHA3_256 => {
+				let public_key_bytes = issuer_public_key.subject_public_key.raw_bytes();
+				let secp256r1_result = Secp256r1PublicKey::try_from(public_key_bytes);
+				let secp256k1_result = Secp256k1PublicKey::try_from(public_key_bytes);
+
+				if let Ok(public_key) = secp256r1_result {
+					if signature_bytes.len() >= 2 && signature_bytes[0] == 0x30 {
+						if let Ok((r_array, s_array)) = parse_der_ecdsa_signature(signature_bytes) {
+							let mut sig_array = [0u8; 64];
+							sig_array[..32].copy_from_slice(&r_array);
+							sig_array[32..].copy_from_slice(&s_array);
+
+							let signature = Secp256r1Signature::from_bytes((&sig_array).into())
+								.map_err(|_| CertificateError::InvalidCertificate)?;
+
+							let options = SigningOptions::for_cert();
+							if public_key
+								.verify_with_options(&tbs_der, &signature, options)
+								.is_ok()
+							{
+								return Ok(true);
+							}
+
+							let hash_bytes = HashAlgorithm::Sha3_256.hash(&tbs_der);
+							let raw_options = SigningOptions { raw: true, for_cert: false };
+							if public_key
+								.verify_with_options(&hash_bytes, &signature, raw_options)
+								.is_ok()
+							{
+								return Ok(true);
+							}
+						}
+					} else if signature_bytes.len() == 64 {
+						let sig_array: [u8; 64] = signature_bytes
+							.try_into()
+							.map_err(|_| CertificateError::InvalidCertificate)?;
+						let signature = Secp256r1Signature::from_bytes((&sig_array).into())
+							.map_err(|_| CertificateError::InvalidCertificate)?;
+
+						let options = SigningOptions::for_cert();
+						if public_key
+							.verify_with_options(&tbs_der, &signature, options)
+							.is_ok()
+						{
+							return Ok(true);
+						}
+					}
+				}
+
+				if let Ok(public_key) = secp256k1_result {
+					if signature_bytes.len() != 64 {
+						return Ok(false);
+					}
+
+					let sig_array: [u8; 64] = signature_bytes
+						.try_into()
+						.map_err(|_| CertificateError::InvalidCertificate)?;
+					let signature = Secp256k1Signature::from_bytes((&sig_array).into())
+						.map_err(|_| CertificateError::InvalidCertificate)?;
+
+					let options = SigningOptions::for_cert();
+					if public_key
+						.verify_with_options(&tbs_der, &signature, options)
+						.is_ok()
+					{
+						return Ok(true);
+					}
+				}
+
+				Ok(false)
+			}
+
 			oids::ECDSA_WITH_SHA256 => {
-				let public_key = Secp256r1PublicKey::try_from(issuer_public_key.public_key.raw_bytes())
+				let public_key = Secp256r1PublicKey::try_from(issuer_public_key.subject_public_key.raw_bytes())
 					.map_err(|_| CertificateError::InvalidCertificate)?;
 
-				// ECDSA signatures are typically 64 bytes (r and s values, 32 bytes each)
 				if signature_bytes.len() != 64 {
 					return Ok(false);
 				}
@@ -1511,7 +1447,6 @@ impl Certificate {
 				let signature = Secp256r1Signature::from_bytes((&sig_array).into())
 					.map_err(|_| CertificateError::InvalidCertificate)?;
 
-				// ECDSA signatures are over the pre-hashed message, use certificate format
 				let options = SigningOptions::for_cert();
 				public_key
 					.verify_with_options(&tbs_der, &signature, options)
@@ -1519,12 +1454,10 @@ impl Certificate {
 					.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)
 			}
 
-			// ECDSA with SHA-256 (secp256k1)
 			oids::SECP256K1 => {
-				let public_key = Secp256k1PublicKey::try_from(issuer_public_key.public_key.raw_bytes())
+				let public_key = Secp256k1PublicKey::try_from(issuer_public_key.subject_public_key.raw_bytes())
 					.map_err(|_| CertificateError::InvalidCertificate)?;
 
-				// ECDSA signatures are typically 64 bytes (r and s values, 32 bytes each)
 				if signature_bytes.len() != 64 {
 					return Ok(false);
 				}
@@ -1534,7 +1467,6 @@ impl Certificate {
 				let signature = Secp256k1Signature::from_bytes((&sig_array).into())
 					.map_err(|_| CertificateError::InvalidCertificate)?;
 
-				// ECDSA signatures are over the pre-hashed message, use certificate format
 				let options = SigningOptions::for_cert();
 				public_key
 					.verify_with_options(&tbs_der, &signature, options)
@@ -1542,10 +1474,8 @@ impl Certificate {
 					.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)
 			}
 
-			// RSA with SHA-256 - not implemented
 			oids::SHA256_WITH_RSA => Err(CertificateError::InvalidCertificate),
 
-			// Unsupported signature algorithm
 			_ => Ok(false),
 		}
 	}
@@ -1614,64 +1544,6 @@ impl Certificate {
 			.unwrap_or(false)
 	}
 
-	/// Get the issuer certificate using the provided certificate store
-	pub fn get_issuer_certificate(&self) -> Option<&Certificate> {
-		if self.is_self_signed() {
-			Some(self)
-		} else {
-			// For compatibility, return None when no store is provided
-			// Use get_issuer_certificate_with_store() for full functionality
-			None
-		}
-	}
-
-	/// Get the issuer certificate using the provided certificate store
-	/// This method traverses the certificate store to find the issuing certificate
-	pub fn get_issuer_certificate_with_store(&self, store: &CertificateStore) -> Option<Certificate> {
-		if self.is_self_signed() {
-			Some(self.clone())
-		} else {
-			// Look for the issuer in the store by matching subject DN
-			store
-				.all_certificates()
-				.find(|cert| cert.tbs_certificate.subject == self.tbs_certificate.issuer)
-				.cloned()
-		}
-	}
-
-	/// Get the root certificate if this is self-signed, otherwise None
-	pub fn get_root_certificate(&self) -> Option<&Certificate> {
-		if self.is_self_signed() {
-			Some(self)
-		} else {
-			// For compatibility, return None when no store is provided
-			// Use get_root_certificate_with_store() for full functionality
-			None
-		}
-	}
-
-	/// Get the root certificate by traversing the chain using the provided certificate store
-	/// This method builds the complete certificate chain and returns the root certificate
-	pub fn get_root_certificate_with_store(&self, store: &CertificateStore) -> Option<Certificate> {
-		if self.is_self_signed() {
-			Some(self.clone())
-		} else {
-			// Build the chain and return the last (root) certificate
-			let chain = self.verify_chain(store);
-			chain.last().cloned()
-		}
-	}
-
-	/// Get the issuer's public key if available
-	pub fn get_issuer_public_key(&self) -> Option<&SubjectPublicKeyInfo> {
-		if self.is_self_signed() {
-			Some(&self.tbs_certificate.subject_public_key_info)
-		} else {
-			// In a real implementation, this would get the issuer's public key from the chain
-			None
-		}
-	}
-
 	/// Parse base extensions from certificate
 	#[cfg(feature = "serde")]
 	fn parse_base_extensions(&self) -> BaseExtensions {
@@ -1701,6 +1573,7 @@ impl Certificate {
 							base_extensions.authority_key_identifier = Some(hex::encode(key_id));
 						}
 					}
+					// TODO: Do we care?
 					_ => {} // Ignore other extensions for base extensions
 				}
 			}
@@ -1775,12 +1648,13 @@ impl Certificate {
 
 		// Build the chain by following issuer certificates
 		loop {
-			// If this is a self-signed certificate, we're done
 			if current.is_self_signed() {
 				// Check if it's in the trusted roots
 				if store.root.contains(current) {
 					chain.push(current.clone());
 				}
+
+				// If this is a self-signed certificate, we are done
 				break;
 			}
 
@@ -1823,119 +1697,6 @@ impl Certificate {
 			.map(|root_cert| store.root.contains(root_cert))
 			.unwrap_or(false)
 	}
-
-	/// Assert that a valid certificate graph can be constructed from the given certificates
-	pub fn assert_can_construct_valid_graph(
-		&self,
-		additional_certs: &HashSet<Certificate>,
-	) -> Result<(), CertificateError> {
-		// Check for duplicates (including this certificate)
-		let mut all_certs = additional_certs.clone();
-		if all_certs.contains(self) {
-			return Err(CertificateError::CertificateDuplicateIncluded);
-		}
-		all_certs.insert(self.clone());
-
-		// Build a map of subject DN (as hex string) -> certificate for quick lookup
-		let mut subject_map: HashMap<String, &Certificate> = HashMap::new();
-		for cert in &all_certs {
-			// Use hex encoding of the DER bytes of the DN as the key
-			if let Ok(dn_der) = <DistinguishedName as der::Encode>::to_der(&cert.tbs_certificate.subject) {
-				let dn_key = hex::encode(dn_der);
-				subject_map.insert(dn_key, cert);
-			}
-		}
-
-		// Check for orphans (certificates that don't connect to any chain)
-		let mut reachable = HashSet::new();
-		let mut to_visit = vec![self];
-
-		while let Some(current) = to_visit.pop() {
-			if reachable.contains(current) {
-				continue;
-			}
-			reachable.insert(current);
-
-			// Find all certificates that could be part of this certificate's chain
-			// 1. Certificates issued by this certificate (if it's a CA)
-			// 2. The issuer of this certificate
-			for cert in &all_certs {
-				if !reachable.contains(cert) {
-					// If current cert issued this cert
-					if cert.tbs_certificate.issuer == current.tbs_certificate.subject {
-						to_visit.push(cert);
-					}
-					// If this cert issued the current cert
-					if current.tbs_certificate.issuer == cert.tbs_certificate.subject {
-						to_visit.push(cert);
-					}
-				}
-			}
-		}
-
-		// Check for orphans
-		for cert in &all_certs {
-			if !reachable.contains(cert) {
-				return Err(CertificateError::CertificateOrphanFound);
-			}
-		}
-
-		// Check for cycles using DFS
-		let mut visited = HashSet::new();
-		let mut rec_stack = HashSet::new();
-
-		fn has_cycle(
-			cert: &Certificate,
-			subject_map: &HashMap<String, &Certificate>,
-			visited: &mut HashSet<String>,
-			rec_stack: &mut HashSet<String>,
-		) -> Result<bool, CertificateError> {
-			// Use hex encoding of the DN as the key
-			let subject_key =
-				if let Ok(dn_der) = <DistinguishedName as der::Encode>::to_der(&cert.tbs_certificate.subject) {
-					hex::encode(dn_der)
-				} else {
-					return Ok(false);
-				};
-
-			if rec_stack.contains(&subject_key) {
-				return Ok(true); // Cycle found
-			}
-
-			if visited.contains(&subject_key) {
-				return Ok(false); // Already processed
-			}
-
-			visited.insert(subject_key.clone());
-			rec_stack.insert(subject_key.clone());
-
-			// Check issuer
-			let issuer_key =
-				if let Ok(dn_der) = <DistinguishedName as der::Encode>::to_der(&cert.tbs_certificate.issuer) {
-					hex::encode(dn_der)
-				} else {
-					rec_stack.remove(&subject_key);
-					return Ok(false);
-				};
-
-			if let Some(issuer_cert) = subject_map.get(&issuer_key) {
-				if has_cycle(issuer_cert, subject_map, visited, rec_stack)? {
-					return Ok(true);
-				}
-			}
-
-			rec_stack.remove(&subject_key);
-			Ok(false)
-		}
-
-		for cert in &all_certs {
-			if has_cycle(cert, &subject_map, &mut visited, &mut rec_stack)? {
-				return Err(CertificateError::CertificateCycleFound);
-			}
-		}
-
-		Ok(())
-	}
 }
 
 impl core::hash::Hash for Certificate {
@@ -1947,69 +1708,81 @@ impl core::hash::Hash for Certificate {
 	}
 }
 
-impl TryFrom<&[u8]> for Certificate {
-	type Error = CertificateError;
+macro_rules! impl_try_from_input {
+	($target_type:ty) => {
+		impl TryFrom<&[u8]> for $target_type {
+			type Error = CertificateError;
 
-	fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-		Self::from_der(data)
-	}
+			fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+				Self::from_der(data)
+			}
+		}
+
+		impl TryFrom<Vec<u8>> for $target_type {
+			type Error = CertificateError;
+
+			fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
+				data.as_slice().try_into()
+			}
+		}
+
+		impl TryFrom<&str> for $target_type {
+			type Error = CertificateError;
+
+			fn try_from(pem: &str) -> Result<Self, Self::Error> {
+				Self::from_pem(pem)
+			}
+		}
+
+		impl TryFrom<String> for $target_type {
+			type Error = CertificateError;
+
+			fn try_from(pem: String) -> Result<Self, Self::Error> {
+				pem.as_str().try_into()
+			}
+		}
+	};
 }
 
-impl TryFrom<Vec<u8>> for Certificate {
-	type Error = CertificateError;
+impl_try_from_input!(Certificate);
 
-	fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
-		data.as_slice().try_into()
-	}
+macro_rules! impl_try_from_output {
+	($source_type:ty) => {
+		impl TryFrom<&$source_type> for Vec<u8> {
+			type Error = CertificateError;
+
+			fn try_from(value: &$source_type) -> Result<Self, Self::Error> {
+				value.to_der()
+			}
+		}
+
+		impl TryFrom<$source_type> for Vec<u8> {
+			type Error = CertificateError;
+
+			fn try_from(value: $source_type) -> Result<Self, Self::Error> {
+				value.to_der()
+			}
+		}
+
+		impl TryFrom<&$source_type> for String {
+			type Error = CertificateError;
+
+			fn try_from(value: &$source_type) -> Result<Self, Self::Error> {
+				value.to_pem()
+			}
+		}
+
+		impl TryFrom<$source_type> for String {
+			type Error = CertificateError;
+
+			fn try_from(value: $source_type) -> Result<Self, Self::Error> {
+				value.to_pem()
+			}
+		}
+	};
 }
 
-impl TryFrom<&str> for Certificate {
-	type Error = CertificateError;
-
-	fn try_from(pem: &str) -> Result<Self, Self::Error> {
-		Self::from_pem(pem)
-	}
-}
-
-impl TryFrom<String> for Certificate {
-	type Error = CertificateError;
-
-	fn try_from(pem: String) -> Result<Self, Self::Error> {
-		pem.as_str().try_into()
-	}
-}
-
-impl TryFrom<&Certificate> for Vec<u8> {
-	type Error = CertificateError;
-
-	fn try_from(cert: &Certificate) -> Result<Self, Self::Error> {
-		cert.to_der()
-	}
-}
-
-impl TryFrom<Certificate> for Vec<u8> {
-	type Error = CertificateError;
-
-	fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
-		cert.to_der()
-	}
-}
-
-impl TryFrom<&Certificate> for String {
-	type Error = CertificateError;
-
-	fn try_from(cert: &Certificate) -> Result<Self, Self::Error> {
-		cert.to_pem()
-	}
-}
-
-impl TryFrom<Certificate> for String {
-	type Error = CertificateError;
-
-	fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
-		cert.to_pem()
-	}
-}
+impl_try_from_output!(Certificate);
 
 macro_rules! impl_try_from_der_decode {
 	($target_type:ty) => {
@@ -2024,8 +1797,6 @@ macro_rules! impl_try_from_der_decode {
 }
 
 impl_try_from_der_decode!(TbsCertificate);
-impl_try_from_der_decode!(SubjectPublicKeyInfo);
-impl_try_from_der_decode!(AlgorithmIdentifier);
 
 macro_rules! impl_try_from_der_encode_trait {
 	($source_type:ty) => {
@@ -2040,16 +1811,14 @@ macro_rules! impl_try_from_der_encode_trait {
 }
 
 impl_try_from_der_encode_trait!(TbsCertificate);
-impl_try_from_der_encode_trait!(SubjectPublicKeyInfo);
-impl_try_from_der_encode_trait!(AlgorithmIdentifier);
 
 #[cfg(test)]
 mod tests {
+	use asn1::oids;
+	use asn1::{BitString, Uint};
 	use chrono::{TimeZone, Utc};
 
 	use super::*;
-	use crate::asn1::{BitString, Uint};
-	use crate::oids;
 	use crate::utils;
 
 	// Test data from TypeScript tests - CA certificate
@@ -2160,7 +1929,7 @@ FmnXzDU=
 					algorithm: ObjectIdentifier::new($algorithm_oid).unwrap(),
 					parameters: None,
 				},
-				public_key: BitString::from_bytes($public_key_bytes).unwrap(),
+				subject_public_key: BitString::from_bytes($public_key_bytes).unwrap(),
 			};
 
 			let serial = 1u128;
@@ -2237,6 +2006,7 @@ FmnXzDU=
 	fn test_certificate_builder_extension_methods() {
 		let subject_dn = utils::create_dn(&[(oids::CN, "Test Cert")]).unwrap();
 		let issuer_dn = utils::create_dn(&[(oids::CN, "Test CA")]).unwrap();
+		let key_usage_ext = ExtensionBuilder::for_key_usage(0x0080).build();
 
 		let builder = CertificateBuilder::new()
 			.subject_dn(subject_dn.clone())
@@ -2244,7 +2014,7 @@ FmnXzDU=
 			.serial_number(U256::from(12345u128))
 			.validity_days(365)
 			.is_ca(false)
-			.with_extension(Extension::key_usage(0x0080).unwrap()) // digital signature
+			.with_extension(key_usage_ext.unwrap())
 			.basic_constraints(false, None)
 			.key_usage(0x0080)
 			.extended_key_usage(vec![oids::CLIENT_AUTH])
@@ -2281,11 +2051,11 @@ FmnXzDU=
 		let algorithm_oid = oids::ED25519;
 		let public_key_bytes = &RAW_ED25519_PUBLIC_KEY[..];
 		let algorithm = AlgorithmIdentifier { algorithm: algorithm_oid.parse().unwrap(), parameters: None };
-		let public_key =
-			SubjectPublicKeyInfo { algorithm, public_key: BitString::from_bytes(public_key_bytes).unwrap() };
+		let subject_public_key = BitString::from_bytes(public_key_bytes).unwrap();
+		let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
 
 		let builder = CertificateBuilder::new()
-			.subject_public_key(public_key)
+			.subject_public_key(public_key_info)
 			.subject_dn(subject_dn)
 			.issuer_dn(issuer_dn)
 			.serial_number(U256::from(12345u128))
@@ -2373,7 +2143,6 @@ FmnXzDU=
 			CA_CERT_PEM,
 			[oids::BASIC_CONSTRAINTS, oids::KEY_USAGE, oids::AUTHORITY_KEY_IDENTIFIER, oids::SUBJECT_KEY_IDENTIFIER]
 		);
-
 		test_certificate_extensions!(
 			USER_CERT_PEM,
 			[oids::KEY_USAGE, oids::AUTHORITY_KEY_IDENTIFIER, oids::SUBJECT_KEY_IDENTIFIER]
@@ -2392,6 +2161,7 @@ FmnXzDU=
 		let hash1_again = cert1.hash().unwrap();
 		assert_eq!(hash1, hash1_again);
 
+		// Ensure the hashes are of expected length
 		assert_eq!(hash1.len(), 20);
 		assert_eq!(hash2.len(), 20);
 	}
@@ -2408,14 +2178,9 @@ FmnXzDU=
 			let issuer_cn_value = issuer_cn.split('=').nth(1).unwrap();
 			let subject_dn = utils::create_dn(&[(oids::CN, subject_cn_value)]).unwrap();
 			let issuer_dn = utils::create_dn(&[(oids::CN, issuer_cn_value)]).unwrap();
-
-			let public_key_info = SubjectPublicKeyInfo {
-				algorithm: AlgorithmIdentifier {
-					algorithm: ObjectIdentifier::new(algorithm_oid).unwrap(),
-					parameters: None,
-				},
-				public_key: BitString::from_bytes(public_key_bytes).unwrap(),
-			};
+			let algorithm = AlgorithmIdentifier::try_from(algorithm_oid).unwrap();
+			let subject_public_key = BitString::from_bytes(public_key_bytes).unwrap();
+			let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
 
 			let serial = 1u128;
 			let not_before = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
@@ -2490,19 +2255,42 @@ FmnXzDU=
 		let ca_cert = get_ca_cert();
 		let user_cert = get_user_cert();
 
-		assert!(user_cert.get_issuer_certificate().is_none());
-		assert!(user_cert.get_root_certificate().is_none());
-		assert!(ca_cert.get_issuer_certificate().is_some());
-		assert!(ca_cert.get_root_certificate().is_some());
+		// Test Certificate without chain (should return None for non-self-signed)
+		let user_with_no_chain = CertificateWithOptions {
+			certificate: user_cert.clone(),
+			options: CertificateOptions::default(),
+			chain: None,
+		};
+		assert!(user_with_no_chain
+			.get_issuer_certificate()
+			.is_none());
+		assert!(user_with_no_chain
+			.get_root_certificate()
+			.is_none());
 
-		let mut store = CertificateStore::new();
-		store.add_root(ca_cert.clone());
+		// Test self-signed certificate (should return itself)
+		let ca_with_no_chain = CertificateWithOptions {
+			certificate: ca_cert.clone(),
+			options: CertificateOptions::default(),
+			chain: None,
+		};
+		assert!(ca_with_no_chain
+			.get_issuer_certificate()
+			.is_some());
+		assert!(ca_with_no_chain.get_root_certificate().is_some());
 
-		let issuer = user_cert.get_issuer_certificate_with_store(&store);
+		// Test with chain
+		let user_with_chain = CertificateWithOptions {
+			certificate: user_cert.clone(),
+			options: CertificateOptions::default(),
+			chain: Some(vec![ca_cert.clone()]),
+		};
+
+		let issuer = user_with_chain.get_issuer_certificate();
 		assert!(issuer.is_some());
 		assert_eq!(issuer.unwrap().subject(), ca_cert.subject());
 
-		let root = user_cert.get_root_certificate_with_store(&store);
+		let root = user_with_chain.get_root_certificate();
 		assert!(root.is_some());
 		assert_eq!(root.unwrap().subject(), ca_cert.subject());
 
@@ -2591,42 +2379,34 @@ FmnXzDU=
 	fn test_certificate_with_options_bundle_functionality() {
 		macro_rules! test_bundle_roundtrip {
 			($bundle:expr, $expected_cert_count:expr) => {
-				println!("Testing bundle with {} expected certificates", $expected_cert_count);
 				let der_bundle = $bundle.to_der().unwrap();
-				println!("DER bundle size: {} bytes", der_bundle.len());
 				assert!(!der_bundle.is_empty());
 
 				let restored = CertificateWithOptions::try_from(der_bundle.as_slice()).unwrap();
 				let actual_count = restored.get_certificates().len();
-				println!("Restored bundle has {} certificates", actual_count);
 				assert_eq!(actual_count, $expected_cert_count);
 			};
 		}
 
 		let cert1 = get_ca_cert();
 		let cert2 = get_user_cert();
-		println!("Got CA cert and user cert");
 
-		println!("Creating bundle from 2 certificates...");
 		let bundle = CertificateWithOptions::try_from(vec![cert1.clone(), cert2.clone()]).unwrap();
-		println!("Bundle created successfully");
 		assert_eq!(bundle.certificate, cert1);
 		assert_eq!(bundle.chain_length(), 1);
 		assert_eq!(bundle.get_certificates().len(), 2);
 		test_bundle_roundtrip!(bundle, 2);
 
-		println!("Creating single certificate bundle...");
 		let single_cert_bundle = CertificateWithOptions::try_from(vec![cert1.clone()]).unwrap();
 		test_bundle_roundtrip!(single_cert_bundle, 1);
-		println!("Test completed successfully");
 	}
 
 	#[cfg(feature = "serde")]
 	#[test]
 	fn test_certificate_json_serialization() {
 		let cert = get_ca_cert();
-		let cert_json = cert.to_json(false).unwrap();
 
+		let cert_json = cert.to_json(false).unwrap();
 		assert!(!cert_json.serial.is_empty());
 		assert!(!cert_json.subject.is_empty());
 		assert!(!cert_json.issuer.is_empty());
@@ -2695,7 +2475,6 @@ FmnXzDU=
 		let hash3 = CertificateHash::new(vec![0x05, 0x06]);
 
 		let mut hash_set = CertificateHashSet::new(vec![hash1.clone(), hash2.clone()]);
-
 		assert!(hash_set.has(&hash1));
 		assert!(hash_set.has(&hash2));
 		assert!(!hash_set.has(&hash3));
@@ -2708,28 +2487,38 @@ FmnXzDU=
 	fn test_extension_creation_methods() {
 		// Test subject alternative name extension
 		let san_entries = vec!["example.com", "192.168.1.1", "user@example.com", "https://example.com"];
-		let san_ext = Extension::subject_alt_name(san_entries).unwrap();
+		let san_ext = ExtensionBuilder::for_subject_alt_name(san_entries)
+			.build()
+			.unwrap();
 		assert_eq!(san_ext.oid.to_string(), oids::SUBJECT_ALT_NAME);
 		assert!(!san_ext.critical);
 
 		// Test extended key usage extension
 		let eku_entries = vec![oids::SERVER_AUTH, oids::CLIENT_AUTH];
-		let eku_ext = Extension::extended_key_usage(eku_entries).unwrap();
+		let eku_ext = ExtensionBuilder::for_extended_key_usage(eku_entries)
+			.build()
+			.unwrap();
 		assert_eq!(eku_ext.oid.to_string(), oids::EXTENDED_KEY_USAGE);
 		assert!(!eku_ext.critical);
 
 		// Test basic constraints for CA certificate
-		let bc_ca_ext = Extension::basic_constraints(true, Some(5)).unwrap();
+		let bc_ca_ext = ExtensionBuilder::for_basic_constraints(true, Some(5))
+			.build()
+			.unwrap();
 		assert_eq!(bc_ca_ext.oid.to_string(), oids::BASIC_CONSTRAINTS);
 		assert!(bc_ca_ext.critical);
 
 		// Test basic constraints for end entity certificate
-		let bc_ee_ext = Extension::basic_constraints(false, None).unwrap();
+		let bc_ee_ext = ExtensionBuilder::for_basic_constraints(false, None)
+			.build()
+			.unwrap();
 		assert_eq!(bc_ee_ext.oid.to_string(), oids::BASIC_CONSTRAINTS);
 		assert!(bc_ee_ext.critical);
 
 		// Test key usage extension
-		let ku_ext = Extension::key_usage(0x0186).unwrap(); // digital signature + key cert sign + crl sign
+		let ku_ext = ExtensionBuilder::for_key_usage(0x0186)
+			.build()
+			.unwrap(); // digital signature + key cert sign + crl sign
 		assert_eq!(ku_ext.oid.to_string(), oids::KEY_USAGE);
 		assert!(ku_ext.critical);
 
@@ -2744,86 +2533,81 @@ FmnXzDU=
 		let cert = get_ca_cert();
 		let moment = get_cert_moment();
 
-		// Test validation methods - these may fail if cert is expired, so we test the API exists
-		let _current_validity = cert.is_currently_valid();
-		let _check_result = cert.check_currently_valid();
-		let _datetime_validity = cert.is_valid_at_datetime(moment);
-		let _validation_result = cert.validate_at_datetime(moment);
+		assert!(cert.is_valid_at_datetime(moment).unwrap());
+		assert!(cert.check_valid(moment));
+		assert!(cert.is_valid_at_datetime(moment).unwrap());
+		assert!(cert.validate_at_datetime(moment).is_ok());
+		assert!(cert.assert_valid(moment).is_ok());
+		assert!(cert.validate_at(moment).is_ok());
 
-		// Test that the validation methods return the expected types
-		assert!(matches!(cert.is_currently_valid(), Ok(_) | Err(_)));
-		assert!(matches!(cert.is_valid_at_datetime(moment), Ok(_) | Err(_)));
-		assert!(matches!(cert.validate_at_datetime(moment), Ok(_) | Err(_)));
+		let subject = cert.subject();
+		let issuer = cert.issuer();
+		let serial = cert.serial_number();
+		assert!(!subject.is_empty());
+		assert!(!issuer.is_empty());
+		assert!(serial > U256::ZERO);
 
-		// Test validation methods that might fail if certificate is expired
-		let _ = cert.assert_valid(moment);
-		let _ = cert.validate_now();
-		let _ = cert.validate_at(moment);
-
-		// Also test some certificate properties while we're here
-		let _subject = cert.subject();
-		let _issuer = cert.issuer();
-		let _serial = cert.serial_number();
-
-		// Test age and validity period calculations
 		let age = cert.age();
 		assert!(age > chrono::Duration::zero());
 
-		let remaining = cert.remaining_validity();
-		// Certificate might be expired, so we just test that we get a duration
-		let _ = remaining; // Don't assert it's positive if cert is expired
+		// Calculate remaining validity from the test moment
+		let remaining = cert.not_after() - moment;
+		assert!(remaining > chrono::Duration::zero());
+		// Certificate expires within 1 day (12 hours remaining)
+		assert!(cert.not_after() <= moment + chrono::Duration::days(1));
+		assert!(cert.age() >= chrono::Duration::hours(12));
 
-		let _ = cert.expires_within(chrono::Duration::days(3650)); // 10 years
-		let _ = cert.valid_for_at_least(chrono::Duration::days(1));
-
-		// Test subject/issuer name extraction
 		let subject_name = cert.subject_name();
 		let issuer_name = cert.issuer_name();
 		assert!(!subject_name.is_empty());
 		assert!(!issuer_name.is_empty());
 
-		// Test public key extraction
-		let _public_key = cert.subject_public_key();
+		let public_key = cert.subject_public_key();
+		assert!(!public_key
+			.subject_public_key
+			.raw_bytes()
+			.is_empty());
 	}
 
 	#[test]
 	fn test_certificate_trust_and_verification() {
 		let ca_cert = get_ca_cert();
 		let user_cert = get_user_cert();
-		let moment = get_cert_moment();
 
-		// Test trust without store - should be false
+		let moment = get_cert_moment();
 		assert!(!ca_cert.is_trusted(&CertificateStore::new(), Some(moment)));
 		assert!(!user_cert.is_trusted(&CertificateStore::new(), Some(moment)));
 
-		// Test trust with store
 		let mut store = CertificateStore::new();
 		store.add_root(ca_cert.clone());
-
 		assert!(ca_cert.is_trusted(&store, Some(moment)));
+		assert!(user_cert.is_trusted(&store, Some(moment)));
 
-		// Test certificate chain verification
 		let chain = user_cert.verify_chain(&store);
 		assert!(!chain.is_empty());
 
-		// Test issuer certificate retrieval
-		let issuer = user_cert.get_issuer_certificate_with_store(&store);
+		// Test with CertificateWithOptions for getting issuer and root
+		let user_with_chain = CertificateWithOptions {
+			certificate: user_cert.clone(),
+			options: CertificateOptions::default(),
+			chain: Some(vec![ca_cert.clone()]),
+		};
+
+		let issuer = user_with_chain.get_issuer_certificate();
 		assert!(issuer.is_some());
 
-		// Test root certificate retrieval
-		let root = user_cert.get_root_certificate_with_store(&store);
+		let root = user_with_chain.get_root_certificate();
 		assert!(root.is_some());
 
-		// Test self-signed detection
+		// Check validity methods
 		assert!(ca_cert.is_self_signed());
 		assert!(!user_cert.is_self_signed());
-
-		// Test certificate comparison
 		assert!(ca_cert.equals(&ca_cert));
 		assert!(!ca_cert.equals(&user_cert));
-
-		// Test issued-by verification
+		assert!(user_cert.check_issued(&ca_cert));
+		assert!(ca_cert.check_issued(&ca_cert));
 		assert!(!ca_cert.check_issued(&user_cert));
+		assert!(!user_cert.check_issued(&user_cert));
 	}
 
 	#[test]
@@ -2894,5 +2678,270 @@ FmnXzDU=
 		let ca_cert_der = ca_cert.to_der().unwrap();
 		let single_cert_bundle = CertificateWithOptions::try_from(ca_cert_der).unwrap();
 		assert_eq!(single_cert_bundle.get_certificates().len(), 1);
+	}
+
+	#[test]
+	fn test_extension_builder() {
+		struct ExtensionTestCase {
+			builder_fn: Box<dyn Fn() -> ExtensionBuilder>,
+			expected_oid: &'static str,
+			expected_critical: bool,
+			validation_fn: Box<dyn Fn(&Extension) -> bool>,
+		}
+
+		let test_cases = vec![
+			ExtensionTestCase {
+				builder_fn: Box::new(|| ExtensionBuilder::for_basic_constraints(true, Some(5))),
+				expected_oid: oids::BASIC_CONSTRAINTS,
+				expected_critical: true,
+				validation_fn: Box::new(|ext| {
+					// Check that the value contains the expected SEQUENCE structure for CA=true, pathLen=5
+					let value = ext.value.as_bytes();
+					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
+				}),
+			},
+			ExtensionTestCase {
+				builder_fn: Box::new(|| ExtensionBuilder::for_basic_constraints(false, None)),
+				expected_oid: oids::BASIC_CONSTRAINTS,
+				expected_critical: true,
+				validation_fn: Box::new(|ext| {
+					let value = ext.value.as_bytes();
+					value.len() >= 2 && value[0] == 0x30 && value[1] == 0x00 // Empty SEQUENCE
+				}),
+			},
+			ExtensionTestCase {
+				// digitalSignature + keyCertSign + cRLSign
+				builder_fn: Box::new(|| ExtensionBuilder::for_key_usage(0x0186)),
+				expected_oid: oids::KEY_USAGE,
+				expected_critical: true,
+				validation_fn: Box::new(|ext| {
+					let value = ext.value.as_bytes();
+					value.len() == 4 && value[0] == 0x03 && value[1] == 0x02 // BIT STRING with length 2
+				}),
+			},
+			ExtensionTestCase {
+				builder_fn: Box::new(|| {
+					ExtensionBuilder::for_extended_key_usage(vec![oids::SERVER_AUTH, oids::CLIENT_AUTH])
+				}),
+				expected_oid: oids::EXTENDED_KEY_USAGE,
+				expected_critical: false,
+				validation_fn: Box::new(|ext| {
+					let value = ext.value.as_bytes();
+					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
+				}),
+			},
+			ExtensionTestCase {
+				builder_fn: Box::new(|| {
+					ExtensionBuilder::for_subject_alt_name(vec![
+						"example.com",
+						"192.168.1.1",
+						"user@example.com",
+						"https://example.com",
+					])
+				}),
+				expected_oid: oids::SUBJECT_ALT_NAME,
+				expected_critical: false,
+				validation_fn: Box::new(|ext| {
+					let value = ext.value.as_bytes();
+					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
+				}),
+			},
+			ExtensionTestCase {
+				builder_fn: Box::new(|| ExtensionBuilder::for_subject_key_identifier(&[0x01, 0x02, 0x03, 0x04])),
+				expected_oid: oids::SUBJECT_KEY_IDENTIFIER,
+				expected_critical: false,
+				validation_fn: Box::new(|ext| {
+					let value = ext.value.as_bytes();
+					value == [0x01, 0x02, 0x03, 0x04]
+				}),
+			},
+			ExtensionTestCase {
+				builder_fn: Box::new(|| ExtensionBuilder::for_authority_key_identifier(&[0x05, 0x06, 0x07, 0x08])),
+				expected_oid: oids::AUTHORITY_KEY_IDENTIFIER,
+				expected_critical: false,
+				validation_fn: Box::new(|ext| {
+					let value = ext.value.as_bytes();
+					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
+				}),
+			},
+		];
+
+		// Test all extension types
+		for test_case in test_cases {
+			// Build the extension
+			let extension = (test_case.builder_fn)().build();
+			assert!(extension.is_ok());
+
+			let extension = extension.unwrap();
+			// Verify OID
+			assert_eq!(extension.oid.to_string(), test_case.expected_oid);
+			// Verify critical flag
+			assert_eq!(extension.critical, test_case.expected_critical);
+			// Run custom validation
+			assert!((test_case.validation_fn)(&extension));
+		}
+
+		// Test fluent API customization
+		let custom_basic_constraints = ExtensionBuilder::for_basic_constraints(true, None)
+			.as_non_critical()
+			.build()
+			.unwrap();
+
+		assert_eq!(custom_basic_constraints.oid.to_string(), oids::BASIC_CONSTRAINTS);
+		assert!(!custom_basic_constraints.critical); // Should be non-critical due to override
+
+		// Test custom extension with fluent API
+		let custom_extension = ExtensionBuilder::new()
+			.with_oid("1.2.3.4.5.6")
+			.with_value(&[0xDE, 0xAD, 0xBE, 0xEF])
+			.as_critical()
+			.build()
+			.unwrap();
+
+		assert_eq!(custom_extension.oid.to_string(), "1.2.3.4.5.6");
+		assert!(custom_extension.critical);
+		assert_eq!(custom_extension.value.as_bytes(), &[0xDE, 0xAD, 0xBE, 0xEF]);
+
+		// Test error cases
+		let invalid_oid_result = ExtensionBuilder::new()
+			.with_oid("invalid.oid")
+			.with_value(&[0x01])
+			.build();
+		assert!(invalid_oid_result.is_err());
+
+		let missing_oid_result = ExtensionBuilder::new()
+			.with_value(&[0x01])
+			.build();
+		assert!(missing_oid_result.is_err());
+
+		let missing_value_result = ExtensionBuilder::new()
+			.with_oid("1.2.3.4")
+			.build();
+		assert!(missing_value_result.is_err());
+	}
+
+	#[test]
+	fn test_verify_signature() {
+		let ca_cert = get_ca_cert();
+		let user_cert = get_user_cert();
+
+		assert!(ca_cert
+			.verify_signature(&ca_cert.tbs_certificate.subject_public_key_info)
+			.unwrap());
+		assert!(user_cert
+			.verify_signature(&ca_cert.tbs_certificate.subject_public_key_info)
+			.unwrap());
+		assert!(!user_cert
+			.verify_signature(&user_cert.tbs_certificate.subject_public_key_info)
+			.unwrap());
+		assert!(!ca_cert
+			.verify_signature(&user_cert.tbs_certificate.subject_public_key_info)
+			.unwrap());
+
+		assert!(ca_cert.check_issued(&ca_cert));
+		assert!(user_cert.check_issued(&ca_cert));
+		assert!(!user_cert.check_issued(&user_cert));
+		assert!(!ca_cert.check_issued(&user_cert));
+
+		let ca_signature_bytes = &ca_cert.signature.raw_bytes();
+		let user_signature_bytes = &user_cert.signature.raw_bytes();
+		assert!(!ca_signature_bytes.is_empty());
+		assert!(!user_signature_bytes.is_empty());
+
+		let ca_tbs_der = ca_cert.tbs_certificate.to_der().unwrap();
+		let user_tbs_der = user_cert.tbs_certificate.to_der().unwrap();
+		assert!(!ca_tbs_der.is_empty());
+		assert!(!user_tbs_der.is_empty());
+		assert_ne!(ca_tbs_der, user_tbs_der);
+	}
+
+	#[test]
+	fn test_verify_signature_edge_cases() {
+		let ca_cert = get_ca_cert();
+		let user_cert = get_user_cert();
+
+		let verification_cases = [
+			(&ca_cert, &ca_cert, true),
+			(&user_cert, &ca_cert, true),
+			(&user_cert, &user_cert, false),
+			(&ca_cert, &user_cert, false),
+		];
+		for (cert, issuer, expected) in verification_cases {
+			let result = cert.verify_signature(&issuer.tbs_certificate.subject_public_key_info);
+			assert_eq!(result.unwrap_or(false), expected);
+		}
+
+		assert!(user_cert.check_issued(&ca_cert));
+		assert!(!user_cert.check_issued(&user_cert));
+		assert!(ca_cert.check_issued(&ca_cert));
+		assert!(!ca_cert.check_issued(&user_cert));
+	}
+
+	#[test]
+	fn test_verify_signature_algorithm_detection() {
+		let ca_cert = get_ca_cert();
+		let user_cert = get_user_cert();
+
+		// Extract signature algorithms and test they're detected correctly
+		let ca_sig_alg = &ca_cert.signature_algorithm;
+		let user_sig_alg = &user_cert.signature_algorithm;
+
+		// Both certificates from TypeScript tests use ECDSA with SHA3-256
+		assert_eq!(ca_sig_alg.algorithm.to_string(), oids::ECDSA_WITH_SHA3_256);
+		assert_eq!(user_sig_alg.algorithm.to_string(), oids::ECDSA_WITH_SHA3_256);
+
+		let verification_result = user_cert.verify_signature(&ca_cert.tbs_certificate.subject_public_key_info);
+		assert!(verification_result.unwrap());
+
+		let ca_public_key = &ca_cert.tbs_certificate.subject_public_key_info;
+		let user_public_key = &user_cert.tbs_certificate.subject_public_key_info;
+
+		// Verify public key algorithms are as expected
+		assert_eq!(ca_public_key.algorithm.algorithm.to_string(), oids::EC_PUBLIC_KEY);
+		assert_eq!(user_public_key.algorithm.algorithm.to_string(), oids::EC_PUBLIC_KEY);
+
+		// Test public key bit strings are not empty
+		assert!(!ca_public_key
+			.subject_public_key
+			.raw_bytes()
+			.is_empty());
+		assert!(!user_public_key
+			.subject_public_key
+			.raw_bytes()
+			.is_empty());
+	}
+
+	#[test]
+	fn test_verify_signature_with_store() {
+		let ca_cert = get_ca_cert();
+		let user_cert = get_user_cert();
+		let moment = get_cert_moment();
+
+		let mut store = CertificateStore::new();
+		store.add_root(ca_cert.clone());
+
+		let chain_verification = user_cert.verify_chain(&store);
+		assert!(!chain_verification.is_empty());
+
+		let ca_trusted = ca_cert.is_trusted(&store, Some(moment));
+		assert!(ca_trusted);
+
+		let user_trusted = user_cert.is_trusted(&store, Some(moment));
+		assert!(user_trusted);
+
+		// Test with CertificateWithOptions for getting issuer and root
+		let user_with_chain = CertificateWithOptions {
+			certificate: user_cert.clone(),
+			options: CertificateOptions::default(),
+			chain: Some(vec![ca_cert.clone()]),
+		};
+
+		let user_issuer = user_with_chain.get_issuer_certificate();
+		assert!(user_issuer.is_some());
+		assert_eq!(user_issuer.unwrap().hash().unwrap(), ca_cert.hash().unwrap());
+
+		let user_root = user_with_chain.get_root_certificate();
+		assert!(user_root.is_some());
+		assert_eq!(user_root.unwrap().hash().unwrap(), ca_cert.hash().unwrap());
 	}
 }

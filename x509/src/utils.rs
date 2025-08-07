@@ -20,7 +20,7 @@ use crate::NameValuePair;
 ///
 /// ```rust
 /// use x509::utils::create_dn;
-/// use x509::oids;
+/// use asn1::oids;
 ///
 /// let pairs = &[
 ///     (oids::CN, "example.com"),
@@ -56,7 +56,7 @@ pub fn create_dn(pairs: &[(&str, &str)]) -> Result<DistinguishedName, Certificat
 ///
 /// ```rust
 /// use x509::utils::generate_key_identifier;
-/// use x509::asn1::BitString;
+/// use asn1::BitString;
 ///
 /// let public_key_bytes = &[0x04, 0x01, 0x02, 0x03]; // Example public key
 /// let bit_string = BitString::new(0, public_key_bytes).unwrap();
@@ -82,7 +82,7 @@ pub fn generate_key_identifier(public_key: &BitString) -> Result<Vec<u8>, Certif
 /// # #[cfg(feature = "serde")]
 /// # {
 /// use x509::utils::{create_dn, dn_to_name_value_pairs};
-/// use x509::oids;
+/// use asn1::oids;
 ///
 /// let pairs = &[(oids::CN, "example.com"), (oids::O, "Example Org")];
 /// let dn = create_dn(pairs).unwrap();
@@ -258,7 +258,7 @@ pub fn parse_authority_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 /// ```rust
 /// use x509::utils::create_dn;
 /// use x509::utils::dn_to_string;
-/// use x509::oids;
+/// use asn1::oids;
 ///
 /// let pairs = &[(oids::CN, "example.com"), (oids::O, "Example Org")];
 /// let dn = create_dn(pairs).unwrap();
@@ -340,9 +340,10 @@ pub fn parse_der_length(data: &[u8]) -> Option<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
+	use asn1::oids;
+	use asn1::BitString;
+
 	use super::*;
-	use crate::asn1::BitString;
-	use crate::oids;
 
 	#[cfg(feature = "serde")]
 	use crate::DistinguishedName;

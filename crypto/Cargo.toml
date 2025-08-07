@@ -122,10 +122,6 @@ version = "0.22"
 [dependencies.hex]
 workspace = true
 
-[dependencies.der]
-workspace = true
-optional = true
-
 [dependencies.chrono]
 workspace = true
 optional = true
@@ -134,8 +130,12 @@ optional = true
 [dependencies.keetanet-error]
 path = "../keetanet-error"
 
+[dependencies.asn1]
+path = "../asn1"
+optional = true
+
 [features]
-default = ["signature", "encryption"]
+default = ["signature", "encryption", "der"]
 signature = ["dep:signature"]
 encryption = [
 	"dep:aead",
@@ -146,6 +146,7 @@ encryption = [
 	"dep:rand",
 	"dep:subtle",
 ]
+der = ["dep:asn1"]
 
 [dev-dependencies]
 hex-literal.workspace = true

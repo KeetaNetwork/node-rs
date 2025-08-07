@@ -60,7 +60,9 @@ do-lint-ci:
 test-feat:
 	cargo test -p crypto --no-default-features --features signature
 	cargo test -p crypto --no-default-features --features encryption
+	cargo test -p crypto --no-default-features --features der
 	cargo test -p x509 --no-default-features --features serde
+	cargo test -p asn1 --no-default-features --features serde
 	cargo test -p crypto -p x509 --all-features
 	cargo test -p crypto -p x509 --no-default-features
 

@@ -41,7 +41,6 @@ pub struct SigningOptions {
 	pub raw: bool,
 
 	/// For certificate processing
-	/// Currently used primarily for SECP256R1 DER encoding
 	pub for_cert: bool,
 }
 

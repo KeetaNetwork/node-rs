@@ -58,6 +58,7 @@ words:
   - Sha256
   - base32
   - hexdigit
+  - prehash
   - Accountable
   - KeyECDSASECP256K1
   - KeyECDSASECP256R1

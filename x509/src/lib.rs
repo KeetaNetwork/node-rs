@@ -10,7 +10,6 @@ use der::Sequence;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-pub mod asn1;
 pub mod certificates;
 pub mod error;
 pub mod oids;
@@ -79,10 +78,10 @@ pub struct NameValuePair {
 mod tests {
 	use core::cmp::Ordering;
 
-	use der::{Decode, Encode, ValueOrd};
+	use asn1::Ia5String;
+	use asn1::{Decode, Encode, ValueOrd};
 
 	use super::*;
-	use crate::asn1::Ia5String;
 
 	#[test]
 	fn test_attribute_value_variants() {

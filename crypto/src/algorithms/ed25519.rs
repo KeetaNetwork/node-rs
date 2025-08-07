@@ -67,30 +67,20 @@ pub struct Ed25519PrivateKey {
 	inner: SigningKey,
 }
 
-impl core::fmt::Debug for Ed25519PrivateKey {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		f.debug_struct("Ed25519PrivateKey")
-			.field("inner", &"[REDACTED]")
-			.finish()
-	}
-}
-
-/// Ed25519 public key wrapper.
-///
-/// This struct wraps the ed25519-dalek VerifyingKey and provides the PublicKey
-/// trait implementation. Ed25519 public keys are 32 bytes long and represent
-/// points on the Ed25519 curve.
-#[derive(Clone, Debug)]
-pub struct Ed25519PublicKey {
-	inner: VerifyingKey,
-}
-
 impl PrivateKey for Ed25519PrivateKey {
 	type PublicKey = Ed25519PublicKey;
 	type Signature = Signature;
 
 	fn as_public_key(&self) -> Self::PublicKey {
 		Ed25519PublicKey { inner: self.inner.verifying_key() }
+	}
+}
+
+impl core::fmt::Debug for Ed25519PrivateKey {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		f.debug_struct("Ed25519PrivateKey")
+			.field("inner", &"[REDACTED]")
+			.finish()
 	}
 }
 
@@ -116,6 +106,27 @@ impl TryFrom<&[u8]> for Ed25519PrivateKey {
 		let signing_key = SigningKey::from_bytes(&bytes_array);
 
 		Ok(Ed25519PrivateKey { inner: signing_key })
+	}
+}
+
+#[cfg(feature = "encryption")]
+impl AsymmetricEncryption for Ed25519PrivateKey {
+	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		// For encryption, we need the corresponding public key
+		let public_key = self.as_public_key();
+
+		public_key.encrypt(plaintext)
+	}
+
+	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		// Convert Ed25519 private key to X25519 for decryption
+		let x25519_private = self.to_x25519()?;
+
+		EciesX25519::decrypt(&x25519_private, cipher_text)
+	}
+
+	fn algorithm_info(&self) -> &'static str {
+		"ECIES-Ed25519-via-X25519-AES128CTR"
 	}
 }
 
@@ -162,6 +173,23 @@ impl Ed25519PrivateKey {
 	}
 }
 
+/// Ed25519 public key wrapper.
+///
+/// This struct wraps the ed25519-dalek VerifyingKey and provides the PublicKey
+/// trait implementation. Ed25519 public keys are 32 bytes long and represent
+/// points on the Ed25519 curve.
+#[derive(Clone, Debug)]
+pub struct Ed25519PublicKey {
+	inner: VerifyingKey,
+}
+
+impl Ed25519PublicKey {
+	/// Convert this Ed25519 public key to an X25519 public key for ECDH
+	pub fn to_x25519(&self) -> Result<X25519PublicKey, CryptoError> {
+		ed25519_to_x25519_public(self)
+	}
+}
+
 impl PublicKey for Ed25519PublicKey {
 	// TODO Verify
 	fn to_uncompressed_bytes(&self) -> Vec<u8> {
@@ -191,6 +219,14 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
 
 		Ok(Ed25519PublicKey { inner: verifying_key })
+	}
+}
+
+#[cfg(feature = "der")]
+impl From<Ed25519PublicKey> for asn1::ObjectIdentifier {
+	fn from(_public_key: Ed25519PublicKey) -> Self {
+		// This should never fail as we are using a constant known OID
+		asn1::ObjectIdentifier::new(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
 	}
 }
 
@@ -231,27 +267,6 @@ impl CryptoVerifierWithOptions<Signature> for Ed25519PublicKey {
 }
 
 #[cfg(feature = "encryption")]
-impl AsymmetricEncryption for Ed25519PrivateKey {
-	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// For encryption, we need the corresponding public key
-		let public_key = self.as_public_key();
-
-		public_key.encrypt(plaintext)
-	}
-
-	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		// Convert Ed25519 private key to X25519 for decryption
-		let x25519_private = self.to_x25519()?;
-
-		EciesX25519::decrypt(&x25519_private, cipher_text)
-	}
-
-	fn algorithm_info(&self) -> &'static str {
-		"ECIES-Ed25519-via-X25519-AES128CTR"
-	}
-}
-
-#[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Ed25519PublicKey {
 	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
 		// Convert Ed25519 public key to X25519 for encryption
@@ -267,13 +282,6 @@ impl AsymmetricEncryption for Ed25519PublicKey {
 
 	fn algorithm_info(&self) -> &'static str {
 		"ECIES-Ed25519-via-X25519-AES128CTR"
-	}
-}
-
-impl Ed25519PublicKey {
-	/// Convert this Ed25519 public key to an X25519 public key for ECDH
-	pub fn to_x25519(&self) -> Result<X25519PublicKey, CryptoError> {
-		ed25519_to_x25519_public(self)
 	}
 }
 
@@ -1242,5 +1250,17 @@ mod tests {
 		let recovered_public = Ed25519PublicKey::try_from(public_vec_owned.as_slice()).unwrap();
 		let recovered_public_bytes: Vec<u8> = (&recovered_public).into();
 		assert_eq!(public_vec_owned, recovered_public_bytes);
+	}
+
+	#[cfg(feature = "der")]
+	#[test]
+	fn test_oid_conversion() {
+		let seed = b"test seed for ed25519 oid conversion!";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+
+		// Test conversion to ObjectIdentifier
+		let oid: asn1::ObjectIdentifier = public_key.into();
+		assert_eq!(oid.to_string(), asn1::oids::ED25519);
 	}
 }
