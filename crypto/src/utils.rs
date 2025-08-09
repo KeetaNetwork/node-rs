@@ -161,36 +161,38 @@ pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]
 	if pos >= der_bytes.len() || der_bytes[pos] != 0x02 {
 		return Err(CryptoError::InvalidInput);
 	}
-	pos += 1;
 
+	pos += 1;
 	if pos >= der_bytes.len() {
 		return Err(CryptoError::InvalidInput);
 	}
-	let r_len = der_bytes[pos] as usize;
-	pos += 1;
 
+	let r_len = der_bytes[pos] as usize;
+
+	pos += 1;
 	if pos + r_len > der_bytes.len() {
 		return Err(CryptoError::InvalidInput);
 	}
-	let r_bytes = &der_bytes[pos..pos + r_len];
-	pos += r_len;
 
+	let r_bytes = &der_bytes[pos..pos + r_len];
+
+	pos += r_len;
 	// Parse s INTEGER
 	if pos >= der_bytes.len() || der_bytes[pos] != 0x02 {
 		return Err(CryptoError::InvalidInput);
 	}
-	pos += 1;
 
+	pos += 1;
 	if pos >= der_bytes.len() {
 		return Err(CryptoError::InvalidInput);
 	}
-	let s_len = der_bytes[pos] as usize;
-	pos += 1;
 
+	let s_len = der_bytes[pos] as usize;
+
+	pos += 1;
 	if pos + s_len > der_bytes.len() {
 		return Err(CryptoError::InvalidInput);
 	}
-	let s_bytes = &der_bytes[pos..pos + s_len];
 
 	// Convert to exactly 32-byte arrays like TypeScript does
 	let mut r_array = [0u8; 32];
@@ -207,6 +209,7 @@ pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]
 	}
 
 	// Handle s value: truncate from left if > 32 bytes, pad on left if < 32 bytes
+	let s_bytes = &der_bytes[pos..pos + s_len];
 	if s_bytes.len() > 32 {
 		// TypeScript: sigSECValue.slice(-32) - take last 32 bytes
 		s_array.copy_from_slice(&s_bytes[s_bytes.len() - 32..]);
@@ -257,10 +260,9 @@ mod tests {
 		// cspell:disable-next-line
 		let normalized_passphrase = "paniccategoryofficeglowskicamerafileslightroomescapeindicatefiction";
 
+		// Both should produce the same result
 		let seed1 = seed_from_passphrase(passphrase_with_spaces).unwrap();
 		let seed2 = seed_from_passphrase(normalized_passphrase).unwrap();
-
-		// Both should produce the same result
 		assert_eq!(seed1.expose_secret(), seed2.expose_secret());
 	}
 
@@ -339,11 +341,48 @@ mod tests {
 		assert_eq!(r[31], 0x20);
 		assert_eq!(s[0], 0x21);
 		assert_eq!(s[31], 0x40);
+	}
 
-		// Test invalid cases
-		assert!(parse_der_ecdsa_signature(&[]).is_err()); // Empty input
-		assert!(parse_der_ecdsa_signature(&[0x31, 0x44]).is_err()); // Wrong tag
-		assert!(parse_der_ecdsa_signature(&[0x30, 0x44]).is_err()); // Too short
-		assert!(parse_der_ecdsa_signature(&[0x30, 0x02, 0x05]).is_err()); // Invalid structure
+	#[test]
+	#[cfg(feature = "der")]
+	fn test_parse_der_ecdsa_signature_error_cases() {
+		let test_cases = [
+			// Basic invalid cases
+			(&[] as &[u8], "Empty input"),
+			(&[0x31, 0x44], "Wrong tag (not SEQUENCE)"),
+			(&[0x30], "Missing length"),
+			(&[0x30, 0x44], "Length but no data"),
+			(&[0x30, 0xFF, 0x02], "Invalid sequence length"),
+			// Precise positioning tests for r INTEGER
+			(&[0x30, 0x02], "pos=2: Buffer ends, no r INTEGER tag"),
+			(&[0x30, 0x03, 0x01], "pos=2: Wrong r tag byte"),
+			(&[0x30, 0x03, 0x02], "pos=3: No r length byte"),
+			(&[0x30, 0x04, 0x02, 0x05], "pos=4: r length=5 but no data"),
+			// Precise positioning tests for s INTEGER
+			(&[0x30, 0x05, 0x02, 0x01, 0x42], "pos=5: No s INTEGER tag"),
+			(&[0x30, 0x06, 0x02, 0x01, 0x42, 0x01], "pos=5: Wrong s tag byte"),
+			(&[0x30, 0x06, 0x02, 0x01, 0x42, 0x02], "pos=6: No s length byte"),
+			(&[0x30, 0x07, 0x02, 0x01, 0x42, 0x02, 0x05], "pos=7: s length=5 but no data"),
+			// Additional edge cases
+			(&[0x30, 0x04, 0x01, 0x20], "Wrong r tag (not INTEGER)"),
+			(&[0x30, 0x04, 0x02, 0x20], "r length but no data"),
+			(&[0x30, 0x04, 0x02, 0xFF, 0x01], "Invalid r length"),
+			(&[0x30, 0x44, 0x02, 0x20, 0x01], "Truncated signature"),
+		];
+
+		for (input, description) in test_cases {
+			assert!(parse_der_ecdsa_signature(input).is_err(), "Failed case: {}", description);
+		}
+
+		// Complex invalid s INTEGER cases
+		let complex_cases = [
+			([0x30, 0x24, 0x02, 0x01, 0x42, 0x01, 0x01, 0x43].as_slice(), "Invalid s tag (not INTEGER)"),
+			([0x30, 0x04, 0x02, 0x01, 0x42, 0x02].as_slice(), "Missing s length"),
+			([0x30, 0x06, 0x02, 0x01, 0x42, 0x02, 0xFF].as_slice(), "Invalid s length"),
+		];
+
+		for (input, description) in complex_cases {
+			assert!(parse_der_ecdsa_signature(input).is_err(), "Failed case: {}", description);
+		}
 	}
 }
