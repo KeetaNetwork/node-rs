@@ -245,9 +245,7 @@ mod tests {
 
 			// But different salt/info should produce different results
 			let array_diff_salt: [u8; 32] = algo.derive_array(ikm, None, info).unwrap();
-			let array_diff_info: [u8; 32] = algo
-				.derive_array(ikm, salt, b"different")
-				.unwrap();
+			let array_diff_info: [u8; 32] = algo.derive_array(ikm, salt, b"different").unwrap();
 			assert_ne!(array, array_diff_salt);
 			assert_ne!(array, array_diff_info);
 		}

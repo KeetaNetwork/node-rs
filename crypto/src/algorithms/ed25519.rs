@@ -704,17 +704,13 @@ mod tests {
 
 		// Test that verification fails with wrong message
 		let wrong_message = b"Wrong message";
-		assert!(public_key
-			.verify(wrong_message, &signature)
-			.is_err());
+		assert!(public_key.verify(wrong_message, &signature).is_err());
 
 		// Test that verification fails with wrong key
 		let wrong_seed = b"wrong seed for ed25519 signatures!!";
 		let wrong_private_key = Ed25519Derivation::derive_from_seed(wrong_seed).unwrap();
 		let wrong_public_key = wrong_private_key.as_public_key();
-		assert!(wrong_public_key
-			.verify(message, &signature)
-			.is_err());
+		assert!(wrong_public_key.verify(message, &signature).is_err());
 	}
 
 	#[cfg(feature = "signature")]
@@ -898,9 +894,7 @@ mod tests {
 
 		// Test with raw options (no pre-hash)
 		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key
-			.sign_with_options(message, raw_options)
-			.unwrap();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
 
 		// Test with cert options (pre-hash, but for_cert flag set)
 		let cert_options = SigningOptions::for_cert();
@@ -936,9 +930,7 @@ mod tests {
 			.is_ok());
 
 		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key
-			.sign_with_options(message, raw_options)
-			.unwrap();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
 		assert!(public_key
 			.verify_with_options(message, &signature_raw, raw_options)
 			.is_ok());
@@ -986,9 +978,7 @@ mod tests {
 		assert_eq!(public_key_string.len(), 64); // 32 bytes * 2 hex chars per byte
 		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
 		// Verify the string is valid hex
-		assert!(public_key_string
-			.chars()
-			.all(|c| c.is_ascii_hexdigit()));
+		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
 
 		// Test that we can decode the hex string back to the original bytes
 		let decoded_bytes = hex::decode(&public_key_string).unwrap();

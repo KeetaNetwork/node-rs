@@ -1,6 +1,7 @@
 use core::fmt::Debug;
 
 use secrecy::SecretBox;
+use strum_macros::{Display, EnumIter, EnumString};
 
 use crate::error::CryptoError;
 
@@ -151,13 +152,16 @@ pub trait KeyDerivation {
 }
 
 /// Supported cryptographic algorithms
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, EnumIter, Display)]
 pub enum Algorithm {
 	/// ECDSA over secp256k1 curve
+	#[strum(serialize = "secp256k1")]
 	Secp256k1,
 	/// Ed25519 digital signature algorithm
+	#[strum(serialize = "Ed25519")]
 	Ed25519,
 	/// ECDSA over secp256r1 curve (NIST P-256)
+	#[strum(serialize = "secp256r1")]
 	Secp256r1,
 }
 
@@ -237,8 +241,7 @@ mod tests {
 		}
 
 		fn create_any_public_key(&self, base_seed: &[u8]) -> AnyPublicKey {
-			self.create_any_private_key(base_seed)
-				.derive_public_key()
+			self.create_any_private_key(base_seed).derive_public_key()
 		}
 	}
 

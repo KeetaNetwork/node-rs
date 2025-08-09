@@ -49,10 +49,7 @@ pub struct AttributeTypeAndValue {
 impl der::ValueOrd for AttributeTypeAndValue {
 	fn value_cmp(&self, other: &Self) -> der::Result<core::cmp::Ordering> {
 		// First compare by attribute type (OID)
-		match self
-			.attribute_type
-			.value_cmp(&other.attribute_type)?
-		{
+		match self.attribute_type.value_cmp(&other.attribute_type)? {
 			core::cmp::Ordering::Equal => {
 				// If OIDs are equal, compare by the raw bytes of the Any value
 				// The Any value already contains the properly encoded DER bytes

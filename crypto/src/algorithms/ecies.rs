@@ -879,24 +879,14 @@ mod tests {
 		// Set a valid ephemeral public key (uncompressed secp256k1 point)
 		malformed_ciphertext[0] = 0x04; // Uncompressed point marker
 								  // Fill with some valid-looking point data
-		for (i, item) in malformed_ciphertext
-			.iter_mut()
-			.enumerate()
-			.take(65)
-			.skip(1)
-		{
+		for (i, item) in malformed_ciphertext.iter_mut().enumerate().take(65).skip(1) {
 			*item = (i % 256) as u8;
 		}
 
 		// Put some data in the cipher_with_iv section but make it too short
 		malformed_ciphertext = vec![0u8; 112]; // Make it exactly at the boundary
 		malformed_ciphertext[0] = 0x04;
-		for (i, item) in malformed_ciphertext
-			.iter_mut()
-			.enumerate()
-			.take(65)
-			.skip(1)
-		{
+		for (i, item) in malformed_ciphertext.iter_mut().enumerate().take(65).skip(1) {
 			*item = (i % 256) as u8;
 		}
 
@@ -938,9 +928,7 @@ mod tests {
 
 		for test_case in &test_cases {
 			let seed = hex::decode(test_case.seed_hex).unwrap();
-			let encrypted_data = BASE64
-				.decode(test_case.encrypted_data_base64)
-				.unwrap();
+			let encrypted_data = BASE64.decode(test_case.encrypted_data_base64).unwrap();
 
 			match test_case.algorithm {
 				Algorithm::Secp256k1 => {

@@ -303,10 +303,7 @@ mod tests {
 			assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
 
 			// Test zero-length truncation
-			let zero_length = test_case
-				.algorithm
-				.hash_truncated(b"test data", 0)
-				.unwrap();
+			let zero_length = test_case.algorithm.hash_truncated(b"test data", 0).unwrap();
 			assert!(zero_length.is_empty());
 		}
 	}
@@ -360,9 +357,7 @@ mod tests {
 			assert_eq!(hash_default_result, hash_array_none);
 
 			// Should match explicit SHA3-256
-			let explicit_sha3 = HashAlgorithm::Sha3_256
-				.hash_array::<32>(input)
-				.unwrap();
+			let explicit_sha3 = HashAlgorithm::Sha3_256.hash_array::<32>(input).unwrap();
 			assert_eq!(hash_default_result, explicit_sha3);
 		}
 	}

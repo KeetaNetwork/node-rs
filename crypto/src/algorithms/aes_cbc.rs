@@ -183,25 +183,19 @@ mod tests {
 
 		// Test with data that's exactly block-aligned (16 bytes)
 		let block_aligned = [0x55u8; 16];
-		let ciphertext = aes_cbc
-			.encrypt(&key, None, &block_aligned)
-			.unwrap();
+		let ciphertext = aes_cbc.encrypt(&key, None, &block_aligned).unwrap();
 		let decrypted = aes_cbc.decrypt(&key, &ciphertext).unwrap();
 		assert_eq!(decrypted, block_aligned);
 
 		// Test with data that needs padding (15 bytes)
 		let needs_padding = [0x66u8; 15];
-		let ciphertext = aes_cbc
-			.encrypt(&key, None, &needs_padding)
-			.unwrap();
+		let ciphertext = aes_cbc.encrypt(&key, None, &needs_padding).unwrap();
 		let decrypted = aes_cbc.decrypt(&key, &ciphertext).unwrap();
 		assert_eq!(decrypted, needs_padding);
 
 		// Test with data that needs lots of padding (1 byte)
 		let minimal_data = [0x77u8; 1];
-		let ciphertext = aes_cbc
-			.encrypt(&key, None, &minimal_data)
-			.unwrap();
+		let ciphertext = aes_cbc.encrypt(&key, None, &minimal_data).unwrap();
 		let decrypted = aes_cbc.decrypt(&key, &ciphertext).unwrap();
 		assert_eq!(decrypted, minimal_data);
 	}

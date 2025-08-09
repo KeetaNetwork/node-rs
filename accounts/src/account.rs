@@ -2,8 +2,7 @@ use core::str::FromStr;
 
 use crypto::prelude::*;
 use secrecy::{ExposeSecret, SecretBox};
-use strum_macros::EnumIter;
-use strum_macros::{Display, EnumString};
+use strum_macros::{Display, EnumIter, EnumString};
 use zeroize::Zeroize;
 
 use crate::error::AccountError;
@@ -1103,11 +1102,7 @@ where
 				macro_rules! get_identifier_bytes {
 					($key_type:ident, $key_struct:ident) => {{
 						let concrete_self = unsafe { &*(self as *const Self as *const Account<$key_struct>) };
-						Ok(concrete_self
-							.keypair
-							.identifier
-							.as_bytes()
-							.to_vec())
+						Ok(concrete_self.keypair.identifier.as_bytes().to_vec())
 					}};
 				}
 
@@ -1777,19 +1772,12 @@ mod tests {
 		macro_rules! test_deterministic_crypto {
 			($key_type:ty, $expected_prefix:expr) => {
 				for test_case in TEST_CASES {
-					let passphrase: Vec<String> = test_case
-						.passphrase
-						.iter()
-						.map(|s| s.to_string())
-						.collect();
+					let passphrase: Vec<String> = test_case.passphrase.iter().map(|s| s.to_string()).collect();
 
 					// Test passphrase -> seed conversion
 					let seed1 = Account::<$key_type>::compute_seed_from_passphrase(passphrase.clone()).unwrap();
 					let account1 = create_test_account::<$key_type>(Some(passphrase.clone().into()));
-					assert!(account1
-						.keypair
-						.public_key
-						.starts_with($expected_prefix));
+					assert!(account1.keypair.public_key.starts_with($expected_prefix));
 
 					// Test hex seed with different construction methods
 					let account2 = create_test_account::<$key_type>(Some(test_case.hex_seed.to_string().into()));
@@ -1907,11 +1895,7 @@ mod tests {
 
 	#[test]
 	fn test_compatibility_private_accounts() {
-		for (index, test_case) in PRIVATE_ACCOUNT_TEST_DATA
-			.indexes
-			.iter()
-			.enumerate()
-		{
+		for (index, test_case) in PRIVATE_ACCOUNT_TEST_DATA.indexes.iter().enumerate() {
 			let seed_bytes = hex::decode(PRIVATE_ACCOUNT_TEST_DATA.seed).unwrap();
 			let seed_data: [u8; 32] = seed_bytes.try_into().unwrap();
 
@@ -2129,10 +2113,7 @@ mod tests {
 				let token_account = Account::<KeyTOKEN>::try_from(result).unwrap();
 				assert_eq!(token_account.keypair_type(), KeyPairType::TOKEN);
 				assert!(!token_account.keypair.identifier.is_empty());
-				assert!(token_account
-					.keypair
-					.public_key
-					.starts_with("token_"));
+				assert!(token_account.keypair.public_key.starts_with("token_"));
 
 				crypto_account
 			}};
@@ -2189,10 +2170,7 @@ mod tests {
 		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
 		assert_eq!(network_account.keypair_type(), KeyPairType::NETWORK);
 		assert!(!network_account.keypair.identifier.is_empty());
-		assert!(network_account
-			.keypair
-			.public_key
-			.starts_with("network_"));
+		assert!(network_account.keypair.public_key.starts_with("network_"));
 
 		// Test network -> token generation (should succeed)
 		let token_from_network = network_account.generate_identifier(KeyPairType::TOKEN, None, 0);
@@ -2285,9 +2263,7 @@ mod tests {
 
 		// Test identifier public key strings
 		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
-		assert!(network_account
-			.to_string()
-			.starts_with("network_"));
+		assert!(network_account.to_string().starts_with("network_"));
 
 		// Test token from conversion
 		let token_account = create_test_account_from_identifier::<KeyTOKEN>("test-token");
@@ -2414,9 +2390,7 @@ mod tests {
 		// Macro to test parsing for any crypto key type
 		macro_rules! test_parse_pubkey {
 			($pubkey_string:expr, $key_type:ty) => {
-				let account = $pubkey_string
-					.parse::<Account<$key_type>>()
-					.unwrap();
+				let account = $pubkey_string.parse::<Account<$key_type>>().unwrap();
 				assert!(!account.has_private_key());
 			};
 		}
@@ -3041,10 +3015,7 @@ mod tests {
 
 					// Generate a valid signature and validate it
 					let signature = account.keypair.sign(test_data, None).unwrap();
-					let is_valid = account
-						.keypair
-						.verify(test_data, &signature, None)
-						.unwrap();
+					let is_valid = account.keypair.verify(test_data, &signature, None).unwrap();
 					assert!(is_valid);
 
 					// Modify signature and verify it fails
@@ -3160,10 +3131,7 @@ mod tests {
 
 				// Generate signature and verify it
 				let signature = account.keypair.sign(test_data, None).unwrap();
-				let verification_result = account
-					.keypair
-					.verify(test_data, &signature, None)
-					.unwrap();
+				let verification_result = account.keypair.verify(test_data, &signature, None).unwrap();
 				assert!(verification_result);
 			};
 		}
@@ -3194,9 +3162,7 @@ mod tests {
 
 				// Test with invalid signature length - should error
 				let invalid_sig = vec![0u8; 5];
-				let error_result = account
-					.keypair
-					.verify(test_data, &invalid_sig, None);
+				let error_result = account.keypair.verify(test_data, &invalid_sig, None);
 				assert!(error_result.is_err());
 			};
 		}
@@ -3236,9 +3202,7 @@ mod tests {
 		// Macro to test crypto accounts - all should be non-identifier
 		macro_rules! test_crypto_account_flags {
 			($public_key_string:expr, $key_type:ty) => {
-				let account = $public_key_string
-					.parse::<Account<$key_type>>()
-					.unwrap();
+				let account = $public_key_string.parse::<Account<$key_type>>().unwrap();
 				test_account_type_flags!(account, false, false, false, false, false);
 			};
 		}
@@ -3254,12 +3218,8 @@ mod tests {
 		// Macro to test account comparison methods for crypto accounts
 		macro_rules! test_crypto_account_comparison {
 			($public_key_string:expr, $key_type:ty, $different_key_string:expr) => {
-				let account1 = $public_key_string
-					.parse::<Account<$key_type>>()
-					.unwrap();
-				let account2 = $public_key_string
-					.parse::<Account<$key_type>>()
-					.unwrap();
+				let account1 = $public_key_string.parse::<Account<$key_type>>().unwrap();
+				let account2 = $public_key_string.parse::<Account<$key_type>>().unwrap();
 
 				// Test compare_public_key - same algorithm
 				assert!(account1.compare_public_key($public_key_string));
@@ -3330,9 +3290,7 @@ mod tests {
 
 		macro_rules! test_no_private_key_crypto {
 			($key_type:ident, $pubkey_string:expr) => {
-				let account = $pubkey_string
-					.parse::<Account<$key_type>>()
-					.unwrap();
+				let account = $pubkey_string.parse::<Account<$key_type>>().unwrap();
 				assert!(!account.has_private_key());
 			};
 		}
@@ -3548,25 +3506,13 @@ mod tests {
 
 		// Test invalid prefix
 		let invalid_key = "keeta_xx_invalid";
-		assert!(invalid_key
-			.parse::<Account<KeyECDSASECP256K1>>()
-			.is_err());
-		assert!(invalid_key
-			.parse::<Account<KeyECDSASECP256R1>>()
-			.is_err());
-		assert!(invalid_key
-			.parse::<Account<KeyED25519>>()
-			.is_err());
-		assert!(invalid_key
-			.parse::<Account<KeyNETWORK>>()
-			.is_err());
+		assert!(invalid_key.parse::<Account<KeyECDSASECP256K1>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyECDSASECP256R1>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyED25519>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyNETWORK>>().is_err());
 		assert!(invalid_key.parse::<Account<KeyTOKEN>>().is_err());
-		assert!(invalid_key
-			.parse::<Account<KeySTORAGE>>()
-			.is_err());
-		assert!(invalid_key
-			.parse::<Account<KeyMULTISIG>>()
-			.is_err());
+		assert!(invalid_key.parse::<Account<KeySTORAGE>>().is_err());
+		assert!(invalid_key.parse::<Account<KeyMULTISIG>>().is_err());
 	}
 
 	#[test]
@@ -3594,9 +3540,7 @@ mod tests {
 	fn test_from_str_implementations() {
 		macro_rules! test_parsing {
 			($key_struct:ident, $key_enum:ident, $test_data:expr) => {{
-				let account = $test_data
-					.parse::<Account<$key_struct>>()
-					.unwrap();
+				let account = $test_data.parse::<Account<$key_struct>>().unwrap();
 				assert_eq!(account.keypair_type(), KeyPairType::$key_enum);
 			}};
 		}
@@ -3620,9 +3564,7 @@ mod tests {
 			}
 		}
 
-		assert!("invalid_key"
-			.parse::<Account<KeyECDSASECP256K1>>()
-			.is_err());
+		assert!("invalid_key".parse::<Account<KeyECDSASECP256K1>>().is_err());
 	}
 
 	#[test]

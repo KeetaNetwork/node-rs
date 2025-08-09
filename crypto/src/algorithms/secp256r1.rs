@@ -16,7 +16,16 @@ use p256::SecretKey as P256SecretKey;
 use secrecy::SecretBox;
 
 #[cfg(feature = "signature")]
-use p256::ecdsa::{signature::hazmat::PrehashVerifier, VerifyingKey};
+use p256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
+#[cfg(feature = "signature")]
+use p256::ecdsa::VerifyingKey;
+
+#[cfg(feature = "encryption")]
+use aead::KeyInit;
+#[cfg(feature = "encryption")]
+use p256::ecdh::diffie_hellman;
+#[cfg(feature = "encryption")]
+use secrecy::ExposeSecret;
 
 #[cfg(feature = "signature")]
 use crate::hash::hash_default;
@@ -32,7 +41,7 @@ use crate::algorithms::ecies::{Ecies, EciesSecp256r1};
 #[cfg(feature = "encryption")]
 use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGeneration};
 #[cfg(feature = "encryption")]
-use aead::KeyInit;
+use crate::utils::generate_random_seed;
 
 use crate::error::CryptoError;
 use crate::kdf::KdfAlgorithm;
@@ -106,8 +115,6 @@ impl Secp256r1PrivateKey {
 	/// # Returns
 	/// Shared secret as raw bytes
 	pub fn ecdh(&self, other_public_key: &Secp256r1PublicKey) -> Result<Vec<u8>, CryptoError> {
-		use p256::ecdh::diffie_hellman;
-
 		// Perform ECDH directly using the p256 function
 		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
 
@@ -122,8 +129,6 @@ impl KeyGeneration for Secp256r1PrivateKey {
 
 	fn generate_random() -> Result<Self, Self::Error> {
 		// Generate a random 32-byte seed and derive a key from it
-		use crate::utils::generate_random_seed;
-		use secrecy::ExposeSecret;
 		let random_seed = generate_random_seed()?;
 		Secp256r1Derivation::derive_from_seed(random_seed.expose_secret())
 	}
@@ -200,8 +205,6 @@ impl CryptoSigner<Signature> for Secp256r1PrivateKey {
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
-		use p256::ecdsa::signature::hazmat::PrehashSigner;
-
 		let signing_key = SigningKey::from(&self.inner);
 
 		if options.raw {
@@ -212,8 +215,8 @@ impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 			}
 			signing_key.sign_prehash(message)
 		} else if options.for_cert {
-			// For certificate signing, explicitly use SHA3-256
-			let data = crate::HashAlgorithm::Sha3_256.hash(message);
+			// For certificate signing, use SHA2-256
+			let data = crate::HashAlgorithm::Sha2_256.hash(message);
 			signing_key.sign_prehash(&data)
 		} else {
 			// For regular signing, use the default hash algorithm (SHA3-256)
@@ -246,10 +249,7 @@ impl From<Secp256r1PublicKey> for asn1::ObjectIdentifier {
 
 impl PublicKey for Secp256r1PublicKey {
 	fn to_uncompressed_bytes(&self) -> Vec<u8> {
-		self.inner
-			.to_encoded_point(false)
-			.as_bytes()
-			.to_vec()
+		self.inner.to_encoded_point(false).as_bytes().to_vec()
 	}
 }
 
@@ -257,10 +257,7 @@ impl From<Secp256r1PublicKey> for Vec<u8> {
 	fn from(key: Secp256r1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
 		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner
-			.to_encoded_point(true)
-			.as_bytes()
-			.to_vec()
+		key.inner.to_encoded_point(true).as_bytes().to_vec()
 	}
 }
 
@@ -268,10 +265,7 @@ impl From<&Secp256r1PublicKey> for Vec<u8> {
 	fn from(key: &Secp256r1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
 		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner
-			.to_encoded_point(true)
-			.as_bytes()
-			.to_vec()
+		key.inner.to_encoded_point(true).as_bytes().to_vec()
 	}
 }
 
@@ -323,8 +317,8 @@ impl CryptoVerifierWithOptions<Signature> for Secp256r1PublicKey {
 			}
 			verifying_key.verify_prehash(message, signature)
 		} else if options.for_cert {
-			// For certificate verification, explicitly use SHA3-256
-			let data = crate::HashAlgorithm::Sha3_256.hash(message);
+			// For certificate verification, use SHA2-256
+			let data = crate::HashAlgorithm::Sha2_256.hash(message);
 			verifying_key.verify_prehash(&data, signature)
 		} else {
 			// For regular verification, use the default hash algorithm
@@ -647,15 +641,11 @@ mod tests {
 
 		// Test key_exchange with public key bytes
 		let public_key2_bytes: Vec<u8> = (&public_key2).into();
-		let shared_secret1_bytes = private_key1
-			.key_exchange(&public_key2_bytes)
-			.unwrap();
+		let shared_secret1_bytes = private_key1.key_exchange(&public_key2_bytes).unwrap();
 		assert_eq!(shared_secret1, shared_secret1_bytes);
 
 		let public_key1_bytes: Vec<u8> = (&public_key1).into();
-		let shared_secret2_bytes = private_key2
-			.key_exchange(&public_key1_bytes)
-			.unwrap();
+		let shared_secret2_bytes = private_key2.key_exchange(&public_key1_bytes).unwrap();
 		assert_eq!(shared_secret2, shared_secret2_bytes);
 
 		// Test that different key pairs produce different shared secrets
@@ -709,9 +699,7 @@ mod tests {
 		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
 
 		// Test that all characters are valid hex
-		assert!(public_key_string
-			.chars()
-			.all(|c| c.is_ascii_hexdigit()));
+		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
 	}
 
 	#[cfg(feature = "signature")]
@@ -728,17 +716,13 @@ mod tests {
 
 		// Test that verification fails with wrong message
 		let wrong_message = b"Wrong message";
-		assert!(public_key
-			.verify(wrong_message, &signature)
-			.is_err());
+		assert!(public_key.verify(wrong_message, &signature).is_err());
 
 		// Test that verification fails with wrong key
 		let wrong_seed = b"wrong seed for signature operations";
 		let wrong_private_key = Secp256r1Derivation::derive_from_seed(wrong_seed).unwrap();
 		let wrong_public_key = wrong_private_key.as_public_key();
-		assert!(wrong_public_key
-			.verify(message, &signature)
-			.is_err());
+		assert!(wrong_public_key.verify(message, &signature).is_err());
 
 		// Also test the old test case
 		let seed2 = b"test seed for secp256r1 sign verify!";
@@ -752,9 +736,7 @@ mod tests {
 
 		// Verify with wrong message should fail
 		let wrong_message2 = b"Hello, wrong world!";
-		assert!(public_key2
-			.verify(wrong_message2, &signature2)
-			.is_err());
+		assert!(public_key2.verify(wrong_message2, &signature2).is_err());
 	}
 
 	#[cfg(feature = "signature")]
@@ -807,8 +789,7 @@ mod tests {
 
 		// Signatures should be different when using different message processing
 		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
-		// Default and cert should be the same since they both pre-hash
-		assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
+		assert_ne!(signature_default.to_bytes(), signature_cert.to_bytes());
 
 		// Verify that the regular signing (which pre-hashes) matches default options
 		let regular_signature = private_key.try_sign(message).unwrap();

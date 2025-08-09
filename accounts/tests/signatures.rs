@@ -47,9 +47,7 @@ fn test_account_sign() {
 		let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, index);
 		let signature = account.sign(TEST_MESSAGE, None).unwrap();
 		assert_eq!(signature.len(), 64);
-		assert!(account
-			.verify(TEST_MESSAGE, &signature, None)
-			.unwrap());
+		assert!(account.verify(TEST_MESSAGE, &signature, None).unwrap());
 		assert!(!account
 			.verify(WRONG_TEST_MESSAGE, &signature, None)
 			.unwrap());
@@ -58,9 +56,7 @@ fn test_account_sign() {
 		let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, index);
 		let signature = account.sign(TEST_MESSAGE, None).unwrap();
 		assert_eq!(signature.len(), 64);
-		assert!(account
-			.verify(TEST_MESSAGE, &signature, None)
-			.unwrap());
+		assert!(account.verify(TEST_MESSAGE, &signature, None).unwrap());
 		assert!(!account
 			.verify(WRONG_TEST_MESSAGE, &signature, None)
 			.unwrap());
@@ -69,9 +65,7 @@ fn test_account_sign() {
 		let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, index);
 		let signature = account.sign(TEST_MESSAGE, None).unwrap();
 		assert_eq!(signature.len(), 64);
-		assert!(account
-			.verify(TEST_MESSAGE, &signature, None)
-			.unwrap());
+		assert!(account.verify(TEST_MESSAGE, &signature, None).unwrap());
 		assert!(!account
 			.verify(WRONG_TEST_MESSAGE, &signature, None)
 			.unwrap());
@@ -92,16 +86,12 @@ fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = Acco
 	let account = T::try_from(Keyable::Seed((test_seed, 0))).unwrap();
 
 	let default_options = SigningOptions::default();
-	let signature_default = account
-		.sign(message, Some(default_options))
-		.unwrap();
+	let signature_default = account.sign(message, Some(default_options)).unwrap();
 	let raw_options = SigningOptions::raw();
 	// For raw signing, we need to provide a 32-byte hash
 	// Use a different hash to ensure signatures are different
 	let different_hash = [0x42u8; 32];
-	let signature_raw = account
-		.sign(&different_hash, Some(raw_options))
-		.unwrap();
+	let signature_raw = account.sign(&different_hash, Some(raw_options)).unwrap();
 
 	assert_ne!(
 		signature_default, signature_raw,
@@ -153,24 +143,16 @@ fn test_algorithm_validation() {
 		let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, index);
 		let signature = account.sign(test_data, None).unwrap();
 		assert_eq!(signature.len(), 64);
-		assert!(account
-			.verify(test_data, &signature, None)
-			.unwrap());
-		assert!(!account
-			.verify(wrong_data, &signature, None)
-			.unwrap());
+		assert!(account.verify(test_data, &signature, None).unwrap());
+		assert!(!account.verify(wrong_data, &signature, None).unwrap());
 
 		let default_options = SigningOptions::default();
 		let raw_options = SigningOptions::raw();
-		let sig_default = account
-			.sign(test_data, Some(default_options))
-			.unwrap();
+		let sig_default = account.sign(test_data, Some(default_options)).unwrap();
 		// For raw signing, we need to provide a 32-byte hash
 		// Use a different hash to ensure signatures are different
 		let different_hash = [0x42u8; 32];
-		let sig_raw = account
-			.sign(&different_hash, Some(raw_options))
-			.unwrap();
+		let sig_raw = account.sign(&different_hash, Some(raw_options)).unwrap();
 		assert!(account
 			.verify(test_data, &sig_default, Some(default_options))
 			.unwrap());
@@ -188,19 +170,11 @@ fn test_algorithm_validation() {
 		let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, index);
 		let signature = account.sign(test_data, None).unwrap();
 		assert_eq!(signature.len(), 64);
-		assert!(account
-			.verify(test_data, &signature, None)
-			.unwrap());
-		assert!(!account
-			.verify(wrong_data, &signature, None)
-			.unwrap());
+		assert!(account.verify(test_data, &signature, None).unwrap());
+		assert!(!account.verify(wrong_data, &signature, None).unwrap());
 
-		let sig_default = account
-			.sign(test_data, Some(default_options))
-			.unwrap();
-		let sig_raw = account
-			.sign(&different_hash, Some(raw_options))
-			.unwrap();
+		let sig_default = account.sign(test_data, Some(default_options)).unwrap();
+		let sig_raw = account.sign(&different_hash, Some(raw_options)).unwrap();
 		assert!(account
 			.verify(test_data, &sig_default, Some(default_options))
 			.unwrap());
@@ -218,12 +192,8 @@ fn test_algorithm_validation() {
 		let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, index);
 		let signature = account.sign(test_data, None).unwrap();
 		assert_eq!(signature.len(), 64);
-		assert!(account
-			.verify(test_data, &signature, None)
-			.unwrap());
-		assert!(!account
-			.verify(wrong_data, &signature, None)
-			.unwrap());
+		assert!(account.verify(test_data, &signature, None).unwrap());
+		assert!(!account.verify(wrong_data, &signature, None).unwrap());
 	}
 }
 
@@ -305,20 +275,11 @@ fn test_ios_signature(
 	test_data: &[u8],
 	should_pass: bool,
 ) {
-	let account_from_public = public_key_string
-		.parse::<GenericAccount>()
-		.unwrap();
+	let account_from_public = public_key_string.parse::<GenericAccount>().unwrap();
 
 	match account_from_public {
 		GenericAccount::EcdsaSecp256k1(account) => {
 			let verification_result = account.verify(test_data, signature_bytes, None);
-
-			match &verification_result {
-				Ok(true) => println!("iOS {algorithm_name} signature verification: PASS"),
-				Ok(false) => println!("iOS {algorithm_name} signature verification: FAIL (signature parses but doesn't verify - known k256 compatibility issue)"),
-				Err(e) => println!("iOS {algorithm_name} signature verification: ERROR ({e:?})"),
-			}
-
 			assert!(verification_result.is_ok(), "iOS {algorithm_name} signature should parse without errors");
 			if should_pass {
 				assert!(verification_result.unwrap(), "iOS {algorithm_name} signature should verify");
@@ -326,13 +287,6 @@ fn test_ios_signature(
 		}
 		GenericAccount::Ed25519(account) => {
 			let verification_result = account.verify(test_data, signature_bytes, None);
-
-			match &verification_result {
-				Ok(true) => println!("iOS {algorithm_name} signature verification: PASS"),
-				Ok(false) => println!("iOS {algorithm_name} signature verification: FAIL (signature invalid)"),
-				Err(e) => println!("iOS {algorithm_name} signature verification: ERROR ({e:?})"),
-			}
-
 			assert!(verification_result.is_ok(), "iOS {algorithm_name} signature should parse without errors");
 			if should_pass {
 				assert!(verification_result.unwrap(), "iOS {algorithm_name} signature should verify");
@@ -415,9 +369,7 @@ fn test_account_sign_hard_coded() {
 
 	// Generate a signature and verify it can be verified
 	let signature = account.sign(test_data, None).unwrap();
-	assert!(account
-		.verify(test_data, &signature, None)
-		.unwrap());
+	assert!(account.verify(test_data, &signature, None).unwrap());
 
 	// Test that corrupted signature fails
 	let mut corrupted_signature = signature.clone();
@@ -428,9 +380,7 @@ fn test_account_sign_hard_coded() {
 
 	// Test public key string round-trip
 	let public_key_string = account.to_string();
-	let public_account = public_key_string
-		.parse::<GenericAccount>()
-		.unwrap();
+	let public_account = public_key_string.parse::<GenericAccount>().unwrap();
 
 	if let GenericAccount::EcdsaSecp256k1(public_only_account) = public_account {
 		// Verify the original signature with public-only account

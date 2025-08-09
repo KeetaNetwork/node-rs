@@ -9,7 +9,7 @@ pub mod utils;
 
 // Re-export commonly used types for convenience
 pub use der::asn1::*;
-pub use der::{Decode, Encode, Sequence, ValueOrd};
+pub use der::{Decode, Encode, Header, Reader, Sequence, SliceReader, Tag, TagNumber, Tagged, ValueOrd};
 pub use error::Asn1Error;
 
 #[cfg(feature = "serde")]

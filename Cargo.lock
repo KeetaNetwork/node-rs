@@ -284,6 +284,8 @@ dependencies = [
  "sha3",
  "signature",
  "snafu",
+ "strum",
+ "strum_macros",
  "subtle",
  "x25519-dalek",
  "zeroize",
