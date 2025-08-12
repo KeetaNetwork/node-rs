@@ -156,8 +156,12 @@ impl KeyExchange for Secp256r1PrivateKey {
 	type PublicKey = Secp256r1PublicKey;
 	type SharedSecret = Vec<u8>;
 
-	fn ecdh(&self, other_public_key: &Self::PublicKey) -> Result<Self::SharedSecret, CryptoError> {
-		self.ecdh(other_public_key)
+	fn ecdh(&self, other_public_key: &Secp256r1PublicKey) -> Result<Vec<u8>, CryptoError> {
+		// Perform ECDH directly using the p256 function
+		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
+
+		// Return the raw bytes of the shared secret
+		Ok(shared_secret.raw_secret_bytes().to_vec())
 	}
 
 	fn key_exchange(&self, their_public_key: &[u8]) -> Result<Self::SharedSecret, CryptoError> {

@@ -11,7 +11,7 @@ use asn1::{Decode, Encode};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
 use crypto::bigint::U256;
-use crypto::HashAlgorithm;
+use crypto::prelude::{AnyPrivateKey, CryptoSignerWithOptions, HashAlgorithm, SigningOptions};
 use hex;
 
 #[cfg(feature = "serde")]
@@ -1150,31 +1150,6 @@ impl CertificateBuilder {
 		self
 	}
 
-	/// Build and sign a certificate with properties.
-	pub fn build_with_properties(
-		&self,
-		_trusted: bool,
-		_chain: Option<Vec<Certificate>>,
-	) -> Result<Certificate, CertificateError> {
-		// First build the TBS certificate
-		let tbs = self.build_tbs()?;
-
-		// TODO Sign
-		let signature_bytes = vec![0u8; 64]; // Placeholder signature
-
-		// Create the certificate
-		let cert = Certificate {
-			tbs_certificate: tbs,
-			signature_algorithm: AlgorithmIdentifier {
-				algorithm: ObjectIdentifier::new(oids::SHA256_WITH_RSA)?,
-				parameters: None,
-			},
-			signature: BitString::from_bytes(&signature_bytes)?,
-		};
-
-		Ok(cert)
-	}
-
 	/// Create a preset CA certificate builder.
 	pub fn for_ca() -> Self {
 		Self::new()
@@ -1254,6 +1229,75 @@ impl CertificateBuilder {
 			subject_unique_id: None,
 			extensions: extensions_option,
 		})
+	}
+
+	/// Build a test certificate without signing.
+	///
+	/// This method is useful for testing purposes and is not available outside
+	/// of unit testing.
+	#[cfg(test)]
+	pub fn build_test(&self) -> Result<Certificate, CertificateError> {
+		// First build the TBS certificate
+		let tbs = self.build_tbs()?;
+		// Dummy signature
+		let signature_bytes = vec![0u8; 64];
+
+		Ok(Certificate {
+			tbs_certificate: tbs,
+			signature_algorithm: AlgorithmIdentifier::try_from(oids::SHA256_WITH_RSA)?,
+			signature: BitString::from_bytes(&signature_bytes)?,
+		})
+	}
+
+	/// Build and sign a certificate.
+	///
+	/// This method automatically detects the signing algorithm based on the
+	/// private key type and follows RFC 5280 standards for certificate signing.
+	pub fn build(&self, signing_key: &crypto::AnyPrivateKey) -> Result<Certificate, CertificateError> {
+		// Determine signature algorithm based on key type first
+		let signature_algorithm_oid = match signing_key {
+			crypto::AnyPrivateKey::Ed25519(_) => oids::ED25519,
+			crypto::AnyPrivateKey::Secp256k1(_) => oids::ECDSA_WITH_SHA256,
+			crypto::AnyPrivateKey::Secp256r1(_) => oids::ECDSA_WITH_SHA256,
+		};
+
+		// Build the TBS certificate with the correct signature algorithm
+		let signature_algorithm = AlgorithmIdentifier::try_from(signature_algorithm_oid)?;
+		let mut tbs_certificate = self.build_tbs()?;
+
+		// Set the signature algorithm in the TBS certificate
+		tbs_certificate.signature_algorithm = signature_algorithm.clone();
+
+		// Serialize the TBS certificate for signing
+		let tbs_der = tbs_certificate.to_der()?;
+		// Sign the TBS certificate
+		let signature_bytes = match signing_key {
+			AnyPrivateKey::Ed25519(ed25519_key) => {
+				// Ed25519 uses raw signing for certificates (no pre-hashing)
+				let signing_opts = SigningOptions::raw();
+				let signature = ed25519_key.sign_with_options(&tbs_der, signing_opts)?;
+
+				signature.to_bytes().to_vec()
+			}
+			AnyPrivateKey::Secp256k1(secp256k1_key) => {
+				let signing_opts = SigningOptions::for_cert();
+				let signature = secp256k1_key.sign_with_options(&tbs_der, signing_opts)?;
+
+				signature.to_der().as_bytes().to_vec()
+			}
+			AnyPrivateKey::Secp256r1(secp256r1_key) => {
+				let signing_opts = SigningOptions::for_cert();
+				let signature = secp256r1_key.sign_with_options(&tbs_der, signing_opts)?;
+
+				signature.to_der().as_bytes().to_vec()
+			}
+		};
+
+		// Create the final certificate
+		let signature = BitString::from_bytes(&signature_bytes)?;
+		let cert = Certificate { tbs_certificate, signature_algorithm, signature };
+
+		Ok(cert)
 	}
 
 	/// Create common certificate extensions
@@ -1560,10 +1604,12 @@ impl Certificate {
 			oids::ED25519 => utils::verify_ed25519_signature(public_key_bytes, signature_bytes, &tbs_der),
 
 			oids::ECDSA_WITH_SHA3_256 => {
+				// For ECDSA, try both curves since the verification function handles curve detection
 				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha3_256)
 			}
 
 			oids::ECDSA_WITH_SHA256 => {
+				// For ECDSA, try both curves since the verification function handles curve detection
 				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha2_256)
 			}
 
@@ -2201,7 +2247,11 @@ mod tests {
 	use asn1::oids;
 	use asn1::{BitString, Uint};
 	use chrono::Utc;
+	use crypto::algorithms::ed25519::Ed25519Derivation;
+	use crypto::operations::encryption::KeyGeneration;
 	use crypto::Algorithm;
+	use crypto::KeyDerivation;
+	use crypto::{AnyPrivateKey, Secp256k1PrivateKey, Secp256r1PrivateKey};
 
 	use super::*;
 	use crate::utils;
@@ -2226,6 +2276,9 @@ mod tests {
 		pub chain: CertificateChain,
 		pub key_data: Option<KeyData>,
 	}
+
+	const TEST_SEED: &str =
+		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
 
 	// Test key data
 	const RAW_ED25519_PUBLIC_KEY: [u8; 32] = [
@@ -2401,7 +2454,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 	/// Deconstruct certificate bundle for easy unpacking
 	#[derive(Debug, Clone)]
-	struct CertificateTriple {
+	struct CertificateTestBundle {
 		pub ca_cert: Certificate,
 		pub intermediate_cert: Certificate,
 		pub client_cert: Certificate,
@@ -2444,12 +2497,12 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	}
 
 	/// Helper function to extract certificates from a certificate chain
-	fn extract_certificates(chain: &CertificateChain) -> CertificateTriple {
+	fn extract_certificates(chain: &CertificateChain) -> CertificateTestBundle {
 		let ca_cert = Certificate::from_pem(chain.root).unwrap();
 		let intermediate_cert = Certificate::from_pem(chain.intermediate).unwrap();
 		let client_cert = Certificate::from_pem(chain.client).unwrap();
 
-		CertificateTriple {
+		CertificateTestBundle {
 			root_certs: HashSet::from([ca_cert.clone()]),
 			intermediate_certs: HashSet::from([intermediate_cert.clone()]),
 			ca_cert,
@@ -2488,7 +2541,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	/// Helper to test all certificate sets with a given test function
 	fn test_all_certificate_sets<F>(test_fn: F)
 	where
-		F: Fn(&CertificateTriple),
+		F: Fn(&CertificateTestBundle),
 	{
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
 			let bundle = extract_certificates(&test_set.chain);
@@ -2670,7 +2723,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 				.with_validity_days(365)
 				.with_is_ca(false);
 
-			let result = builder.build_with_properties(false, None);
+			let result = builder.build_test();
 			assert!(result.is_ok());
 		}
 	}
@@ -2757,7 +2810,8 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_chain_traversal() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, root_certs, intermediate_certs } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, root_certs, intermediate_certs } =
+				bundle;
 
 			// Test Certificate without chain (should return None for non-self-signed)
 			let client_with_no_chain = CertificateBundle {
@@ -2800,28 +2854,68 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 	#[test]
 	fn test_certificate_builder_api() {
-		let oids = [(oids::CN, "example.com"), (oids::O, "Example Corp"), (oids::C, "US")];
-		let dn = utils::create_dn(&oids).unwrap();
-		let builder = CertificateBuilder::new()
-			.with_subject_dn(dn.clone())
-			.with_issuer_dn(dn.clone())
-			.with_serial_number(U256::from(12345u128))
-			.with_validity_days(365)
-			.with_is_ca(false);
+		const TEST_CERTIFICATE_SETS: &[fn() -> AnyPrivateKey] = &[
+			|| AnyPrivateKey::Ed25519(Ed25519Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap()),
+			|| AnyPrivateKey::Secp256k1(Secp256k1PrivateKey::generate_random().unwrap()),
+			|| AnyPrivateKey::Secp256r1(Secp256r1PrivateKey::generate_random().unwrap()),
+		];
 
-		// Verify fields were set
-		assert!(builder.subject_dn.is_some());
-		assert!(builder.issuer_dn.is_some());
-		assert!(builder.serial.is_some());
-		assert!(builder.valid_from.is_some());
-		assert!(builder.valid_to.is_some());
-		assert_eq!(builder.is_ca, Some(false));
+		for generate_key in TEST_CERTIFICATE_SETS {
+			let private_key = generate_key();
+			let public_key = private_key.derive_public_key();
 
-		// Test DN creation utility
-		let subject_str = utils::dn_to_string(&builder.subject_dn.unwrap());
-		assert!(subject_str.contains("example.com"));
-		assert!(subject_str.contains("Example Corp"));
-		assert!(subject_str.contains("US"));
+			let serial = 1u64;
+			let now = chrono::Utc::now();
+			let valid_from = now;
+			let valid_to = now + chrono::Duration::days(365);
+			let subject_dn = utils::create_dn(&[(oids::CN, "Test Subject")]).unwrap();
+			let issuer_dn = subject_dn.clone();
+
+			let builder = CertificateBuilder::new()
+				.with_subject_dn(subject_dn.clone())
+				.with_issuer_dn(issuer_dn.clone())
+				.with_serial_number(U256::from(serial))
+				.with_validity(valid_from, valid_to)
+				.with_subject_public_key(public_key.into())
+				.with_is_ca(false);
+
+			let result = builder.build(&private_key);
+			assert!(result.is_ok());
+
+			// Verify the certificate structure
+			let certificate = result.unwrap();
+			assert_eq!(certificate.tbs_certificate.subject, subject_dn);
+			assert_eq!(certificate.tbs_certificate.issuer, issuer_dn);
+			assert_eq!(certificate.tbs_certificate.serial_number, asn1::Uint::new(&serial.to_be_bytes()).unwrap());
+			assert!(!certificate.signature.raw_bytes().is_empty());
+
+			// Verify the certificate is self-signed and can be verified with its own public key
+			let subject_public_key = &certificate.tbs_certificate.subject_public_key_info;
+			let signature_verification = certificate.verify_signature(subject_public_key);
+			assert!(signature_verification.is_ok());
+			assert!(signature_verification.unwrap());
+
+			// Verify the certificate is currently valid
+			assert!(certificate.is_currently_valid().unwrap());
+
+			// Verify basic certificate properties
+			assert!(certificate.is_self_signed());
+			assert_eq!(certificate.subject(), certificate.issuer());
+
+			// Test PEM/DER roundtrip to ensure the certificate is well-formed
+			let pem_output = certificate.to_pem();
+			assert!(pem_output.is_ok());
+
+			let der_output = certificate.to_der();
+			assert!(der_output.is_ok());
+
+			// Verify we can parse the certificate back from PEM
+			let re_parsed_cert = Certificate::from_pem(&pem_output.unwrap());
+			assert!(re_parsed_cert.is_ok());
+
+			let re_parsed_cert = re_parsed_cert.unwrap();
+			assert_eq!(certificate.to_der().unwrap(), re_parsed_cert.to_der().unwrap());
+		}
 	}
 
 	#[test]
@@ -2835,10 +2929,9 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		}
 
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
+			// Test basic conversions
 			let pem_data = test_set.chain.root;
 			let base_cert = Certificate::from_pem(test_set.chain.root).unwrap();
-
-			// Test basic conversions
 			test_certificate_with_options_basic!(CertificateBundle::try_from(pem_data), false, 1);
 			test_certificate_with_options_basic!(CertificateBundle::try_from(pem_data.to_string()), false, 1);
 			test_certificate_with_options_basic!(CertificateBundle::try_from(base_cert.clone()), false, 1);
@@ -2871,7 +2964,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		}
 
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 
 			let chain = vec![client_cert.clone(), intermediate_cert.clone(), ca_cert.clone()];
 			let bundle = CertificateBundle::try_from(chain).unwrap();
@@ -2907,7 +3000,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_certificate_store_functionality() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 
 			let mut cert_with_options = CertificateBundle {
 				certificate: client_cert.clone(),
@@ -2935,7 +3028,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_intermediate_certificate_functionality() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
 
 			// Create a certificate bundle with intermediate certificate
 			let mut cert_bundle = CertificateBundle {
@@ -3029,7 +3122,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_certificate_trust_and_verification() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
 
 			let moment = get_cert_moment();
 
@@ -3092,7 +3185,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	fn test_certificate_with_options_validation() {
 		test_all_certificate_sets(|bundle| {
 			let moment = get_cert_moment();
-			let CertificateTriple { ca_cert, root_certs, intermediate_certs, client_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, root_certs, intermediate_certs, client_cert, .. } = bundle;
 
 			let cert_with_options = CertificateBundle::new(
 				&client_cert.to_pem().unwrap(),
@@ -3146,7 +3239,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		}
 
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
 				extract_certificates(&test_set.chain);
 
 			// Test each certificate in the chain
@@ -3188,7 +3281,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_verify_signature() {
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, .. } =
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } =
 				extract_certificates(&test_set.chain);
 
 			// Get the correct signing keys for each certificate
@@ -3239,7 +3332,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_verify_signature_edge_cases() {
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
 				extract_certificates(&test_set.chain);
 			assert!(user_cert.check_issued(&intermediate_cert));
 			assert!(!user_cert.check_issued(&user_cert));
@@ -3264,7 +3357,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_verify_signature_algorithm_detection() {
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
 				extract_certificates(&test_set.chain);
 
 			// Extract signature algorithms and test they're detected correctly
@@ -3304,7 +3397,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	fn test_verify_signature_with_store() {
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
 			let moment = get_cert_moment();
-			let CertificateTriple {
+			let CertificateTestBundle {
 				ca_cert,
 				intermediate_cert,
 				client_cert: user_cert,
@@ -3709,7 +3802,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_authority_subject_dn_validation() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 			// Test valid issuer-subject relationships
 			assert!(intermediate_cert.validate_issuer_subject_dn_match(ca_cert));
 			assert!(client_cert.validate_issuer_subject_dn_match(intermediate_cert));
@@ -3724,7 +3817,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_authority_key_identifier_validation() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 			// Test Authority Key Identifier validation
 			assert!(intermediate_cert.validate_authority_key_identifier(ca_cert));
 			assert!(client_cert.validate_authority_key_identifier(intermediate_cert));
@@ -3742,7 +3835,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_enhanced_certificate_validation() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 			// Test enhanced check_issued with RFC 5280 compliance
 			assert!(intermediate_cert.check_issued(ca_cert));
 			assert!(client_cert.check_issued(intermediate_cert));
@@ -3764,7 +3857,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	#[test]
 	fn test_certificate_path_validation() {
 		test_all_certificate_sets(|bundle| {
-			let CertificateTriple { ca_cert, intermediate_cert, client_cert, .. } = bundle;
+			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 
 			// Test valid certificate path
 			let valid_path = vec![client_cert.clone(), intermediate_cert.clone(), ca_cert.clone()];
@@ -3924,16 +4017,16 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	fn test_certificate_graph_validation() {
 		// Create test certificates for graph validation
 		let subject_cert = create_dummy_cert_builder("Subject", "Issuer", 1, false)
-			.build_with_properties(false, None)
+			.build_test()
 			.unwrap();
 		let intermediate_cert = create_dummy_cert_builder("Issuer", "Intermediate", 2, true)
-			.build_with_properties(false, None)
+			.build_test()
 			.unwrap();
 		let root_cert = create_dummy_cert_builder("Intermediate", "Intermediate", 3, true) // Self-signed
-			.build_with_properties(false, None)
+			.build_test()
 			.unwrap();
 		let orphan_cert = create_dummy_cert_builder("Orphan", "Orphan", 4, true) // Self-signed orphan
-			.build_with_properties(false, None)
+			.build_test()
 			.unwrap();
 
 		// Test valid graph (no cycles, no orphans, no duplicates)
@@ -3968,13 +4061,13 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 		// Test cycle detection by creating certificates that form a cycle
 		let cycle_a_cert = create_dummy_cert_builder("CycleA", "CycleB", 5, true) // A issued by B
-			.build_with_properties(false, None)
+			.build_test()
 			.unwrap();
 		let cycle_b_cert = create_dummy_cert_builder("CycleB", "CycleA", 6, true) // B issued by A
-			.build_with_properties(false, None)
+			.build_test()
 			.unwrap();
 		let cycle_subject_cert = create_dummy_cert_builder("Subject", "CycleA", 7, false) // Subject issued by A
-			.build_with_properties(false, None)
+			.build_test()
 			.unwrap();
 
 		let certificates_with_cycle = [cycle_a_cert, cycle_b_cert].into_iter().collect();

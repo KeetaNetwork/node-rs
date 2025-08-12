@@ -3,10 +3,14 @@ name = "asn1"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-der = { workspace = true }
-snafu = { workspace = true }
-hex = { workspace = true }
+[dependencies.der]
+workspace = true
+
+[dependencies.hex]
+workspace = true
+
+[dependencies.snafu]
+workspace = true
 
 [dependencies.serde]
 workspace = true

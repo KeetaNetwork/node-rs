@@ -10,7 +10,6 @@
 // Re-export algorithm-specific signature types
 pub use k256::ecdsa::Signature as Secp256k1Signature;
 
-use k256::ecdh::diffie_hellman;
 use k256::ecdsa::{Signature, SigningKey};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey as K256SecretKey;
@@ -20,6 +19,9 @@ use secrecy::SecretBox;
 use k256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
 #[cfg(feature = "signature")]
 use k256::ecdsa::VerifyingKey;
+
+#[cfg(feature = "encryption")]
+use k256::ecdh::diffie_hellman;
 
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::Ecies;
@@ -102,19 +104,6 @@ impl TryFrom<&[u8]> for Secp256k1PrivateKey {
 	}
 }
 
-impl Secp256k1PrivateKey {
-	/// Perform ECDH key exchange with another public key
-	///
-	/// Returns the shared secret as raw bytes (32 bytes for secp256k1)
-	pub fn ecdh(&self, other_public_key: &Secp256k1PublicKey) -> Result<Vec<u8>, CryptoError> {
-		// Perform ECDH directly using the k256 function
-		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
-
-		// Return the raw bytes of the shared secret
-		Ok(shared_secret.raw_secret_bytes().to_vec())
-	}
-}
-
 #[cfg(feature = "encryption")]
 impl KeyGeneration for Secp256k1PrivateKey {
 	type Error = CryptoError;
@@ -132,8 +121,12 @@ impl KeyExchange for Secp256k1PrivateKey {
 	type PublicKey = Secp256k1PublicKey;
 	type SharedSecret = Vec<u8>;
 
-	fn ecdh(&self, other_public_key: &Self::PublicKey) -> Result<Self::SharedSecret, CryptoError> {
-		self.ecdh(other_public_key)
+	fn ecdh(&self, other_public_key: &Secp256k1PublicKey) -> Result<Vec<u8>, CryptoError> {
+		// Perform ECDH directly using the k256 function
+		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
+
+		// Return the raw bytes of the shared secret
+		Ok(shared_secret.raw_secret_bytes().to_vec())
 	}
 
 	fn key_exchange(&self, their_public_key: &[u8]) -> Result<Self::SharedSecret, CryptoError> {

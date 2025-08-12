@@ -63,6 +63,24 @@ impl From<base64::DecodeError> for CertificateError {
 	}
 }
 
+impl From<crypto::error::CryptoError> for CertificateError {
+	fn from(error: crypto::error::CryptoError) -> Self {
+		CertificateError::Asn1ParseError { message: format!("Crypto error: {error}") }
+	}
+}
+
+impl From<crypto::operations::SignatureError> for CertificateError {
+	fn from(_error: crypto::operations::SignatureError) -> Self {
+		CertificateError::CertificateSignatureVerificationFailed
+	}
+}
+
+impl From<asn1::error::Asn1Error> for CertificateError {
+	fn from(error: asn1::error::Asn1Error) -> Self {
+		CertificateError::Asn1ParseError { message: format!("ASN.1 error: {error}") }
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -121,5 +139,26 @@ mod tests {
 		let base64_error = base64::DecodeError::InvalidByte(0, b'!');
 		let cert_error: CertificateError = base64_error.into();
 		assert_eq!(cert_error, CertificateError::InvalidCertificate);
+	}
+
+	#[test]
+	fn test_crypto_error_conversion() {
+		let crypto_error = crypto::error::CryptoError::InvalidPrivateKey;
+		let cert_error: CertificateError = crypto_error.into();
+		assert!(matches!(cert_error, CertificateError::Asn1ParseError { .. }));
+	}
+
+	#[test]
+	fn test_signature_error_conversion() {
+		let signature_error = crypto::operations::SignatureError::new();
+		let cert_error: CertificateError = signature_error.into();
+		assert_eq!(cert_error, CertificateError::CertificateSignatureVerificationFailed);
+	}
+
+	#[test]
+	fn test_asn1_error_conversion() {
+		let asn1_error = asn1::error::Asn1Error::InvalidOid { reason: "test".to_string() };
+		let cert_error: CertificateError = asn1_error.into();
+		assert!(matches!(cert_error, CertificateError::Asn1ParseError { .. }));
 	}
 }

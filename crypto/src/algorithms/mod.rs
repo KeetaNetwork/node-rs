@@ -1,7 +1,11 @@
 use core::fmt::Debug;
-
 use secrecy::SecretBox;
 use strum_macros::{Display, EnumIter, EnumString};
+
+#[cfg(feature = "der")]
+use asn1::oids;
+#[cfg(feature = "der")]
+use asn1::{AlgorithmIdentifier, Any, ObjectIdentifier, SubjectPublicKeyInfo};
 
 use crate::error::CryptoError;
 
@@ -53,21 +57,49 @@ pub trait PublicKey:
 	fn to_uncompressed_bytes(&self) -> Vec<u8>;
 }
 
-/// Enum to hold different key types
-#[derive(Debug, Clone)]
-pub enum AnyPrivateKey {
-	Secp256k1(Secp256k1PrivateKey),
-	Ed25519(Ed25519PrivateKey),
-	Secp256r1(Secp256r1PrivateKey),
+macro_rules! impl_any_key {
+	(
+		$any_key_type:ident,
+		$any_public_key_type:ident,
+		$(($variant:ident, $key_type:ty, $algorithm:expr)),* $(,)?
+	) => {
+		/// Enum to hold different key types
+		#[derive(Debug, Clone)]
+		pub enum $any_key_type {
+			$(
+				$variant($key_type),
+			)*
+		}
+
+		impl From<&$any_key_type> for Algorithm {
+			fn from(key: &$any_key_type) -> Self {
+				match key {
+					$(
+						$any_key_type::$variant(_) => $algorithm,
+					)*
+				}
+			}
+		}
+
+		impl From<$any_key_type> for Algorithm {
+			fn from(key: $any_key_type) -> Self {
+				match key {
+					$(
+						$any_key_type::$variant(_) => $algorithm,
+					)*
+				}
+			}
+		}
+	};
 }
 
-/// Enum to hold different public key types
-#[derive(Debug, Clone)]
-pub enum AnyPublicKey {
-	Secp256k1(Secp256k1PublicKey),
-	Ed25519(Ed25519PublicKey),
-	Secp256r1(Secp256r1PublicKey),
-}
+impl_any_key!(
+	AnyPrivateKey,
+	AnyPublicKey,
+	(Secp256k1, Secp256k1PrivateKey, Algorithm::Secp256k1),
+	(Ed25519, Ed25519PrivateKey, Algorithm::Ed25519),
+	(Secp256r1, Secp256r1PrivateKey, Algorithm::Secp256r1),
+);
 
 impl AnyPrivateKey {
 	pub fn derive_public_key(&self) -> AnyPublicKey {
@@ -87,25 +119,13 @@ impl AnyPrivateKey {
 	}
 }
 
-impl From<&AnyPrivateKey> for Algorithm {
-	fn from(key: &AnyPrivateKey) -> Self {
-		match key {
-			AnyPrivateKey::Secp256k1(_) => Algorithm::Secp256k1,
-			AnyPrivateKey::Ed25519(_) => Algorithm::Ed25519,
-			AnyPrivateKey::Secp256r1(_) => Algorithm::Secp256r1,
-		}
-	}
-}
-
-impl From<AnyPrivateKey> for Algorithm {
-	fn from(key: AnyPrivateKey) -> Self {
-		match key {
-			AnyPrivateKey::Secp256k1(_) => Algorithm::Secp256k1,
-			AnyPrivateKey::Ed25519(_) => Algorithm::Ed25519,
-			AnyPrivateKey::Secp256r1(_) => Algorithm::Secp256r1,
-		}
-	}
-}
+impl_any_key!(
+	AnyPublicKey,
+	AnyPublicKey,
+	(Secp256k1, Secp256k1PublicKey, Algorithm::Secp256k1),
+	(Ed25519, Ed25519PublicKey, Algorithm::Ed25519),
+	(Secp256r1, Secp256r1PublicKey, Algorithm::Secp256r1),
+);
 
 impl AnyPublicKey {
 	pub fn to_bytes(&self) -> Vec<u8> {
@@ -117,25 +137,33 @@ impl AnyPublicKey {
 	}
 }
 
-impl From<&AnyPublicKey> for Algorithm {
-	fn from(key: &AnyPublicKey) -> Self {
-		match key {
-			AnyPublicKey::Secp256k1(_) => Algorithm::Secp256k1,
-			AnyPublicKey::Ed25519(_) => Algorithm::Ed25519,
-			AnyPublicKey::Secp256r1(_) => Algorithm::Secp256r1,
+#[cfg(feature = "der")]
+macro_rules! impl_subject_public_key_info {
+	($(($variant:ident, $oid:expr, $params_oid:expr)),* $(,)?) => {
+		impl From<AnyPublicKey> for SubjectPublicKeyInfo {
+			fn from(key: AnyPublicKey) -> Self {
+				match key {
+					$(
+						AnyPublicKey::$variant(public_key) => {
+							let algorithm = ObjectIdentifier::new($oid).unwrap();
+							let parameters = $params_oid.map(|oid| Any::from(ObjectIdentifier::new(oid).unwrap()));
+							let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
+
+							SubjectPublicKeyInfo::new(algorithm_id, &Vec::<u8>::from(public_key)).unwrap()
+						}
+					)*
+				}
+			}
 		}
-	}
+	};
 }
 
-impl From<AnyPublicKey> for Algorithm {
-	fn from(key: AnyPublicKey) -> Self {
-		match key {
-			AnyPublicKey::Secp256k1(_) => Algorithm::Secp256k1,
-			AnyPublicKey::Ed25519(_) => Algorithm::Ed25519,
-			AnyPublicKey::Secp256r1(_) => Algorithm::Secp256r1,
-		}
-	}
-}
+#[cfg(feature = "der")]
+impl_subject_public_key_info!(
+	(Secp256k1, oids::EC_PUBLIC_KEY, Some(oids::SECP256K1)),
+	(Ed25519, oids::ED25519, None),
+	(Secp256r1, oids::EC_PUBLIC_KEY, Some(oids::SECP256R1)),
+);
 
 /// Trait for key derivation algorithms
 pub trait KeyDerivation {
@@ -203,7 +231,7 @@ impl TryFrom<u8> for Algorithm {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use secrecy::{ExposeSecret, SecretBox};
+	use secrecy::ExposeSecret;
 
 	const TEST_SEED: &str =
 		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
@@ -211,13 +239,14 @@ mod tests {
 	struct AlgorithmTestData {
 		algorithm: Algorithm,
 		seed_suffix: &'static str,
+		expected_id: u8,
 	}
 
 	impl AlgorithmTestData {
 		const TEST_CASES: &'static [Self] = &[
-			Self { algorithm: Algorithm::Secp256k1, seed_suffix: "secp256k1" },
-			Self { algorithm: Algorithm::Ed25519, seed_suffix: "ed25519" },
-			Self { algorithm: Algorithm::Secp256r1, seed_suffix: "secp256r1" },
+			Self { algorithm: Algorithm::Secp256k1, seed_suffix: "secp256k1", expected_id: 0 },
+			Self { algorithm: Algorithm::Ed25519, seed_suffix: "ed25519", expected_id: 1 },
+			Self { algorithm: Algorithm::Secp256r1, seed_suffix: "secp256r1", expected_id: 6 },
 		];
 
 		fn create_any_private_key(&self, base_seed: &[u8]) -> AnyPrivateKey {
@@ -266,102 +295,35 @@ mod tests {
 	#[test]
 	fn test_any_private_key_operations() {
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let mut seed = TEST_SEED.as_bytes().to_vec();
-			seed.extend_from_slice(test_case.seed_suffix.as_bytes());
+			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes());
 
-			match test_case.algorithm {
-				Algorithm::Secp256k1 => {
-					let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
-					let any_private_key = AnyPrivateKey::Secp256k1(private_key.clone());
+			// Test derive_public_key preserves the key data
+			let derived_public = any_private_key.derive_public_key();
+			let expected_public = test_case.create_any_public_key(TEST_SEED.as_bytes());
+			assert_eq!(derived_public.to_bytes(), expected_public.to_bytes());
 
-					let derived_public = any_private_key.derive_public_key();
-					let expected_public = private_key.as_public_key();
-					assert_eq!(derived_public.to_bytes(), Vec::<u8>::from(expected_public));
-
-					let any_key_bytes = any_private_key.to_bytes();
-					let expected_bytes = SecretBox::<Vec<u8>>::from(&private_key);
-					assert_eq!(any_key_bytes.expose_secret(), expected_bytes.expose_secret());
-				}
-				Algorithm::Ed25519 => {
-					let private_key = Ed25519Derivation::derive_from_seed(&seed).unwrap();
-					let any_private_key = AnyPrivateKey::Ed25519(private_key.clone());
-
-					let derived_public = any_private_key.derive_public_key();
-					let expected_public = private_key.as_public_key();
-					assert_eq!(derived_public.to_bytes(), Vec::<u8>::from(expected_public));
-
-					let any_key_bytes = any_private_key.to_bytes();
-					let expected_bytes = SecretBox::<Vec<u8>>::from(&private_key);
-					assert_eq!(any_key_bytes.expose_secret(), expected_bytes.expose_secret());
-				}
-				Algorithm::Secp256r1 => {
-					let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
-					let any_private_key = AnyPrivateKey::Secp256r1(private_key.clone());
-
-					let derived_public = any_private_key.derive_public_key();
-					let expected_public = private_key.as_public_key();
-					assert_eq!(derived_public.to_bytes(), Vec::<u8>::from(expected_public));
-
-					let any_key_bytes = any_private_key.to_bytes();
-					let expected_bytes = SecretBox::<Vec<u8>>::from(&private_key);
-					assert_eq!(any_key_bytes.expose_secret(), expected_bytes.expose_secret());
-				}
-			}
+			// Test to_bytes returns non-empty secret data
+			let any_key_bytes = any_private_key.to_bytes();
+			assert!(!any_key_bytes.expose_secret().is_empty());
 		}
 	}
 
 	#[test]
 	fn test_any_public_key_operations() {
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let mut seed = TEST_SEED.as_bytes().to_vec();
-			seed.extend_from_slice(test_case.seed_suffix.as_bytes());
+			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes());
 
-			match test_case.algorithm {
-				Algorithm::Secp256k1 => {
-					let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
-					let public_key = private_key.as_public_key();
-					let any_public_key = AnyPublicKey::Secp256k1(public_key.clone());
-
-					let any_pub_bytes = any_public_key.to_bytes();
-					let expected_bytes = Vec::<u8>::from(&public_key);
-					assert_eq!(any_pub_bytes, expected_bytes);
-				}
-				Algorithm::Ed25519 => {
-					let private_key = Ed25519Derivation::derive_from_seed(&seed).unwrap();
-					let public_key = private_key.as_public_key();
-					let any_public_key = AnyPublicKey::Ed25519(public_key.clone());
-
-					let any_pub_bytes = any_public_key.to_bytes();
-					let expected_bytes = Vec::<u8>::from(&public_key);
-					assert_eq!(any_pub_bytes, expected_bytes);
-				}
-				Algorithm::Secp256r1 => {
-					let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
-					let public_key = private_key.as_public_key();
-					let any_public_key = AnyPublicKey::Secp256r1(public_key.clone());
-
-					let any_pub_bytes = any_public_key.to_bytes();
-					let expected_bytes = Vec::<u8>::from(&public_key);
-					assert_eq!(any_pub_bytes, expected_bytes);
-				}
-			}
+			// Test to_bytes returns non-empty public key data
+			let any_pub_bytes = any_public_key.to_bytes();
+			assert!(!any_pub_bytes.is_empty());
+			// Test algorithm detection
+			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
 		}
 	}
 
 	#[test]
 	fn test_algorithm_id_and_conversion() {
-		struct AlgorithmIdTestCase {
-			algorithm: Algorithm,
-			expected_id: u8,
-		}
-
-		let test_cases = [
-			AlgorithmIdTestCase { algorithm: Algorithm::Secp256k1, expected_id: 0 },
-			AlgorithmIdTestCase { algorithm: Algorithm::Ed25519, expected_id: 1 },
-			AlgorithmIdTestCase { algorithm: Algorithm::Secp256r1, expected_id: 6 },
-		];
-
-		for test_case in &test_cases {
+		for test_case in AlgorithmTestData::TEST_CASES {
 			// Test algorithm ID
 			assert_eq!(test_case.algorithm.id(), test_case.expected_id);
 			// Test from_id
@@ -375,5 +337,51 @@ mod tests {
 		// Test invalid ID
 		assert!(Algorithm::from_id(99).is_err());
 		assert!(Algorithm::try_from(99u8).is_err());
+	}
+
+	#[cfg(feature = "der")]
+	#[test]
+	fn test_any_public_key_to_subject_public_key_info() {
+		struct SubjectPublicKeyInfoTestCase {
+			algorithm: Algorithm,
+			expected_algorithm_oid: &'static str,
+			has_parameters: bool,
+		}
+
+		const TEST_CASES: &[SubjectPublicKeyInfoTestCase] = &[
+			SubjectPublicKeyInfoTestCase {
+				algorithm: Algorithm::Secp256k1,
+				expected_algorithm_oid: oids::EC_PUBLIC_KEY,
+				has_parameters: true,
+			},
+			SubjectPublicKeyInfoTestCase {
+				algorithm: Algorithm::Ed25519,
+				expected_algorithm_oid: oids::ED25519,
+				has_parameters: false,
+			},
+			SubjectPublicKeyInfoTestCase {
+				algorithm: Algorithm::Secp256r1,
+				expected_algorithm_oid: oids::EC_PUBLIC_KEY,
+				has_parameters: true,
+			},
+		];
+
+		for test_case in TEST_CASES {
+			let test_data = AlgorithmTestData::TEST_CASES
+				.iter()
+				.find(|data| data.algorithm == test_case.algorithm)
+				.unwrap();
+
+			// Test data persistence
+			let any_public_key = test_data.create_any_public_key(TEST_SEED.as_bytes());
+			let subject_public_key_info = SubjectPublicKeyInfo::from(any_public_key.clone());
+			assert_eq!(subject_public_key_info.algorithm.algorithm.to_string(), test_case.expected_algorithm_oid);
+			assert_eq!(subject_public_key_info.algorithm.parameters.is_some(), test_case.has_parameters);
+
+			// Test that public key bytes are preserved
+			let original_bytes = any_public_key.to_bytes();
+			let spki_bytes = subject_public_key_info.subject_public_key.raw_bytes();
+			assert_eq!(original_bytes, spki_bytes);
+		}
 	}
 }

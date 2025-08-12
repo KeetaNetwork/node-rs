@@ -13,7 +13,7 @@ use crate::algorithms::secp256r1::{Secp256r1PrivateKey, Secp256r1PublicKey};
 use crate::algorithms::PublicKey;
 use crate::error::CryptoError;
 use crate::hash::HashAlgorithm;
-use crate::operations::encryption::{KeyGeneration, SymmetricEncryption};
+use crate::operations::encryption::{KeyExchange, KeyGeneration, SymmetricEncryption};
 use crate::PrivateKey;
 
 /// Algorithm identifier for ECIES with secp256k1

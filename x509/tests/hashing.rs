@@ -1,7 +1,12 @@
 mod common;
 
+#[cfg(feature = "serde")]
 use std::collections::HashSet;
-use x509::certificates::{Certificate, CertificateBundle, CertificateHash, CertificateOptions};
+
+use x509::certificates::{Certificate, CertificateHash};
+
+#[cfg(feature = "serde")]
+use x509::certificates::{CertificateBundle, CertificateOptions};
 
 use common::*;
 
