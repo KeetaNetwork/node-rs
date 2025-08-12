@@ -2886,12 +2886,17 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			let issuer_public_key = bundle.get_issuer_public_key();
 			assert!(issuer_public_key.is_some());
 
-			// Test to_json method with chain certificates
-			let json_result = bundle.to_json(false);
-			assert!(json_result.is_ok());
-			let json_data = json_result.unwrap();
-			assert!(json_data.chain.is_some());
+			#[cfg(feature = "serde")]
+			{
+				// Test to_json method with chain certificates
+				let json_result = bundle.to_json(false);
+				assert!(json_result.is_ok());
 
+				let json_data = json_result.unwrap();
+				assert!(json_data.chain.is_some());
+			}
+
+			// Test bundle roundtrip
 			test_bundle_roundtrip(&bundle, 3);
 
 			let single_cert_bundle = CertificateBundle::try_from(vec![client_cert.clone()]).unwrap();
