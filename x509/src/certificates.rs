@@ -925,7 +925,7 @@ impl TryFrom<&str> for CertificateHash {
 }
 
 /// Certificate hash set for managing collections of hashes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CertificateHashSet {
 	certificates: HashSet<Certificate>,
 }
@@ -944,12 +944,6 @@ impl CertificateHashSet {
 	/// Add a certificate to the set
 	pub fn insert(&mut self, certificate: Certificate) {
 		self.certificates.insert(certificate);
-	}
-}
-
-impl Default for CertificateHashSet {
-	fn default() -> Self {
-		Self { certificates: HashSet::new() }
 	}
 }
 
@@ -1613,7 +1607,7 @@ impl Certificate {
 	}
 
 	/// Validate certificate path according to RFC 5280 Section 6.
-	/// See: https://tools.ietf.org/html/rfc5280#section-6
+	/// See: <https://tools.ietf.org/html/rfc5280#section-6>
 	pub fn validate_certificate_path(&self, path: &[Certificate]) -> Result<bool, CertificateError> {
 		if path.is_empty() {
 			return Ok(false);
@@ -1689,7 +1683,7 @@ impl Certificate {
 					// Check if this is a known critical extension
 					if !known_critical_extensions.contains(&oid_str.as_str()) {
 						return Err(CertificateError::ValidationFailed {
-							reason: format!("Unknown critical extension: {}", oid_str),
+							reason: format!("Unknown critical extension: {oid_str}"),
 						});
 					}
 
@@ -1728,7 +1722,7 @@ impl Certificate {
 				let oid_str = extension.oid.to_string();
 				if seen_oids.contains(&oid_str) {
 					return Err(CertificateError::ValidationFailed {
-						reason: format!("Duplicate extension OID: {}", oid_str),
+						reason: format!("Duplicate extension OID: {oid_str}"),
 					});
 				}
 				seen_oids.insert(oid_str);
@@ -4030,7 +4024,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			];
 
 			for (field_name, field_value) in string_fields {
-				assert!(!field_value.is_empty(), "{} field should not be empty", field_name);
+				assert!(!field_value.is_empty(), "{field_name} field should not be empty");
 			}
 
 			// Test array fields are not empty

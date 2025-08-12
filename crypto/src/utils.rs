@@ -371,7 +371,7 @@ mod tests {
 		];
 
 		for (input, description) in test_cases {
-			assert!(parse_der_ecdsa_signature(input).is_err(), "Failed case: {}", description);
+			assert!(parse_der_ecdsa_signature(input).is_err(), "Failed case: {description}");
 		}
 
 		// Complex invalid s INTEGER cases
@@ -382,7 +382,7 @@ mod tests {
 		];
 
 		for (input, description) in complex_cases {
-			assert!(parse_der_ecdsa_signature(input).is_err(), "Failed case: {}", description);
+			assert!(parse_der_ecdsa_signature(input).is_err(), "Failed case: {description}");
 		}
 	}
 }
