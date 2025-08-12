@@ -1,6 +1,7 @@
 mod common;
 
-use x509::certificates::*;
+use std::collections::HashSet;
+use x509::certificates::{CertificateBundle, CertificateHash, CertificateOptions, Extension};
 use x509::oids;
 
 use common::*;
@@ -11,9 +12,15 @@ fn test_json_serialization() {
 	use serde_json;
 
 	let cert = ca_certificate();
+	let bundle = CertificateBundle {
+		certificate: cert.clone(),
+		options: CertificateOptions::default(),
+		root: HashSet::new(),
+		intermediate: HashSet::new(),
+	};
 
 	// Test that JSON contains hash field
-	let json_struct = cert.to_json(true).unwrap();
+	let json_struct = bundle.to_json(true).unwrap();
 	let json_string = serde_json::to_string(&json_struct).unwrap();
 	assert!(json_string.contains("\"$hash\""));
 	assert!(!json_struct.hash_field.is_empty());
@@ -100,10 +107,10 @@ fn test_json_hash_consistency() {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_hash = ca_cert.hash().unwrap();
-	let user_hash = user_cert.hash().unwrap();
-	let ca_hash_hex = hex::encode(ca_hash.as_bytes());
-	let user_hash_hex = hex::encode(user_hash.as_bytes());
+	let ca_hash = CertificateHash::from(&ca_cert);
+	let user_hash = CertificateHash::from(&user_cert);
+	let ca_hash_hex = hex::encode(ca_hash.as_ref());
+	let user_hash_hex = hex::encode(user_hash.as_ref());
 
 	let ca_json = ca_cert.to_json(true).unwrap();
 	let user_json = user_cert.to_json(true).unwrap();
