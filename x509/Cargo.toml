@@ -44,6 +44,9 @@ path = "../crypto"
 [dependencies.asn1]
 path = "../asn1"
 
+[dependencies.accounts]
+path = "../accounts"
+
 [features]
 default = ["serde"]
 serde = ["dep:serde", "dep:serde_json"]

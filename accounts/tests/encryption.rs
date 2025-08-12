@@ -76,10 +76,10 @@ fn test_encryption_error_cases() {
 	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
 
 	// Decryption with invalid data should fail
-	let decrypt_result = account.decrypt(&[1, 2, 3, 4]);
+	let decrypt_result = account.decrypt([1, 2, 3, 4]);
 	assert!(decrypt_result.is_err(), "Decryption should fail with invalid data");
 
-	let decrypt_result = account.decrypt(&[]);
+	let decrypt_result = account.decrypt([]);
 	assert!(decrypt_result.is_err(), "Decryption should fail with empty data");
 }
 

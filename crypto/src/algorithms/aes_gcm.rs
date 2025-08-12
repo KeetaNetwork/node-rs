@@ -20,7 +20,8 @@ pub struct Aes256Gcm {
 
 impl Aes256Gcm {
 	/// Create a new AES-256-GCM instance with the given key
-	pub fn new(key: &[u8]) -> Result<Self, CryptoError> {
+	pub fn new(key: impl AsRef<[u8]>) -> Result<Self, CryptoError> {
+		let key = key.as_ref();
 		if key.len() != 32 {
 			return Err(CryptoError::InvalidKeySize);
 		}
@@ -98,7 +99,7 @@ mod tests {
 	#[test]
 	fn test_aes_256_gcm_basic() {
 		let key = [0x42u8; 32]; // 256-bit key
-		let aes_gcm = Aes256Gcm::new(&key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		let plaintext = b"Hello, AES-GCM world!";
 
 		// Generate nonce for testing
@@ -118,7 +119,7 @@ mod tests {
 	fn test_aes_256_gcm_properties() {
 		let key = [0x42u8; 32];
 
-		let aes_gcm = Aes256Gcm::new(&key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		assert_eq!(aes_gcm.algorithm_info(), "AES-256-GCM");
 		assert_eq!(Aes256Gcm::key_size(), 32);
 		assert_eq!(Aes256Gcm::nonce_size(), 12);
@@ -128,7 +129,7 @@ mod tests {
 	#[test]
 	fn test_aes_256_gcm_wrong_key_size() {
 		let wrong_key = [0x42u8; 16]; // Wrong size (should be 32)
-		let result = Aes256Gcm::new(&wrong_key);
+		let result = Aes256Gcm::new(wrong_key);
 		assert!(result.is_err());
 
 		if let Err(err) = result {
@@ -139,7 +140,7 @@ mod tests {
 	#[test]
 	fn test_aes_256_gcm_random_nonce() {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(&key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		let plaintext = b"Same plaintext";
 
 		// Generate two different nonces
@@ -162,7 +163,7 @@ mod tests {
 	#[test]
 	fn test_aes_256_gcm_authentication() {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(&key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		let plaintext = b"Authenticated message";
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
@@ -180,7 +181,7 @@ mod tests {
 	#[test]
 	fn test_aes_256_gcm_with_aad() {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(&key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		let plaintext = b"Secret message";
 		let aad = b"additional data";
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
@@ -206,7 +207,7 @@ mod tests {
 	#[test]
 	fn test_aes_256_gcm_empty_plaintext() {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(&key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		let plaintext = b"";
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
@@ -221,7 +222,7 @@ mod tests {
 	#[test]
 	fn test_aes_256_gcm_large_data() {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(&key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		let plaintext = vec![0x55u8; 8192]; // 8KB of data
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 

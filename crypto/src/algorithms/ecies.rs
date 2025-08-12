@@ -43,7 +43,7 @@ pub trait Ecies {
 	///
 	/// # Returns
 	/// Encrypted data
-	fn encrypt(recipient_public_key: &Self::PublicKey, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError>;
+	fn encrypt<T: AsRef<[u8]>>(recipient_public_key: &Self::PublicKey, plaintext: T) -> Result<Vec<u8>, CryptoError>;
 
 	/// Decrypt data using ECIES.
 	///
@@ -53,7 +53,8 @@ pub trait Ecies {
 	///
 	/// # Returns
 	/// Decrypted plaintext data
-	fn decrypt(recipient_private_key: &Self::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError>;
+	fn decrypt<T: AsRef<[u8]>>(recipient_private_key: &Self::PrivateKey, ciphertext: T)
+		-> Result<Vec<u8>, CryptoError>;
 
 	/// Get algorithm information string.
 	fn algorithm_info() -> &'static str;
@@ -67,9 +68,9 @@ impl EciesSecp256k1 {
 	///
 	/// This matches the ecies-geth implementation which uses a counter-based
 	/// KDF and then SHA-256 for the MAC key derivation.
-	fn derive_keys(shared_secret: &[u8]) -> Result<([u8; 16], [u8; 32]), CryptoError> {
+	fn derive_keys(shared_secret: impl AsRef<[u8]>) -> Result<([u8; 16], [u8; 32]), CryptoError> {
 		// First derive 32 bytes using the KDF
-		let kdf_output = Self::kdf(shared_secret, 32)?;
+		let kdf_output = Self::kdf(shared_secret.as_ref(), 32)?;
 
 		// First 16 bytes are the encryption key for AES-128
 		let mut encryption_key = [0u8; 16];
@@ -84,7 +85,7 @@ impl EciesSecp256k1 {
 	/// KDF implementation that mimics ecies-geth's counter-based KDF.
 	///
 	/// This is the same KDF used in Parity and Geth implementations.
-	fn kdf(secret: &[u8], output_length: usize) -> Result<Vec<u8>, CryptoError> {
+	fn kdf(secret: impl AsRef<[u8]>, output_length: usize) -> Result<Vec<u8>, CryptoError> {
 		let mut ctr = 1u32;
 		let mut written = 0;
 		let mut result = Vec::new();
@@ -94,9 +95,9 @@ impl EciesSecp256k1 {
 			let ctr_bytes = [(ctr >> 24) as u8, (ctr >> 16) as u8, (ctr >> 8) as u8, ctr as u8];
 
 			// Hash: counter || secret
-			let mut combined = Vec::with_capacity(4 + secret.len());
+			let mut combined = Vec::with_capacity(4 + secret.as_ref().len());
 			combined.extend_from_slice(&ctr_bytes);
-			combined.extend_from_slice(secret);
+			combined.extend_from_slice(secret.as_ref());
 
 			let hash_result = HashAlgorithm::Sha2_256.hash(&combined);
 
@@ -119,7 +120,10 @@ impl Ecies for EciesSecp256k1 {
 	/// authentication.
 	///
 	/// Format: ephemeral_public_key (65 bytes) + (iv + ciphertext) + hmac (32 bytes)
-	fn encrypt(recipient_public_key: &Secp256k1PublicKey, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<T: AsRef<[u8]>>(
+		recipient_public_key: &Secp256k1PublicKey,
+		plaintext: T,
+	) -> Result<Vec<u8>, CryptoError> {
 		// Generate ephemeral key pair
 		let ephemeral_private = Secp256k1PrivateKey::generate_random()?;
 		let ephemeral_public = ephemeral_private.as_public_key();
@@ -136,7 +140,7 @@ impl Ecies for EciesSecp256k1 {
 		// Encrypt with AES-128-CTR
 		let cipher = Aes128CtrCipher::new();
 		let ciphertext_only = cipher
-			.encrypt_with_iv(&encryption_key, &iv, plaintext)
+			.encrypt_with_iv(&encryption_key, &iv, plaintext.as_ref())
 			.map_err(|_| CryptoError::EncryptionFailed)?;
 
 		// Create ciphertext with IV prepended (matches ecies-geth aes128CtrEncrypt)
@@ -161,17 +165,20 @@ impl Ecies for EciesSecp256k1 {
 	/// Decrypt data using ECIES with secp256k1.
 	///
 	/// Uses AES-128-CTR for decryption and HMAC-SHA256 for authentication.
-	fn decrypt(recipient_private_key: &Secp256k1PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<T: AsRef<[u8]>>(
+		recipient_private_key: &Secp256k1PrivateKey,
+		ciphertext: T,
+	) -> Result<Vec<u8>, CryptoError> {
 		// Check minimum length: 65 (ephemeral_pk) + 16 (iv) + 32 (hmac) = 113 bytes minimum
-		if ciphertext.len() < 113 {
+		if ciphertext.as_ref().len() < 113 {
 			return Err(CryptoError::DecryptionFailed);
 		}
 
 		// Parse the message components
-		let ephemeral_public_bytes = &ciphertext[0..65];
-		let hmac_start = ciphertext.len() - 32;
-		let cipher_with_iv = &ciphertext[65..hmac_start]; // IV + encrypted data
-		let received_hmac = &ciphertext[hmac_start..];
+		let ephemeral_public_bytes = &ciphertext.as_ref()[0..65];
+		let hmac_start = ciphertext.as_ref().len() - 32;
+		let cipher_with_iv = &ciphertext.as_ref()[65..hmac_start]; // IV + encrypted data
+		let received_hmac = &ciphertext.as_ref()[hmac_start..];
 
 		// Parse ephemeral public key
 		let ephemeral_public = Secp256k1PublicKey::try_from(ephemeral_public_bytes)?;
@@ -223,7 +230,7 @@ impl Ecies for EciesX25519 {
 	/// Uses AES-CBC for encryption and HMAC-SHA256 (matching ecies-25519 format).
 	///
 	/// Format: iv (16 bytes) + ephemeral_public_key (32 bytes) + mac (32 bytes) + ciphertext
-	fn encrypt(recipient_public_key: &X25519PublicKey, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<T: AsRef<[u8]>>(recipient_public_key: &X25519PublicKey, plaintext: T) -> Result<Vec<u8>, CryptoError> {
 		use crate::algorithms::aes_cbc::Aes256Cbc;
 
 		// Generate ephemeral key pair
@@ -244,7 +251,7 @@ impl Ecies for EciesX25519 {
 		let shared_secret = ephemeral_private.diffie_hellman(recipient_public_key);
 
 		// Derive keys using SHA-512 (matching ecies-25519)
-		let sha512_hash = HashAlgorithm::Sha2_512.hash(&shared_secret);
+		let sha512_hash = HashAlgorithm::Sha2_512.hash(shared_secret);
 		let encryption_key = &sha512_hash[0..32]; // First 32 bytes
 		let mac_key = &sha512_hash[32..]; // Remaining bytes
 
@@ -260,7 +267,7 @@ impl Ecies for EciesX25519 {
 
 		// Encrypt with AES-CBC
 		let cipher = Aes256Cbc;
-		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, encryption_key, Some(&iv), plaintext)
+		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, encryption_key, Some(&iv), plaintext.as_ref())
 			.map_err(|_| CryptoError::EncryptionFailed)?;
 		// Extract just the ciphertext part (skip the IV that was prepended)
 		let ciphertext = &iv_and_ciphertext[16..];
@@ -288,19 +295,22 @@ impl Ecies for EciesX25519 {
 	/// Decrypt data using ECIES with X25519.
 	///
 	/// Uses AES-CBC for decryption and HMAC-SHA256 (matching ecies-25519 format).
-	fn decrypt(recipient_private_key: &X25519PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<T: AsRef<[u8]>>(
+		recipient_private_key: &X25519PrivateKey,
+		ciphertext: T,
+	) -> Result<Vec<u8>, CryptoError> {
 		use crate::algorithms::aes_cbc::Aes256Cbc;
 
 		// Check minimum length: 16 (iv) + 32 (ephemeral_pk) + 32 (mac) = 80 bytes minimum
-		if ciphertext.len() < 80 {
+		if ciphertext.as_ref().len() < 80 {
 			return Err(CryptoError::DecryptionFailed);
 		}
 
 		// Parse the message components: iv + ephemeral_public_key + mac + ciphertext
-		let iv = &ciphertext[0..16];
-		let ephemeral_public_bytes = &ciphertext[16..48];
-		let received_mac = &ciphertext[48..80];
-		let encrypted_data = &ciphertext[80..];
+		let iv = &ciphertext.as_ref()[0..16];
+		let ephemeral_public_bytes = &ciphertext.as_ref()[16..48];
+		let received_mac = &ciphertext.as_ref()[48..80];
+		let encrypted_data = &ciphertext.as_ref()[80..];
 
 		// Parse ephemeral public key
 		let ephemeral_public = X25519PublicKey::try_from(ephemeral_public_bytes)?;
@@ -308,7 +318,7 @@ impl Ecies for EciesX25519 {
 		let shared_secret = recipient_private_key.diffie_hellman(&ephemeral_public);
 
 		// Derive keys using SHA-512 (matching ecies-25519)
-		let sha512_hash = HashAlgorithm::Sha2_512.hash(&shared_secret);
+		let sha512_hash = HashAlgorithm::Sha2_512.hash(shared_secret);
 		let encryption_key = &sha512_hash[0..32]; // First 32 bytes
 		let mac_key = &sha512_hash[32..]; // Remaining bytes
 
@@ -357,7 +367,10 @@ impl Ecies for EciesSecp256r1 {
 	/// This follows the crypto-ecies-js format.
 	///
 	/// Format: ephemeral_public_key (65 bytes) + ciphertext + hmac (64 bytes) + iv (16 bytes)
-	fn encrypt(recipient_public_key: &Secp256r1PublicKey, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<T: AsRef<[u8]>>(
+		recipient_public_key: &Secp256r1PublicKey,
+		plaintext: T,
+	) -> Result<Vec<u8>, CryptoError> {
 		use crate::algorithms::aes_cbc::Aes256Cbc;
 
 		// Generate ephemeral key pair
@@ -388,7 +401,7 @@ impl Ecies for EciesSecp256r1 {
 
 		// Encrypt with AES-256-CBC
 		let cipher = Aes256Cbc;
-		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, &encryption_key, Some(&iv), plaintext)
+		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, encryption_key, Some(&iv), plaintext.as_ref())
 			.map_err(|_| CryptoError::EncryptionFailed)?;
 		// Extract just the ciphertext part (skip the IV that was prepended)
 		let ciphertext_only = &iv_and_ciphertext[16..];
@@ -415,21 +428,24 @@ impl Ecies for EciesSecp256r1 {
 	///
 	/// Uses AES-256-CBC for decryption and HMAC-SHA512 for authentication.
 	/// This follows the crypto-ecies-js format.
-	fn decrypt(recipient_private_key: &Secp256r1PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<T: AsRef<[u8]>>(
+		recipient_private_key: &Secp256r1PrivateKey,
+		ciphertext: T,
+	) -> Result<Vec<u8>, CryptoError> {
 		use crate::algorithms::aes_cbc::Aes256Cbc;
 
 		// Minimum size: ephemeral_key(65) + ciphertext(16) + hmac(64) + iv(16) = 161
-		if ciphertext.len() < 161 {
+		if ciphertext.as_ref().len() < 161 {
 			return Err(CryptoError::DecryptionFailed);
 		}
 
 		// Parse components using TypeScript format: ephemeral_pk + ciphertext + hmac + iv
-		let ephemeral_public_bytes = &ciphertext[0..65];
-		let iv_start = ciphertext.len() - 16;
-		let hmac_start = ciphertext.len() - 80; // 64 + 16 = 80
-		let encrypted_data = &ciphertext[65..hmac_start];
-		let received_hmac = &ciphertext[hmac_start..iv_start];
-		let iv = &ciphertext[iv_start..];
+		let ephemeral_public_bytes = &ciphertext.as_ref()[0..65];
+		let iv_start = ciphertext.as_ref().len() - 16;
+		let hmac_start = ciphertext.as_ref().len() - 80; // 64 + 16 = 80
+		let encrypted_data = &ciphertext.as_ref()[65..hmac_start];
+		let received_hmac = &ciphertext.as_ref()[hmac_start..iv_start];
+		let iv = &ciphertext.as_ref()[iv_start..];
 
 		// Parse ephemeral public key
 		let ephemeral_public = Secp256r1PublicKey::try_from(ephemeral_public_bytes)?;
@@ -462,7 +478,7 @@ impl Ecies for EciesSecp256r1 {
 		let mut iv_and_ciphertext = Vec::with_capacity(16 + encrypted_data.len());
 		iv_and_ciphertext.extend_from_slice(iv);
 		iv_and_ciphertext.extend_from_slice(encrypted_data);
-		let plaintext = SymmetricEncryption::decrypt(&cipher, &encryption_key, &iv_and_ciphertext)
+		let plaintext = SymmetricEncryption::decrypt(&cipher, encryption_key, &iv_and_ciphertext)
 			.map_err(|_| CryptoError::DecryptionFailed)?;
 
 		Ok(plaintext)
@@ -478,13 +494,16 @@ impl EciesSecp256r1 {
 	///
 	/// This generates derivation keys using iterative SHA512 over a seed constructed from
 	/// ephemeral public key (65 bytes) + shared secret X coordinate (32 bytes)
-	fn derive_keys(ephemeral_public_key: &[u8], shared_secret_x: &[u8]) -> Result<([u8; 32], [u8; 128]), CryptoError> {
+	fn derive_keys(
+		ephemeral_public_key: impl AsRef<[u8]>,
+		shared_secret_x: impl AsRef<[u8]>,
+	) -> Result<([u8; 32], [u8; 128]), CryptoError> {
 		use sha2::{Digest, Sha512};
 
 		// Construct seed: ephemeral_public_key (65 bytes) + shared_secret_x (32 bytes, padded to 64 hex chars)
 		let mut seed = Vec::with_capacity(65 + 32);
-		seed.extend_from_slice(ephemeral_public_key);
-		seed.extend_from_slice(shared_secret_x);
+		seed.extend_from_slice(ephemeral_public_key.as_ref());
+		seed.extend_from_slice(shared_secret_x.as_ref());
 
 		// Key sizes matching TypeScript implementation
 		let symmetric_key_bytes = 256 / 8; // 32 bytes for AES-256
@@ -648,7 +667,7 @@ mod tests {
 
 		// Test with too short ciphertext (less than 33 bytes for ephemeral public key)
 		let short_ciphertext = [0u8; 32];
-		let result = EciesSecp256k1::decrypt(&private_key, &short_ciphertext);
+		let result = EciesSecp256k1::decrypt(&private_key, short_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
 
@@ -667,7 +686,7 @@ mod tests {
 		let fake_ciphertext = [0u8; 100];
 
 		// Public key should not be able to decrypt
-		let result = public_key.decrypt(&fake_ciphertext);
+		let result = public_key.decrypt(fake_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
 	}
@@ -757,7 +776,7 @@ mod tests {
 
 		// Test with too short ciphertext (less than 80 bytes minimum)
 		let short_ciphertext = [0u8; 50];
-		let result = EciesX25519::decrypt(&x25519_private, &short_ciphertext);
+		let result = EciesX25519::decrypt(&x25519_private, short_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
 

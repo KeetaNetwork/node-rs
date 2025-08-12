@@ -25,7 +25,15 @@ impl SymmetricEncryption for Aes256Cbc {
 	///
 	/// # Returns
 	/// Encrypted data with PKCS#7 padding applied.
-	fn encrypt(&self, key: &[u8], iv: Option<&[u8]>, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<K: AsRef<[u8]>, P: AsRef<[u8]>>(
+		&self,
+		key: K,
+		iv: Option<&[u8]>,
+		plaintext: P,
+	) -> Result<Vec<u8>, CryptoError> {
+		let key = key.as_ref();
+		let plaintext = plaintext.as_ref();
+
 		if key.len() != 32 {
 			return Err(CryptoError::InvalidKeySize);
 		}
@@ -66,7 +74,10 @@ impl SymmetricEncryption for Aes256Cbc {
 	///
 	/// # Returns
 	/// Decrypted data with PKCS#7 padding removed.
-	fn decrypt(&self, key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError> {
+		let key = key.as_ref();
+		let ciphertext = ciphertext.as_ref();
+
 		if key.len() != 32 {
 			return Err(CryptoError::InvalidKeySize);
 		}
@@ -111,12 +122,12 @@ mod tests {
 		let plaintext = b"Hello, AES-CBC world!";
 
 		// Test encryption
-		let ciphertext = aes_cbc.encrypt(&key, None, plaintext).unwrap();
+		let ciphertext = aes_cbc.encrypt(key, None, plaintext).unwrap();
 		assert_ne!(ciphertext.as_slice(), plaintext); // Should be different
 		assert!(ciphertext.len() > plaintext.len()); // Should include IV and padding
 
 		// Test decryption
-		let decrypted = aes_cbc.decrypt(&key, &ciphertext).unwrap();
+		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -135,13 +146,13 @@ mod tests {
 		let plaintext = b"test";
 
 		// Test encryption with wrong key size
-		let result = aes_cbc.encrypt(&wrong_key, None, plaintext);
+		let result = aes_cbc.encrypt(wrong_key, None, plaintext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
 
 		// Test decryption with wrong key size
 		let fake_ciphertext = [0u8; 32];
-		let result = aes_cbc.decrypt(&wrong_key, &fake_ciphertext);
+		let result = aes_cbc.decrypt(wrong_key, fake_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
 	}
@@ -152,7 +163,7 @@ mod tests {
 		let key = [0x42u8; 32];
 		let short_ciphertext = [0u8; 8]; // Too short (needs at least 16 bytes for IV)
 
-		let result = aes_cbc.decrypt(&key, &short_ciphertext);
+		let result = aes_cbc.decrypt(key, short_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
 	}
@@ -165,13 +176,13 @@ mod tests {
 
 		// Encrypt the same plaintext twice
 		// Cipher texts should be different due to random IV
-		let ciphertext1 = aes_cbc.encrypt(&key, None, plaintext).unwrap();
-		let ciphertext2 = aes_cbc.encrypt(&key, None, plaintext).unwrap();
+		let ciphertext1 = aes_cbc.encrypt(key, None, plaintext).unwrap();
+		let ciphertext2 = aes_cbc.encrypt(key, None, plaintext).unwrap();
 		assert_ne!(ciphertext1, ciphertext2);
 
 		// But both should decrypt to the same plaintext
-		let decrypted1 = aes_cbc.decrypt(&key, &ciphertext1).unwrap();
-		let decrypted2 = aes_cbc.decrypt(&key, &ciphertext2).unwrap();
+		let decrypted1 = aes_cbc.decrypt(key, &ciphertext1).unwrap();
+		let decrypted2 = aes_cbc.decrypt(key, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
 	}
@@ -183,20 +194,20 @@ mod tests {
 
 		// Test with data that's exactly block-aligned (16 bytes)
 		let block_aligned = [0x55u8; 16];
-		let ciphertext = aes_cbc.encrypt(&key, None, &block_aligned).unwrap();
-		let decrypted = aes_cbc.decrypt(&key, &ciphertext).unwrap();
+		let ciphertext = aes_cbc.encrypt(key, None, block_aligned).unwrap();
+		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, block_aligned);
 
 		// Test with data that needs padding (15 bytes)
 		let needs_padding = [0x66u8; 15];
-		let ciphertext = aes_cbc.encrypt(&key, None, &needs_padding).unwrap();
-		let decrypted = aes_cbc.decrypt(&key, &ciphertext).unwrap();
+		let ciphertext = aes_cbc.encrypt(key, None, needs_padding).unwrap();
+		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, needs_padding);
 
 		// Test with data that needs lots of padding (1 byte)
 		let minimal_data = [0x77u8; 1];
-		let ciphertext = aes_cbc.encrypt(&key, None, &minimal_data).unwrap();
-		let decrypted = aes_cbc.decrypt(&key, &ciphertext).unwrap();
+		let ciphertext = aes_cbc.encrypt(key, None, minimal_data).unwrap();
+		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, minimal_data);
 	}
 }

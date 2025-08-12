@@ -19,6 +19,9 @@ pub enum CryptoError {
 	/// Signature verification failed
 	#[snafu(display("Signature verification failed"))]
 	SignatureVerificationFailed,
+	/// Generic signature error
+	#[snafu(display("Signature error"))]
+	SignatureError,
 	/// Unsupported algorithm
 	#[snafu(display("Unsupported algorithm: {algorithm}"))]
 	UnsupportedAlgorithm { algorithm: String },
@@ -88,6 +91,20 @@ impl From<cbc::cipher::inout::NotEqualError> for CryptoError {
 impl From<cbc::cipher::block_padding::UnpadError> for CryptoError {
 	fn from(_: cbc::cipher::block_padding::UnpadError) -> Self {
 		CryptoError::DecryptionFailed
+	}
+}
+
+#[cfg(feature = "signature")]
+impl From<crate::operations::SignatureError> for CryptoError {
+	fn from(_: crate::operations::SignatureError) -> Self {
+		CryptoError::SignatureError
+	}
+}
+
+#[cfg(feature = "signature")]
+impl From<CryptoError> for crate::operations::SignatureError {
+	fn from(_: CryptoError) -> Self {
+		crate::operations::SignatureError::new()
 	}
 }
 
@@ -171,7 +188,7 @@ mod tests {
 		let key = [0u8; 32]; // Valid key size
 		let invalid_ciphertext = [0u8; 15]; // Invalid size (not multiple of 16)
 
-		let result = cipher.decrypt(&key, &invalid_ciphertext);
+		let result = cipher.decrypt(key, invalid_ciphertext);
 		assert!(result.is_err());
 		// This should result in a DecryptionFailed error
 		assert_eq!(result.unwrap_err(), CryptoError::DecryptionFailed);
@@ -194,5 +211,18 @@ mod tests {
 		let unpad_error = cbc::cipher::block_padding::UnpadError;
 		let crypto_error: CryptoError = unpad_error.into();
 		assert_eq!(crypto_error, CryptoError::DecryptionFailed);
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_signature_error_conversion() {
+		let signature_error = crate::operations::SignatureError::new();
+		let crypto_error: CryptoError = signature_error.into();
+		assert_eq!(crypto_error, CryptoError::SignatureError);
+
+		// Test opposite conversion
+		let crypto_error = CryptoError::SignatureError;
+		let _signature_error: crate::operations::SignatureError = crypto_error.into();
+		// SignatureError doesn't implement PartialEq, so just test the conversion works
 	}
 }

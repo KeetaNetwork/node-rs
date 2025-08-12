@@ -113,7 +113,15 @@ impl SymmetricEncryption for Aes128CtrCipher {
 	/// Encrypt data with optional IV prepended
 	///
 	/// Format: iv (16 bytes) + ciphertext
-	fn encrypt(&self, key: &[u8], iv: Option<&[u8]>, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<K: AsRef<[u8]>, P: AsRef<[u8]>>(
+		&self,
+		key: K,
+		iv: Option<&[u8]>,
+		plaintext: P,
+	) -> Result<Vec<u8>, CryptoError> {
+		let key = key.as_ref();
+		let plaintext = plaintext.as_ref();
+
 		if key.len() != 16 {
 			return Err(CryptoError::InvalidKeySize);
 		}
@@ -146,7 +154,10 @@ impl SymmetricEncryption for Aes128CtrCipher {
 	/// Decrypt data with IV extracted from the beginning
 	///
 	/// Expected format: iv (16 bytes) + ciphertext
-	fn decrypt(&self, key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError> {
+		let key = key.as_ref();
+		let ciphertext = ciphertext.as_ref();
+
 		if key.len() != 16 {
 			return Err(CryptoError::InvalidKeySize);
 		}
@@ -188,12 +199,12 @@ mod tests {
 		let plaintext = b"Hello, AES-CTR world!";
 
 		// Test encryption
-		let ciphertext = cipher.encrypt(&key, None, plaintext).unwrap();
+		let ciphertext = cipher.encrypt(key, None, plaintext).unwrap();
 		assert_ne!(ciphertext.as_slice(), plaintext); // Should be different
 		assert_eq!(ciphertext.len(), 16 + plaintext.len()); // IV + plaintext length
 
 		// Test decryption
-		let decrypted = cipher.decrypt(&key, &ciphertext).unwrap();
+		let decrypted = cipher.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -214,7 +225,7 @@ mod tests {
 		let wrong_key = [0x42u8; 32]; // Wrong size (should be 16)
 		let plaintext = b"test";
 
-		let result = cipher.encrypt(&wrong_key, None, plaintext);
+		let result = cipher.encrypt(wrong_key, None, plaintext);
 		assert!(matches!(result, Err(CryptoError::InvalidKeySize)));
 	}
 
@@ -262,15 +273,15 @@ mod tests {
 		let plaintext = b"Same message";
 
 		// Encrypt the same message twice (should use different random IVs)
-		let ciphertext1 = cipher.encrypt(&key, None, plaintext).unwrap();
-		let ciphertext2 = cipher.encrypt(&key, None, plaintext).unwrap();
+		let ciphertext1 = cipher.encrypt(key, None, plaintext).unwrap();
+		let ciphertext2 = cipher.encrypt(key, None, plaintext).unwrap();
 
 		// Cipher texts should be different due to different IVs
 		assert_ne!(ciphertext1, ciphertext2);
 
 		// But both should decrypt to the same plaintext
-		let decrypted1 = cipher.decrypt(&key, &ciphertext1).unwrap();
-		let decrypted2 = cipher.decrypt(&key, &ciphertext2).unwrap();
+		let decrypted1 = cipher.decrypt(key, &ciphertext1).unwrap();
+		let decrypted2 = cipher.decrypt(key, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
 	}
@@ -294,7 +305,7 @@ mod tests {
 		let key = [0x42u8; 16];
 		let short_ciphertext = [0u8; 15]; // Too short (less than IV size)
 
-		let result = cipher.decrypt(&key, &short_ciphertext);
+		let result = cipher.decrypt(key, short_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
 	}
@@ -306,10 +317,10 @@ mod tests {
 		let plaintext = b"";
 
 		// Should handle empty plaintext correctly
-		let ciphertext = cipher.encrypt(&key, None, plaintext).unwrap();
+		let ciphertext = cipher.encrypt(key, None, plaintext).unwrap();
 		assert_eq!(ciphertext.len(), 16); // IV only
 
-		let decrypted = cipher.decrypt(&key, &ciphertext).unwrap();
+		let decrypted = cipher.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -319,10 +330,10 @@ mod tests {
 		let key = [0x42u8; 16];
 		let plaintext = vec![0x55u8; 8192]; // 8KB of data
 
-		let ciphertext = cipher.encrypt(&key, None, &plaintext).unwrap();
+		let ciphertext = cipher.encrypt(key, None, &plaintext).unwrap();
 		assert_eq!(ciphertext.len(), 16 + 8192); // IV + data
 
-		let decrypted = cipher.decrypt(&key, &ciphertext).unwrap();
+		let decrypted = cipher.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -356,12 +367,12 @@ mod tests {
 		let key = [0x42u8; 16];
 		let plaintext = b"test default implementation";
 
-		let ciphertext1 = cipher1.encrypt(&key, None, plaintext).unwrap();
-		let ciphertext2 = cipher2.encrypt(&key, None, plaintext).unwrap();
+		let ciphertext1 = cipher1.encrypt(key, None, plaintext).unwrap();
+		let ciphertext2 = cipher2.encrypt(key, None, plaintext).unwrap();
 
 		// Both should decrypt correctly (though ciphertext will be different due to random IVs)
-		let decrypted1 = cipher1.decrypt(&key, &ciphertext1).unwrap();
-		let decrypted2 = cipher2.decrypt(&key, &ciphertext2).unwrap();
+		let decrypted1 = cipher1.decrypt(key, &ciphertext1).unwrap();
+		let decrypted2 = cipher2.decrypt(key, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
 	}
@@ -374,13 +385,13 @@ mod tests {
 
 		// Test with too short IV
 		let short_iv = [0x12u8; 8]; // 8 bytes instead of 16
-		let result = cipher.encrypt(&key, Some(&short_iv), plaintext);
+		let result = cipher.encrypt(key, Some(&short_iv), plaintext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidIvSize));
 
 		// Test with too long IV
 		let long_iv = [0x12u8; 32]; // 32 bytes instead of 16
-		let result = cipher.encrypt(&key, Some(&long_iv), plaintext);
+		let result = cipher.encrypt(key, Some(&long_iv), plaintext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidIvSize));
 	}
@@ -444,7 +455,7 @@ mod tests {
 
 		// Test with wrong key size
 		let wrong_key = [0x42u8; 8]; // 8 bytes instead of 16
-		let result = cipher.decrypt(&wrong_key, &ciphertext);
+		let result = cipher.decrypt(wrong_key, ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
 	}
@@ -455,7 +466,7 @@ mod tests {
 		let key = [0x42u8; 16];
 		let ciphertext = [0u8; 16]; // Exactly IV size, should work (empty plaintext)
 
-		let result = cipher.decrypt(&key, &ciphertext);
+		let result = cipher.decrypt(key, ciphertext);
 		assert!(result.is_ok());
 		let decrypted = result.unwrap();
 		assert_eq!(decrypted.len(), 0); // Should be empty plaintext
@@ -473,7 +484,7 @@ mod tests {
 		let key = [0x42u8; 16];
 		let ciphertext = [0u8; 15]; // Less than IV size, should fail
 
-		let result = cipher.decrypt(&key, &ciphertext);
+		let result = cipher.decrypt(key, ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
 	}

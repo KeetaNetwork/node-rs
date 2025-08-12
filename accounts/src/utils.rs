@@ -88,7 +88,7 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorith
 /// Create an identifier key from seed and index
 pub(crate) fn create_identifier_key(seed: &Seed, index: Index, prefix: &str) -> Result<(String, String), AccountError> {
 	let seed_buffer = combine_seed_and_index(seed, index);
-	let hash_result: [u8; 32] = crypto::hash_array(&seed_buffer, None)?;
+	let hash_result: [u8; 32] = crypto::hash_array(seed_buffer, None)?;
 	let identifier = hex::encode(&hash_result[..16]); // Use first 16 bytes as identifier
 	let public_key = format!("{prefix}_{identifier}");
 

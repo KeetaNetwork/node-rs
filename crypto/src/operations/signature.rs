@@ -3,6 +3,7 @@
 //! This module provides idiomatic traits and types for cryptographic signing
 //! and verification operations, leveraging the RustCrypto ecosystem.
 
+use crate::algorithms::CryptoAlgorithm;
 use crate::error::CryptoError;
 
 // Re-export key RustCrypto signature traits for easier use
@@ -12,7 +13,7 @@ pub use signature::{DigestSigner, DigestVerifier, Error as SignatureError, Rando
 ///
 /// This trait extends RustCrypto's Signer trait with additional functionality
 /// needed for our cryptographic operations.
-pub trait CryptoSigner<S>: Signer<S> {
+pub trait CryptoSigner<S>: CryptoAlgorithm + Signer<S> {
 	/// Check if this signer has access to the private key
 	fn has_private_key(&self) -> bool;
 }
@@ -21,7 +22,7 @@ pub trait CryptoSigner<S>: Signer<S> {
 ///
 /// This trait extends RustCrypto's Verifier trait with additional functionality
 /// needed for our cryptographic operations.
-pub trait CryptoVerifier<S>: Verifier<S> {
+pub trait CryptoVerifier<S>: CryptoAlgorithm + Verifier<S> {
 	/// Get the public key bytes for this verifier
 	fn public_key_bytes(&self) -> Vec<u8>;
 
@@ -67,7 +68,7 @@ pub trait CryptoSignerWithOptions<S>: CryptoSigner<S> {
 	/// - If options.raw = false (default): pre-hashes the message
 	/// - If options.raw = true: uses raw message
 	/// - options.for_cert: controls encoding format for certificates
-	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<S, SignatureError>;
+	fn sign_with_options<T: AsRef<[u8]>>(&self, message: T, options: SigningOptions) -> Result<S, SignatureError>;
 }
 
 /// Extended verification operations with configurable options
@@ -81,12 +82,19 @@ pub trait CryptoVerifierWithOptions<S>: CryptoVerifier<S> {
 	/// - If options.raw = false (default): pre-hashes the message
 	/// - If options.raw = true: uses raw message
 	/// - options.for_cert: controls encoding format for certificates
-	fn verify_with_options(&self, message: &[u8], signature: &S, options: SigningOptions)
-		-> Result<(), SignatureError>;
+	fn verify_with_options<T: AsRef<[u8]>>(
+		&self,
+		message: T,
+		signature: &S,
+		options: SigningOptions,
+	) -> Result<(), SignatureError>;
 }
 
 #[cfg(test)]
 mod tests {
+	use crate::algorithms::CryptoAlgorithm;
+	use crate::Algorithm;
+
 	use super::*;
 	use signature::{Signer, Verifier};
 
@@ -94,6 +102,18 @@ mod tests {
 	// Note: There are algorithm-specific tests for real implementations
 	struct MockSigner;
 	struct MockVerifier;
+
+	impl CryptoAlgorithm for MockSigner {
+		fn get_algorithm(&self) -> Algorithm {
+			Algorithm::Ed25519
+		}
+	}
+
+	impl CryptoAlgorithm for MockVerifier {
+		fn get_algorithm(&self) -> Algorithm {
+			Algorithm::Ed25519
+		}
+	}
 
 	#[derive(Clone)]
 	struct MockSignature([u8; 32]);
@@ -144,8 +164,13 @@ mod tests {
 	}
 
 	impl CryptoSignerWithOptions<MockSignature> for MockSigner {
-		fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<MockSignature, SignatureError> {
+		fn sign_with_options<T: AsRef<[u8]>>(
+			&self,
+			message: T,
+			options: SigningOptions,
+		) -> Result<MockSignature, SignatureError> {
 			// Mock implementation: use different signature based on options
+			let message = message.as_ref();
 			let mut signature_bytes = [1u8; 32];
 
 			if options.raw {
@@ -182,13 +207,14 @@ mod tests {
 	}
 
 	impl CryptoVerifierWithOptions<MockSignature> for MockVerifier {
-		fn verify_with_options(
+		fn verify_with_options<T: AsRef<[u8]>>(
 			&self,
-			message: &[u8],
+			message: T,
 			signature: &MockSignature,
 			options: SigningOptions,
 		) -> Result<(), SignatureError> {
 			// Mock implementation: validate signature was created with matching options
+			let message = message.as_ref();
 			let sig_bytes = signature.as_ref();
 
 			// Check if signature was marked for raw processing
@@ -226,6 +252,12 @@ mod tests {
 	// Mock implementations that can fail for error testing
 	struct FailingMockVerifier;
 
+	impl CryptoAlgorithm for FailingMockVerifier {
+		fn get_algorithm(&self) -> Algorithm {
+			Algorithm::Ed25519
+		}
+	}
+
 	impl Verifier<MockSignature> for FailingMockVerifier {
 		fn verify(&self, _msg: &[u8], _signature: &MockSignature) -> Result<(), signature::Error> {
 			Err(signature::Error::new())
@@ -244,10 +276,13 @@ mod tests {
 
 	#[test]
 	fn test_crypto_signer_trait() {
-		let signer = MockSigner;
-
 		// Test CryptoSigner trait method
+		let signer = MockSigner;
 		assert!(signer.has_private_key());
+
+		// Test getting the algorithm
+		let algorithm = signer.get_algorithm();
+		assert_eq!(algorithm, Algorithm::Ed25519);
 
 		// Test signing a message
 		let message = b"test message for signer trait";
@@ -263,6 +298,9 @@ mod tests {
 		let signature = signer.try_sign(message).unwrap();
 
 		// Test CryptoVerifier trait methods
+		let algorithm = verifier.get_algorithm();
+		assert_eq!(algorithm, Algorithm::Ed25519);
+
 		let public_key_bytes = verifier.public_key_bytes();
 		assert_eq!(public_key_bytes, vec![0x02, 0x03, 0x04, 0x05]);
 
@@ -292,9 +330,12 @@ mod tests {
 		let failing_verifier = FailingMockVerifier;
 		let signer = MockSigner;
 		let message = b"test message";
-		let signature = signer.try_sign(message).unwrap();
+
+		let algorithm = failing_verifier.get_algorithm();
+		assert_eq!(algorithm, Algorithm::Ed25519);
 
 		// Test verification failure
+		let signature = signer.try_sign(message).unwrap();
 		assert!(failing_verifier.verify(message, &signature).is_err());
 
 		// Test empty public key bytes
@@ -446,25 +487,16 @@ mod tests {
 	}
 
 	#[test]
-	fn test_extended_traits_trait_object_compatibility() {
-		// Test that our extended traits can be used as trait objects
+	fn test_extended_traits_with_ref_compatibility() {
 		let signer = MockSigner;
 		let verifier = MockVerifier;
-
-		// Test CryptoSignerWithOptions as trait object
-		let crypto_signer_with_opts: &dyn CryptoSignerWithOptions<MockSignature> = &signer;
 		let options = SigningOptions::default();
-		let message = b"trait object test";
 
-		let signature = crypto_signer_with_opts
-			.sign_with_options(message, options)
-			.unwrap();
+		let message_vec = b"test message".to_vec();
+		let signature = signer.sign_with_options(&message_vec, options).unwrap();
 		assert_eq!(signature.as_ref().len(), 32);
 
-		// Test CryptoVerifierWithOptions as trait object
-		let crypto_verifier_with_opts: &dyn CryptoVerifierWithOptions<MockSignature> = &verifier;
-		assert!(crypto_verifier_with_opts
-			.verify_with_options(message, &signature, options)
-			.is_ok());
+		let verification = verifier.verify_with_options(&message_vec, &signature, options);
+		assert!(verification.is_ok());
 	}
 }

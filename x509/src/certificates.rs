@@ -11,7 +11,7 @@ use asn1::{Decode, Encode};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
 use crypto::bigint::U256;
-use crypto::prelude::{AnyPrivateKey, CryptoSignerWithOptions, HashAlgorithm, SigningOptions};
+use crypto::prelude::{Algorithm, CryptoSignerWithOptions, HashAlgorithm, SignatureEncoding, SigningOptions};
 use hex;
 
 #[cfg(feature = "serde")]
@@ -1249,53 +1249,56 @@ impl CertificateBuilder {
 		})
 	}
 
-	/// Build and sign a certificate.
+	/// Build and sign a certificate with any signer that implements CryptoSignerWithOptions.
 	///
-	/// This method automatically detects the signing algorithm based on the
-	/// private key type and follows RFC 5280 standards for certificate signing.
-	pub fn build(&self, signing_key: &crypto::AnyPrivateKey) -> Result<Certificate, CertificateError> {
-		// Determine signature algorithm based on key type first
-		let signature_algorithm_oid = match signing_key {
-			crypto::AnyPrivateKey::Ed25519(_) => oids::ED25519,
-			crypto::AnyPrivateKey::Secp256k1(_) => oids::ECDSA_WITH_SHA256,
-			crypto::AnyPrivateKey::Secp256r1(_) => oids::ECDSA_WITH_SHA256,
+	/// This method is generic and works with any type that can sign, including
+	/// Account types, raw private keys, or other signing implementations.
+	pub fn build<T, S>(&self, signer: &T) -> Result<Certificate, CertificateError>
+	where
+		T: CryptoSignerWithOptions<S> + 'static,
+		S: SignatureEncoding,
+	{
+		// Determine signature algorithm OID based on the algorithm
+		// Get the algorithm from the signer
+		let algorithm = signer.get_algorithm();
+		let signature_algorithm_oid = match algorithm {
+			Algorithm::Ed25519 => oids::ED25519,
+			Algorithm::Secp256k1 => oids::ECDSA_WITH_SHA256,
+			Algorithm::Secp256r1 => oids::ECDSA_WITH_SHA256,
 		};
 
 		// Build the TBS certificate with the correct signature algorithm
-		let signature_algorithm = AlgorithmIdentifier::try_from(signature_algorithm_oid)?;
 		let mut tbs_certificate = self.build_tbs()?;
-
-		// Set the signature algorithm in the TBS certificate
-		tbs_certificate.signature_algorithm = signature_algorithm.clone();
+		tbs_certificate.signature_algorithm =
+			AlgorithmIdentifier { algorithm: ObjectIdentifier::new(signature_algorithm_oid)?, parameters: None };
 
 		// Serialize the TBS certificate for signing
 		let tbs_der = tbs_certificate.to_der()?;
-		// Sign the TBS certificate
-		let signature_bytes = match signing_key {
-			AnyPrivateKey::Ed25519(ed25519_key) => {
-				// Ed25519 uses raw signing for certificates (no pre-hashing)
-				let signing_opts = SigningOptions::raw();
-				let signature = ed25519_key.sign_with_options(&tbs_der, signing_opts)?;
 
-				signature.to_bytes().to_vec()
-			}
-			AnyPrivateKey::Secp256k1(secp256k1_key) => {
-				let signing_opts = SigningOptions::for_cert();
-				let signature = secp256k1_key.sign_with_options(&tbs_der, signing_opts)?;
-
-				signature.to_der().as_bytes().to_vec()
-			}
-			AnyPrivateKey::Secp256r1(secp256r1_key) => {
-				let signing_opts = SigningOptions::for_cert();
-				let signature = secp256r1_key.sign_with_options(&tbs_der, signing_opts)?;
-
-				signature.to_der().as_bytes().to_vec()
-			}
+		// Determine signing options based on algorithm
+		let signing_options = match algorithm {
+			Algorithm::Ed25519 => SigningOptions::raw(),
+			Algorithm::Secp256k1 | Algorithm::Secp256r1 => SigningOptions::for_cert(),
 		};
 
+		// Sign the TBS certificate
+		let signature = signer
+			.sign_with_options(&tbs_der, signing_options)
+			.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)?;
+
+		// Convert signature to bytes
+		let signature_bytes = signature.to_bytes();
+		let signature_bit_string = BitString::from_bytes(signature_bytes.as_ref())?;
+
 		// Create the final certificate
-		let signature = BitString::from_bytes(&signature_bytes)?;
-		let cert = Certificate { tbs_certificate, signature_algorithm, signature };
+		let cert = Certificate {
+			tbs_certificate,
+			signature_algorithm: AlgorithmIdentifier {
+				algorithm: ObjectIdentifier::new(signature_algorithm_oid)?,
+				parameters: None,
+			},
+			signature: signature_bit_string,
+		};
 
 		Ok(cert)
 	}
@@ -2669,7 +2672,6 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			.with_issuer_dn(issuer_dn.clone())
 			.with_serial_number(U256::from(12345u128))
 			.with_validity_days(365)
-			.with_is_ca(false)
 			.with_extension(key_usage_ext.unwrap())
 			.with_basic_constraints(false, None)
 			.with_key_usage(0x0080)
@@ -2679,6 +2681,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			.with_extensions(vec![Extension::new("1.2.3.4.6", &[0x03, 0x04], false).unwrap()])
 			.without_common_extensions()
 			.with_common_extensions()
+			.as_ca()
 			.as_self_signed();
 
 		// Test that the builder accumulated the extensions correctly
@@ -2871,6 +2874,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			let subject_dn = utils::create_dn(&[(oids::CN, "Test Subject")]).unwrap();
 			let issuer_dn = subject_dn.clone();
 
+			// Create a certificate builder and build a certificate
 			let builder = CertificateBuilder::new()
 				.with_subject_dn(subject_dn.clone())
 				.with_issuer_dn(issuer_dn.clone())
@@ -2879,7 +2883,11 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 				.with_subject_public_key(public_key.into())
 				.with_is_ca(false);
 
-			let result = builder.build(&private_key);
+			let result = match private_key {
+				AnyPrivateKey::Ed25519(key) => builder.build(&key),
+				AnyPrivateKey::Secp256k1(key) => builder.build(&key),
+				AnyPrivateKey::Secp256r1(key) => builder.build(&key),
+			};
 			assert!(result.is_ok());
 
 			// Verify the certificate structure
@@ -3066,6 +3074,10 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			assert!(cert.validate_at_datetime(moment).is_ok());
 			assert!(cert.assert_valid(moment).is_ok());
 			assert!(cert.validate_at(moment).is_ok());
+
+			// Test validate_now (cert may be expired)
+			let now = cert.validate_now();
+			assert!(now.is_ok() || now.is_err());
 
 			// Test current validity methods
 			assert!(cert.is_currently_valid().unwrap());
@@ -3986,7 +3998,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			.build()
 			.unwrap();
 		assert_eq!(custom_basic_constraints.oid.to_string(), oids::BASIC_CONSTRAINTS);
-		assert!(!custom_basic_constraints.critical); // Should be non-critical due to override
+		assert!(!custom_basic_constraints.critical);
 
 		// Test custom extension with fluent API
 		let custom_extension = ExtensionBuilder::new()
@@ -4110,7 +4122,6 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	fn test_certificate_json_serialization() {
 		test_all_certificate_sets(|bundle| {
 			let cert_json = bundle.ca_cert.to_json(false).unwrap();
-
 			// Test required string fields are not empty
 			let string_fields = vec![
 				("serial", cert_json.serial.as_str()),

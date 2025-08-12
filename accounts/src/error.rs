@@ -2,7 +2,6 @@ use hex::FromHexError;
 use keetanet_error::KeetaNetError;
 use strum_macros::AsRefStr;
 
-use crypto::operations::SignatureError;
 use crypto::CryptoError;
 
 #[derive(Debug, AsRefStr, Clone, PartialEq, Eq)]
@@ -39,6 +38,12 @@ pub enum AccountError {
 	EncryptionNotSupported,
 }
 
+impl std::fmt::Display for AccountError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{self:?}")
+	}
+}
+
 impl From<AccountError> for KeetaNetError {
 	fn from(err: AccountError) -> Self {
 		KeetaNetError::Code { code: err.as_ref().to_string(), message: format!("{err:?}") }
@@ -62,6 +67,7 @@ impl From<CryptoError> for AccountError {
 			CryptoError::InvalidInput => AccountError::PassphraseWeak,
 			CryptoError::UnsupportedAlgorithm { .. } => AccountError::InvalidKeyType,
 			CryptoError::SignatureVerificationFailed => AccountError::InvalidConstruction,
+			CryptoError::SignatureError => AccountError::InvalidConstruction,
 			CryptoError::EncryptionFailed => AccountError::InvalidConstruction,
 			CryptoError::DecryptionFailed => AccountError::InvalidConstruction,
 			CryptoError::InvalidOperation => AccountError::InvalidConstruction,
@@ -73,9 +79,15 @@ impl From<CryptoError> for AccountError {
 	}
 }
 
-impl From<SignatureError> for AccountError {
-	fn from(_err: SignatureError) -> Self {
+impl From<crypto::operations::SignatureError> for AccountError {
+	fn from(_err: crypto::operations::SignatureError) -> Self {
 		AccountError::InvalidConstruction
+	}
+}
+
+impl From<AccountError> for crypto::operations::SignatureError {
+	fn from(_err: AccountError) -> Self {
+		crypto::operations::SignatureError::new()
 	}
 }
 
@@ -84,15 +96,10 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn test_account_error_debug() {
-		// Test Debug trait implementation
+	fn test_account_error_formatting() {
 		let error = AccountError::InvalidPrefix;
-		let debug_string = format!("{error:?}");
-		assert_eq!(debug_string, "InvalidPrefix");
-
-		let error2 = AccountError::PassphraseWeak;
-		let debug_string2 = format!("{error2:?}");
-		assert_eq!(debug_string2, "PassphraseWeak");
+		let display_string = format!("{error}");
+		assert_eq!(display_string, "InvalidPrefix");
 	}
 
 	#[test]
@@ -114,5 +121,38 @@ mod tests {
 			code, 
 			message 
 		} if code == "PASSPHRASE_WEAK" && message == "PassphraseWeak"));
+	}
+
+	#[test]
+	fn test_signature_error_conversion() {
+		let signature_error = crypto::operations::SignatureError::new();
+		let account_error: AccountError = signature_error.into();
+		assert_eq!(account_error, AccountError::InvalidConstruction);
+
+		// Test opposite conversion
+		let account_error = AccountError::InvalidConstruction;
+		let _signature_error: crypto::operations::SignatureError = account_error.into();
+		// SignatureError doesn't implement PartialEq, so just test the conversion works
+	}
+
+	#[test]
+	fn test_crypto_error_conversion() {
+		let invalid_construction_variants = vec![
+			CryptoError::InvalidKeyMaterial,
+			CryptoError::KeyDerivationFailed,
+			CryptoError::InvalidPrivateKey,
+			CryptoError::InvalidLength,
+			CryptoError::SignatureVerificationFailed,
+			CryptoError::SignatureError,
+			CryptoError::EncryptionFailed,
+			CryptoError::DecryptionFailed,
+			CryptoError::InvalidOperation,
+			CryptoError::InternalError { message: "test".to_string() },
+			CryptoError::InvalidIvSize,
+		];
+
+		for crypto_error in invalid_construction_variants {
+			assert_eq!(AccountError::from(crypto_error), AccountError::InvalidConstruction);
+		}
 	}
 }

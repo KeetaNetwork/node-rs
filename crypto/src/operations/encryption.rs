@@ -32,7 +32,12 @@ pub trait SymmetricEncryption {
 	///
 	/// # Returns
 	/// Encrypted data (may include IV/nonce)
-	fn encrypt(&self, key: &[u8], iv: Option<&[u8]>, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError>;
+	fn encrypt<K: AsRef<[u8]>, P: AsRef<[u8]>>(
+		&self,
+		key: K,
+		iv: Option<&[u8]>,
+		plaintext: P,
+	) -> Result<Vec<u8>, CryptoError>;
 
 	/// Decrypt data using symmetric encryption
 	///
@@ -42,7 +47,7 @@ pub trait SymmetricEncryption {
 	///
 	/// # Returns
 	/// Decrypted plaintext data
-	fn decrypt(&self, key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError>;
+	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError>;
 
 	/// Get algorithm-specific metadata or configuration
 	fn algorithm_info(&self) -> &'static str;
@@ -63,12 +68,12 @@ pub trait AsymmetricEncryption {
 	/// Encrypt data using asymmetric encryption
 	///
 	/// This typically uses the public key for encryption.
-	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError>;
+	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError>;
 
 	/// Decrypt data using asymmetric encryption
 	///
 	/// This typically uses the private key for decryption.
-	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError>;
+	fn decrypt<C: AsRef<[u8]>>(&self, cipher_text: C) -> Result<Vec<u8>, CryptoError>;
 
 	/// Get algorithm-specific metadata or configuration
 	fn algorithm_info(&self) -> &'static str;
@@ -133,7 +138,7 @@ pub trait KeyExchange {
 	///
 	/// # Returns
 	/// The shared secret as raw bytes
-	fn key_exchange(&self, their_public_key: &[u8]) -> Result<Self::SharedSecret, CryptoError>;
+	fn key_exchange<K: AsRef<[u8]>>(&self, their_public_key: K) -> Result<Self::SharedSecret, CryptoError>;
 
 	/// Derive an AEAD key from the shared secret.
 	///
@@ -171,8 +176,9 @@ mod tests {
 	}
 
 	impl AsymmetricEncryption for MockAsymmetricEncryption {
-		fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 			// Mock encryption: reverse bytes and add prefix
+			let plaintext = plaintext.as_ref();
 			let mut result = vec![0xFF, 0xEE]; // Mock header
 			let mut encrypted = plaintext.to_vec();
 
@@ -182,7 +188,8 @@ mod tests {
 			Ok(result)
 		}
 
-		fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		fn decrypt<C: AsRef<[u8]>>(&self, cipher_text: C) -> Result<Vec<u8>, CryptoError> {
+			let cipher_text = cipher_text.as_ref();
 			if !self.has_private_key {
 				return Err(CryptoError::InvalidOperation);
 			}
@@ -229,7 +236,8 @@ mod tests {
 			Ok(shared_secret)
 		}
 
-		fn key_exchange(&self, their_public_key: &[u8]) -> Result<Self::SharedSecret, CryptoError> {
+		fn key_exchange<K: AsRef<[u8]>>(&self, their_public_key: K) -> Result<Self::SharedSecret, CryptoError> {
+			let their_public_key = their_public_key.as_ref();
 			if their_public_key.len() != 32 {
 				return Err(CryptoError::InvalidPublicKey);
 			}
@@ -253,11 +261,11 @@ mod tests {
 	struct FailingMockAsymmetricEncryption;
 
 	impl AsymmetricEncryption for FailingMockAsymmetricEncryption {
-		fn encrypt(&self, _plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		fn encrypt<P: AsRef<[u8]>>(&self, _plaintext: P) -> Result<Vec<u8>, CryptoError> {
 			Err(CryptoError::EncryptionFailed)
 		}
 
-		fn decrypt(&self, _cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+		fn decrypt<C: AsRef<[u8]>>(&self, _cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 			Err(CryptoError::DecryptionFailed)
 		}
 
@@ -292,16 +300,16 @@ mod tests {
 		let bob_public_key = [0x33; 32]; // Mock Bob's public key
 
 		// Test key exchange
-		let shared_secret = alice.key_exchange(&bob_public_key).unwrap();
+		let shared_secret = alice.key_exchange(bob_public_key).unwrap();
 		assert_eq!(shared_secret.len(), 32);
 
 		// Test that the shared secret is deterministic
-		let shared_secret2 = alice.key_exchange(&bob_public_key).unwrap();
+		let shared_secret2 = alice.key_exchange(bob_public_key).unwrap();
 		assert_eq!(shared_secret, shared_secret2);
 
 		// Test error case with wrong key length
 		let wrong_key = [0x44; 16]; // Wrong length
-		assert!(alice.key_exchange(&wrong_key).is_err());
+		assert!(alice.key_exchange(wrong_key).is_err());
 	}
 
 	#[test]
@@ -309,7 +317,7 @@ mod tests {
 		let alice = MockKeyExchange::new();
 		let bob_public_key = [0x33; 32]; // Mock Bob's public key
 
-		let shared_secret = alice.key_exchange(&bob_public_key).unwrap();
+		let shared_secret = alice.key_exchange(bob_public_key).unwrap();
 		assert_eq!(shared_secret.len(), 32);
 
 		// Test derive_aead_key with a concrete AEAD implementation
@@ -322,7 +330,7 @@ mod tests {
 	fn test_derive_aead_key_error() {
 		let alice = MockKeyExchange::new();
 		let bob_public_key = [0x33; 32]; // Mock Bob's public key
-		let shared_secret = alice.key_exchange(&bob_public_key).unwrap();
+		let shared_secret = alice.key_exchange(bob_public_key).unwrap();
 
 		// Error case: Try to derive AES-128 key (16 bytes) from 32-byte secret
 		// This should fail because the mock derive_aead_key just passes the
@@ -351,16 +359,17 @@ mod tests {
 	}
 
 	#[test]
-	fn test_trait_object_compatibility() {
+	fn test_asymmetric_encryption_with_asref_flexibility() {
+		// Test that AsymmetricEncryption works with different AsRef<[u8]> types
 		let mock_encryption = MockAsymmetricEncryption::new_private();
-		// Test AsymmetricEncryption trait object
-		let asymmetric_encryption: &dyn AsymmetricEncryption = &mock_encryption;
-		let plaintext = b"test";
-		let ciphertext = asymmetric_encryption.encrypt(plaintext).unwrap();
 
-		let decrypted = asymmetric_encryption.decrypt(&ciphertext).unwrap();
-		assert_eq!(decrypted, plaintext);
-		assert!(!asymmetric_encryption.algorithm_info().is_empty());
+		// Test with Vec<u8> to demonstrate AsRef flexibility
+		let plaintext_vec = b"test".to_vec();
+		let ciphertext = mock_encryption.encrypt(&plaintext_vec).unwrap();
+
+		let decrypted = mock_encryption.decrypt(&ciphertext).unwrap();
+		assert_eq!(decrypted, plaintext_vec);
+		assert!(!mock_encryption.algorithm_info().is_empty());
 	}
 
 	#[test]
@@ -383,8 +392,8 @@ mod tests {
 		let bob_key2 = [0x22; 32];
 
 		// Different public keys should produce different shared secrets
-		let secret1 = alice.key_exchange(&bob_key1).unwrap();
-		let secret2 = alice.key_exchange(&bob_key2).unwrap();
+		let secret1 = alice.key_exchange(bob_key1).unwrap();
+		let secret2 = alice.key_exchange(bob_key2).unwrap();
 		assert_ne!(secret1, secret2);
 	}
 }

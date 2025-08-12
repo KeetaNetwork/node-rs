@@ -16,12 +16,16 @@ use k256::SecretKey as K256SecretKey;
 use secrecy::SecretBox;
 
 #[cfg(feature = "signature")]
+use ::signature::{Keypair, Signer, Verifier};
+#[cfg(feature = "signature")]
 use k256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
 #[cfg(feature = "signature")]
 use k256::ecdsa::VerifyingKey;
 
 #[cfg(feature = "encryption")]
 use k256::ecdh::diffie_hellman;
+#[cfg(feature = "encryption")]
+use secrecy::ExposeSecret;
 
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::Ecies;
@@ -31,8 +35,6 @@ use crate::algorithms::ecies::EciesSecp256k1;
 use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGeneration, KeyInit};
 #[cfg(feature = "encryption")]
 use crate::utils::generate_random_seed;
-#[cfg(feature = "encryption")]
-use secrecy::ExposeSecret;
 
 #[cfg(feature = "signature")]
 use crate::hash::hash_default;
@@ -40,9 +42,8 @@ use crate::hash::hash_default;
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
-#[cfg(feature = "signature")]
-use ::signature::{Keypair, Signer, Verifier};
 
+use crate::algorithms::{Algorithm, CryptoAlgorithm};
 use crate::kdf::KdfAlgorithm;
 use crate::{error::CryptoError, KeyDerivation, PrivateKey, PublicKey};
 
@@ -67,6 +68,12 @@ impl core::fmt::Debug for Secp256k1PrivateKey {
 		f.debug_struct("Secp256k1PrivateKey")
 			.field("inner", &"[REDACTED]")
 			.finish()
+	}
+}
+
+impl CryptoAlgorithm for Secp256k1PrivateKey {
+	fn get_algorithm(&self) -> Algorithm {
+		Algorithm::Secp256k1
 	}
 }
 
@@ -104,6 +111,14 @@ impl TryFrom<&[u8]> for Secp256k1PrivateKey {
 	}
 }
 
+#[cfg(feature = "der")]
+impl From<Secp256k1PrivateKey> for asn1::ObjectIdentifier {
+	fn from(_private_key: Secp256k1PrivateKey) -> Self {
+		// This should never fail as we are using a constant known OID
+		asn1::ObjectIdentifier::new(asn1::oids::SECP256K1).expect("Failed to create OID for secp256k1")
+	}
+}
+
 #[cfg(feature = "encryption")]
 impl KeyGeneration for Secp256k1PrivateKey {
 	type Error = CryptoError;
@@ -129,8 +144,8 @@ impl KeyExchange for Secp256k1PrivateKey {
 		Ok(shared_secret.raw_secret_bytes().to_vec())
 	}
 
-	fn key_exchange(&self, their_public_key: &[u8]) -> Result<Self::SharedSecret, CryptoError> {
-		let public_key = Secp256k1PublicKey::try_from(their_public_key)?;
+	fn key_exchange<K: AsRef<[u8]>>(&self, their_public_key: K) -> Result<Self::SharedSecret, CryptoError> {
+		let public_key = Secp256k1PublicKey::try_from(their_public_key.as_ref())?;
 
 		self.ecdh(&public_key)
 	}
@@ -146,15 +161,15 @@ impl KeyExchange for Secp256k1PrivateKey {
 
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Secp256k1PrivateKey {
-	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 		// Use the public key for encryption
 		let public_key = self.as_public_key();
 
 		public_key.encrypt(plaintext)
 	}
 
-	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		EciesSecp256k1::decrypt(self, cipher_text)
+	fn decrypt<C: AsRef<[u8]>>(&self, cipher_text: C) -> Result<Vec<u8>, CryptoError> {
+		EciesSecp256k1::decrypt(self, cipher_text.as_ref())
 	}
 
 	fn algorithm_info(&self) -> &'static str {
@@ -192,7 +207,12 @@ impl CryptoSigner<Signature> for Secp256k1PrivateKey {
 
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Secp256k1PrivateKey {
-	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
+	fn sign_with_options<T: AsRef<[u8]>>(
+		&self,
+		message: T,
+		options: SigningOptions,
+	) -> Result<Signature, ::signature::Error> {
+		let message = message.as_ref();
 		let signing_key = SigningKey::from(&self.inner);
 
 		if options.raw {
@@ -225,6 +245,12 @@ impl CryptoSignerWithOptions<Signature> for Secp256k1PrivateKey {
 #[derive(Clone, Debug)]
 pub struct Secp256k1PublicKey {
 	inner: k256::PublicKey,
+}
+
+impl CryptoAlgorithm for Secp256k1PublicKey {
+	fn get_algorithm(&self) -> Algorithm {
+		Algorithm::Secp256k1
+	}
 }
 
 impl PublicKey for Secp256k1PublicKey {
@@ -289,12 +315,13 @@ impl CryptoVerifier<Signature> for Secp256k1PublicKey {
 
 #[cfg(feature = "signature")]
 impl CryptoVerifierWithOptions<Signature> for Secp256k1PublicKey {
-	fn verify_with_options(
+	fn verify_with_options<T: AsRef<[u8]>>(
 		&self,
-		message: &[u8],
+		message: T,
 		signature: &Signature,
 		options: SigningOptions,
 	) -> Result<(), ::signature::Error> {
+		let message = message.as_ref();
 		let verifying_key = VerifyingKey::from(&self.inner);
 
 		if options.raw {
@@ -322,11 +349,11 @@ impl CryptoVerifierWithOptions<Signature> for Secp256k1PublicKey {
 
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Secp256k1PublicKey {
-	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-		EciesSecp256k1::encrypt(self, plaintext)
+	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
+		EciesSecp256k1::encrypt(self, plaintext.as_ref())
 	}
 
-	fn decrypt(&self, _cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<C: AsRef<[u8]>>(&self, _cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 		// Public keys cannot decrypt
 		Err(CryptoError::InvalidOperation)
 	}
@@ -520,6 +547,9 @@ mod tests {
 		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 		assert!(private_key.has_private_key());
 
+		let algorithm = private_key.get_algorithm();
+		assert_eq!(algorithm, Algorithm::Secp256k1);
+
 		let verifying_key = private_key.verifying_key();
 		assert!(!verifying_key.public_key_bytes().is_empty());
 
@@ -608,7 +638,7 @@ mod tests {
 		// Use a different 32-byte hash to make it truly different
 		let different_hash = [0x42u8; 32]; // Different from hash_default(message)
 		let signature_raw = private_key
-			.sign_with_options(&different_hash, raw_options)
+			.sign_with_options(different_hash, raw_options)
 			.unwrap();
 
 		// Test with cert options (pre-hash, but for_cert flag set)
@@ -646,10 +676,10 @@ mod tests {
 		let raw_options = SigningOptions::raw();
 		let pre_computed_hash = hash_default(message);
 		let signature_raw = private_key
-			.sign_with_options(&pre_computed_hash, raw_options)
+			.sign_with_options(pre_computed_hash, raw_options)
 			.unwrap();
 		assert!(public_key
-			.verify_with_options(&pre_computed_hash, &signature_raw, raw_options)
+			.verify_with_options(pre_computed_hash, &signature_raw, raw_options)
 			.is_ok());
 
 		let cert_options = SigningOptions::for_cert();
@@ -662,7 +692,7 @@ mod tests {
 
 		// Test verification failure with mismatched options
 		assert!(public_key
-			.verify_with_options(&pre_computed_hash, &signature_raw, default_options)
+			.verify_with_options(pre_computed_hash, &signature_raw, default_options)
 			.is_err());
 		assert!(public_key
 			.verify_with_options(message, &signature_default, raw_options)
@@ -795,6 +825,8 @@ mod tests {
 
 		// Test conversion to ObjectIdentifier
 		let oid: asn1::ObjectIdentifier = public_key.into();
+		assert_eq!(oid.to_string(), asn1::oids::SECP256K1);
+		let oid: asn1::ObjectIdentifier = private_key.into();
 		assert_eq!(oid.to_string(), asn1::oids::SECP256K1);
 	}
 }

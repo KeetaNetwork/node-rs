@@ -33,12 +33,12 @@ use crate::NameValuePair;
 ///
 /// let dn = create_dn(pairs).unwrap();
 /// ```
-pub fn create_dn(pairs: &[(&str, &str)]) -> Result<DistinguishedName, CertificateError> {
+pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<DistinguishedName, CertificateError> {
 	let mut dn = Vec::new();
 	for (name, value) in pairs {
-		let attribute_type = ObjectIdentifier::new(name)?;
+		let attribute_type = ObjectIdentifier::new(name.as_ref())?;
 		// Create IA5String for the attribute value (commonly used in X.509)
-		let ia5_string = Ia5String::new(value)?;
+		let ia5_string = Ia5String::new(value.as_ref())?;
 		let attribute_value = Any::encode_from(&ia5_string)?;
 
 		let attr = AttributeTypeAndValue { attribute_type, attribute_value };
@@ -193,9 +193,9 @@ pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedNa
 /// let key_id = parse_key_identifier(extension_bytes).unwrap();
 /// assert_eq!(key_id.len(), 20);
 /// ```
-pub fn parse_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
+pub fn parse_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>> {
 	// Subject Key Identifier is an OCTET STRING
-	let mut reader = SliceReader::new(bytes).ok()?;
+	let mut reader = SliceReader::new(bytes.as_ref()).ok()?;
 	let octet_string = OctetString::decode(&mut reader).ok()?;
 
 	Some(octet_string.as_bytes().to_vec())
@@ -219,8 +219,8 @@ pub fn parse_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
 /// let key_id = parse_authority_key_identifier(extension_bytes).unwrap();
 /// assert_eq!(key_id.len(), 20);
 /// ```
-pub fn parse_authority_key_identifier(bytes: &[u8]) -> Option<Vec<u8>> {
-	let mut reader = SliceReader::new(bytes).ok()?;
+pub fn parse_authority_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>> {
+	let mut reader = SliceReader::new(bytes.as_ref()).ok()?;
 
 	// Decode the SEQUENCE header
 	let sequence_header = Header::decode(&mut reader).ok()?;
@@ -308,7 +308,8 @@ pub fn dn_to_string(dn: &DistinguishedName) -> String {
 /// assert_eq!(content_len, 256);
 /// assert_eq!(header_len, 4);
 /// ```
-pub fn parse_der_length(data: &[u8]) -> Option<(usize, usize)> {
+pub fn parse_der_length(data: impl AsRef<[u8]>) -> Option<(usize, usize)> {
+	let data = data.as_ref();
 	if data.is_empty() {
 		return None;
 	}
@@ -382,8 +383,8 @@ pub fn parse_der_length(data: &[u8]) -> Option<(usize, usize)> {
 /// # Ok(())
 /// # }
 /// ```
-pub fn der_to_raw_signature(signature_bytes: &[u8]) -> Result<[u8; 64], CertificateError> {
-	if let Ok((r_array, s_array)) = parse_der_ecdsa_signature(signature_bytes) {
+pub fn der_to_raw_signature(signature_bytes: impl AsRef<[u8]>) -> Result<[u8; 64], CertificateError> {
+	if let Ok((r_array, s_array)) = parse_der_ecdsa_signature(signature_bytes.as_ref()) {
 		let mut sig_array = [0u8; 64];
 		sig_array[..32].copy_from_slice(&r_array);
 		sig_array[32..].copy_from_slice(&s_array);
@@ -419,8 +420,8 @@ pub fn der_to_raw_signature(signature_bytes: &[u8]) -> Result<[u8; 64], Certific
 /// * `Err(CertificateError)` - Error during verification process
 fn try_verify_ecdsa_generic<K, S, F>(
 	public_key: K,
-	signature_bytes: &[u8],
-	tbs_der: &[u8],
+	signature_bytes: impl AsRef<[u8]>,
+	tbs_der: impl AsRef<[u8]>,
 	hash_algorithm: HashAlgorithm,
 	sig_from_bytes: F,
 ) -> Result<bool, CertificateError>
@@ -428,6 +429,9 @@ where
 	K: CryptoVerifierWithOptions<S>,
 	F: Fn(&[u8; 64]) -> Result<S, CertificateError>,
 {
+	let signature_bytes = signature_bytes.as_ref();
+	let tbs_der = tbs_der.as_ref();
+
 	// Try DER-encoded signature first
 	if signature_bytes.len() >= 2 && signature_bytes[0] == 0x30 {
 		if let Ok(sig_array) = der_to_raw_signature(signature_bytes) {
@@ -504,13 +508,13 @@ where
 /// );
 /// ```
 pub fn try_verify_ecdsa_secp256r1(
-	public_key_bytes: &[u8],
-	signature_bytes: &[u8],
-	tbs_der: &[u8],
+	public_key_bytes: impl AsRef<[u8]>,
+	signature_bytes: impl AsRef<[u8]>,
+	tbs_der: impl AsRef<[u8]>,
 	hash_algorithm: HashAlgorithm,
 ) -> Result<bool, CertificateError> {
 	let public_key =
-		Secp256r1PublicKey::try_from(public_key_bytes).map_err(|_| CertificateError::InvalidCertificate)?;
+		Secp256r1PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
 
 	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, hash_algorithm, |sig_array| {
 		Secp256r1Signature::from_bytes((sig_array).into()).map_err(|_| CertificateError::InvalidCertificate)
@@ -555,13 +559,13 @@ pub fn try_verify_ecdsa_secp256r1(
 /// );
 /// ```
 pub fn try_verify_ecdsa_secp256k1(
-	public_key_bytes: &[u8],
-	signature_bytes: &[u8],
-	tbs_der: &[u8],
+	public_key_bytes: impl AsRef<[u8]>,
+	signature_bytes: impl AsRef<[u8]>,
+	tbs_der: impl AsRef<[u8]>,
 	hash_algorithm: HashAlgorithm,
 ) -> Result<bool, CertificateError> {
 	let public_key =
-		Secp256k1PublicKey::try_from(public_key_bytes).map_err(|_| CertificateError::InvalidCertificate)?;
+		Secp256k1PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
 
 	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, hash_algorithm, |sig_array| {
 		Secp256k1Signature::from_bytes((sig_array).into()).map_err(|_| CertificateError::InvalidCertificate)
@@ -602,15 +606,17 @@ pub fn try_verify_ecdsa_secp256k1(
 /// );
 /// ```
 pub fn verify_ed25519_signature(
-	public_key_bytes: &[u8],
-	signature_bytes: &[u8],
-	tbs_der: &[u8],
+	public_key_bytes: impl AsRef<[u8]>,
+	signature_bytes: impl AsRef<[u8]>,
+	tbs_der: impl AsRef<[u8]>,
 ) -> Result<bool, CertificateError> {
+	let signature_bytes = signature_bytes.as_ref();
 	if signature_bytes.len() != 64 {
 		return Ok(false);
 	}
 
-	let public_key = Ed25519PublicKey::try_from(public_key_bytes).map_err(|_| CertificateError::InvalidCertificate)?;
+	let public_key =
+		Ed25519PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
 
 	let sig_array: [u8; 64] = signature_bytes
 		.try_into()
@@ -619,7 +625,7 @@ pub fn verify_ed25519_signature(
 
 	let options = SigningOptions::raw();
 	public_key
-		.verify_with_options(tbs_der, &signature, options)
+		.verify_with_options(tbs_der.as_ref(), &signature, options)
 		.map(|()| true)
 		.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)
 }
@@ -667,13 +673,13 @@ pub fn verify_ed25519_signature(
 /// );
 /// ```
 pub fn verify_ecdsa_signature(
-	public_key_bytes: &[u8],
-	signature_bytes: &[u8],
-	tbs_der: &[u8],
+	public_key_bytes: impl AsRef<[u8]>,
+	signature_bytes: impl AsRef<[u8]>,
+	tbs_der: impl AsRef<[u8]>,
 	hash_algorithm: HashAlgorithm,
 ) -> Result<bool, CertificateError> {
 	// Try Secp256r1 first (more common in X.509)
-	if let Ok(result) = try_verify_ecdsa_secp256r1(public_key_bytes, signature_bytes, tbs_der, hash_algorithm) {
+	if let Ok(result) = try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, &tbs_der, hash_algorithm) {
 		if result {
 			return Ok(true);
 		}
@@ -1114,9 +1120,9 @@ mod tests {
 		assert_eq!(&result[32..], &expected_s);
 
 		// Test with invalid DER signatures
-		assert!(der_to_raw_signature(&[]).is_err()); // Empty
-		assert!(der_to_raw_signature(&[0x31, 0x44]).is_err()); // Wrong tag
-		assert!(der_to_raw_signature(&[0x30, 0x02]).is_err()); // Too short
+		assert!(der_to_raw_signature([]).is_err()); // Empty
+		assert!(der_to_raw_signature([0x31, 0x44]).is_err()); // Wrong tag
+		assert!(der_to_raw_signature([0x30, 0x02]).is_err()); // Too short
 	}
 
 	#[test]

@@ -70,26 +70,6 @@ macro_rules! impl_any_key {
 				$variant($key_type),
 			)*
 		}
-
-		impl From<&$any_key_type> for Algorithm {
-			fn from(key: &$any_key_type) -> Self {
-				match key {
-					$(
-						$any_key_type::$variant(_) => $algorithm,
-					)*
-				}
-			}
-		}
-
-		impl From<$any_key_type> for Algorithm {
-			fn from(key: $any_key_type) -> Self {
-				match key {
-					$(
-						$any_key_type::$variant(_) => $algorithm,
-					)*
-				}
-			}
-		}
 	};
 }
 
@@ -119,6 +99,16 @@ impl AnyPrivateKey {
 	}
 }
 
+impl CryptoAlgorithm for AnyPrivateKey {
+	fn get_algorithm(&self) -> Algorithm {
+		match self {
+			AnyPrivateKey::Secp256k1(key) => key.into(),
+			AnyPrivateKey::Ed25519(key) => key.into(),
+			AnyPrivateKey::Secp256r1(key) => key.into(),
+		}
+	}
+}
+
 impl_any_key!(
 	AnyPublicKey,
 	AnyPublicKey,
@@ -129,6 +119,16 @@ impl_any_key!(
 
 impl AnyPublicKey {
 	pub fn to_bytes(&self) -> Vec<u8> {
+		match self {
+			AnyPublicKey::Secp256k1(key) => key.into(),
+			AnyPublicKey::Ed25519(key) => key.into(),
+			AnyPublicKey::Secp256r1(key) => key.into(),
+		}
+	}
+}
+
+impl CryptoAlgorithm for AnyPublicKey {
+	fn get_algorithm(&self) -> Algorithm {
 		match self {
 			AnyPublicKey::Secp256k1(key) => key.into(),
 			AnyPublicKey::Ed25519(key) => key.into(),
@@ -228,6 +228,19 @@ impl TryFrom<u8> for Algorithm {
 	}
 }
 
+/// Core cryptographic algorithm trait
+pub trait CryptoAlgorithm: Send + Sync {
+	/// Get the cryptographic algorithm used by this implementation
+	fn get_algorithm(&self) -> Algorithm;
+}
+
+/// Blanket implementation: anything that implements CryptoAlgorithm can be converted to Algorithm
+impl<T: CryptoAlgorithm> From<&T> for Algorithm {
+	fn from(crypto_algo: &T) -> Self {
+		crypto_algo.get_algorithm()
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -275,11 +288,23 @@ mod tests {
 	}
 
 	#[test]
+	fn test_get_algorithm() {
+		for test_case in AlgorithmTestData::TEST_CASES {
+			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes());
+			assert_eq!(any_private_key.get_algorithm(), test_case.algorithm);
+			assert_eq!(Algorithm::from(&any_private_key), test_case.algorithm);
+
+			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes());
+			assert_eq!(any_public_key.get_algorithm(), test_case.algorithm);
+			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
+		}
+	}
+
+	#[test]
 	fn test_algorithm_from_any_private_key() {
 		for test_case in AlgorithmTestData::TEST_CASES {
 			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes());
 			assert_eq!(Algorithm::from(&any_private_key), test_case.algorithm);
-			assert_eq!(Algorithm::from(any_private_key), test_case.algorithm);
 		}
 	}
 
@@ -288,7 +313,6 @@ mod tests {
 		for test_case in AlgorithmTestData::TEST_CASES {
 			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes());
 			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
-			assert_eq!(Algorithm::from(any_public_key), test_case.algorithm);
 		}
 	}
 

@@ -1287,6 +1287,7 @@ dependencies = [
 name = "x509"
 version = "0.1.0"
 dependencies = [
+ "accounts",
  "asn1",
  "base64",
  "chrono",

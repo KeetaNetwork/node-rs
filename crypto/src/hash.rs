@@ -46,7 +46,8 @@ impl HashAlgorithm {
 	}
 
 	/// Hash data using this algorithm
-	pub fn hash(&self, data: &[u8]) -> Vec<u8> {
+	pub fn hash(&self, data: impl AsRef<[u8]>) -> Vec<u8> {
+		let data = data.as_ref();
 		match self {
 			HashAlgorithm::Sha3_256 => {
 				let mut hasher = Sha3_256::new();
@@ -72,7 +73,7 @@ impl HashAlgorithm {
 	}
 
 	/// Hash data and return as a fixed-size array
-	pub fn hash_array<const N: usize>(&self, data: &[u8]) -> Result<[u8; N], CryptoError> {
+	pub fn hash_array<const N: usize>(&self, data: impl AsRef<[u8]>) -> Result<[u8; N], CryptoError> {
 		if N != self.length() {
 			return Err(CryptoError::InvalidLength);
 		}
@@ -84,7 +85,7 @@ impl HashAlgorithm {
 	}
 
 	/// Hash data and truncate to specified length
-	pub fn hash_truncated(&self, data: &[u8], length: usize) -> Result<Vec<u8>, CryptoError> {
+	pub fn hash_truncated(&self, data: impl AsRef<[u8]>, length: usize) -> Result<Vec<u8>, CryptoError> {
 		if length > self.length() {
 			return Err(CryptoError::InvalidLength);
 		}
@@ -100,7 +101,7 @@ impl HashAlgorithm {
 /// - If `algorithm` is None, uses the default algorithm (SHA3-256)
 /// - Returns a fixed-size array of length N
 /// - For truncation, N must be <= algorithm's output length
-pub fn hash<const N: usize>(data: &[u8], algorithm: Option<HashAlgorithm>) -> Result<[u8; N], CryptoError> {
+pub fn hash<const N: usize>(data: impl AsRef<[u8]>, algorithm: Option<HashAlgorithm>) -> Result<[u8; N], CryptoError> {
 	let algo = algorithm.unwrap_or(DEFAULT_HASH_ALGORITHM);
 
 	if N > algo.length() {
@@ -115,7 +116,7 @@ pub fn hash<const N: usize>(data: &[u8], algorithm: Option<HashAlgorithm>) -> Re
 }
 
 /// Hash some data using the default algorithm, returning the full hash
-pub fn hash_default(data: &[u8]) -> [u8; 32] {
+pub fn hash_default(data: impl AsRef<[u8]>) -> [u8; 32] {
 	DEFAULT_HASH_ALGORITHM
 		.hash_array::<32>(data)
 		.expect("SHA3-256 should always produce 32 bytes")
@@ -129,7 +130,10 @@ pub fn hash_default(data: &[u8]) -> [u8; 32] {
 /// For other algorithms, returns an array of the appropriate size:
 /// - SHA3-256 and SHA2-256: 32 bytes
 /// - SHA2-512: 64 bytes
-pub fn hash_array<const N: usize>(data: &[u8], algorithm: Option<HashAlgorithm>) -> Result<[u8; N], CryptoError> {
+pub fn hash_array<const N: usize>(
+	data: impl AsRef<[u8]>,
+	algorithm: Option<HashAlgorithm>,
+) -> Result<[u8; N], CryptoError> {
 	let algo = algorithm.unwrap_or(DEFAULT_HASH_ALGORITHM);
 
 	algo.hash_array::<N>(data)

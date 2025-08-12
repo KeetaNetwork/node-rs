@@ -33,6 +33,9 @@ use secrecy::{ExposeSecret, SecretBox};
 use x25519_dalek::PublicKey as DalekX25519PublicKey;
 use zeroize::Zeroize;
 
+#[cfg(feature = "signature")]
+use ::signature::{Keypair, Signer, Verifier};
+
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::{Ecies, EciesX25519};
 #[cfg(feature = "encryption")]
@@ -44,9 +47,8 @@ use crate::hash::hash_default;
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
-#[cfg(feature = "signature")]
-use ::signature::{Keypair, Signer, Verifier};
 
+use crate::algorithms::{Algorithm, CryptoAlgorithm};
 use crate::error::CryptoError;
 use crate::hash;
 use crate::{KeyDerivation, PrivateKey, PublicKey};
@@ -67,12 +69,25 @@ pub struct Ed25519PrivateKey {
 	inner: SigningKey,
 }
 
+impl Ed25519PrivateKey {
+	/// Convert this Ed25519 private key to an X25519 private key for ECDH
+	pub fn to_x25519(&self) -> Result<X25519PrivateKey, CryptoError> {
+		ed25519_to_x25519_private(self)
+	}
+}
+
 impl PrivateKey for Ed25519PrivateKey {
 	type PublicKey = Ed25519PublicKey;
 	type Signature = Signature;
 
 	fn as_public_key(&self) -> Self::PublicKey {
 		Ed25519PublicKey { inner: self.inner.verifying_key() }
+	}
+}
+
+impl CryptoAlgorithm for Ed25519PrivateKey {
+	fn get_algorithm(&self) -> Algorithm {
+		Algorithm::Ed25519
 	}
 }
 
@@ -109,20 +124,28 @@ impl TryFrom<&[u8]> for Ed25519PrivateKey {
 	}
 }
 
+#[cfg(feature = "der")]
+impl From<Ed25519PrivateKey> for asn1::ObjectIdentifier {
+	fn from(_private_key: Ed25519PrivateKey) -> Self {
+		// This should never fail as we are using a constant known OID
+		asn1::ObjectIdentifier::new(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
+	}
+}
+
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Ed25519PrivateKey {
-	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 		// For encryption, we need the corresponding public key
 		let public_key = self.as_public_key();
 
 		public_key.encrypt(plaintext)
 	}
 
-	fn decrypt(&self, cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<C: AsRef<[u8]>>(&self, cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 		// Convert Ed25519 private key to X25519 for decryption
 		let x25519_private = self.to_x25519()?;
 
-		EciesX25519::decrypt(&x25519_private, cipher_text)
+		EciesX25519::decrypt(&x25519_private, cipher_text.as_ref())
 	}
 
 	fn algorithm_info(&self) -> &'static str {
@@ -155,7 +178,12 @@ impl CryptoSigner<Signature> for Ed25519PrivateKey {
 
 #[cfg(feature = "signature")]
 impl CryptoSignerWithOptions<Signature> for Ed25519PrivateKey {
-	fn sign_with_options(&self, message: &[u8], options: SigningOptions) -> Result<Signature, ::signature::Error> {
+	fn sign_with_options<T: AsRef<[u8]>>(
+		&self,
+		message: T,
+		options: SigningOptions,
+	) -> Result<Signature, ::signature::Error> {
+		let message = message.as_ref();
 		let data = if options.raw {
 			message.to_vec()
 		} else {
@@ -163,13 +191,6 @@ impl CryptoSignerWithOptions<Signature> for Ed25519PrivateKey {
 		};
 
 		self.inner.try_sign(&data)
-	}
-}
-
-impl Ed25519PrivateKey {
-	/// Convert this Ed25519 private key to an X25519 private key for ECDH
-	pub fn to_x25519(&self) -> Result<X25519PrivateKey, CryptoError> {
-		ed25519_to_x25519_private(self)
 	}
 }
 
@@ -187,6 +208,12 @@ impl Ed25519PublicKey {
 	/// Convert this Ed25519 public key to an X25519 public key for ECDH
 	pub fn to_x25519(&self) -> Result<X25519PublicKey, CryptoError> {
 		ed25519_to_x25519_public(self)
+	}
+}
+
+impl CryptoAlgorithm for Ed25519PublicKey {
+	fn get_algorithm(&self) -> Algorithm {
+		Algorithm::Ed25519
 	}
 }
 
@@ -250,12 +277,13 @@ impl CryptoVerifier<Signature> for Ed25519PublicKey {
 
 #[cfg(feature = "signature")]
 impl CryptoVerifierWithOptions<Signature> for Ed25519PublicKey {
-	fn verify_with_options(
+	fn verify_with_options<T: AsRef<[u8]>>(
 		&self,
-		message: &[u8],
+		message: T,
 		signature: &Signature,
 		options: SigningOptions,
 	) -> Result<(), ::signature::Error> {
+		let message = message.as_ref();
 		let data = if options.raw {
 			message.to_vec()
 		} else {
@@ -268,14 +296,14 @@ impl CryptoVerifierWithOptions<Signature> for Ed25519PublicKey {
 
 #[cfg(feature = "encryption")]
 impl AsymmetricEncryption for Ed25519PublicKey {
-	fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 		// Convert Ed25519 public key to X25519 for encryption
 		let x25519_public = self.to_x25519()?;
 
-		EciesX25519::encrypt(&x25519_public, plaintext)
+		EciesX25519::encrypt(&x25519_public, plaintext.as_ref())
 	}
 
-	fn decrypt(&self, _cipher_text: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	fn decrypt<C: AsRef<[u8]>>(&self, _cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 		// Public keys cannot decrypt
 		Err(CryptoError::InvalidOperation)
 	}
@@ -1008,7 +1036,7 @@ mod tests {
 
 		// Test that public key cannot decrypt
 		let fake_ciphertext = [0u8; 100];
-		let result = public_key.decrypt(&fake_ciphertext);
+		let result = public_key.decrypt(fake_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
 	}
@@ -1054,10 +1082,14 @@ mod tests {
 
 	#[cfg(feature = "signature")]
 	#[test]
-	fn test_ed25519_crypto_signer_has_private_key() {
+	fn test_ed25519_crypto_signer_ext_trait() {
 		let seed = b"test seed for ed25519 has private key test";
+
 		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		assert!(private_key.has_private_key());
+
+		let algorithm = private_key.get_algorithm();
+		assert_eq!(algorithm, Algorithm::Ed25519);
 	}
 
 	#[test]
@@ -1251,6 +1283,8 @@ mod tests {
 
 		// Test conversion to ObjectIdentifier
 		let oid: asn1::ObjectIdentifier = public_key.into();
+		assert_eq!(oid.to_string(), asn1::oids::ED25519);
+		let oid: asn1::ObjectIdentifier = private_key.into();
 		assert_eq!(oid.to_string(), asn1::oids::ED25519);
 	}
 }

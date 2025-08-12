@@ -37,7 +37,7 @@ pub use crate::kdf::KdfAlgorithm;
 
 // RustCrypto traits when signature feature is enabled
 #[cfg(feature = "signature")]
-pub use ::signature::Keypair;
+pub use ::signature::{Keypair, SignatureEncoding, Signer, Verifier};
 
 // Signature types and operations
 #[cfg(feature = "signature")]

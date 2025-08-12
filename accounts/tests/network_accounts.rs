@@ -87,14 +87,14 @@ fn test_identifier_account_error_handling() {
 	let sign_result = network_account.sign(b"test data", None);
 	assert!(sign_result.is_err());
 
-	let verify_result = network_account.verify(b"test data", &[0u8; 64], None);
+	let verify_result = network_account.verify(b"test data", [0u8; 64], None);
 	assert!(verify_result.is_err());
 
 	// Test encryption on unsupported accounts
 	let encrypt_result = network_account.encrypt(b"test data");
 	assert!(encrypt_result.is_err());
 
-	let decrypt_result = network_account.decrypt(&[0u8; 64]);
+	let decrypt_result = network_account.decrypt([0u8; 64]);
 	assert!(decrypt_result.is_err());
 
 	let token_account = // cspell:disable-next-line

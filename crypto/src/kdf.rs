@@ -51,11 +51,14 @@ impl KdfAlgorithm {
 	/// Derived key material of the specified length
 	pub fn derive(
 		&self,
-		ikm: &[u8],
+		ikm: impl AsRef<[u8]>,
 		salt: Option<&[u8]>,
-		info: &[u8],
+		info: impl AsRef<[u8]>,
 		output_length: usize,
 	) -> Result<Vec<u8>, CryptoError> {
+		let ikm = ikm.as_ref();
+		let info = info.as_ref();
+
 		if output_length > self.max_output_length() {
 			return Err(CryptoError::InvalidLength);
 		}
@@ -98,7 +101,15 @@ impl KdfAlgorithm {
 	///
 	/// # Returns
 	/// Derived key material of the specified length
-	pub fn expand_only(&self, prk: &[u8], info: &[u8], output_length: usize) -> Result<Vec<u8>, CryptoError> {
+	pub fn expand_only(
+		&self,
+		prk: impl AsRef<[u8]>,
+		info: impl AsRef<[u8]>,
+		output_length: usize,
+	) -> Result<Vec<u8>, CryptoError> {
+		let prk = prk.as_ref();
+		let info = info.as_ref();
+
 		if output_length > self.max_output_length() {
 			return Err(CryptoError::InvalidLength);
 		}
@@ -136,9 +147,9 @@ impl KdfAlgorithm {
 	/// Derived key material as a fixed-size array
 	pub fn derive_array<const N: usize>(
 		&self,
-		ikm: &[u8],
+		ikm: impl AsRef<[u8]>,
 		salt: Option<&[u8]>,
-		info: &[u8],
+		info: impl AsRef<[u8]>,
 	) -> Result<[u8; N], CryptoError> {
 		let okm = self.derive(ikm, salt, info, N)?;
 		let mut array = [0u8; N];
@@ -155,7 +166,11 @@ impl KdfAlgorithm {
 	///
 	/// # Returns
 	/// Derived key material as a fixed-size array
-	pub fn expand_only_array<const N: usize>(&self, prk: &[u8], info: &[u8]) -> Result<[u8; N], CryptoError> {
+	pub fn expand_only_array<const N: usize>(
+		&self,
+		prk: impl AsRef<[u8]>,
+		info: impl AsRef<[u8]>,
+	) -> Result<[u8; N], CryptoError> {
 		let okm = self.expand_only(prk, info, N)?;
 		let mut array = [0u8; N];
 		array.copy_from_slice(&okm);

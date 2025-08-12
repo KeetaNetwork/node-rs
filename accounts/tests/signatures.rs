@@ -91,7 +91,7 @@ fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = Acco
 	// For raw signing, we need to provide a 32-byte hash
 	// Use a different hash to ensure signatures are different
 	let different_hash = [0x42u8; 32];
-	let signature_raw = account.sign(&different_hash, Some(raw_options)).unwrap();
+	let signature_raw = account.sign(different_hash, Some(raw_options)).unwrap();
 
 	assert_ne!(
 		signature_default, signature_raw,
@@ -105,7 +105,7 @@ fn test_signing_options_for_algorithm<T: KeyPair + TryFrom<Keyable, Error = Acco
 	);
 	assert!(
 		account
-			.verify(&different_hash, &signature_raw, Some(raw_options))
+			.verify(different_hash, &signature_raw, Some(raw_options))
 			.unwrap(),
 		"Raw signature should verify with raw options for {algorithm_type:?}"
 	);
@@ -152,12 +152,12 @@ fn test_algorithm_validation() {
 		// For raw signing, we need to provide a 32-byte hash
 		// Use a different hash to ensure signatures are different
 		let different_hash = [0x42u8; 32];
-		let sig_raw = account.sign(&different_hash, Some(raw_options)).unwrap();
+		let sig_raw = account.sign(different_hash, Some(raw_options)).unwrap();
 		assert!(account
 			.verify(test_data, &sig_default, Some(default_options))
 			.unwrap());
 		assert!(account
-			.verify(&different_hash, &sig_raw, Some(raw_options))
+			.verify(different_hash, &sig_raw, Some(raw_options))
 			.unwrap());
 		assert!(!account
 			.verify(test_data, &sig_default, Some(raw_options))
@@ -174,12 +174,12 @@ fn test_algorithm_validation() {
 		assert!(!account.verify(wrong_data, &signature, None).unwrap());
 
 		let sig_default = account.sign(test_data, Some(default_options)).unwrap();
-		let sig_raw = account.sign(&different_hash, Some(raw_options)).unwrap();
+		let sig_raw = account.sign(different_hash, Some(raw_options)).unwrap();
 		assert!(account
 			.verify(test_data, &sig_default, Some(default_options))
 			.unwrap());
 		assert!(account
-			.verify(&different_hash, &sig_raw, Some(raw_options))
+			.verify(different_hash, &sig_raw, Some(raw_options))
 			.unwrap());
 		assert!(!account
 			.verify(test_data, &sig_default, Some(raw_options))
@@ -340,25 +340,25 @@ fn test_identifier_sign_verify_should_fail() {
 	let network_account = create_account_from_seed::<KeyNETWORK>(KeyPairType::NETWORK, 0);
 	assert!(network_account.sign(test_data, None).is_err());
 	assert!(network_account
-		.verify(test_data, &fake_signature, None)
+		.verify(test_data, fake_signature, None)
 		.is_err());
 
 	let token_account = create_account_from_seed::<KeyTOKEN>(KeyPairType::TOKEN, 0);
 	assert!(token_account.sign(test_data, None).is_err());
 	assert!(token_account
-		.verify(test_data, &fake_signature, None)
+		.verify(test_data, fake_signature, None)
 		.is_err());
 
 	let storage_account = create_account_from_seed::<KeySTORAGE>(KeyPairType::STORAGE, 0);
 	assert!(storage_account.sign(test_data, None).is_err());
 	assert!(storage_account
-		.verify(test_data, &fake_signature, None)
+		.verify(test_data, fake_signature, None)
 		.is_err());
 
 	let multisig_account = create_account_from_seed::<KeyMULTISIG>(KeyPairType::MULTISIG, 0);
 	assert!(multisig_account.sign(test_data, None).is_err());
 	assert!(multisig_account
-		.verify(test_data, &fake_signature, None)
+		.verify(test_data, fake_signature, None)
 		.is_err());
 }
 

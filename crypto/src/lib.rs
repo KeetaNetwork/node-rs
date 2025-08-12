@@ -23,7 +23,7 @@ pub use error::CryptoError;
 pub use hash::{default_hash_algorithm, default_hash_algorithm_length, hash, hash_array, hash_default, HashAlgorithm};
 
 // Algorithm-agnostic key types
-pub use algorithms::{AnyPrivateKey, AnyPublicKey};
+pub use algorithms::{AnyPrivateKey, AnyPublicKey, CryptoAlgorithm};
 
 // Specific algorithm implementations
 pub use algorithms::ed25519::{
