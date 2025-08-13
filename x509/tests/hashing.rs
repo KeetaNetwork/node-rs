@@ -15,8 +15,8 @@ fn test_hash_uniqueness() {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_hash = CertificateHash::from(&ca_cert);
-	let user_hash = CertificateHash::from(&user_cert);
+	let ca_hash = CertificateHash::try_from(&ca_cert).unwrap();
+	let user_hash = CertificateHash::try_from(&user_cert).unwrap();
 	assert_ne!(ca_hash, user_hash);
 	assert_eq!(ca_hash.len(), 20);
 	assert_eq!(user_hash.len(), 20);
@@ -27,8 +27,8 @@ fn test_hash_consistency() {
 	let ca_cert = ca_certificate();
 	let ca_cert_2 = ca_certificate();
 
-	let ca_hash = CertificateHash::from(&ca_cert);
-	let ca_hash_2 = CertificateHash::from(&ca_cert_2);
+	let ca_hash = CertificateHash::try_from(&ca_cert).unwrap();
+	let ca_hash_2 = CertificateHash::try_from(&ca_cert_2).unwrap();
 	assert_eq!(ca_hash, ca_hash_2);
 }
 
@@ -37,8 +37,8 @@ fn test_hash_hex_representation() {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_hash = CertificateHash::from(&ca_cert);
-	let user_hash = CertificateHash::from(&user_cert);
+	let ca_hash = CertificateHash::try_from(&ca_cert).unwrap();
+	let user_hash = CertificateHash::try_from(&user_cert).unwrap();
 
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
@@ -53,8 +53,8 @@ fn test_hash_der_consistency() {
 	let ca_der = ca_cert.to_der().unwrap();
 	let ca_from_der = Certificate::try_from(ca_der.as_slice()).unwrap();
 
-	let ca_hash_from_der = CertificateHash::from(&ca_from_der);
-	let ca_hash_original = CertificateHash::from(&ca_cert);
+	let ca_hash_from_der = CertificateHash::try_from(&ca_from_der).unwrap();
+	let ca_hash_original = CertificateHash::try_from(&ca_cert).unwrap();
 	assert_eq!(ca_hash_original, ca_hash_from_der);
 }
 
@@ -64,8 +64,8 @@ fn test_hash_json_serialization() {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_hash = CertificateHash::from(&ca_cert);
-	let user_hash = CertificateHash::from(&user_cert);
+	let ca_hash = CertificateHash::try_from(&ca_cert).unwrap();
+	let user_hash = CertificateHash::try_from(&user_cert).unwrap();
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
 

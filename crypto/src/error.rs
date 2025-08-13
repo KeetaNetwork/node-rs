@@ -223,6 +223,6 @@ mod tests {
 		// Test opposite conversion
 		let crypto_error = CryptoError::SignatureError;
 		let _signature_error: crate::operations::SignatureError = crypto_error.into();
-		// SignatureError doesn't implement PartialEq, so just test the conversion works
+		// SignatureError does not implement PartialEq
 	}
 }

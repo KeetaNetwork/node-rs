@@ -76,12 +76,11 @@ impl SymmetricEncryption for Aes256Cbc {
 	/// Decrypted data with PKCS#7 padding removed.
 	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError> {
 		let key = key.as_ref();
-		let ciphertext = ciphertext.as_ref();
-
 		if key.len() != 32 {
 			return Err(CryptoError::InvalidKeySize);
 		}
 
+		let ciphertext = ciphertext.as_ref();
 		if ciphertext.len() < 16 {
 			return Err(CryptoError::DecryptionFailed);
 		}
@@ -92,9 +91,9 @@ impl SymmetricEncryption for Aes256Cbc {
 		let encrypted_data = &ciphertext[16..];
 		// Create cipher
 		let cipher = Aes256CbcDec::new_from_slices(key, iv)?;
+
 		// Decrypt with PKCS#7 padding removal
 		let decrypted = cipher.decrypt_padded_vec_mut::<Pkcs7>(encrypted_data)?;
-
 		Ok(decrypted)
 	}
 

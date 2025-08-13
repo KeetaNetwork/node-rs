@@ -17,13 +17,16 @@ pub(crate) fn combine_seed_and_index(seed: &Seed, index: Index) -> [u8; 36] {
 	indexed_seed
 }
 
-/// Format a public key with checksum and base32 encoding
-pub(crate) fn format_public_key(public_key_bytes: &[u8], algorithm: Algorithm) -> Result<String, AccountError> {
+/// Format a public key with checksum and base32 encoding.
+pub(crate) fn format_public_key(
+	public_key_bytes: impl AsRef<[u8]>,
+	algorithm: Algorithm,
+) -> Result<String, AccountError> {
 	// Start with algorithm identifier
 	let mut pub_key_values = vec![algorithm.id()];
 
 	// Add the public key bytes
-	pub_key_values.extend_from_slice(public_key_bytes);
+	pub_key_values.extend_from_slice(public_key_bytes.as_ref());
 
 	// Calculate checksum using crypto crate hash abstraction
 	let checksum_of = Vec::from(&pub_key_values[..]);
@@ -47,7 +50,6 @@ pub(crate) fn format_public_key(public_key_bytes: &[u8], algorithm: Algorithm) -
 
 	// Encode as base32
 	let pub_key_formatted = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &pub_key_values);
-
 	Ok(format!("keeta_{pub_key_formatted}"))
 }
 
@@ -68,11 +70,9 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorith
 
 	// Extract algorithm
 	let algorithm = Algorithm::from_id(decoded[0]).map_err(AccountError::from)?;
-
 	// Extract public key bytes (everything except first byte and last 5 bytes)
 	let pubkey_end = decoded.len() - 5;
 	let public_key_bytes = decoded[1..pubkey_end].to_vec();
-
 	// Verify checksum
 	let checksum_input = decoded[..pubkey_end].to_vec();
 	let calculated_checksum: [u8; 32] = hash_array(&checksum_input, None).map_err(AccountError::from)?;
@@ -89,9 +89,10 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorith
 pub(crate) fn create_identifier_key(seed: &Seed, index: Index, prefix: &str) -> Result<(String, String), AccountError> {
 	let seed_buffer = combine_seed_and_index(seed, index);
 	let hash_result: [u8; 32] = crypto::hash_array(seed_buffer, None)?;
-	let identifier = hex::encode(&hash_result[..16]); // Use first 16 bytes as identifier
-	let public_key = format!("{prefix}_{identifier}");
 
+	// Use first 16 bytes as identifier
+	let identifier = hex::encode(&hash_result[..16]);
+	let public_key = format!("{prefix}_{identifier}");
 	Ok((identifier, public_key))
 }
 
@@ -106,8 +107,8 @@ mod tests {
 		let seed_data = [1u8; 32];
 		let seed = SecretBox::new(Box::new(seed_data));
 		let index = 0x12345678;
-		let combined = combine_seed_and_index(&seed, index);
 
+		let combined = combine_seed_and_index(&seed, index);
 		assert_eq!(&combined[..32], &seed_data);
 		assert_eq!(combined[32], 0x12);
 		assert_eq!(combined[33], 0x34);

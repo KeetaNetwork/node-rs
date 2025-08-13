@@ -65,7 +65,7 @@ impl TryFrom<KeyPairType> for Algorithm {
 			KeyPairType::ECDSASECP256K1 => Ok(Algorithm::Secp256k1),
 			KeyPairType::ED25519 => Ok(Algorithm::Ed25519),
 			KeyPairType::ECDSASECP256R1 => Ok(Algorithm::Secp256r1),
-			// Identifier types don't map to crypto algorithms
+			// Identifier types do not map to crypto algorithms
 			KeyPairType::NETWORK | KeyPairType::TOKEN | KeyPairType::STORAGE | KeyPairType::MULTISIG => {
 				Err(AccountError::InvalidKeyType)
 			}
@@ -78,10 +78,6 @@ pub trait AccountSigner {
 	/// Sign a message with the private key.
 	///
 	/// Returns the signature as a byte vector.
-	///
-	/// The options parameter controls message preprocessing:
-	/// - If options.raw = false (default): pre-hashes the message
-	/// - If options.raw = true: uses raw message
 	fn sign<T: AsRef<[u8]>>(&self, _message: T, _options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		Err(AccountError::NoIdentifierSign)
 	}
@@ -92,10 +88,6 @@ pub trait AccountVerifier {
 	/// Verify a signature against a message using the public key.
 	///
 	/// Returns true if the signature is valid, false otherwise.
-	///
-	/// The options parameter controls message preprocessing:
-	/// - If options.raw = false (default): pre-hashes the message
-	/// - If options.raw = true: uses raw message
 	fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
 		&self,
 		_message: T,
@@ -127,13 +119,9 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	}
 
 	/// Encrypt data using the public key.
-	///
-	/// Returns the encrypted data as a byte vector.
 	fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError>;
 
 	/// Decrypt data using the private key.
-	///
-	/// Returns the decrypted data as a byte vector.
 	fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError>;
 
 	/// Check if this key pair supports encryption operations.
@@ -202,7 +190,6 @@ pub enum Keyable {
 	Identifier(String),
 }
 
-// Blanket implementations for types that implement IntoSecret
 impl From<[u8; 32]> for Keyable {
 	fn from(seed: [u8; 32]) -> Self {
 		Keyable::Seed((seed.into_secret(), 0))
@@ -428,8 +415,8 @@ impl KeyPair for KeyECDSASECP256K1 {
 		// Parse the public key from the formatted string for encryption
 		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
 		let public_key = Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
-		let ciphertext = public_key.encrypt(plaintext.as_ref())?;
 
+		let ciphertext = public_key.encrypt(plaintext.as_ref())?;
 		Ok(ciphertext)
 	}
 
@@ -438,8 +425,8 @@ impl KeyPair for KeyECDSASECP256K1 {
 			.private_key
 			.as_ref()
 			.ok_or(AccountError::InvalidConstruction)?;
-		let plaintext = private_key.decrypt(ciphertext.as_ref())?;
 
+		let plaintext = private_key.decrypt(ciphertext.as_ref())?;
 		Ok(plaintext)
 	}
 
@@ -535,8 +522,8 @@ impl KeyPair for KeyED25519 {
 		if let AnyPrivateKey::Ed25519(ed_key) = key {
 			let public_key = ed_key.verifying_key();
 			let public_key_bytes = Vec::<u8>::from(&public_key);
-			let formatted_key = format_public_key(&public_key_bytes, Algorithm::Ed25519)?;
 
+			let formatted_key = format_public_key(&public_key_bytes, Algorithm::Ed25519)?;
 			Ok(formatted_key)
 		} else {
 			Err(AccountError::InvalidConstruction)
@@ -549,8 +536,8 @@ impl KeyPair for KeyED25519 {
 
 	fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
 		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
-		let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_slice())?;
 
+		let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_slice())?;
 		Ok(public_key.encrypt(plaintext.as_ref())?)
 	}
 
@@ -584,9 +571,7 @@ pub struct KeyNETWORK {
 impl KeyPair for KeyNETWORK {
 	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::NETWORK;
 
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Identifier keys don't have traditional private keys
-		let _ = (seed, index);
+	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
 		Err(AccountError::InvalidConstruction)
 	}
 
@@ -607,11 +592,11 @@ impl KeyPair for KeyNETWORK {
 	}
 
 	fn supports_encryption(&self) -> bool {
-		false // Identifier keys don't support encryption
+		false
 	}
 
 	fn signature_size(&self) -> usize {
-		0 // Identifier keys don't produce signatures
+		0
 	}
 }
 
@@ -627,9 +612,7 @@ pub struct KeyTOKEN {
 impl KeyPair for KeyTOKEN {
 	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::TOKEN;
 
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Identifier keys don't have traditional private keys
-		let _ = (seed, index);
+	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
 		Err(AccountError::InvalidConstruction)
 	}
 
@@ -650,11 +633,11 @@ impl KeyPair for KeyTOKEN {
 	}
 
 	fn supports_encryption(&self) -> bool {
-		false // Identifier keys don't support encryption
+		false
 	}
 
 	fn signature_size(&self) -> usize {
-		0 // Identifier keys don't produce signatures
+		0
 	}
 }
 
@@ -670,8 +653,7 @@ pub struct KeySTORAGE {
 impl KeyPair for KeySTORAGE {
 	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::STORAGE;
 
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		let _ = (seed, index);
+	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
 		Err(AccountError::InvalidConstruction)
 	}
 
@@ -692,16 +674,15 @@ impl KeyPair for KeySTORAGE {
 	}
 
 	fn supports_encryption(&self) -> bool {
-		false // Identifier keys don't support encryption
+		false
 	}
 
 	fn signature_size(&self) -> usize {
-		0 // Identifier keys don't produce signatures
+		0
 	}
 }
 
 /// MULTISIG identifier key type
-/// Similar to Network/Token/Storage but for multisig accounts
 #[derive(Clone)]
 pub struct KeyMULTISIG {
 	pub identifier: String,
@@ -711,8 +692,7 @@ pub struct KeyMULTISIG {
 impl KeyPair for KeyMULTISIG {
 	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::MULTISIG;
 
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		let _ = (seed, index);
+	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
 		Err(AccountError::InvalidConstruction)
 	}
 
@@ -1343,7 +1323,8 @@ impl_crypto_traits!(
 );
 impl_crypto_traits!(KeyED25519, Ed25519Signature, Ed25519PrivateKey, Ed25519PublicKey, Algorithm::Ed25519);
 
-// Macro to implement crypto traits for identifier key types that don't support crypto operations
+// Macro to implement crypto traits for identifier key types that do
+// not support crypto operations
 macro_rules! impl_identifier_crypto_traits {
 	($key_type:ty) => {
 		impl AccountSigner for $key_type {}
@@ -1744,6 +1725,11 @@ mod tests {
 		Account::<T>::try_from(Accountable::KeyAndType(keyable, T::keypair_type())).unwrap()
 	}
 
+	/// Creates a test network account with the given ID.
+	fn create_test_network_account(id: u64) -> Account<KeyNETWORK> {
+		Account::<KeyNETWORK>::generate_network_address(id).unwrap()
+	}
+
 	#[test]
 	fn test_basic_account_generation() {
 		// Macro to test account generation for any key type
@@ -1994,7 +1980,7 @@ mod tests {
 
 					// Verify public keys match
 					assert_eq!(account.keypair.public_key, account_from_pubkey.keypair.public_key);
-					// Verify original account has private key, new one doesn't
+					// Verify original account has private key, new one does not
 					assert!(account.keypair.private_key.is_some());
 					assert!(account_from_pubkey.keypair.private_key.is_none());
 				}};
@@ -2175,7 +2161,7 @@ mod tests {
 		test_invalid_construction!(secp256r1_account, KeyPairType::TOKEN, Some(""));
 
 		// Test network account generation - special case
-		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+		let network_account = create_test_network_account(12345);
 		assert_eq!(network_account.keypair_type(), KeyPairType::NETWORK);
 		assert!(!network_account.keypair.identifier.is_empty());
 		assert!(network_account.keypair.public_key.starts_with("network_"));
@@ -2243,7 +2229,7 @@ mod tests {
 				}
 				// Network account (special case, does not have private key)
 				KeyPairType::NETWORK => {
-					let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+					let network_account = create_test_network_account(12345);
 					test_account_guards!(network_account, test_data);
 					assert!(!network_account.has_private_key());
 				}
@@ -2271,7 +2257,7 @@ mod tests {
 		}
 
 		// Test identifier public key strings
-		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+		let network_account = create_test_network_account(12345);
 		assert!(network_account.to_string().starts_with("network_"));
 
 		// Test token from conversion
@@ -2380,7 +2366,7 @@ mod tests {
 			assert!(secp256k1_account.has_private_key());
 		}
 
-		// Test accounts created from public key strings don't have private keys
+		// Test accounts created from public key strings do not have private keys
 		for test_case in TEST_CASES {
 			let secp256k1_account = test_case
 				.expected_secp256k1_pubkey
@@ -2390,7 +2376,7 @@ mod tests {
 		}
 
 		// Test identifier accounts never have private keys regardless of creation method
-		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+		let network_account = create_test_network_account(12345);
 		assert!(!network_account.has_private_key());
 
 		let token_account = create_test_account_from_identifier::<KeyTOKEN>("test");
@@ -2411,7 +2397,7 @@ mod tests {
 		// cspell:disable-next-line
 		test_parse_pubkey!("keeta_ayb2ph7legh7gipz5qu5yqxfeb2omwcdf4xvsxxhodtuxdxh4i7oj3uyxwmldii", KeyECDSASECP256R1);
 
-		// Test identifier accounts created from seeds also don't have private keys
+		// Test identifier accounts created from seeds also do not have private keys
 		let network_from_seed = create_test_account::<KeyNETWORK>(None);
 		assert!(!network_from_seed.has_private_key());
 	}
@@ -2537,7 +2523,7 @@ mod tests {
 				}
 				// Special case
 				KeyPairType::NETWORK => {
-					let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+					let network_account = create_test_network_account(12345);
 					let network_pubkey = network_account.to_string();
 					let network_pubkey_to_string = network_account.keypair.to_public_key_string();
 					assert!(network_pubkey.starts_with("network_"));
@@ -2624,7 +2610,7 @@ mod tests {
 
 				// Special case for NETWORK
 				if test_data.key_type == KeyPairType::NETWORK && test_data.is_identifier {
-					let account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+					let account = create_test_network_account(12345);
 					let debug_string = format!("{account:?}");
 					assert!(debug_string.contains("NETWORK"));
 					assert!(debug_string.contains("public_key"));
@@ -2651,15 +2637,14 @@ mod tests {
 			test_clone!(KeyECDSASECP256K1, test_case.hex_seed.into());
 			test_clone!(KeyED25519, test_case.hex_seed.into());
 			test_clone!(KeyECDSASECP256R1, test_case.hex_seed.into());
-
 			// Test cloning identifier accounts
 			test_clone!(KeyTOKEN, Keyable::Identifier("test-token".to_string()));
 			test_clone!(KeySTORAGE, Keyable::Identifier("test-storage".to_string()));
 			test_clone!(KeyMULTISIG, Keyable::Identifier("test-multisig".to_string()));
 		}
 
-		// Test cloning network account (uses special generation method)
-		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+		// Test cloning network account
+		let network_account = create_test_network_account(12345);
 		let cloned_network = network_account.clone();
 		assert_eq!(network_account.to_string(), cloned_network.to_string());
 	}
@@ -2991,7 +2976,7 @@ mod tests {
 		}
 
 		// Test account type detection methods using the macro
-		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
+		let network_account = create_test_network_account(1);
 		test_account_type_detection!(network_account, true, false, false, false, true);
 
 		let token_account = create_test_account_from_pub_key_string::<KeyTOKEN>(TEST_PUBLIC_ACCOUNT_DATA.token.1);
@@ -3061,7 +3046,7 @@ mod tests {
 			};
 		}
 
-		test_identifier_sign_fail!(KeyNETWORK, Account::<KeyNETWORK>::generate_network_address(5).unwrap());
+		test_identifier_sign_fail!(KeyNETWORK, create_test_network_account(5));
 		test_identifier_sign_fail!(KeyTOKEN, create_test_account_from_identifier::<KeyTOKEN>("test-token"));
 		test_identifier_sign_fail!(KeySTORAGE, create_test_account_from_identifier::<KeySTORAGE>("test-storage"));
 		test_identifier_sign_fail!(KeyMULTISIG, create_test_account_from_identifier::<KeyMULTISIG>("test-multisig"));
@@ -3070,12 +3055,12 @@ mod tests {
 	#[test]
 	fn test_network_address_generation() {
 		// Different network IDs should produce different accounts
-		let network_account1 = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
-		let network_account2 = Account::<KeyNETWORK>::generate_network_address(2).unwrap();
+		let network_account1 = create_test_network_account(1);
+		let network_account2 = create_test_network_account(2);
 		assert!(!network_account1.compare_account(&network_account2));
 
 		// Same network ID should produce identical accounts
-		let network_account1_verify = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
+		let network_account1_verify = create_test_network_account(1);
 		assert!(network_account1.compare_account(&network_account1_verify));
 		assert_eq!(network_account1.to_string(), network_account1_verify.to_string());
 	}
@@ -3108,7 +3093,7 @@ mod tests {
 		test_crypto_encryption_support!(KeyED25519, seed_array2);
 
 		// Test identifier types - none should support encryption
-		test_no_encryption!(Account::<KeyNETWORK>::generate_network_address(1).unwrap());
+		test_no_encryption!(create_test_network_account(1));
 		test_no_encryption!(create_test_account_from_pub_key_string::<KeyTOKEN>(TEST_PUBLIC_ACCOUNT_DATA.token.1));
 		test_no_encryption!(create_test_account_from_pub_key_string::<KeySTORAGE>(TEST_PUBLIC_ACCOUNT_DATA.storage.1));
 	}
@@ -3193,7 +3178,7 @@ mod tests {
 		}
 
 		// Test identifier account types
-		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
+		let network_account = create_test_network_account(1);
 		test_account_type_flags!(network_account, true, true, false, false, false);
 
 		let token_account = create_test_account_from_pub_key_string::<KeyTOKEN>(TEST_PUBLIC_ACCOUNT_DATA.token.1);
@@ -3278,9 +3263,9 @@ mod tests {
 		assert!(!secp256r1_account.compare_account(&ed25519_account));
 
 		// Test with identifier accounts
-		let network1 = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
-		let network2 = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
-		let network3 = Account::<KeyNETWORK>::generate_network_address(2).unwrap();
+		let network1 = create_test_network_account(1);
+		let network2 = create_test_network_account(1);
+		let network3 = create_test_network_account(2);
 		assert!(network1.compare_account(&network2));
 		assert!(!network1.compare_account(&network3));
 	}
@@ -3336,7 +3321,7 @@ mod tests {
 		test_no_private_key_identifier!(KeyMULTISIG, "test-multisig");
 
 		// Test identifier accounts should never have private keys
-		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
+		let network_account = create_test_network_account(1);
 		assert!(!network_account.has_private_key());
 	}
 
@@ -3376,7 +3361,7 @@ mod tests {
 		test_identifier_no_encryption!(KeyMULTISIG, "test-multisig");
 
 		// Test no encryption support for identifier accounts
-		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
+		let network_account = create_test_network_account(1);
 		assert!(!network_account.supports_encryption());
 		assert!(network_account.encrypt(test_data).is_err());
 		assert!(network_account.decrypt(test_data).is_err());
@@ -3414,7 +3399,7 @@ mod tests {
 		test_signature_size_identifier!(KeyMULTISIG, 0);
 
 		// Identifier accounts have signature size 0
-		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
+		let network_account = create_test_network_account(1);
 		assert_eq!(network_account.signature_size(), 0);
 	}
 
@@ -3663,11 +3648,11 @@ mod tests {
 		// Decryption with invalid data should fail
 		assert!(secp256r1_account.decrypt(b"invalid").is_err());
 
-		// Test identifier accounts don't support signing/verification
+		// Test identifier accounts do not support signing/verification
 		let test_data = b"test message";
 		let fake_signature = b"fake signature";
 
-		let network_account = Account::<KeyNETWORK>::generate_network_address(1).unwrap();
+		let network_account = create_test_network_account(1);
 		assert!(matches!(network_account.sign(test_data, None), Err(AccountError::NoIdentifierSign)));
 		assert!(matches!(
 			network_account.verify(test_data, fake_signature, None),
@@ -3715,8 +3700,8 @@ mod tests {
 		test_identifier_pubkey_bytes!(KeySTORAGE, "test-storage");
 		test_identifier_pubkey_bytes!(KeyMULTISIG, "test-multisig");
 
-		// Test network account (special case with generate_network_address)
-		let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+		// Test network account
+		let network_account = create_test_network_account(12345);
 		let network_pubkey_bytes = network_account.get_public_key_bytes().unwrap();
 		assert!(!network_pubkey_bytes.is_empty());
 	}

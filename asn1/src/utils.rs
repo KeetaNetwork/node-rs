@@ -98,10 +98,9 @@ mod tests {
 				assert_eq!(serialized, $expected_json);
 
 				// Test deserialization function
+				// Verify round-trip equality
 				let mut deserializer = serde_json::Deserializer::from_str(&serialized);
 				let deserialized = $deserialize_fn(&mut deserializer).expect("deserialization failed");
-
-				// Verify round-trip equality
 				assert_eq!(original, deserialized);
 			}
 		};
@@ -139,6 +138,7 @@ mod tests {
 			fn test_deserialize_errors() {
 				$(
 					let mut deserializer = serde_json::Deserializer::from_str($invalid_data);
+
 					let result = $deserialize_fn(&mut deserializer);
 					assert!(result.is_err());
 				)+
@@ -184,6 +184,7 @@ mod tests {
 		// Test invalid OID format
 		let invalid_json = r#""invalid.oid.format""#;
 		let mut deserializer = serde_json::Deserializer::from_str(invalid_json);
+
 		let result = deserialize_oid(&mut deserializer);
 		assert!(result.is_err());
 	}

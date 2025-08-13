@@ -24,7 +24,7 @@ pub type HexSeed = SecretBox<String>;
 /// A passphrase used for key derivation, stored securely.
 pub type Passphrase = SecretBox<Vec<String>>;
 
-/// Trait for converting types into their corresponding SecretBox wrapped versions.
+/// Trait for converting types into their corresponding SecretBox versions.
 pub trait IntoSecret<T: Zeroize> {
 	/// Convert the value into a SecretBox.
 	fn into_secret(self) -> SecretBox<T>;

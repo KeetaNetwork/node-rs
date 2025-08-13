@@ -67,32 +67,32 @@ impl KdfAlgorithm {
 			KdfAlgorithm::HkdfSha2_256 => {
 				let hk = Hkdf::<Sha256>::new(salt, ikm);
 				let mut okm = vec![0u8; output_length];
-				hk.expand(info, &mut okm)?;
 
+				hk.expand(info, &mut okm)?;
 				Ok(okm)
 			}
 			KdfAlgorithm::HkdfSha2_512 => {
 				let hk = Hkdf::<Sha512>::new(salt, ikm);
 				let mut okm = vec![0u8; output_length];
-				hk.expand(info, &mut okm)?;
 
+				hk.expand(info, &mut okm)?;
 				Ok(okm)
 			}
 			KdfAlgorithm::HkdfSha3_256 => {
 				let hk = Hkdf::<Sha3_256>::new(salt, ikm);
 				let mut okm = vec![0u8; output_length];
-				hk.expand(info, &mut okm)?;
 
+				hk.expand(info, &mut okm)?;
 				Ok(okm)
 			}
 		}
 	}
 
-	/// Derive key material using expand-only (treating IKM as PRK)
+	/// Derive key material using expand-only (treating IKM as PRK).
 	///
 	/// This method treats the input key material as already-extracted PRK
-	/// and performs only the expand step. This is used for TypeScript compatibility
-	/// where the seed is treated directly as PRK material.
+	/// and performs only the expand step. This is used for node TypeScript
+	/// compatibility where the seed is treated directly as PRK material.
 	///
 	/// # Arguments
 	/// * `prk` - Pre-extracted key material (treated as PRK)
@@ -118,25 +118,28 @@ impl KdfAlgorithm {
 			KdfAlgorithm::HkdfSha2_256 => {
 				let hk = Hkdf::<Sha256>::from_prk(prk)?;
 				let mut okm = vec![0u8; output_length];
+
 				hk.expand(info, &mut okm)?;
 				Ok(okm)
 			}
 			KdfAlgorithm::HkdfSha2_512 => {
 				let hk = Hkdf::<Sha512>::from_prk(prk)?;
 				let mut okm = vec![0u8; output_length];
+
 				hk.expand(info, &mut okm)?;
 				Ok(okm)
 			}
 			KdfAlgorithm::HkdfSha3_256 => {
 				let hk = Hkdf::<Sha3_256>::from_prk(prk)?;
 				let mut okm = vec![0u8; output_length];
+
 				hk.expand(info, &mut okm)?;
 				Ok(okm)
 			}
 		}
 	}
 
-	/// Derive key material as a fixed-size array
+	/// Derive key material as a fixed-size array.
 	///
 	/// # Arguments
 	/// * `ikm` - Input Key Material
@@ -153,12 +156,12 @@ impl KdfAlgorithm {
 	) -> Result<[u8; N], CryptoError> {
 		let okm = self.derive(ikm, salt, info, N)?;
 		let mut array = [0u8; N];
-		array.copy_from_slice(&okm);
 
+		array.copy_from_slice(&okm);
 		Ok(array)
 	}
 
-	/// Expand-only derivation as a fixed-size array
+	/// Expand-only derivation as a fixed-size array.
 	///
 	/// # Arguments
 	/// * `prk` - Pre-extracted key material
@@ -173,8 +176,8 @@ impl KdfAlgorithm {
 	) -> Result<[u8; N], CryptoError> {
 		let okm = self.expand_only(prk, info, N)?;
 		let mut array = [0u8; N];
-		array.copy_from_slice(&okm);
 
+		array.copy_from_slice(&okm);
 		Ok(array)
 	}
 }

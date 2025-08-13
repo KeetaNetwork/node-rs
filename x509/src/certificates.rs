@@ -1,4 +1,4 @@
-//! X.509 certificate handling
+//! X.509 certificate handling.
 //!
 //! This module provides functionality for working with X.509 certificates,
 //! including parsing, validation, and generation of certificate requests.
@@ -348,6 +348,7 @@ impl ExtensionBuilder {
 		let key_id = key_id.as_ref();
 		let mut auth_key_id_der = vec![0x30]; // SEQUENCE
 		let key_id_with_tag = [&[0x80], key_id].concat(); // [0] IMPLICIT
+
 		auth_key_id_der.push(key_id_with_tag.len() as u8);
 		auth_key_id_der.extend_from_slice(&key_id_with_tag);
 
@@ -559,6 +560,7 @@ impl CertificateBundle {
 		for cert in chain {
 			self.add_intermediate(cert);
 		}
+
 		self
 	}
 
@@ -638,7 +640,6 @@ impl FromStr for CertificateBundle {
 		let options = CertificateOptions::default();
 
 		// For PEM string input, we can't determine trust without a store
-		// User can call methods to set trust later if needed
 		Ok(Self { certificate, options, root: HashSet::new(), intermediate: HashSet::new() })
 	}
 }
@@ -793,6 +794,7 @@ impl CertificateHash {
 		let algorithm_oid = algorithm_oid
 			.map(|s| s.as_ref().to_string())
 			.unwrap_or_else(|| oids::SHA1.to_string());
+
 		Self { hash: hash.into(), algorithm_oid }
 	}
 
@@ -888,18 +890,25 @@ impl From<&[u8]> for CertificateHash {
 	}
 }
 
-impl From<&Certificate> for CertificateHash {
-	fn from(certificate: &Certificate) -> Self {
+impl TryFrom<&Certificate> for CertificateHash {
+	type Error = CertificateError;
+
+	fn try_from(certificate: &Certificate) -> Result<Self, Self::Error> {
 		let der_bytes = certificate
 			.to_der()
-			.expect("Failed to serialize certificate to DER");
-		Self::from_certificate_der(&der_bytes)
+			.map_err(|e| CertificateError::ValidationFailed {
+				reason: format!("Failed to serialize certificate to DER: {e}"),
+			})?;
+
+		Ok(Self::from_certificate_der(&der_bytes))
 	}
 }
 
-impl From<Certificate> for CertificateHash {
-	fn from(certificate: Certificate) -> Self {
-		Self::from(&certificate)
+impl TryFrom<Certificate> for CertificateHash {
+	type Error = CertificateError;
+
+	fn try_from(certificate: Certificate) -> Result<Self, Self::Error> {
+		Self::try_from(&certificate)
 	}
 }
 
@@ -1816,6 +1825,8 @@ impl Certificate {
 
 	/// Validate Authority Key Identifier extension per RFC 5280 section 4.2.1.1
 	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
+	///
+	/// TODO Make this more readable
 	pub fn validate_authority_key_identifier(&self, issuer: &Certificate) -> bool {
 		// If Authority Key Identifier is present, validate it matches the issuer's Subject Key Identifier
 		if let Some(auth_key_ext) = self.get_extension(oids::AUTHORITY_KEY_IDENTIFIER) {
@@ -1828,7 +1839,7 @@ impl Certificate {
 					return auth_key_id == subject_key_id;
 				}
 			}
-			// If Authority Key Identifier is present but can't be validated, this is suspicious
+			// If Authority Key Identifier is present but cannot be validated
 			return false;
 		}
 
@@ -1875,7 +1886,7 @@ impl Certificate {
 	/// Convert certificate to JSON representation
 	#[cfg(feature = "serde")]
 	pub fn to_json(&self, include_pem: bool) -> Result<CertificateJson, CertificateError> {
-		let hash = CertificateHash::from(self);
+		let hash = CertificateHash::try_from(self)?;
 		let hash_hex = hex::encode(hash.as_ref());
 		let pem = if include_pem {
 			Some(self.to_pem()?)
@@ -1930,6 +1941,7 @@ impl Certificate {
 	) -> impl Iterator<Item = Certificate> {
 		let mut current = self;
 		let mut ordered_chain = vec![self.clone()];
+
 		let mut chain_set = HashSet::new();
 		chain_set.insert(self.clone());
 
@@ -2006,22 +2018,17 @@ impl Certificate {
 		// no certificates with same content but different objects
 		let mut seen_hashes = HashSet::new();
 		for cert in certificates {
-			let cert_hash = CertificateHash::from(cert);
+			let cert_hash = CertificateHash::try_from(cert)?;
 			if !seen_hashes.insert(cert_hash) {
-				return Err(CertificateError::ValidationFailed {
-					reason: "CERTIFICATE_DUPLICATE_INCLUDED: Duplicate certificate found in graph".to_string(),
-				});
+				return Err(CertificateError::CertificateDuplicateIncluded);
 			}
 		}
 
-		// Check for orphans - certificates that don't connect to the subject certificate
+		// Check for orphans - certificates that do not connect to the subject certificate
 		let connected_certs = self.find_connected_certificates(certificates);
 		for cert in certificates {
 			if !connected_certs.contains(cert) && cert != self {
-				return Err(CertificateError::ValidationFailed {
-					reason: "CERTIFICATE_ORPHAN_FOUND: Orphaned certificate found that doesn't connect to subject"
-						.to_string(),
-				});
+				return Err(CertificateError::CertificateOrphanFound);
 			}
 		}
 
@@ -2104,9 +2111,7 @@ impl Certificate {
 				}
 
 				if rec_stack.contains(cert) {
-					return Err(CertificateError::ValidationFailed {
-						reason: "CERTIFICATE_CYCLE_FOUND: Cycle detected in certificate graph".to_string(),
-					});
+					return Err(CertificateError::CertificateCycleFound);
 				}
 
 				if !visited.contains(cert) {
@@ -3237,14 +3242,14 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		macro_rules! test_certificate_from {
 			($source:expr, $expected_hash:expr) => {
 				let cert = Certificate::try_from($source).unwrap();
-				assert_eq!($expected_hash, CertificateHash::from(&cert));
+				assert_eq!($expected_hash, CertificateHash::try_from(&cert).unwrap());
 			};
 		}
 
 		macro_rules! test_certificate_parse {
 			($source:expr, $expected_hash:expr) => {
 				let cert: Certificate = $source.parse().unwrap();
-				assert_eq!($expected_hash, CertificateHash::from(&cert));
+				assert_eq!($expected_hash, CertificateHash::try_from(&cert).unwrap());
 			};
 		}
 
@@ -3255,7 +3260,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			// Test each certificate in the chain
 			for cert in [&ca_cert, &intermediate_cert, &user_cert] {
 				let der_bytes = cert.to_der().unwrap();
-				let expected_hash = CertificateHash::from(cert);
+				let expected_hash = CertificateHash::try_from(cert).unwrap();
 
 				// Test Certificate from various sources
 				test_certificate_from!(der_bytes.as_slice(), expected_hash);
@@ -3272,12 +3277,18 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			}
 
 			// Test Certificate from PEM strings (specific to each cert type)
-			test_certificate_parse!(test_set.chain.root, CertificateHash::from(&ca_cert));
-			test_certificate_parse!(test_set.chain.root.to_string(), CertificateHash::from(&ca_cert));
-			test_certificate_parse!(test_set.chain.intermediate, CertificateHash::from(&intermediate_cert));
-			test_certificate_parse!(test_set.chain.intermediate.to_string(), CertificateHash::from(&intermediate_cert));
-			test_certificate_parse!(test_set.chain.client, CertificateHash::from(&user_cert));
-			test_certificate_parse!(test_set.chain.client.to_string(), CertificateHash::from(&user_cert));
+			test_certificate_parse!(test_set.chain.root, CertificateHash::try_from(&ca_cert).unwrap());
+			test_certificate_parse!(test_set.chain.root.to_string(), CertificateHash::try_from(&ca_cert).unwrap());
+			test_certificate_parse!(
+				test_set.chain.intermediate,
+				CertificateHash::try_from(&intermediate_cert).unwrap()
+			);
+			test_certificate_parse!(
+				test_set.chain.intermediate.to_string(),
+				CertificateHash::try_from(&intermediate_cert).unwrap()
+			);
+			test_certificate_parse!(test_set.chain.client, CertificateHash::try_from(&user_cert).unwrap());
+			test_certificate_parse!(test_set.chain.client.to_string(), CertificateHash::try_from(&user_cert).unwrap());
 
 			// Test CertificateWithOptions from concatenated DER
 			let mut combined_der = ca_cert.to_der().unwrap();
@@ -3434,11 +3445,11 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 			let user_issuer = user_with_chain.get_issuer_certificate();
 			assert!(user_issuer.is_some());
-			assert_eq!(CertificateHash::from(&user_issuer.unwrap()), CertificateHash::from(&intermediate_cert));
+			assert_eq!(CertificateHash::try_from(&user_issuer.unwrap()), CertificateHash::try_from(&intermediate_cert));
 
 			let user_root = user_with_chain.get_root_certificate();
 			assert!(user_root.is_some());
-			assert_eq!(CertificateHash::from(&user_root.unwrap()), CertificateHash::from(&ca_cert));
+			assert_eq!(CertificateHash::try_from(&user_root.unwrap()), CertificateHash::try_from(&ca_cert));
 		}
 	}
 
@@ -3492,8 +3503,8 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		test_all_certificate_sets(|bundle| {
 			for cert in [&bundle.ca_cert, &bundle.intermediate_cert, &bundle.client_cert] {
 				// Test From<&Certificate>
-				let hash_from_ref = CertificateHash::from(cert);
-				let hash_from_owned = CertificateHash::from(cert.clone());
+				let hash_from_ref = CertificateHash::try_from(cert).unwrap();
+				let hash_from_owned = CertificateHash::try_from(cert.clone()).unwrap();
 				assert_eq!(hash_from_ref, hash_from_owned);
 
 				// Test From<&[u8]> via DER
@@ -3670,15 +3681,15 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		test_all_certificate_sets(|bundle| {
 			for cert in [&bundle.ca_cert, &bundle.intermediate_cert, &bundle.client_cert] {
 				// Hash should be consistent across PEM/DER round-trips
-				let original_hash = CertificateHash::from(cert);
+				let original_hash = CertificateHash::try_from(cert).unwrap();
 
 				let pem = cert.to_pem().unwrap();
 				let cert_from_pem: Certificate = pem.parse().unwrap();
-				let hash_from_pem = CertificateHash::from(&cert_from_pem);
+				let hash_from_pem = CertificateHash::try_from(&cert_from_pem).unwrap();
 
 				let der = cert.to_der().unwrap();
 				let cert_from_der = Certificate::try_from(der).unwrap();
-				let hash_from_der = CertificateHash::from(&cert_from_der);
+				let hash_from_der = CertificateHash::try_from(&cert_from_der).unwrap();
 				assert_eq!(original_hash, hash_from_pem);
 				assert_eq!(original_hash, hash_from_der);
 				assert_eq!(hash_from_pem, hash_from_der);
@@ -4062,10 +4073,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			.collect();
 		let result = subject_cert.assert_can_construct_valid_graph(&certificates_with_orphan);
 		assert!(result.is_err());
-		assert!(result
-			.unwrap_err()
-			.to_string()
-			.contains("CERTIFICATE_ORPHAN_FOUND"));
+		assert!(matches!(result.unwrap_err(), CertificateError::CertificateOrphanFound));
 
 		// Test cycle detection by creating certificates that form a cycle
 		let cycle_a_cert = create_dummy_cert_builder("CycleA", "CycleB", 5, true) // A issued by B
@@ -4078,13 +4086,11 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			.build_test()
 			.unwrap();
 
+		// Test cycle detection
 		let certificates_with_cycle = [cycle_a_cert, cycle_b_cert].into_iter().collect();
 		let cycle_result = cycle_subject_cert.assert_can_construct_valid_graph(&certificates_with_cycle);
 		assert!(cycle_result.is_err());
-		assert!(cycle_result
-			.unwrap_err()
-			.to_string()
-			.contains("CERTIFICATE_CYCLE_FOUND"));
+		assert!(matches!(cycle_result.unwrap_err(), CertificateError::CertificateCycleFound));
 	}
 
 	#[test]

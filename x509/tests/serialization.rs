@@ -112,8 +112,8 @@ fn test_json_hash_consistency() {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_hash = CertificateHash::from(&ca_cert);
-	let user_hash = CertificateHash::from(&user_cert);
+	let ca_hash = CertificateHash::try_from(&ca_cert).unwrap();
+	let user_hash = CertificateHash::try_from(&user_cert).unwrap();
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
 

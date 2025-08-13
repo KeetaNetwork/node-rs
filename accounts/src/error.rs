@@ -107,7 +107,6 @@ mod tests {
 		// Test conversion from AccountError to KeetaNetError
 		let account_error = AccountError::InvalidPrefix;
 		let keeta_error: KeetaNetError = account_error.into();
-
 		assert!(matches!(keeta_error, KeetaNetError::Code { 
 			code, 
 			message 
@@ -116,7 +115,6 @@ mod tests {
 		// Test another error type
 		let account_error2 = AccountError::PassphraseWeak;
 		let keeta_error2: KeetaNetError = account_error2.into();
-
 		assert!(matches!(keeta_error2, KeetaNetError::Code { 
 			code, 
 			message 
@@ -132,7 +130,7 @@ mod tests {
 		// Test opposite conversion
 		let account_error = AccountError::InvalidConstruction;
 		let _signature_error: crypto::operations::SignatureError = account_error.into();
-		// SignatureError doesn't implement PartialEq, so just test the conversion works
+		// SignatureError does not implement PartialEq
 	}
 
 	#[test]

@@ -220,10 +220,9 @@ mod tests {
 		let ia5_string = Ia5String::new("test").unwrap();
 		let attribute_value = Any::encode_from(&ia5_string).unwrap();
 		let attr = AttributeTypeAndValue { attribute_type, attribute_value };
-
 		let rdn = SetOfVec::from_iter([attr.clone()]).unwrap();
-		let dn: DistinguishedName = vec![rdn];
 
+		let dn: DistinguishedName = vec![rdn];
 		assert_eq!(dn.len(), 1);
 		assert_eq!(dn[0].len(), 1);
 		assert_eq!(*dn[0].get(0).unwrap(), attr);
@@ -243,8 +242,8 @@ mod tests {
 
 		let rdn1 = SetOfVec::from_iter([attr1.clone()]).unwrap();
 		let rdn2 = SetOfVec::from_iter([attr2.clone()]).unwrap();
-		let multi_dn: DistinguishedName = vec![rdn1, rdn2];
 
+		let multi_dn: DistinguishedName = vec![rdn1, rdn2];
 		assert_eq!(multi_dn.len(), 2);
 		assert_eq!(*multi_dn[0].get(0).unwrap(), attr1);
 		assert_eq!(*multi_dn[1].get(0).unwrap(), attr2);
@@ -255,8 +254,8 @@ mod tests {
 	fn test_name_value_pair_serde() {
 		let name = "commonName".to_string();
 		let value = "Test Certificate".to_string();
+		
 		let pair = NameValuePair { name, value };
-
 		assert_eq!(pair.name, "commonName");
 		assert_eq!(pair.value, "Test Certificate");
 

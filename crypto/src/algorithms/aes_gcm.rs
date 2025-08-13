@@ -101,8 +101,6 @@ mod tests {
 		let key = [0x42u8; 32]; // 256-bit key
 		let aes_gcm = Aes256Gcm::new(key).unwrap();
 		let plaintext = b"Hello, AES-GCM world!";
-
-		// Generate nonce for testing
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Test encryption

@@ -8,7 +8,7 @@ use crate::error::CryptoError;
 // Re-export key RustCrypto AEAD traits for easier use
 pub use aead::{Aead, AeadCore, AeadInPlace, KeyInit};
 
-/// AEAD operations that extend RustCrypto's Aead trait
+/// AEAD operations that extend RustCrypto's Aead trait.
 ///
 /// This trait extends the RustCrypto Aead trait with additional convenience
 /// methods while avoiding method name conflicts. It provides the standard
@@ -18,7 +18,7 @@ pub trait CryptoAead: Aead {
 	fn algorithm_info(&self) -> &'static str;
 }
 
-/// Symmetric encryption operations
+/// Symmetric encryption operations.
 ///
 /// This trait provides encryption functionality for symmetric encryption
 /// schemes like AES-CBC that use the same key for both encryption and decryption.
@@ -39,7 +39,7 @@ pub trait SymmetricEncryption {
 		plaintext: P,
 	) -> Result<Vec<u8>, CryptoError>;
 
-	/// Decrypt data using symmetric encryption
+	/// Decrypt data using symmetric encryption.
 	///
 	/// # Arguments
 	/// * `key` - The symmetric encryption key
@@ -59,10 +59,10 @@ pub trait SymmetricEncryption {
 	fn block_size(&self) -> usize;
 }
 
-/// Asymmetric encryption operations
+/// Asymmetric encryption operations.
 ///
 /// This trait provides encryption functionality for asymmetric encryption
-/// schemes like ECIES that don't follow the AEAD pattern but provide
+/// schemes like ECIES that do not follow the AEAD pattern but provide
 /// authenticated encryption.
 pub trait AsymmetricEncryption {
 	/// Encrypt data using asymmetric encryption
@@ -79,7 +79,7 @@ pub trait AsymmetricEncryption {
 	fn algorithm_info(&self) -> &'static str;
 }
 
-/// Key generation operations for cryptographic keys
+/// Key generation operations for cryptographic keys.
 ///
 /// This trait provides random key generation functionality for cryptographic
 /// algorithms. Implementations should use cryptographically secure random
@@ -94,7 +94,7 @@ pub trait KeyGeneration {
 		Self: Sized;
 }
 
-/// Nonce generation for cryptographic operations
+/// Nonce generation for cryptographic operations.
 ///
 /// This trait provides a unified interface for generating nonces across
 /// different cryptographic algorithms that require them.
@@ -112,7 +112,7 @@ pub trait NonceGeneration {
 	fn nonce_size() -> usize;
 }
 
-/// Key exchange operations for asymmetric encryption
+/// Key exchange operations for asymmetric encryption.
 ///
 /// This trait provides key agreement/exchange functionality for asymmetric
 /// encryption schemes like ECDH, X25519, etc.
@@ -157,10 +157,8 @@ mod tests {
 	use super::*;
 	use aes_gcm::{Aes128Gcm, Aes256Gcm};
 
-	// Simplified mock implementations for testing
-	// Note: Real AEAD testing is done in algorithm-specific modules
-
-	// Mock AsymmetricEncryption implementation
+	/// Simplified mock implementations for testing
+	/// Note: Real AEAD testing is done in algorithm-specific modules
 	struct MockAsymmetricEncryption {
 		has_private_key: bool,
 	}
@@ -359,7 +357,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_asymmetric_encryption_with_asref_flexibility() {
+	fn test_asymmetric_encryption_with_as_ref_compatibility() {
 		// Test that AsymmetricEncryption works with different AsRef<[u8]> types
 		let mock_encryption = MockAsymmetricEncryption::new_private();
 

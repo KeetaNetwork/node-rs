@@ -95,7 +95,7 @@ impl HashAlgorithm {
 	}
 }
 
-/// Hash some data with optional algorithm and optional fixed length
+/// Hash some data with optional algorithm and optional fixed length.
 ///
 /// This function provides a flexible interface for hashing data.
 /// - If `algorithm` is None, uses the default algorithm (SHA3-256)
@@ -115,14 +115,14 @@ pub fn hash<const N: usize>(data: impl AsRef<[u8]>, algorithm: Option<HashAlgori
 	Ok(array)
 }
 
-/// Hash some data using the default algorithm, returning the full hash
+/// Hash some data using the default algorithm, returning the full hash.
 pub fn hash_default(data: impl AsRef<[u8]>) -> [u8; 32] {
 	DEFAULT_HASH_ALGORITHM
 		.hash_array::<32>(data)
 		.expect("SHA3-256 should always produce 32 bytes")
 }
 
-/// Hash some data using an optional algorithm, returning a fixed-size array
+/// Hash some data using an optional algorithm, returning a fixed-size array.
 ///
 /// If algorithm is None, uses the default algorithm (SHA3-256) and returns
 /// a 32-byte array.
@@ -153,7 +153,6 @@ pub fn default_hash_algorithm_length() -> usize {
 mod tests {
 	use super::*;
 
-	// Test data for different algorithms with comprehensive test cases
 	struct HashTestCase {
 		algorithm: HashAlgorithm,
 		name: &'static str,
@@ -222,13 +221,10 @@ mod tests {
 			.iter()
 			.map(|tc| tc.algorithm.hash(test_data))
 			.collect();
+
 		for i in 0..results.len() {
 			for j in i + 1..results.len() {
-				assert_ne!(
-					results[i], results[j],
-					"Algorithms {} and {} should produce different results",
-					HASH_TEST_CASES[i].name, HASH_TEST_CASES[j].name
-				);
+				assert_ne!(results[i], results[j]);
 			}
 		}
 	}

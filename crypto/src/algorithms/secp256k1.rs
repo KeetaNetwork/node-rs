@@ -280,7 +280,6 @@ impl TryFrom<&[u8]> for Secp256k1PublicKey {
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let public_key = k256::PublicKey::from_sec1_bytes(bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
-
 		Ok(Secp256k1PublicKey { inner: public_key })
 	}
 }
@@ -297,7 +296,6 @@ impl From<Secp256k1PublicKey> for asn1::ObjectIdentifier {
 impl Verifier<Signature> for Secp256k1PublicKey {
 	fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), ::signature::Error> {
 		let verifying_key = k256::ecdsa::VerifyingKey::from(&self.inner);
-
 		verifying_key.verify(msg, signature)
 	}
 }
@@ -654,7 +652,7 @@ mod tests {
 
 		// Verify that the regular signing (which pre-hashes) matches default options
 		let regular_signature = private_key.try_sign(message).unwrap();
-		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes()); // Different because regular signing doesn't pre-hash message
+		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes());
 	}
 
 	#[cfg(feature = "signature")]

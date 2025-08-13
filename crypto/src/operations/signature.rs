@@ -9,7 +9,7 @@ use crate::error::CryptoError;
 // Re-export key RustCrypto signature traits for easier use
 pub use signature::{DigestSigner, DigestVerifier, Error as SignatureError, RandomizedSigner, Signer, Verifier};
 
-/// Core cryptographic signing operations
+/// Core cryptographic signing operations.
 ///
 /// This trait extends RustCrypto's Signer trait with additional functionality
 /// needed for our cryptographic operations.
@@ -18,7 +18,7 @@ pub trait CryptoSigner<S>: CryptoAlgorithm + Signer<S> {
 	fn has_private_key(&self) -> bool;
 }
 
-/// Core cryptographic verification operations
+/// Core cryptographic verification operations.
 ///
 /// This trait extends RustCrypto's Verifier trait with additional functionality
 /// needed for our cryptographic operations.
@@ -30,7 +30,7 @@ pub trait CryptoVerifier<S>: CryptoAlgorithm + Verifier<S> {
 	fn public_key_string(&self) -> Result<String, CryptoError>;
 }
 
-/// Signing and verification options for cryptographic operations
+/// Signing and verification options for cryptographic operations.
 ///
 /// Default options are:
 /// - raw: false (will pre-hash the message)
@@ -57,31 +57,21 @@ impl SigningOptions {
 	}
 }
 
-/// Extended signing operations with configurable options
+/// Extended signing operations with configurable options.
 ///
 /// This trait provides signing operations with additional configuration
 /// options for message preprocessing and encoding formats.
 pub trait CryptoSignerWithOptions<S>: CryptoSigner<S> {
-	/// Sign a message with the specified options
-	///
-	/// The options parameter controls message preprocessing:
-	/// - If options.raw = false (default): pre-hashes the message
-	/// - If options.raw = true: uses raw message
-	/// - options.for_cert: controls encoding format for certificates
+	/// Sign a message with the specified options.
 	fn sign_with_options<T: AsRef<[u8]>>(&self, message: T, options: SigningOptions) -> Result<S, SignatureError>;
 }
 
-/// Extended verification operations with configurable options
+/// Extended verification operations with configurable options.
 ///
 /// This trait provides verification operations with additional configuration
 /// options for message preprocessing and encoding formats.
 pub trait CryptoVerifierWithOptions<S>: CryptoVerifier<S> {
-	/// Verify a signature against a message using the specified options
-	///
-	/// The options parameter controls message preprocessing:
-	/// - If options.raw = false (default): pre-hashes the message
-	/// - If options.raw = true: uses raw message
-	/// - options.for_cert: controls encoding format for certificates
+	/// Verify a signature against a message using the specified options.
 	fn verify_with_options<T: AsRef<[u8]>>(
 		&self,
 		message: T,
@@ -98,8 +88,8 @@ mod tests {
 	use super::*;
 	use signature::{Signer, Verifier};
 
-	// Mock implementations for testing
-	// Note: There are algorithm-specific tests for real implementations
+	/// Mock implementations for testing
+	/// Note: There are algorithm-specific tests for real implementations
 	struct MockSigner;
 	struct MockVerifier;
 

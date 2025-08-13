@@ -118,8 +118,8 @@ impl TryFrom<&[u8]> for Ed25519PrivateKey {
 		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] = bytes
 			.try_into()
 			.map_err(|_| CryptoError::InvalidPrivateKey)?;
-		let signing_key = SigningKey::from_bytes(&bytes_array);
 
+		let signing_key = SigningKey::from_bytes(&bytes_array);
 		Ok(Ed25519PrivateKey { inner: signing_key })
 	}
 }
@@ -137,14 +137,12 @@ impl AsymmetricEncryption for Ed25519PrivateKey {
 	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 		// For encryption, we need the corresponding public key
 		let public_key = self.as_public_key();
-
 		public_key.encrypt(plaintext)
 	}
 
 	fn decrypt<C: AsRef<[u8]>>(&self, cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 		// Convert Ed25519 private key to X25519 for decryption
 		let x25519_private = self.to_x25519()?;
-
 		EciesX25519::decrypt(&x25519_private, cipher_text.as_ref())
 	}
 
@@ -243,8 +241,8 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] = bytes
 			.try_into()
 			.map_err(|_| CryptoError::InvalidPublicKey)?;
-		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
 
+		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
 		Ok(Ed25519PublicKey { inner: verifying_key })
 	}
 }
@@ -299,7 +297,6 @@ impl AsymmetricEncryption for Ed25519PublicKey {
 	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 		// Convert Ed25519 public key to X25519 for encryption
 		let x25519_public = self.to_x25519()?;
-
 		EciesX25519::encrypt(&x25519_public, plaintext.as_ref())
 	}
 
@@ -346,8 +343,8 @@ impl X25519PrivateKey {
 		// Compute the X25519 public key from the private key using scalar multiplication
 		let private_key_array: [u8; 32] = *self.bytes.expose_secret();
 		let public_key_bytes = x25519_dalek::x25519(private_key_array, x25519_dalek::X25519_BASEPOINT_BYTES);
-		let public_key = DalekX25519PublicKey::from(public_key_bytes);
 
+		let public_key = DalekX25519PublicKey::from(public_key_bytes);
 		X25519PublicKey::from(public_key)
 	}
 
@@ -388,8 +385,8 @@ impl X25519PrivateKey {
 	pub fn diffie_hellman(&self, other_public: &X25519PublicKey) -> [u8; 32] {
 		// Create private key from our bytes and perform ECDH
 		let private_key_array: [u8; 32] = *self.bytes.expose_secret();
-		let shared_secret = x25519_dalek::x25519(private_key_array, *other_public.inner.as_bytes());
 
+		let shared_secret = x25519_dalek::x25519(private_key_array, *other_public.inner.as_bytes());
 		shared_secret
 	}
 }
@@ -425,8 +422,8 @@ impl TryFrom<&[u8]> for X25519PublicKey {
 		let bytes_array: [u8; 32] = bytes
 			.try_into()
 			.map_err(|_| CryptoError::InvalidPublicKey)?;
-		let public_key = DalekX25519PublicKey::from(bytes_array);
 
+		let public_key = DalekX25519PublicKey::from(bytes_array);
 		Ok(X25519PublicKey { inner: public_key })
 	}
 }
@@ -504,9 +501,9 @@ pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519
 	let montgomery_point = edwards_point.to_montgomery();
 	// Get the Montgomery point bytes
 	let montgomery_bytes = montgomery_point.as_bytes();
+
 	// Create X25519 public key from the Montgomery point
 	let x25519_public = DalekX25519PublicKey::from(*montgomery_bytes);
-
 	Ok(X25519PublicKey { inner: x25519_public })
 }
 
@@ -908,164 +905,6 @@ mod tests {
 		assert_eq!(secret_box_owned.expose_secret(), &private_bytes.to_vec());
 	}
 
-	#[cfg(feature = "signature")]
-	#[test]
-	fn test_ed25519_crypto_signer_with_options() {
-		let seed = b"test seed for ed25519 signer with options";
-		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let message = b"test message for ed25519 signing with options";
-
-		// Test with default options (pre-hash)
-		let default_options = SigningOptions::default();
-		let signature_default = private_key
-			.sign_with_options(message, default_options)
-			.unwrap();
-
-		// Test with raw options (no pre-hash)
-		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
-
-		// Test with cert options (pre-hash, but for_cert flag set)
-		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key
-			.sign_with_options(message, cert_options)
-			.unwrap();
-
-		// Signatures should be different when using different message processing
-		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
-		// Default and cert should be the same since they both pre-hash
-		assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
-
-		// Verify that the regular signing (which pre-hashes) matches default options
-		let regular_signature = private_key.try_sign(message).unwrap();
-		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes());
-	}
-
-	#[cfg(feature = "signature")]
-	#[test]
-	fn test_ed25519_crypto_verifier_with_options() {
-		let seed = b"test seed for ed25519 verifier with options";
-		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.as_public_key();
-		let message = b"test message for ed25519 verification with options";
-
-		// Test verification with matching options
-		let default_options = SigningOptions::default();
-		let signature_default = private_key
-			.sign_with_options(message, default_options)
-			.unwrap();
-		assert!(public_key
-			.verify_with_options(message, &signature_default, default_options)
-			.is_ok());
-
-		let raw_options = SigningOptions::raw();
-		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
-		assert!(public_key
-			.verify_with_options(message, &signature_raw, raw_options)
-			.is_ok());
-
-		let cert_options = SigningOptions::for_cert();
-		let signature_cert = private_key
-			.sign_with_options(message, cert_options)
-			.unwrap();
-		assert!(public_key
-			.verify_with_options(message, &signature_cert, cert_options)
-			.is_ok());
-
-		// Test verification failure with mismatched options
-		assert!(public_key
-			.verify_with_options(message, &signature_raw, default_options)
-			.is_err());
-		assert!(public_key
-			.verify_with_options(message, &signature_default, raw_options)
-			.is_err());
-
-		// Test verification failure with wrong message
-		let wrong_message = b"wrong message";
-		assert!(public_key
-			.verify_with_options(wrong_message, &signature_default, default_options)
-			.is_err());
-	}
-
-	#[cfg(feature = "signature")]
-	#[test]
-	fn test_ed25519_crypto_verifier_trait() {
-		let seed = b"test seed for ed25519 crypto verifier trait";
-		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.as_public_key();
-
-		// Test public_key_bytes() method
-		let public_key_bytes = public_key.public_key_bytes();
-		assert_eq!(public_key_bytes.len(), 32); // Ed25519 public keys are 32 bytes
-
-		// Should match the regular Vec conversion
-		let regular_bytes: Vec<u8> = (&public_key).into();
-		assert_eq!(public_key_bytes, regular_bytes);
-
-		// Test public_key_string() method
-		let public_key_string = public_key.public_key_string().unwrap();
-		assert_eq!(public_key_string.len(), 64); // 32 bytes * 2 hex chars per byte
-		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
-		// Verify the string is valid hex
-		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
-
-		// Test that we can decode the hex string back to the original bytes
-		let decoded_bytes = hex::decode(&public_key_string).unwrap();
-		assert_eq!(decoded_bytes, public_key_bytes);
-	}
-
-	#[cfg(feature = "encryption")]
-	#[test]
-	fn test_ed25519_asymmetric_encryption_trait() {
-		let seed = b"test seed for ed25519 asymmetric encryption";
-		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.as_public_key();
-		let plaintext = b"Hello, Ed25519 encryption via X25519!";
-
-		// Test encryption via AsymmetricEncryption trait
-		let ciphertext = public_key.encrypt(plaintext).unwrap();
-		assert_ne!(ciphertext.as_slice(), plaintext);
-		assert!(ciphertext.len() > plaintext.len());
-
-		// Test decryption via AsymmetricEncryption trait
-		let decrypted = private_key.decrypt(&ciphertext).unwrap();
-		assert_eq!(decrypted, plaintext);
-
-		// Test algorithm info
-		assert_eq!(public_key.algorithm_info(), "ECIES-Ed25519-via-X25519-AES128CTR");
-		assert_eq!(private_key.algorithm_info(), "ECIES-Ed25519-via-X25519-AES128CTR");
-
-		// Test that public key cannot decrypt
-		let fake_ciphertext = [0u8; 100];
-		let result = public_key.decrypt(fake_ciphertext);
-		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
-	}
-
-	#[cfg(feature = "encryption")]
-	#[test]
-	fn test_ed25519_encryption_round_trip() {
-		let seed = b"test seed for ed25519 round trip encryption";
-		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let plaintext = b"Round-trip test message for Ed25519 encryption";
-
-		// Test encryption via private key (should use public key internally)
-		let ciphertext = private_key.encrypt(plaintext).unwrap();
-		let decrypted = private_key.decrypt(&ciphertext).unwrap();
-		assert_eq!(decrypted, plaintext);
-
-		// Test that different plaintext produce different ciphertext
-		let plaintext2 = b"Different message for encryption test";
-		let ciphertext2 = private_key.encrypt(plaintext2).unwrap();
-		assert_ne!(ciphertext, ciphertext2);
-
-		// Test that encryption is non-deterministic (ephemeral keys)
-		let ciphertext3 = private_key.encrypt(plaintext).unwrap();
-		assert_ne!(ciphertext, ciphertext3);
-		let decrypted3 = private_key.decrypt(&ciphertext3).unwrap();
-		assert_eq!(decrypted3, plaintext);
-	}
-
 	#[test]
 	fn test_ed25519_public_key_uncompressed_bytes() {
 		let seed = b"test seed for ed25519 uncompressed bytes";
@@ -1275,6 +1114,164 @@ mod tests {
 		assert_eq!(public_vec_owned, recovered_public_bytes);
 	}
 
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_ed25519_crypto_signer_with_options() {
+		let seed = b"test seed for ed25519 signer with options";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let message = b"test message for ed25519 signing with options";
+
+		// Test with default options (pre-hash)
+		let default_options = SigningOptions::default();
+		let signature_default = private_key
+			.sign_with_options(message, default_options)
+			.unwrap();
+
+		// Test with raw options (no pre-hash)
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+
+		// Test with cert options (pre-hash, but for_cert flag set)
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key
+			.sign_with_options(message, cert_options)
+			.unwrap();
+
+		// Signatures should be different when using different message processing
+		assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
+		// Default and cert should be the same since they both pre-hash
+		assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
+
+		// Verify that the regular signing (which pre-hashes) matches default options
+		let regular_signature = private_key.try_sign(message).unwrap();
+		assert_ne!(regular_signature.to_bytes(), signature_default.to_bytes());
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_ed25519_crypto_verifier_with_options() {
+		let seed = b"test seed for ed25519 verifier with options";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+		let message = b"test message for ed25519 verification with options";
+
+		// Test verification with matching options
+		let default_options = SigningOptions::default();
+		let signature_default = private_key
+			.sign_with_options(message, default_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_default, default_options)
+			.is_ok());
+
+		let raw_options = SigningOptions::raw();
+		let signature_raw = private_key.sign_with_options(message, raw_options).unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_raw, raw_options)
+			.is_ok());
+
+		let cert_options = SigningOptions::for_cert();
+		let signature_cert = private_key
+			.sign_with_options(message, cert_options)
+			.unwrap();
+		assert!(public_key
+			.verify_with_options(message, &signature_cert, cert_options)
+			.is_ok());
+
+		// Test verification failure with mismatched options
+		assert!(public_key
+			.verify_with_options(message, &signature_raw, default_options)
+			.is_err());
+		assert!(public_key
+			.verify_with_options(message, &signature_default, raw_options)
+			.is_err());
+
+		// Test verification failure with wrong message
+		let wrong_message = b"wrong message";
+		assert!(public_key
+			.verify_with_options(wrong_message, &signature_default, default_options)
+			.is_err());
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_ed25519_crypto_verifier_trait() {
+		let seed = b"test seed for ed25519 crypto verifier trait";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+
+		// Test public_key_bytes() method
+		let public_key_bytes = public_key.public_key_bytes();
+		assert_eq!(public_key_bytes.len(), 32); // Ed25519 public keys are 32 bytes
+
+		// Should match the regular Vec conversion
+		let regular_bytes: Vec<u8> = (&public_key).into();
+		assert_eq!(public_key_bytes, regular_bytes);
+
+		// Test public_key_string() method
+		let public_key_string = public_key.public_key_string().unwrap();
+		assert_eq!(public_key_string.len(), 64); // 32 bytes * 2 hex chars per byte
+		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
+		// Verify the string is valid hex
+		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
+
+		// Test that we can decode the hex string back to the original bytes
+		let decoded_bytes = hex::decode(&public_key_string).unwrap();
+		assert_eq!(decoded_bytes, public_key_bytes);
+	}
+
+	#[cfg(feature = "encryption")]
+	#[test]
+	fn test_ed25519_asymmetric_encryption_trait() {
+		let seed = b"test seed for ed25519 asymmetric encryption";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let public_key = private_key.as_public_key();
+		let plaintext = b"Hello, Ed25519 encryption via X25519!";
+
+		// Test encryption via AsymmetricEncryption trait
+		let ciphertext = public_key.encrypt(plaintext).unwrap();
+		assert_ne!(ciphertext.as_slice(), plaintext);
+		assert!(ciphertext.len() > plaintext.len());
+
+		// Test decryption via AsymmetricEncryption trait
+		let decrypted = private_key.decrypt(&ciphertext).unwrap();
+		assert_eq!(decrypted, plaintext);
+
+		// Test algorithm info
+		assert_eq!(public_key.algorithm_info(), "ECIES-Ed25519-via-X25519-AES128CTR");
+		assert_eq!(private_key.algorithm_info(), "ECIES-Ed25519-via-X25519-AES128CTR");
+
+		// Test that public key cannot decrypt
+		let fake_ciphertext = [0u8; 100];
+		let result = public_key.decrypt(fake_ciphertext);
+		assert!(result.is_err());
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
+	}
+
+	#[cfg(feature = "encryption")]
+	#[test]
+	fn test_ed25519_encryption_round_trip() {
+		let seed = b"test seed for ed25519 round trip encryption";
+		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let plaintext = b"Round-trip test message for Ed25519 encryption";
+
+		// Test encryption via private key (should use public key internally)
+		let ciphertext = private_key.encrypt(plaintext).unwrap();
+		let decrypted = private_key.decrypt(&ciphertext).unwrap();
+		assert_eq!(decrypted, plaintext);
+
+		// Test that different plaintext produce different ciphertext
+		let plaintext2 = b"Different message for encryption test";
+		let ciphertext2 = private_key.encrypt(plaintext2).unwrap();
+		assert_ne!(ciphertext, ciphertext2);
+
+		// Test that encryption is non-deterministic (ephemeral keys)
+		let ciphertext3 = private_key.encrypt(plaintext).unwrap();
+		assert_ne!(ciphertext, ciphertext3);
+		let decrypted3 = private_key.decrypt(&ciphertext3).unwrap();
+		assert_eq!(decrypted3, plaintext);
+	}
+
 	#[cfg(feature = "der")]
 	#[test]
 	fn test_oid_conversion() {
@@ -1285,6 +1282,7 @@ mod tests {
 		// Test conversion to ObjectIdentifier
 		let oid: asn1::ObjectIdentifier = public_key.into();
 		assert_eq!(oid.to_string(), asn1::oids::ED25519);
+
 		let oid: asn1::ObjectIdentifier = private_key.into();
 		assert_eq!(oid.to_string(), asn1::oids::ED25519);
 	}

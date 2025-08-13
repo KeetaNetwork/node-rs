@@ -659,7 +659,7 @@ pub fn verify_ed25519_signature(
 /// use x509::utils::verify_ecdsa_signature;
 /// use crypto::HashAlgorithm;
 ///
-/// // This example shows the function signature but doesn't run
+/// // This example shows the function signature but does not run
 /// // because it would require valid cryptographic data
 /// let public_key_bytes = &[/* ECDSA public key bytes */];
 /// let signature_bytes = &[/* signature bytes */];

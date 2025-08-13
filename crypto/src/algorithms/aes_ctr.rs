@@ -48,7 +48,7 @@ impl Aes128CtrCipher {
 		iv
 	}
 
-	/// Encrypt data with a provided IV
+	/// Encrypt data with a provided IV.
 	///
 	/// # Arguments
 	/// * `key` - 16-byte encryption key
@@ -57,10 +57,18 @@ impl Aes128CtrCipher {
 	///
 	/// # Returns
 	/// Encrypted data (same length as plaintext)
-	pub fn encrypt_with_iv(&self, key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	pub fn encrypt_with_iv<K: AsRef<[u8]>, I: AsRef<[u8]>, P: AsRef<[u8]>>(
+		&self,
+		key: K,
+		iv: I,
+		plaintext: P,
+	) -> Result<Vec<u8>, CryptoError> {
+		let key = key.as_ref();
 		if key.len() != 16 {
 			return Err(CryptoError::InvalidKeySize);
 		}
+
+		let iv = iv.as_ref();
 		if iv.len() != 16 {
 			return Err(CryptoError::InvalidOperation);
 		}
@@ -68,14 +76,14 @@ impl Aes128CtrCipher {
 		// Create CTR cipher instance
 		let mut cipher = Aes128Ctr::new_from_slices(key, iv)?;
 		// CTR mode works in-place, so we need a mutable copy
-		let mut ciphertext = plaintext.to_vec();
+		let mut ciphertext = plaintext.as_ref().to_vec();
 
 		cipher.apply_keystream(&mut ciphertext);
 
 		Ok(ciphertext)
 	}
 
-	/// Decrypt data with a provided IV
+	/// Decrypt data with a provided IV.
 	///
 	/// # Arguments
 	/// * `key` - 16-byte encryption key
@@ -84,10 +92,18 @@ impl Aes128CtrCipher {
 	///
 	/// # Returns
 	/// Decrypted plaintext (same length as ciphertext)
-	pub fn decrypt_with_iv(&self, key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+	pub fn decrypt_with_iv<K: AsRef<[u8]>, I: AsRef<[u8]>, C: AsRef<[u8]>>(
+		&self,
+		key: K,
+		iv: I,
+		ciphertext: C,
+	) -> Result<Vec<u8>, CryptoError> {
+		let key = key.as_ref();
 		if key.len() != 16 {
 			return Err(CryptoError::InvalidKeySize);
 		}
+
+		let iv = iv.as_ref();
 		if iv.len() != 16 {
 			return Err(CryptoError::InvalidOperation);
 		}
@@ -95,7 +111,7 @@ impl Aes128CtrCipher {
 		// Create CTR cipher instance
 		let mut cipher = Aes128Ctr::new_from_slices(key, iv)?;
 		// CTR mode is symmetric - decryption is the same as encryption
-		let mut plaintext = ciphertext.to_vec();
+		let mut plaintext = ciphertext.as_ref().to_vec();
 
 		cipher.apply_keystream(&mut plaintext);
 
@@ -110,7 +126,7 @@ impl Default for Aes128CtrCipher {
 }
 
 impl SymmetricEncryption for Aes128CtrCipher {
-	/// Encrypt data with optional IV prepended
+	/// Encrypt data with optional IV prepended.
 	///
 	/// Format: iv (16 bytes) + ciphertext
 	fn encrypt<K: AsRef<[u8]>, P: AsRef<[u8]>>(
@@ -120,8 +136,6 @@ impl SymmetricEncryption for Aes128CtrCipher {
 		plaintext: P,
 	) -> Result<Vec<u8>, CryptoError> {
 		let key = key.as_ref();
-		let plaintext = plaintext.as_ref();
-
 		if key.len() != 16 {
 			return Err(CryptoError::InvalidKeySize);
 		}
@@ -141,7 +155,7 @@ impl SymmetricEncryption for Aes128CtrCipher {
 		};
 
 		// Encrypt with the IV
-		let ciphertext = self.encrypt_with_iv(key, &iv_bytes, plaintext)?;
+		let ciphertext = self.encrypt_with_iv(key, iv_bytes, plaintext)?;
 
 		// Prepend IV to ciphertext
 		let mut result = Vec::with_capacity(16 + ciphertext.len());
@@ -156,11 +170,11 @@ impl SymmetricEncryption for Aes128CtrCipher {
 	/// Expected format: iv (16 bytes) + ciphertext
 	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError> {
 		let key = key.as_ref();
-		let ciphertext = ciphertext.as_ref();
-
 		if key.len() != 16 {
 			return Err(CryptoError::InvalidKeySize);
 		}
+
+		let ciphertext = ciphertext.as_ref();
 		if ciphertext.len() < 16 {
 			return Err(CryptoError::DecryptionFailed);
 		}
@@ -237,12 +251,12 @@ mod tests {
 		let plaintext = b"Test with specific IV";
 
 		// Test encryption with specific IV
-		let ciphertext = cipher.encrypt_with_iv(&key, &iv, plaintext).unwrap();
+		let ciphertext = cipher.encrypt_with_iv(key, iv, plaintext).unwrap();
 		assert_ne!(ciphertext.as_slice(), plaintext);
 		assert_eq!(ciphertext.len(), plaintext.len()); // CTR preserves length
 
 		// Test decryption with same IV
-		let decrypted = cipher.decrypt_with_iv(&key, &iv, &ciphertext).unwrap();
+		let decrypted = cipher.decrypt_with_iv(key, iv, &ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
 	}
 
@@ -255,13 +269,13 @@ mod tests {
 
 		// Encrypt the same plaintext with the same IV twice
 		// Should be identical (deterministic with same key + IV)
-		let ciphertext1 = cipher.encrypt_with_iv(&key, &iv, plaintext).unwrap();
-		let ciphertext2 = cipher.encrypt_with_iv(&key, &iv, plaintext).unwrap();
+		let ciphertext1 = cipher.encrypt_with_iv(key, iv, plaintext).unwrap();
+		let ciphertext2 = cipher.encrypt_with_iv(key, iv, plaintext).unwrap();
 		assert_eq!(ciphertext1, ciphertext2);
 
 		// Both should decrypt correctly
-		let decrypted1 = cipher.decrypt_with_iv(&key, &iv, &ciphertext1).unwrap();
-		let decrypted2 = cipher.decrypt_with_iv(&key, &iv, &ciphertext2).unwrap();
+		let decrypted1 = cipher.decrypt_with_iv(key, iv, &ciphertext1).unwrap();
+		let decrypted2 = cipher.decrypt_with_iv(key, iv, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
 	}
@@ -346,14 +360,14 @@ mod tests {
 		let plaintext1 = b"short";
 		let plaintext2 = b"a much longer plaintext message";
 
-		let ciphertext1 = cipher.encrypt_with_iv(&key, &iv, plaintext1).unwrap();
-		let ciphertext2 = cipher.encrypt_with_iv(&key, &iv, plaintext2).unwrap();
+		let ciphertext1 = cipher.encrypt_with_iv(key, iv, plaintext1).unwrap();
+		let ciphertext2 = cipher.encrypt_with_iv(key, iv, plaintext2).unwrap();
 		assert_eq!(ciphertext1.len(), plaintext1.len());
 		assert_eq!(ciphertext2.len(), plaintext2.len());
 
 		// Verify decryption works correctly
-		let decrypted1 = cipher.decrypt_with_iv(&key, &iv, &ciphertext1).unwrap();
-		let decrypted2 = cipher.decrypt_with_iv(&key, &iv, &ciphertext2).unwrap();
+		let decrypted1 = cipher.decrypt_with_iv(key, iv, &ciphertext1).unwrap();
+		let decrypted2 = cipher.decrypt_with_iv(key, iv, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext1);
 		assert_eq!(decrypted2, plaintext2);
 	}
@@ -404,7 +418,7 @@ mod tests {
 
 		// Test with wrong IV size
 		let wrong_iv = [0x12u8; 8]; // 8 bytes instead of 16
-		let result = cipher.encrypt_with_iv(&key, &wrong_iv, plaintext);
+		let result = cipher.encrypt_with_iv(key, wrong_iv, plaintext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
 	}
@@ -417,7 +431,7 @@ mod tests {
 
 		// Test with wrong IV size
 		let wrong_iv = [0x12u8; 8]; // 8 bytes instead of 16
-		let result = cipher.decrypt_with_iv(&key, &wrong_iv, ciphertext);
+		let result = cipher.decrypt_with_iv(key, wrong_iv, ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidOperation));
 	}
@@ -430,7 +444,7 @@ mod tests {
 
 		// Test with wrong key size
 		let wrong_key = [0x42u8; 8]; // 8 bytes instead of 16
-		let result = cipher.encrypt_with_iv(&wrong_key, &iv, plaintext);
+		let result = cipher.encrypt_with_iv(wrong_key, iv, plaintext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
 	}
@@ -443,7 +457,7 @@ mod tests {
 
 		// Test with wrong key size
 		let wrong_key = [0x42u8; 8]; // 8 bytes instead of 16
-		let result = cipher.decrypt_with_iv(&wrong_key, &iv, ciphertext);
+		let result = cipher.decrypt_with_iv(wrong_key, iv, ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
 	}

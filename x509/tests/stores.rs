@@ -146,7 +146,6 @@ fn test_certificate_chain_operations() {
 		root: root_store.clone(),
 		intermediate: intermediate_store.clone(),
 	};
-
 	assert!(user_cert_with_chain.is_trusted());
 	assert_eq!(user_cert_with_chain.chain_length(), 2);
 

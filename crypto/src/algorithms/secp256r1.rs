@@ -135,7 +135,6 @@ impl KeyGeneration for Secp256r1PrivateKey {
 impl AsymmetricEncryption for Secp256r1PrivateKey {
 	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 		let public_key = self.as_public_key();
-
 		public_key.encrypt(plaintext)
 	}
 
@@ -156,7 +155,6 @@ impl KeyExchange for Secp256r1PrivateKey {
 	fn ecdh(&self, other_public_key: &Secp256r1PublicKey) -> Result<Vec<u8>, CryptoError> {
 		// Perform ECDH directly using the p256 function
 		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
-
 		// Return the raw bytes of the shared secret
 		Ok(shared_secret.raw_secret_bytes().to_vec())
 	}
@@ -181,8 +179,8 @@ impl Keypair for Secp256r1PrivateKey {
 
 	fn verifying_key(&self) -> Self::VerifyingKey {
 		let signing_key = SigningKey::from(&self.inner);
-		let verifying_key = signing_key.verifying_key();
 
+		let verifying_key = signing_key.verifying_key();
 		Secp256r1PublicKey { inner: verifying_key.into() }
 	}
 }
@@ -191,7 +189,6 @@ impl Keypair for Secp256r1PrivateKey {
 impl Signer<Signature> for Secp256r1PrivateKey {
 	fn try_sign(&self, msg: &[u8]) -> Result<Signature, ::signature::Error> {
 		let signing_key = SigningKey::from(&self.inner);
-
 		signing_key.try_sign(msg)
 	}
 }
@@ -278,7 +275,6 @@ impl TryFrom<&[u8]> for Secp256r1PublicKey {
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let public_key = p256::PublicKey::from_sec1_bytes(bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
-
 		Ok(Secp256r1PublicKey { inner: public_key })
 	}
 }
@@ -295,7 +291,6 @@ impl From<Secp256r1PublicKey> for asn1::ObjectIdentifier {
 impl Verifier<Signature> for Secp256r1PublicKey {
 	fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), ::signature::Error> {
 		let verifying_key = p256::ecdsa::VerifyingKey::from(&self.inner);
-
 		verifying_key.verify(msg, signature)
 	}
 }
@@ -368,7 +363,6 @@ impl KeyDerivation for Secp256r1Derivation {
 
 	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
 		let seed = seed.as_ref();
-		// Use the same key derivation process as SECP256K1
 
 		// Try with the seed as-is first (index 0 case)
 		let mut attempt_seed = seed.to_vec();
@@ -874,6 +868,7 @@ mod tests {
 		// Test conversion to ObjectIdentifier
 		let oid: asn1::ObjectIdentifier = public_key.into();
 		assert_eq!(oid.to_string(), asn1::oids::SECP256R1);
+
 		let oid: asn1::ObjectIdentifier = private_key.into();
 		assert_eq!(oid.to_string(), asn1::oids::SECP256R1);
 	}

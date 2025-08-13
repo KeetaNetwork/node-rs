@@ -175,7 +175,7 @@ fn test_typescript_encryption_compatibility() {
 			assert_eq!(
 				decrypted.as_slice(),
 				test_case.expected_plaintext,
-				"{:?}: Decrypted data doesn't match expected plaintext",
+				"{:?}: Decrypted data does not match expected plaintext",
 				test_case.algorithm
 			);
 		}
