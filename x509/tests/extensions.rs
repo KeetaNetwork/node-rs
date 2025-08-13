@@ -40,7 +40,7 @@ fn test_extensions_not_empty() {
 fn test_extension_der_roundtrip() {
 	let ca_cert = ca_certificate();
 	let ca_der = ca_cert.to_der().unwrap();
-	let ca_from_der = Certificate::from_der(&ca_der).unwrap();
+	let ca_from_der = Certificate::try_from(ca_der.as_slice()).unwrap();
 
 	let original_extensions = &ca_cert.tbs_certificate.extensions;
 	let decoded_extensions = &ca_from_der.tbs_certificate.extensions;

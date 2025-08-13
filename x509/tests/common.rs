@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use asn1::oids;
-use asn1::{AlgorithmIdentifier, BitString, SubjectPublicKeyInfo};
+use asn1::{BitString, SubjectPublicKeyInfo};
 use chrono::{DateTime, TimeZone, Utc};
 use crypto::{bigint::U256, prelude::Algorithm};
 use x509::certificates::{Certificate, CertificateBuilder, TbsCertificate};
@@ -102,11 +102,11 @@ pub fn test_moment() -> DateTime<Utc> {
 }
 
 pub fn ca_certificate() -> Certificate {
-	Certificate::from_pem(CA_CERT_PEM).unwrap()
+	CA_CERT_PEM.parse().unwrap()
 }
 
 pub fn user_certificate() -> Certificate {
-	Certificate::from_pem(USER_CERT_PEM).unwrap()
+	USER_CERT_PEM.parse().unwrap()
 }
 
 /// Creates test public key bytes based on algorithm and index
@@ -187,7 +187,7 @@ pub fn create_certificate_tbs(
 		Algorithm::Secp256k1 => oids::ECDSA_WITH_SHA256,
 	};
 
-	let algorithm_id = AlgorithmIdentifier::try_from(algorithm_oid)?;
+	let algorithm_id = algorithm_oid.parse()?;
 	let subject_public_key_bitstring = BitString::from_bytes(subject_public_key)?;
 	let public_key_info =
 		SubjectPublicKeyInfo { algorithm: algorithm_id, subject_public_key: subject_public_key_bitstring };

@@ -529,7 +529,8 @@ pub struct Ed25519Derivation;
 impl KeyDerivation for Ed25519Derivation {
 	type PrivateKey = Ed25519PrivateKey;
 
-	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError> {
+	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
+		let seed = seed.as_ref();
 		// Hash the seed+index buffer directly using our hash abstraction
 		let hash_result: [u8; 32] = hash::hash_array(seed, None)?;
 
@@ -547,8 +548,8 @@ impl KeyDerivation for Ed25519Derivation {
 		Ok(Ed25519PrivateKey { inner: signing_key })
 	}
 
-	fn validate_key_material(bytes: &[u8]) -> bool {
-		bytes.len() == ed25519_dalek::SECRET_KEY_LENGTH
+	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
+		bytes.as_ref().len() == ed25519_dalek::SECRET_KEY_LENGTH
 	}
 
 	fn key_size() -> usize {
@@ -758,11 +759,11 @@ mod tests {
 	fn test_ed25519_key_derivation_utility_methods() {
 		// Test validate_key_material with valid key
 		let valid_key = [0x01; ed25519_dalek::SECRET_KEY_LENGTH]; // Valid 32-byte key
-		assert!(Ed25519Derivation::validate_key_material(&valid_key));
+		assert!(Ed25519Derivation::validate_key_material(valid_key));
 
 		// Test validate_key_material with invalid key (wrong length)
 		let invalid_key = [0x01; 16]; // Invalid length
-		assert!(!Ed25519Derivation::validate_key_material(&invalid_key));
+		assert!(!Ed25519Derivation::validate_key_material(invalid_key));
 		// Test key_size
 		assert_eq!(Ed25519Derivation::key_size(), ed25519_dalek::SECRET_KEY_LENGTH);
 		assert_eq!(Ed25519Derivation::key_size(), 32);

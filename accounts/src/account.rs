@@ -404,7 +404,7 @@ impl KeyPair for KeyECDSASECP256K1 {
 		// Convert seed and index to bytes for HKDF
 		let seed_buffer = combine_seed_and_index(seed, index);
 		// Use the crypto crate's secp256k1 derivation
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed_buffer)?;
+		let private_key = Secp256k1Derivation::derive_from_seed(seed_buffer)?;
 
 		Ok(AnyPrivateKey::Secp256k1(private_key))
 	}
@@ -465,7 +465,7 @@ impl KeyPair for KeyECDSASECP256R1 {
 		// Convert seed and index to bytes for HKDF
 		let seed_buffer = combine_seed_and_index(seed, index);
 		// Use the crypto crate's secp256r1 derivation
-		let private_key = Secp256r1Derivation::derive_from_seed(&seed_buffer)?;
+		let private_key = Secp256r1Derivation::derive_from_seed(seed_buffer)?;
 
 		Ok(AnyPrivateKey::Secp256r1(private_key))
 	}
@@ -526,7 +526,7 @@ impl KeyPair for KeyED25519 {
 		// Convert seed and index to bytes for HKDF
 		let seed_buffer = combine_seed_and_index(seed, index);
 		// Use the crypto crate's Ed25519 derivation
-		let private_key = Ed25519Derivation::derive_from_seed(&seed_buffer)?;
+		let private_key = Ed25519Derivation::derive_from_seed(seed_buffer)?;
 
 		Ok(AnyPrivateKey::Ed25519(private_key))
 	}

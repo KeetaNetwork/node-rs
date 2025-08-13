@@ -957,7 +957,7 @@ mod tests {
 					indexed_seed[..32].copy_from_slice(&seed);
 					indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
 
-					let private_key = Secp256k1Derivation::derive_from_seed(&indexed_seed).unwrap();
+					let private_key = Secp256k1Derivation::derive_from_seed(indexed_seed).unwrap();
 					let public_key = private_key.as_public_key();
 
 					// Test decryption of TypeScript data
@@ -978,7 +978,7 @@ mod tests {
 					indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
 
 					// Derive Ed25519 key first, then convert to X25519
-					let ed25519_private = Ed25519Derivation::derive_from_seed(&indexed_seed).unwrap();
+					let ed25519_private = Ed25519Derivation::derive_from_seed(indexed_seed).unwrap();
 					let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
 					let x25519_public = x25519_private.derive_public_key();
 

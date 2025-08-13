@@ -382,7 +382,8 @@ pub struct Secp256k1Derivation;
 impl KeyDerivation for Secp256k1Derivation {
 	type PrivateKey = Secp256k1PrivateKey;
 
-	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError> {
+	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
+		let seed = seed.as_ref();
 		// Try with the seed as-is first (index 0 case)
 		let mut attempt_seed = seed.to_vec();
 		for attempt in 0u32..1000 {
@@ -406,7 +407,8 @@ impl KeyDerivation for Secp256k1Derivation {
 		Err(CryptoError::KeyDerivationFailed)
 	}
 
-	fn validate_key_material(bytes: &[u8]) -> bool {
+	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
+		let bytes = bytes.as_ref();
 		bytes.len() == 32 && K256SecretKey::from_slice(bytes).is_ok()
 	}
 
@@ -456,8 +458,8 @@ mod tests {
 		let mut seed_with_index = [0u8; 36];
 		seed_with_index[..23].copy_from_slice(b"deterministic test seed");
 
-		let key1 = Secp256k1Derivation::derive_from_seed(&seed_with_index).unwrap();
-		let key2 = Secp256k1Derivation::derive_from_seed(&seed_with_index).unwrap();
+		let key1 = Secp256k1Derivation::derive_from_seed(seed_with_index).unwrap();
+		let key2 = Secp256k1Derivation::derive_from_seed(seed_with_index).unwrap();
 		assert_eq!(
 			SecretBox::<Vec<u8>>::from(&key1).expose_secret(),
 			SecretBox::<Vec<u8>>::from(&key2).expose_secret()
@@ -471,15 +473,15 @@ mod tests {
 	fn test_key_derivation_utility_methods() {
 		// Test validate_key_material with valid key
 		let valid_key = [0x01; 32]; // Valid 32-byte key
-		assert!(Secp256k1Derivation::validate_key_material(&valid_key));
+		assert!(Secp256k1Derivation::validate_key_material(valid_key));
 
 		// Test validate_key_material with invalid key (wrong length)
 		let invalid_key = [0x01; 16]; // Invalid length
-		assert!(!Secp256k1Derivation::validate_key_material(&invalid_key));
+		assert!(!Secp256k1Derivation::validate_key_material(invalid_key));
 
 		// Test validate_key_material with invalid key (all zeros)
 		let zero_key = [0x00; 32]; // All zeros is invalid for secp256k1
-		assert!(!Secp256k1Derivation::validate_key_material(&zero_key));
+		assert!(!Secp256k1Derivation::validate_key_material(zero_key));
 
 		// Test key_size
 		assert_eq!(Secp256k1Derivation::key_size(), 32);
@@ -490,7 +492,7 @@ mod tests {
 		let mut seed = [0u8; 36]; // Proper seed + index length
 		seed[..26].copy_from_slice(b"test seed for secret box c");
 
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 
 		// Test From<Secp256k1PrivateKey> for SecretBox<Vec<u8>>
 		let secret_box: SecretBox<Vec<u8>> = private_key.clone().into();
@@ -509,7 +511,7 @@ mod tests {
 		let mut seed = [0u8; 36]; // Proper seed + index length
 		seed[..26].copy_from_slice(b"test seed for public key c");
 
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 		let public_key = private_key.as_public_key();
 
 		// Test From<Secp256k1PublicKey> for Vec<u8>
@@ -529,7 +531,7 @@ mod tests {
 		let mut seed = [0u8; 36]; // Proper seed + index length
 		seed[..22].copy_from_slice(b"test seed for debug fo");
 
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 
 		// Test that Debug format hides the private key
 		let debug_string = format!("{private_key:?}");
@@ -740,7 +742,7 @@ mod tests {
 		let mut seed = [0u8; 36]; // Proper seed + index length
 		seed[..23].copy_from_slice(b"test seed for algorithm");
 
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 		let public_key = private_key.as_public_key();
 
 		// Test algorithm_info for private key
@@ -755,7 +757,7 @@ mod tests {
 		let mut seed = [0u8; 36]; // Proper seed + index length
 		seed[..25].copy_from_slice(b"test seed for private key");
 
-		let private_key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 		let message = b"Test message for private key encryption";
 
 		// Test that private key encrypt works (delegates to public key)

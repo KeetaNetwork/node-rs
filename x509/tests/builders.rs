@@ -1,6 +1,6 @@
 mod common;
 
-use asn1::{AlgorithmIdentifier, BitString, SubjectPublicKeyInfo, Uint};
+use asn1::{BitString, SubjectPublicKeyInfo, Uint};
 use chrono::{TimeZone, Utc};
 use crypto::bigint::U256;
 use crypto::prelude::Algorithm;
@@ -108,7 +108,7 @@ fn test_certificate_compatibility() {
 	for (is_ca, algorithm_oid, public_key, subject_name, issuer_name) in test_cases {
 		let subject_dn = utils::create_dn(&[(oids::CN, subject_name)]).unwrap();
 		let issuer_dn = utils::create_dn(&[(oids::CN, issuer_name)]).unwrap();
-		let algorithm = AlgorithmIdentifier::try_from(algorithm_oid).unwrap();
+		let algorithm = algorithm_oid.parse().unwrap();
 		let subject_public_key = BitString::from_bytes(public_key).unwrap();
 		let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
 

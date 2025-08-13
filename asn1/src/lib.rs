@@ -7,6 +7,8 @@ pub mod error;
 pub mod oids;
 pub mod utils;
 
+use std::str::FromStr;
+
 // Re-export commonly used types for convenience
 pub use der::asn1::*;
 pub use der::{Decode, Encode, Header, Reader, Sequence, SliceReader, Tag, TagNumber, Tagged, ValueOrd};
@@ -58,19 +60,11 @@ impl AlgorithmIdentifier {
 	}
 }
 
-impl TryFrom<&str> for AlgorithmIdentifier {
-	type Error = Asn1Error;
+impl FromStr for AlgorithmIdentifier {
+	type Err = Asn1Error;
 
-	fn try_from(oid: &str) -> Result<Self, Self::Error> {
+	fn from_str(oid: &str) -> Result<Self, Self::Err> {
 		Self::new(oid)
-	}
-}
-
-impl TryFrom<String> for AlgorithmIdentifier {
-	type Error = Asn1Error;
-
-	fn try_from(oid: String) -> Result<Self, Self::Error> {
-		oid.as_str().try_into()
 	}
 }
 
@@ -200,13 +194,13 @@ mod tests {
 			fn test_try_from_valid_oids() {
 				$(
 					// Test &str conversion
-					let alg_id: AlgorithmIdentifier = $valid_input.try_into().unwrap();
+					let alg_id: AlgorithmIdentifier = $valid_input.parse().unwrap();
 					assert_eq!(alg_id.algorithm.to_string(), $valid_expected);
 					assert!(alg_id.parameters.is_none());
 
 					// Test String conversion
 					let oid_string = $valid_input.to_string();
-					let alg_id: AlgorithmIdentifier = oid_string.try_into().unwrap();
+					let alg_id: AlgorithmIdentifier = oid_string.parse().unwrap();
 					assert_eq!(alg_id.algorithm.to_string(), $valid_expected);
 					assert!(alg_id.parameters.is_none());
 				)+
@@ -216,12 +210,12 @@ mod tests {
 			fn test_try_from_invalid_oids() {
 				$(
 					// Test &str conversion fails
-					let result: Result<AlgorithmIdentifier, _> = $invalid_input.try_into();
+					let result: Result<AlgorithmIdentifier, _> = $invalid_input.parse();
 					assert!(result.is_err());
 
 					// Test String conversion fails
 					let oid_string = $invalid_input.to_string();
-					let result: Result<AlgorithmIdentifier, _> = oid_string.try_into();
+					let result: Result<AlgorithmIdentifier, _> = oid_string.parse();
 					assert!(result.is_err());
 				)+
 			}
@@ -251,6 +245,36 @@ mod tests {
 			assert_eq!(alg_id.algorithm.to_string(), oid);
 			assert!(alg_id.parameters.is_some());
 			assert_eq!(alg_id.parameters.unwrap(), null_param);
+		}
+	}
+
+	#[test]
+	fn test_algorithm_identifier_with_invalid_oid_in_new_with_params() {
+		let null_param = Any::from_der(&[0x05, 0x00]).unwrap();
+		let result = AlgorithmIdentifier::new_with_params("invalid.oid", null_param);
+		assert!(result.is_err());
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+	}
+
+	#[test]
+	fn test_subject_public_key_info_with_invalid_bit_string() {
+		// Test with empty key bytes
+		let alg_id = AlgorithmIdentifier::new(oids::ED25519).unwrap();
+		let empty_key_result = SubjectPublicKeyInfo::new(alg_id.clone(), &[]);
+		assert!(empty_key_result.is_ok()); // Empty bytes should be valid for BitString
+
+		// Test with various key sizes
+		let test_sizes = [1, 32, 64, 65, 256];
+		for size in test_sizes {
+			let key_bytes = vec![0x42; size];
+
+			// Test with valid key bytes
+			let spki_result = SubjectPublicKeyInfo::new(alg_id.clone(), &key_bytes);
+			assert!(spki_result.is_ok());
+
+			// Verify the created SubjectPublicKeyInfo
+			let spki = spki_result.unwrap();
+			assert_eq!(spki.subject_public_key.raw_bytes(), &key_bytes);
 		}
 	}
 

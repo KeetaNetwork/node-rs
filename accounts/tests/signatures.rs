@@ -281,6 +281,7 @@ fn test_ios_signature(
 		GenericAccount::EcdsaSecp256k1(account) => {
 			let verification_result = account.verify(test_data, signature_bytes, None);
 			assert!(verification_result.is_ok(), "iOS {algorithm_name} signature should parse without errors");
+
 			if should_pass {
 				assert!(verification_result.unwrap(), "iOS {algorithm_name} signature should verify");
 			}
@@ -288,6 +289,7 @@ fn test_ios_signature(
 		GenericAccount::Ed25519(account) => {
 			let verification_result = account.verify(test_data, signature_bytes, None);
 			assert!(verification_result.is_ok(), "iOS {algorithm_name} signature should parse without errors");
+
 			if should_pass {
 				assert!(verification_result.unwrap(), "iOS {algorithm_name} signature should verify");
 			}

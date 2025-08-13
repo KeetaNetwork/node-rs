@@ -4,6 +4,7 @@
 //! including parsing, validation, and generation of certificate requests.
 
 use std::collections::HashSet;
+use std::str::FromStr;
 
 use asn1::{AlgorithmIdentifier, SubjectPublicKeyInfo};
 use asn1::{BitString, ObjectIdentifier, OctetString, Sequence, Uint};
@@ -78,9 +79,9 @@ pub struct Extension {
 
 impl Extension {
 	/// Create a new extension.
-	pub fn new(oid: &str, value: &[u8], critical: bool) -> Result<Self, CertificateError> {
-		let oid = ObjectIdentifier::new(oid)?;
-		let value = OctetString::new(value)?;
+	pub fn new<S: AsRef<str>, V: AsRef<[u8]>>(oid: S, value: V, critical: bool) -> Result<Self, CertificateError> {
+		let oid = ObjectIdentifier::new(oid.as_ref())?;
+		let value = OctetString::new(value.as_ref())?;
 
 		Ok(Self { oid, critical, value })
 	}
@@ -140,7 +141,11 @@ impl ExtensionBuilder {
 	///
 	/// ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId
 	/// KeyPurposeId ::= OBJECT IDENTIFIER
-	pub fn for_extended_key_usage(ext_key_use: Vec<&str>) -> Self {
+	pub fn for_extended_key_usage<I, S>(ext_key_use: I) -> Self
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
 		Self::new()
 			.with_oid(oids::EXTENDED_KEY_USAGE)
 			.with_extended_key_usage_value(ext_key_use)
@@ -161,7 +166,11 @@ impl ExtensionBuilder {
 	///     iPAddress                       \[7\] OCTET STRING,
 	///     registeredID                    \[8\] OBJECT IDENTIFIER
 	/// }
-	pub fn for_subject_alt_name(san_entries: Vec<&str>) -> Self {
+	pub fn for_subject_alt_name<I, S>(san_entries: I) -> Self
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
 		Self::new()
 			.with_oid(oids::SUBJECT_ALT_NAME)
 			.with_subject_alt_name_value(san_entries)
@@ -173,7 +182,7 @@ impl ExtensionBuilder {
 	///
 	/// SubjectKeyIdentifier ::= KeyIdentifier
 	/// KeyIdentifier ::= OCTET STRING
-	pub fn for_subject_key_identifier(key_id: &[u8]) -> Self {
+	pub fn for_subject_key_identifier<T: AsRef<[u8]>>(key_id: T) -> Self {
 		Self::new()
 			.with_oid(oids::SUBJECT_KEY_IDENTIFIER)
 			.with_value(key_id)
@@ -189,7 +198,7 @@ impl ExtensionBuilder {
 	///     authorityCertSerialNumber \[2\] CertificateSerialNumber OPTIONAL
 	/// }
 	/// KeyIdentifier ::= OCTET STRING
-	pub fn for_authority_key_identifier(key_id: &[u8]) -> Self {
+	pub fn for_authority_key_identifier<T: AsRef<[u8]>>(key_id: T) -> Self {
 		Self::new()
 			.with_oid(oids::AUTHORITY_KEY_IDENTIFIER)
 			.with_authority_key_identifier_value(key_id)
@@ -197,8 +206,8 @@ impl ExtensionBuilder {
 	}
 
 	/// Set the extension OID.
-	pub fn with_oid(mut self, oid: &str) -> Self {
-		self.oid = Some(oid.to_string());
+	pub fn with_oid<S: AsRef<str>>(mut self, oid: S) -> Self {
+		self.oid = Some(oid.as_ref().to_string());
 		self
 	}
 
@@ -221,8 +230,8 @@ impl ExtensionBuilder {
 	}
 
 	/// Set the extension value directly.
-	pub fn with_value(mut self, value: &[u8]) -> Self {
-		self.value = Some(value.to_vec());
+	pub fn with_value<T: AsRef<[u8]>>(mut self, value: T) -> Self {
+		self.value = Some(value.as_ref().to_vec());
 		self
 	}
 
@@ -257,12 +266,16 @@ impl ExtensionBuilder {
 	}
 
 	/// Set extended key usage extension value.
-	fn with_extended_key_usage_value(mut self, ext_key_use: Vec<&str>) -> Self {
+	fn with_extended_key_usage_value<I, S>(mut self, ext_key_use: I) -> Self
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
 		let mut value = vec![0x30]; // SEQUENCE
 		let mut content = Vec::new();
 
 		for eku_oid in ext_key_use {
-			if let Ok(oid) = ObjectIdentifier::new(eku_oid) {
+			if let Ok(oid) = ObjectIdentifier::new(eku_oid.as_ref()) {
 				if let Ok(oid_der) = oid.to_der() {
 					content.extend_from_slice(&oid_der);
 				}
@@ -277,10 +290,15 @@ impl ExtensionBuilder {
 	}
 
 	/// Set subject alternative name extension value.
-	fn with_subject_alt_name_value(mut self, san_entries: Vec<&str>) -> Self {
+	fn with_subject_alt_name_value<I, S>(mut self, san_entries: I) -> Self
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
 		let general_names: Vec<Vec<u8>> = san_entries
-			.iter()
-			.map(|&san_entry| {
+			.into_iter()
+			.map(|san_entry| {
+				let san_entry = san_entry.as_ref();
 				if san_entry.contains('@') {
 					let mut name = vec![0x81]; // [1] IMPLICIT
 					name.push(san_entry.len() as u8);
@@ -326,7 +344,8 @@ impl ExtensionBuilder {
 	}
 
 	/// Set authority key identifier extension value.
-	fn with_authority_key_identifier_value(mut self, key_id: &[u8]) -> Self {
+	fn with_authority_key_identifier_value<T: AsRef<[u8]>>(mut self, key_id: T) -> Self {
+		let key_id = key_id.as_ref();
 		let mut auth_key_id_der = vec![0x30]; // SEQUENCE
 		let key_id_with_tag = [&[0x80], key_id].concat(); // [0] IMPLICIT
 		auth_key_id_der.push(key_id_with_tag.len() as u8);
@@ -390,21 +409,6 @@ pub struct TbsCertificate {
 	pub extensions: Option<Vec<Extension>>,
 }
 
-/// Complete X.509 Certificate structure according to RFC 5280 Section 4.1.
-/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1>
-///
-/// Certificate  ::=  SEQUENCE  {
-///     tbsCertificate       TBSCertificate,
-///     signatureAlgorithm   AlgorithmIdentifier,
-///     signatureValue       BIT STRING
-/// }
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
-pub struct Certificate {
-	pub tbs_certificate: TbsCertificate,
-	pub signature_algorithm: AlgorithmIdentifier,
-	pub signature: BitString,
-}
-
 /// Options for certificate construction.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct CertificateOptions {
@@ -436,7 +440,7 @@ impl CertificateBundle {
 		root: Option<HashSet<Certificate>>,
 		intermediate: Option<HashSet<Certificate>>,
 	) -> Result<Self, CertificateError> {
-		let certificate = Certificate::from_pem(pem_data)?;
+		let certificate = pem_data.parse()?;
 		let options = opts.unwrap_or_default();
 		let root = root.unwrap_or_default();
 		let intermediate = intermediate.unwrap_or_default();
@@ -551,7 +555,7 @@ impl CertificateBundle {
 	}
 
 	/// Set the certificate chain by adding certificates to the store.
-	pub fn with_chain(mut self, chain: Vec<Certificate>) -> Self {
+	pub fn with_chain<I: IntoIterator<Item = Certificate>>(mut self, chain: I) -> Self {
 		for cert in chain {
 			self.add_intermediate(cert);
 		}
@@ -625,25 +629,17 @@ impl TryFrom<&CertificateBundle> for Vec<u8> {
 	}
 }
 
-/// TryFrom implementations for CertificateWithOptions
-impl TryFrom<&str> for CertificateBundle {
-	type Error = CertificateError;
+/// FromStr and TryFrom implementations for CertificateBundle
+impl FromStr for CertificateBundle {
+	type Err = CertificateError;
 
-	fn try_from(pem_data: &str) -> Result<Self, Self::Error> {
-		let certificate = Certificate::from_pem(pem_data)?;
+	fn from_str(pem_data: &str) -> Result<Self, Self::Err> {
+		let certificate = pem_data.parse()?;
 		let options = CertificateOptions::default();
 
 		// For PEM string input, we can't determine trust without a store
 		// User can call methods to set trust later if needed
 		Ok(Self { certificate, options, root: HashSet::new(), intermediate: HashSet::new() })
-	}
-}
-
-impl TryFrom<String> for CertificateBundle {
-	type Error = CertificateError;
-
-	fn try_from(pem_data: String) -> Result<Self, Self::Error> {
-		Self::try_from(pem_data.as_str())
 	}
 }
 
@@ -700,7 +696,7 @@ impl TryFrom<&[u8]> for CertificateBundle {
 				if offset + total_len <= data.len() {
 					let cert_data = &data[offset..offset + total_len];
 
-					if let Ok(cert) = Certificate::from_der(cert_data) {
+					if let Ok(cert) = Certificate::try_from(cert_data) {
 						certificates.push(cert);
 						offset += total_len;
 					} else {
@@ -793,31 +789,33 @@ pub struct CertificateHash {
 
 impl CertificateHash {
 	/// Create a new certificate hash with optional algorithm OID (defaults to SHA1)
-	pub fn new(hash: Vec<u8>, algorithm_oid: Option<&str>) -> Self {
-		let algorithm_oid = algorithm_oid.unwrap_or(oids::SHA1).to_string();
-		Self { hash, algorithm_oid }
+	pub fn new<T: Into<Vec<u8>>, S: AsRef<str>>(hash: T, algorithm_oid: Option<S>) -> Self {
+		let algorithm_oid = algorithm_oid
+			.map(|s| s.as_ref().to_string())
+			.unwrap_or_else(|| oids::SHA1.to_string());
+		Self { hash: hash.into(), algorithm_oid }
 	}
 
 	/// Create a standardized certificate hash using SHA-256
-	pub fn sha256(data: &[u8]) -> Self {
-		let hash_bytes = HashAlgorithm::Sha2_256.hash(data);
+	pub fn sha256<T: AsRef<[u8]>>(data: T) -> Self {
+		let hash_bytes = HashAlgorithm::Sha2_256.hash(data.as_ref());
 		Self::new(hash_bytes, Some(oids::SHA256))
 	}
 
 	/// Create a certificate hash using SHA-1 (for legacy compatibility)
-	pub fn sha1(data: &[u8]) -> Self {
-		let hash_bytes = HashAlgorithm::Sha1.hash(data);
+	pub fn sha1<T: AsRef<[u8]>>(data: T) -> Self {
+		let hash_bytes = HashAlgorithm::Sha1.hash(data.as_ref());
 		Self::new(hash_bytes, Some(oids::SHA1))
 	}
 
 	/// Create a certificate hash from a certificate's DER bytes
-	pub fn from_certificate_der(der_bytes: &[u8]) -> Self {
+	pub fn from_certificate_der<T: AsRef<[u8]>>(der_bytes: T) -> Self {
 		// Use SHA-1 for certificate hashing (standard for X.509 key identifiers)
 		Self::sha1(der_bytes)
 	}
 
 	/// Create a modernized certificate hash using SHA-256
-	pub fn from_certificate_der_sha256(der_bytes: &[u8]) -> Self {
+	pub fn from_certificate_der_sha256<T: AsRef<[u8]>>(der_bytes: T) -> Self {
 		Self::sha256(der_bytes)
 	}
 
@@ -905,20 +903,12 @@ impl From<Certificate> for CertificateHash {
 	}
 }
 
-impl TryFrom<String> for CertificateHash {
-	type Error = CertificateError;
+impl std::str::FromStr for CertificateHash {
+	type Err = CertificateError;
 
-	fn try_from(hex: String) -> Result<Self, Self::Error> {
-		hex.as_str().try_into()
-	}
-}
-
-impl TryFrom<&str> for CertificateHash {
-	type Error = CertificateError;
-
-	fn try_from(hex: &str) -> Result<Self, Self::Error> {
+	fn from_str(hex: &str) -> Result<Self, Self::Err> {
 		match hex::decode(hex) {
-			Ok(bytes) => Ok(Self::new(bytes, None)),
+			Ok(bytes) => Ok(Self::new(bytes, None::<&str>)),
 			Err(_) => Err(CertificateError::ValidationFailed { reason: "Invalid hex string".to_string() }),
 		}
 	}
@@ -932,7 +922,7 @@ pub struct CertificateHashSet {
 
 impl CertificateHashSet {
 	/// Create a new certificate set
-	pub fn new(certificates: Vec<Certificate>) -> Self {
+	pub fn new<I: IntoIterator<Item = Certificate>>(certificates: I) -> Self {
 		Self { certificates: certificates.into_iter().collect() }
 	}
 
@@ -1076,8 +1066,19 @@ impl CertificateBuilder {
 	}
 
 	/// Add an extended key usage extension.
-	pub fn with_extended_key_usage(mut self, ext_key_use: Vec<&str>) -> Self {
-		if let Ok(extension) = ExtensionBuilder::for_extended_key_usage(ext_key_use).build() {
+	pub fn with_extended_key_usage<I, S>(mut self, ext_key_use: I) -> Self
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
+		// Convert the input into a vector of strings
+		let ext_key_use_strings: Vec<String> = ext_key_use
+			.into_iter()
+			.map(|s| s.as_ref().to_string())
+			.collect();
+
+		let ext_key_use_vec: Vec<&str> = ext_key_use_strings.iter().map(|s| s.as_str()).collect();
+		if let Ok(extension) = ExtensionBuilder::for_extended_key_usage(ext_key_use_vec).build() {
 			self.extensions.push(extension);
 		}
 
@@ -1085,8 +1086,19 @@ impl CertificateBuilder {
 	}
 
 	/// Add a subject alternative name extension.
-	pub fn with_subject_alt_name(mut self, san_entries: Vec<&str>) -> Self {
-		if let Ok(extension) = ExtensionBuilder::for_subject_alt_name(san_entries).build() {
+	pub fn with_subject_alt_name<I, S>(mut self, san_entries: I) -> Self
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
+		// Convert the input into a vector of strings
+		let san_entries_strings: Vec<String> = san_entries
+			.into_iter()
+			.map(|s| s.as_ref().to_string())
+			.collect();
+
+		let san_entries_vec: Vec<&str> = san_entries_strings.iter().map(|s| s.as_str()).collect();
+		if let Ok(extension) = ExtensionBuilder::for_subject_alt_name(san_entries_vec).build() {
 			self.extensions.push(extension);
 		}
 
@@ -1094,7 +1106,7 @@ impl CertificateBuilder {
 	}
 
 	/// Add a custom extension by OID.
-	pub fn with_custom_extension(mut self, oid: &str, value: &[u8], critical: bool) -> Self {
+	pub fn with_custom_extension<S: AsRef<str>, T: AsRef<[u8]>>(mut self, oid: S, value: T, critical: bool) -> Self {
 		if let Ok(extension) = Extension::new(oid, value, critical) {
 			self.extensions.push(extension);
 		}
@@ -1145,7 +1157,10 @@ impl CertificateBuilder {
 	}
 
 	/// Add multiple extensions at once.
-	pub fn with_extensions(mut self, extensions: Vec<Extension>) -> Self {
+	pub fn with_extensions<I>(mut self, extensions: I) -> Self
+	where
+		I: IntoIterator<Item = Extension>,
+	{
 		self.extensions.extend(extensions);
 		self
 	}
@@ -1244,7 +1259,7 @@ impl CertificateBuilder {
 
 		Ok(Certificate {
 			tbs_certificate: tbs,
-			signature_algorithm: AlgorithmIdentifier::try_from(oids::SHA256_WITH_RSA)?,
+			signature_algorithm: oids::SHA256_WITH_RSA.parse()?,
 			signature: BitString::from_bytes(&signature_bytes)?,
 		})
 	}
@@ -1345,59 +1360,30 @@ impl CertificateBuilder {
 	}
 }
 
+/// Complete X.509 Certificate structure according to RFC 5280 Section 4.1.
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1>
+///
+/// Certificate  ::=  SEQUENCE  {
+///     tbsCertificate       TBSCertificate,
+///     signatureAlgorithm   AlgorithmIdentifier,
+///     signatureValue       BIT STRING
+/// }
+#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
+pub struct Certificate {
+	pub tbs_certificate: TbsCertificate,
+	pub signature_algorithm: AlgorithmIdentifier,
+	pub signature: BitString,
+}
+
 impl Certificate {
-	/// Parse a certificate from DER-encoded bytes
-	pub fn from_der(data: &[u8]) -> Result<Self, CertificateError> {
-		let cert = <Self as Decode>::from_der(data).map_err(CertificateError::from)?;
-
-		// Validate RFC 5280 compliance
-		cert.validate_rfc5280_compliance()?;
-
-		Ok(cert)
-	}
-
 	/// Convert the certificate to DER format
 	pub fn to_der(&self) -> Result<Vec<u8>, CertificateError> {
-		<Self as Encode>::to_der(self).map_err(CertificateError::from)
-	}
-
-	/// Parse a certificate from PEM-encoded string
-	pub fn from_pem(pem: &str) -> Result<Self, CertificateError> {
-		// Extract the base64 content between BEGIN/END CERTIFICATE markers
-		let lines: Vec<&str> = pem.lines().collect();
-		let start = lines
-			.iter()
-			.position(|line| line.contains("BEGIN CERTIFICATE"))
-			.ok_or(CertificateError::InvalidCertificate)?;
-		let end = lines
-			.iter()
-			.position(|line| line.contains("END CERTIFICATE"))
-			.ok_or(CertificateError::InvalidCertificate)?;
-
-		if start >= end {
-			return Err(CertificateError::InvalidCertificate);
-		}
-
-		let base64_content = lines[start + 1..end].join("");
-		let der_bytes = general_purpose::STANDARD.decode(base64_content)?;
-
-		Self::from_der(&der_bytes)
+		Vec::<u8>::try_from(self)
 	}
 
 	/// Convert the certificate to PEM format
 	pub fn to_pem(&self) -> Result<String, CertificateError> {
-		let der = self.to_der()?;
-		let base64_content = general_purpose::STANDARD.encode(&der);
-
-		// Split into 64-character lines
-		let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
-		for chunk in base64_content.as_bytes().chunks(64) {
-			pem.push_str(core::str::from_utf8(chunk).unwrap());
-			pem.push('\n');
-		}
-		pem.push_str("-----END CERTIFICATE-----\n");
-
-		Ok(pem)
+		Ok(format!("{self}"))
 	}
 
 	/// Get the serial number as U256
@@ -1522,9 +1508,9 @@ impl Certificate {
 	}
 
 	/// Get an extension by OID
-	pub fn get_extension(&self, oid: &str) -> Option<&Extension> {
+	pub fn get_extension<S: AsRef<str>>(&self, oid: S) -> Option<&Extension> {
 		if let Some(ref extensions) = self.tbs_certificate.extensions {
-			let target_oid = ObjectIdentifier::new(oid).ok()?;
+			let target_oid = ObjectIdentifier::new(oid.as_ref()).ok()?;
 			extensions.iter().find(|ext| ext.oid == target_oid)
 		} else {
 			None
@@ -1532,8 +1518,11 @@ impl Certificate {
 	}
 
 	/// Get all extensions from the certificate
-	pub fn get_extensions(&self) -> Vec<Extension> {
-		self.tbs_certificate.extensions.clone().unwrap_or_default()
+	pub fn get_extensions(&self) -> impl Iterator<Item = &Extension> {
+		self.tbs_certificate
+			.extensions
+			.iter()
+			.flat_map(|exts| exts.iter())
 	}
 
 	/// Check if this is a CA certificate (has Basic Constraints CA=true)
@@ -1764,9 +1753,8 @@ impl Certificate {
 	/// Validate extension consistency per RFC 5280
 	pub fn validate_extension_consistency(&self) -> Result<(), CertificateError> {
 		if let Some(extensions) = &self.tbs_certificate.extensions {
-			let mut seen_oids = std::collections::HashSet::new();
-
 			// Check for duplicate extensions (RFC 5280 section 4.2)
+			let mut seen_oids = HashSet::new();
 			for extension in extensions {
 				let oid_str = extension.oid.to_string();
 				if seen_oids.contains(&oid_str) {
@@ -1820,12 +1808,14 @@ impl Certificate {
 	}
 
 	/// Validate issuer/subject DN relationship per RFC 5280 section 4.1.2.4
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.4>
 	pub fn validate_issuer_subject_dn_match(&self, issuer: &Certificate) -> bool {
 		// The issuer field of this certificate must match the subject field of the issuer certificate
 		self.tbs_certificate.issuer == issuer.tbs_certificate.subject
 	}
 
 	/// Validate Authority Key Identifier extension per RFC 5280 section 4.2.1.1
+	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
 	pub fn validate_authority_key_identifier(&self, issuer: &Certificate) -> bool {
 		// If Authority Key Identifier is present, validate it matches the issuer's Subject Key Identifier
 		if let Some(auth_key_ext) = self.get_extension(oids::AUTHORITY_KEY_IDENTIFIER) {
@@ -1849,9 +1839,7 @@ impl Certificate {
 	/// Parse base extensions from certificate
 	#[cfg(feature = "serde")]
 	fn parse_base_extensions(&self) -> BaseExtensions {
-		let mut base_extensions =
-			BaseExtensions { basic_constraints: None, subject_key_identifier: None, authority_key_identifier: None };
-
+		let mut base_extensions = BaseExtensions::default();
 		if let Some(extensions) = &self.tbs_certificate.extensions {
 			for ext in extensions {
 				match ext.oid.to_string().as_str() {
@@ -2141,81 +2129,86 @@ impl core::hash::Hash for Certificate {
 	}
 }
 
-macro_rules! impl_try_from_input {
-	($target_type:ty) => {
-		impl TryFrom<&[u8]> for $target_type {
-			type Error = CertificateError;
+impl std::fmt::Display for Certificate {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let der = self.to_der().map_err(|_| std::fmt::Error)?;
+		let base64_content = general_purpose::STANDARD.encode(&der);
 
-			fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-				Self::from_der(data)
-			}
+		// Write PEM format header
+		writeln!(f, "-----BEGIN CERTIFICATE-----")?;
+		// Split into 64-character lines
+		for chunk in base64_content.as_bytes().chunks(64) {
+			let chunk_str = core::str::from_utf8(chunk).map_err(|_| std::fmt::Error)?;
+			writeln!(f, "{chunk_str}")?;
 		}
-
-		impl TryFrom<Vec<u8>> for $target_type {
-			type Error = CertificateError;
-
-			fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
-				data.as_slice().try_into()
-			}
-		}
-
-		impl TryFrom<&str> for $target_type {
-			type Error = CertificateError;
-
-			fn try_from(pem: &str) -> Result<Self, Self::Error> {
-				Self::from_pem(pem)
-			}
-		}
-
-		impl TryFrom<String> for $target_type {
-			type Error = CertificateError;
-
-			fn try_from(pem: String) -> Result<Self, Self::Error> {
-				pem.as_str().try_into()
-			}
-		}
-	};
+		// Write PEM format footer
+		writeln!(f, "-----END CERTIFICATE-----")
+	}
 }
 
-impl_try_from_input!(Certificate);
+impl std::str::FromStr for Certificate {
+	type Err = CertificateError;
 
-macro_rules! impl_try_from_output {
-	($source_type:ty) => {
-		impl TryFrom<&$source_type> for Vec<u8> {
-			type Error = CertificateError;
+	fn from_str(pem: &str) -> Result<Self, Self::Err> {
+		// Extract the base64 content between BEGIN/END CERTIFICATE markers
+		let lines: Vec<&str> = pem.lines().collect();
+		let start = lines
+			.iter()
+			.position(|line| line.contains("BEGIN CERTIFICATE"))
+			.ok_or(CertificateError::InvalidCertificate)?;
+		let end = lines
+			.iter()
+			.position(|line| line.contains("END CERTIFICATE"))
+			.ok_or(CertificateError::InvalidCertificate)?;
 
-			fn try_from(value: &$source_type) -> Result<Self, Self::Error> {
-				value.to_der()
-			}
+		if start >= end {
+			return Err(CertificateError::InvalidCertificate);
 		}
 
-		impl TryFrom<$source_type> for Vec<u8> {
-			type Error = CertificateError;
+		let base64_content = lines[start + 1..end].join("");
+		let der_bytes = general_purpose::STANDARD.decode(base64_content)?;
 
-			fn try_from(value: $source_type) -> Result<Self, Self::Error> {
-				value.to_der()
-			}
-		}
-
-		impl TryFrom<&$source_type> for String {
-			type Error = CertificateError;
-
-			fn try_from(value: &$source_type) -> Result<Self, Self::Error> {
-				value.to_pem()
-			}
-		}
-
-		impl TryFrom<$source_type> for String {
-			type Error = CertificateError;
-
-			fn try_from(value: $source_type) -> Result<Self, Self::Error> {
-				value.to_pem()
-			}
-		}
-	};
+		Self::try_from(der_bytes.as_slice())
+	}
 }
 
-impl_try_from_output!(Certificate);
+// TryFrom implementations for Certificate
+impl TryFrom<&[u8]> for Certificate {
+	type Error = CertificateError;
+
+	fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
+		let cert = <Self as Decode>::from_der(data).map_err(CertificateError::from)?;
+
+		// Validate RFC 5280 compliance
+		cert.validate_rfc5280_compliance()?;
+
+		Ok(cert)
+	}
+}
+
+impl TryFrom<Vec<u8>> for Certificate {
+	type Error = CertificateError;
+
+	fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
+		Self::try_from(data.as_slice())
+	}
+}
+
+impl TryFrom<&Certificate> for Vec<u8> {
+	type Error = CertificateError;
+
+	fn try_from(value: &Certificate) -> Result<Self, Self::Error> {
+		value.to_owned().try_into()
+	}
+}
+
+impl TryFrom<Certificate> for Vec<u8> {
+	type Error = CertificateError;
+
+	fn try_from(value: Certificate) -> Result<Self, Self::Error> {
+		Ok(<Certificate as Encode>::to_der(&value)?)
+	}
+}
 
 macro_rules! impl_try_from_der_decode {
 	($target_type:ty) => {
@@ -2223,7 +2216,7 @@ macro_rules! impl_try_from_der_decode {
 			type Error = CertificateError;
 
 			fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-				<Self as Decode>::from_der(data).map_err(CertificateError::from)
+				Ok(<Self as Decode>::from_der(data)?)
 			}
 		}
 	};
@@ -2446,7 +2439,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	fn get_cert_moment() -> DateTime<Utc> {
 		// Get the first test certificate and calculate a moment in the
 		// middle of its validity.
-		let cert = Certificate::from_pem(TEST_CERTIFICATE_SETS[0].chain.root).unwrap();
+		let cert: Certificate = TEST_CERTIFICATE_SETS[0].chain.root.parse().unwrap();
 		let validity_start = cert.not_before();
 		let validity_end = cert.not_after();
 		let validity_duration = validity_end - validity_start;
@@ -2480,13 +2473,13 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	{
 		let test_cases = vec![
 			HashTestCase {
-				hash_fn: CertificateHash::sha1,
+				hash_fn: |data| CertificateHash::sha1(data),
 				expected_algorithm_oid: crate::oids::SHA1,
 				expected_algorithm_name: "SHA1",
 				expected_length: 20,
 			},
 			HashTestCase {
-				hash_fn: CertificateHash::sha256,
+				hash_fn: |data| CertificateHash::sha256(data),
 				expected_algorithm_oid: crate::oids::SHA256,
 				expected_algorithm_name: "SHA256",
 				expected_length: 32,
@@ -2501,9 +2494,9 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 	/// Helper function to extract certificates from a certificate chain
 	fn extract_certificates(chain: &CertificateChain) -> CertificateTestBundle {
-		let ca_cert = Certificate::from_pem(chain.root).unwrap();
-		let intermediate_cert = Certificate::from_pem(chain.intermediate).unwrap();
-		let client_cert = Certificate::from_pem(chain.client).unwrap();
+		let ca_cert: Certificate = chain.root.parse().unwrap();
+		let intermediate_cert: Certificate = chain.intermediate.parse().unwrap();
+		let client_cert: Certificate = chain.client.parse().unwrap();
 
 		CertificateTestBundle {
 			root_certs: HashSet::from([ca_cert.clone()]),
@@ -2569,11 +2562,11 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	/// Helper to test DER/PEM roundtrip
 	fn test_cert_roundtrip(cert: &Certificate) {
 		let pem_output = cert.to_pem().unwrap();
-		let cert_re_parsed = Certificate::from_pem(&pem_output).unwrap();
+		let cert_re_parsed: Certificate = pem_output.parse().unwrap();
 		assert_eq!(cert.to_der().unwrap(), cert_re_parsed.to_der().unwrap());
 
 		let der_bytes = cert.to_der().unwrap();
-		let cert_from_der = Certificate::from_der(&der_bytes).unwrap();
+		let cert_from_der = Certificate::try_from(der_bytes.as_slice()).unwrap();
 		assert_eq!(cert.to_der().unwrap(), cert_from_der.to_der().unwrap());
 	}
 
@@ -2677,8 +2670,8 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			.with_key_usage(0x0080)
 			.with_extended_key_usage(vec![oids::CLIENT_AUTH])
 			.with_subject_alt_name(vec!["test.example.com"])
-			.with_custom_extension("1.2.3.4.5", &[0x01, 0x02], false)
-			.with_extensions(vec![Extension::new("1.2.3.4.6", &[0x03, 0x04], false).unwrap()])
+			.with_custom_extension("1.2.3.4.5", [0x01, 0x02], false)
+			.with_extensions(vec![Extension::new("1.2.3.4.6", [0x03, 0x04], false).unwrap()])
 			.without_common_extensions()
 			.with_common_extensions()
 			.as_ca()
@@ -2905,7 +2898,6 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 			// Verify the certificate is currently valid
 			assert!(certificate.is_currently_valid().unwrap());
-
 			// Verify basic certificate properties
 			assert!(certificate.is_self_signed());
 			assert_eq!(certificate.subject(), certificate.issuer());
@@ -2918,7 +2910,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			assert!(der_output.is_ok());
 
 			// Verify we can parse the certificate back from PEM
-			let re_parsed_cert = Certificate::from_pem(&pem_output.unwrap());
+			let re_parsed_cert = pem_output.unwrap().parse::<Certificate>();
 			assert!(re_parsed_cert.is_ok());
 
 			let re_parsed_cert = re_parsed_cert.unwrap();
@@ -2939,9 +2931,8 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
 			// Test basic conversions
 			let pem_data = test_set.chain.root;
-			let base_cert = Certificate::from_pem(test_set.chain.root).unwrap();
-			test_certificate_with_options_basic!(CertificateBundle::try_from(pem_data), false, 1);
-			test_certificate_with_options_basic!(CertificateBundle::try_from(pem_data.to_string()), false, 1);
+			let base_cert: Certificate = test_set.chain.root.parse().unwrap();
+			test_certificate_with_options_basic!(pem_data.parse::<CertificateBundle>(), false, 1);
 			test_certificate_with_options_basic!(CertificateBundle::try_from(base_cert.clone()), false, 1);
 			test_certificate_with_options_basic!(CertificateBundle::try_from(vec![base_cert.clone()]), false, 1);
 
@@ -2950,7 +2941,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			assert!(empty_result.is_err());
 
 			// Test chain functionality
-			let cert_with_opts = CertificateBundle::try_from(pem_data).unwrap();
+			let cert_with_opts = pem_data.parse::<CertificateBundle>().unwrap();
 			let cert_with_trust = cert_with_opts
 				.with_trusted(true)
 				.with_chain(vec![base_cert]);
@@ -3250,6 +3241,13 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			};
 		}
 
+		macro_rules! test_certificate_parse {
+			($source:expr, $expected_hash:expr) => {
+				let cert: Certificate = $source.parse().unwrap();
+				assert_eq!($expected_hash, CertificateHash::from(&cert));
+			};
+		}
+
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
 				extract_certificates(&test_set.chain);
@@ -3266,8 +3264,6 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 				// Test Certificate to various targets
 				test_certificate_conversion!(cert, Vec<u8>, |v: Vec<u8>| v == der_bytes);
 				test_certificate_conversion!(cert.clone(), Vec<u8>, |v: Vec<u8>| v == der_bytes);
-				test_certificate_conversion!(cert, String, |s: String| s.contains("BEGIN CERTIFICATE"));
-				test_certificate_conversion!(cert.clone(), String, |s: String| s.contains("BEGIN CERTIFICATE"));
 
 				// Test CertificateWithOptions from single certificate DER
 				let cert_der = cert.to_der().unwrap();
@@ -3276,12 +3272,12 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			}
 
 			// Test Certificate from PEM strings (specific to each cert type)
-			test_certificate_from!(test_set.chain.root, CertificateHash::from(&ca_cert));
-			test_certificate_from!(test_set.chain.root.to_string(), CertificateHash::from(&ca_cert));
-			test_certificate_from!(test_set.chain.intermediate, CertificateHash::from(&intermediate_cert));
-			test_certificate_from!(test_set.chain.intermediate.to_string(), CertificateHash::from(&intermediate_cert));
-			test_certificate_from!(test_set.chain.client, CertificateHash::from(&user_cert));
-			test_certificate_from!(test_set.chain.client.to_string(), CertificateHash::from(&user_cert));
+			test_certificate_parse!(test_set.chain.root, CertificateHash::from(&ca_cert));
+			test_certificate_parse!(test_set.chain.root.to_string(), CertificateHash::from(&ca_cert));
+			test_certificate_parse!(test_set.chain.intermediate, CertificateHash::from(&intermediate_cert));
+			test_certificate_parse!(test_set.chain.intermediate.to_string(), CertificateHash::from(&intermediate_cert));
+			test_certificate_parse!(test_set.chain.client, CertificateHash::from(&user_cert));
+			test_certificate_parse!(test_set.chain.client.to_string(), CertificateHash::from(&user_cert));
 
 			// Test CertificateWithOptions from concatenated DER
 			let mut combined_der = ca_cert.to_der().unwrap();
@@ -3372,22 +3368,22 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
 				extract_certificates(&test_set.chain);
 
-			// Extract signature algorithms and test they're detected correctly
+			// Verify signature algorithms are valid OIDs
 			let ca_sig_alg = &ca_cert.signature_algorithm;
 			let intermediate_sig_alg = &intermediate_cert.signature_algorithm;
 			let user_sig_alg = &user_cert.signature_algorithm;
-			// Verify signature algorithms are valid OIDs
 			assert!(!ca_sig_alg.algorithm.to_string().is_empty());
 			assert!(!intermediate_sig_alg.algorithm.to_string().is_empty());
 			assert!(!user_sig_alg.algorithm.to_string().is_empty());
 
+			// Verify signatures
 			let ca_public_key = &ca_cert.tbs_certificate.subject_public_key_info;
 			let intermediate_public_key = &intermediate_cert.tbs_certificate.subject_public_key_info;
 			let user_public_key = &user_cert.tbs_certificate.subject_public_key_info;
-			// Verify signatures
 			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
 			assert!(intermediate_cert.verify_signature(ca_public_key).unwrap());
 			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
+
 			// Verify public key algorithms match the expected OID from key data
 			if let Some(key_data) = &test_set.key_data {
 				assert_eq!(ca_public_key.algorithm.algorithm.to_string(), key_data.oid);
@@ -3450,7 +3446,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 	fn test_certificate_hash_functionality() {
 		let hash_bytes = vec![0x01, 0x02, 0x03, 0x04];
 
-		let cert_hash = CertificateHash::new(hash_bytes.clone(), None);
+		let cert_hash = CertificateHash::new(hash_bytes.clone(), None::<&str>);
 		assert_eq!(cert_hash.len(), 4);
 		assert!(!cert_hash.is_empty());
 		assert_eq!(cert_hash.as_ref(), &hash_bytes);
@@ -3460,12 +3456,12 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		assert_eq!(cert_hash.to_string(), "01020304");
 		assert_ne!(cert_hash.to_string(), "05060708");
 
-		let other_hash = CertificateHash::new(hash_bytes.clone(), None);
+		let other_hash = CertificateHash::new(hash_bytes.clone(), None::<&str>);
 		assert_eq!(cert_hash, other_hash);
 
-		let different_hash = CertificateHash::new(vec![0x05, 0x06], None);
+		let different_hash = CertificateHash::new(vec![0x05, 0x06], None::<&str>);
 		assert_ne!(cert_hash, different_hash);
-		let empty_hash = CertificateHash::new(vec![], None);
+		let empty_hash = CertificateHash::new(vec![], None::<&str>);
 		assert!(empty_hash.is_empty());
 		assert_eq!(empty_hash.len(), 0);
 	}
@@ -3529,17 +3525,17 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		let hash = CertificateHash::sha256(test_data);
 		let hex_string = hash.to_string();
 
-		// Test TryFrom<String>
-		let hash_from_string = CertificateHash::try_from(hex_string.clone()).unwrap();
+		// Test FromStr with String
+		let hash_from_string: CertificateHash = hex_string.parse().unwrap();
 		assert_eq!(hash_from_string.as_ref(), hash.as_ref());
 
-		// Test TryFrom<&str>
-		let hash_from_str = CertificateHash::try_from(hex_string.as_str()).unwrap();
+		// Test FromStr with &str
+		let hash_from_str: CertificateHash = hex_string.as_str().parse().unwrap();
 		assert_eq!(hash_from_str, hash_from_string);
 
 		// Test invalid hex strings
-		assert!(CertificateHash::try_from("invalid_hex").is_err());
-		assert!(CertificateHash::try_from("g1234567").is_err()); // Invalid hex character
+		assert!("invalid_hex".parse::<CertificateHash>().is_err());
+		assert!("g1234567".parse::<CertificateHash>().is_err()); // Invalid hex character
 	}
 
 	#[test]
@@ -3677,11 +3673,11 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 				let original_hash = CertificateHash::from(cert);
 
 				let pem = cert.to_pem().unwrap();
-				let cert_from_pem = Certificate::from_pem(&pem).unwrap();
+				let cert_from_pem: Certificate = pem.parse().unwrap();
 				let hash_from_pem = CertificateHash::from(&cert_from_pem);
 
 				let der = cert.to_der().unwrap();
-				let cert_from_der = Certificate::from_der(&der).unwrap();
+				let cert_from_der = Certificate::try_from(der).unwrap();
 				let hash_from_der = CertificateHash::from(&cert_from_der);
 				assert_eq!(original_hash, hash_from_pem);
 				assert_eq!(original_hash, hash_from_der);
@@ -3746,7 +3742,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			},
 			ExtensionTest {
 				name: "custom extension",
-				extension: Extension::new("1.2.3.4", &[0x01, 0x02, 0x03], true).unwrap(),
+				extension: Extension::new("1.2.3.4", [0x01, 0x02, 0x03], true).unwrap(),
 				expected_oid: "1.2.3.4",
 				expected_critical: true,
 			},
@@ -3781,10 +3777,10 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 		for (subject, issuer, san_critical) in dn_test_cases {
 			// Create a minimal public key info for Ed25519
-			let algorithm = AlgorithmIdentifier::try_from(oids::ED25519).unwrap();
+			let algorithm = oids::ED25519.parse().unwrap();
 			let subject_public_key = BitString::from_bytes(&[0u8; 32]).unwrap();
 			let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
-			let signature_algorithm = AlgorithmIdentifier::try_from(oids::ED25519).unwrap();
+			let signature_algorithm = oids::ED25519.parse().unwrap();
 			let signature = BitString::from_bytes(&[0u8; 64]).unwrap();
 			let mut builder = CertificateBuilder::new()
 				.with_serial_number(U256::from_u8(1))
@@ -3958,7 +3954,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 				}),
 			},
 			ExtensionTestCase {
-				builder_fn: Box::new(|| ExtensionBuilder::for_subject_key_identifier(&[0x01, 0x02, 0x03, 0x04])),
+				builder_fn: Box::new(|| ExtensionBuilder::for_subject_key_identifier([0x01, 0x02, 0x03, 0x04])),
 				expected_oid: oids::SUBJECT_KEY_IDENTIFIER,
 				expected_critical: false,
 				validation_fn: Box::new(|ext| {
@@ -3967,7 +3963,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 				}),
 			},
 			ExtensionTestCase {
-				builder_fn: Box::new(|| ExtensionBuilder::for_authority_key_identifier(&[0x05, 0x06, 0x07, 0x08])),
+				builder_fn: Box::new(|| ExtensionBuilder::for_authority_key_identifier([0x05, 0x06, 0x07, 0x08])),
 				expected_oid: oids::AUTHORITY_KEY_IDENTIFIER,
 				expected_critical: false,
 				validation_fn: Box::new(|ext| {
@@ -4003,7 +3999,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		// Test custom extension with fluent API
 		let custom_extension = ExtensionBuilder::new()
 			.with_oid("1.2.3.4.5.6")
-			.with_value(&[0xDE, 0xAD, 0xBE, 0xEF])
+			.with_value([0xDE, 0xAD, 0xBE, 0xEF])
 			.as_critical()
 			.build()
 			.unwrap();
@@ -4014,11 +4010,11 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 		// Test error cases
 		let invalid_oid_result = ExtensionBuilder::new()
 			.with_oid("invalid.oid")
-			.with_value(&[0x01])
+			.with_value([0x01])
 			.build();
 		assert!(invalid_oid_result.is_err());
 
-		let missing_oid_result = ExtensionBuilder::new().with_value(&[0x01]).build();
+		let missing_oid_result = ExtensionBuilder::new().with_value([0x01]).build();
 		assert!(missing_oid_result.is_err());
 
 		let missing_value_result = ExtensionBuilder::new().with_oid("1.2.3.4").build();

@@ -170,10 +170,10 @@ pub trait KeyDerivation {
 	type PrivateKey: PrivateKey;
 
 	/// Derive a private key from seed material
-	fn derive_from_seed(seed: &[u8]) -> Result<Self::PrivateKey, CryptoError>;
+	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError>;
 
 	/// Validate that bytes represent valid key material
-	fn validate_key_material(bytes: &[u8]) -> bool;
+	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool;
 
 	/// Get the expected key size in bytes
 	fn key_size() -> usize;

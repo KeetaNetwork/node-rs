@@ -51,7 +51,7 @@ fn test_hash_hex_representation() {
 fn test_hash_der_consistency() {
 	let ca_cert = ca_certificate();
 	let ca_der = ca_cert.to_der().unwrap();
-	let ca_from_der = Certificate::from_der(&ca_der).unwrap();
+	let ca_from_der = Certificate::try_from(ca_der.as_slice()).unwrap();
 
 	let ca_hash_from_der = CertificateHash::from(&ca_from_der);
 	let ca_hash_original = CertificateHash::from(&ca_cert);
