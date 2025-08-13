@@ -201,6 +201,46 @@ mod tests {
 	const TEST_INPUTS: &[(&[u8], &str)] =
 		&[(b"hello world", "hello_world"), (b"", "empty"), (b"test data", "test_data")];
 
+	/// Helper function to get expected hash value for a test case and input
+	fn get_expected_hash(test_case: &HashTestCase, input: &[u8]) -> &'static str {
+		match input {
+			b"hello world" => test_case.expected_hello_world,
+			b"" => test_case.expected_empty,
+			b"test data" => test_case.expected_test_data,
+			_ => panic!("Unexpected input for test case"),
+		}
+	}
+
+	/// Helper macro to test hash array functionality for different sizes
+	macro_rules! with_hash_size {
+		($length:expr, $test_fn:ident, $($args:expr),*) => {
+			match $length {
+				20 => $test_fn::<20>($($args),*),
+				32 => $test_fn::<32>($($args),*),
+				64 => $test_fn::<64>($($args),*),
+				_ => panic!("Unsupported hash length: {}", $length),
+			}
+		};
+	}
+
+	/// Generic helper function for testing hash array functionality
+	fn test_hash_array_for_size<const N: usize>(algorithm: HashAlgorithm, input: &[u8], expected_vec: &[u8]) {
+		let array: [u8; N] = algorithm.hash_array(input).unwrap();
+		assert_eq!(array.to_vec(), expected_vec);
+	}
+
+	/// Generic helper function for testing invalid hash array sizes
+	fn test_invalid_hash_array<const N: usize>(algorithm: HashAlgorithm, input: &[u8]) {
+		let result: Result<[u8; N], CryptoError> = algorithm.hash_array(input);
+		assert_eq!(result.unwrap_err(), CryptoError::InvalidLength);
+	}
+
+	/// Generic helper function for testing main hash API
+	fn test_main_hash_for_size<const N: usize>(algorithm: HashAlgorithm, input: &[u8], expected: &[u8]) {
+		let result: [u8; N] = hash(input, Some(algorithm)).unwrap();
+		assert_eq!(result.to_vec(), expected);
+	}
+
 	#[test]
 	fn test_algorithm_properties() {
 		for test_case in HASH_TEST_CASES {
@@ -232,10 +272,11 @@ mod tests {
 	#[test]
 	fn test_expected_hash_values() {
 		for test_case in HASH_TEST_CASES {
-			// Test expected hash values for known inputs
-			assert_eq!(hex::encode(test_case.algorithm.hash(b"hello world")), test_case.expected_hello_world);
-			assert_eq!(hex::encode(test_case.algorithm.hash(b"")), test_case.expected_empty);
-			assert_eq!(hex::encode(test_case.algorithm.hash(b"test data")), test_case.expected_test_data);
+			for &(input, _) in TEST_INPUTS {
+				let expected = get_expected_hash(test_case, input);
+				let actual = hex::encode(test_case.algorithm.hash(input));
+				assert_eq!(actual, expected, "Hash mismatch for {} with input: {:?}", test_case.name, input);
+			}
 		}
 	}
 
@@ -243,31 +284,17 @@ mod tests {
 	fn test_hash_array_functionality() {
 		for test_case in HASH_TEST_CASES {
 			for &(input, _) in TEST_INPUTS {
+				let vec_result = test_case.algorithm.hash(input);
+
 				// Test valid array length (matching algorithm's output size)
-				if test_case.length == 20 {
-					let array: [u8; 20] = test_case.algorithm.hash_array(input).unwrap();
-					let vec_result = test_case.algorithm.hash(input);
-					assert_eq!(array.to_vec(), vec_result);
+				with_hash_size!(test_case.length, test_hash_array_for_size, test_case.algorithm, input, &vec_result);
 
-					// Test invalid array length
-					let invalid: Result<[u8; 16], CryptoError> = test_case.algorithm.hash_array(input);
-					assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
-				} else if test_case.length == 32 {
-					let array: [u8; 32] = test_case.algorithm.hash_array(input).unwrap();
-					let vec_result = test_case.algorithm.hash(input);
-					assert_eq!(array.to_vec(), vec_result);
-
-					// Test invalid array length
-					let invalid: Result<[u8; 16], CryptoError> = test_case.algorithm.hash_array(input);
-					assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
-				} else if test_case.length == 64 {
-					let array: [u8; 64] = test_case.algorithm.hash_array(input).unwrap();
-					let vec_result = test_case.algorithm.hash(input);
-					assert_eq!(array.to_vec(), vec_result);
-
-					// Test invalid array length
-					let invalid: Result<[u8; 32], CryptoError> = test_case.algorithm.hash_array(input);
-					assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
+				// Test invalid array length based on algorithm
+				match test_case.length {
+					20 => test_invalid_hash_array::<16>(test_case.algorithm, input),
+					32 => test_invalid_hash_array::<16>(test_case.algorithm, input),
+					64 => test_invalid_hash_array::<32>(test_case.algorithm, input),
+					_ => panic!("Unexpected hash length: {}", test_case.length),
 				}
 			}
 		}
@@ -312,31 +339,26 @@ mod tests {
 	fn test_main_hash_api() {
 		for test_case in HASH_TEST_CASES {
 			for &(input, _) in TEST_INPUTS {
+				let expected = test_case.algorithm.hash(input);
+
 				// Test main hash function with appropriate const generic
-				if test_case.length == 20 {
-					let result: [u8; 20] = hash(input, Some(test_case.algorithm)).unwrap();
-					let expected = test_case.algorithm.hash(input);
-					assert_eq!(result.to_vec(), expected);
+				with_hash_size!(test_case.length, test_main_hash_for_size, test_case.algorithm, input, &expected);
 
-					// Test truncation
-					let truncated: [u8; 16] = hash(input, Some(test_case.algorithm)).unwrap();
-					assert_eq!(truncated[..], expected[..16]);
-				} else if test_case.length == 32 {
-					let result: [u8; 32] = hash(input, Some(test_case.algorithm)).unwrap();
-					let expected = test_case.algorithm.hash(input);
-					assert_eq!(result.to_vec(), expected);
-
-					// Test truncation
-					let truncated: [u8; 16] = hash(input, Some(test_case.algorithm)).unwrap();
-					assert_eq!(truncated[..], expected[..16]);
-				} else if test_case.length == 64 {
-					let result: [u8; 64] = hash(input, Some(test_case.algorithm)).unwrap();
-					let expected = test_case.algorithm.hash(input);
-					assert_eq!(result.to_vec(), expected);
-
-					// Test truncation
-					let truncated: [u8; 32] = hash(input, Some(test_case.algorithm)).unwrap();
-					assert_eq!(truncated[..], expected[..32]);
+				// Test truncation based on algorithm
+				match test_case.length {
+					20 => {
+						let truncated: [u8; 16] = hash(input, Some(test_case.algorithm)).unwrap();
+						assert_eq!(truncated[..], expected[..16]);
+					}
+					32 => {
+						let truncated: [u8; 16] = hash(input, Some(test_case.algorithm)).unwrap();
+						assert_eq!(truncated[..], expected[..16]);
+					}
+					64 => {
+						let truncated: [u8; 32] = hash(input, Some(test_case.algorithm)).unwrap();
+						assert_eq!(truncated[..], expected[..32]);
+					}
+					_ => panic!("Unexpected hash length: {}", test_case.length),
 				}
 			}
 		}
@@ -380,23 +402,22 @@ mod tests {
 	fn test_api_equivalence() {
 		let test_data = b"hello world";
 
-		// Test that hash and hash_array are equivalent
+		// Test that hash and hash_array are equivalent for default algorithm
 		let hash_result: [u8; 32] = hash(test_data, None).unwrap();
 		let hash_array_result: [u8; 32] = hash_array(test_data, None).unwrap();
 		assert_eq!(hash_result, hash_array_result);
 
-		// Test with different algorithms
+		// Test with different algorithms using helper functions
 		for test_case in HASH_TEST_CASES {
-			if test_case.length == 20 {
-				let hash_result: [u8; 20] = hash(test_data, Some(test_case.algorithm)).unwrap();
-				let hash_array_result: [u8; 20] = hash_array(test_data, Some(test_case.algorithm)).unwrap();
-				assert_eq!(hash_result, hash_array_result);
-			} else if test_case.length == 32 {
-				let hash_result: [u8; 32] = hash(test_data, Some(test_case.algorithm)).unwrap();
-				let hash_array_result: [u8; 32] = hash_array(test_data, Some(test_case.algorithm)).unwrap();
-				assert_eq!(hash_result, hash_array_result);
-			}
+			with_hash_size!(test_case.length, test_api_equivalence_for_size, test_case.algorithm, test_data);
 		}
+	}
+
+	/// Helper function for testing API equivalence for a specific size
+	fn test_api_equivalence_for_size<const N: usize>(algorithm: HashAlgorithm, test_data: &[u8]) {
+		let hash_result: [u8; N] = hash(test_data, Some(algorithm)).unwrap();
+		let hash_array_result: [u8; N] = hash_array(test_data, Some(algorithm)).unwrap();
+		assert_eq!(hash_result, hash_array_result);
 	}
 
 	#[test]

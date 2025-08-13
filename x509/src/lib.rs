@@ -254,7 +254,7 @@ mod tests {
 	fn test_name_value_pair_serde() {
 		let name = "commonName".to_string();
 		let value = "Test Certificate".to_string();
-		
+
 		let pair = NameValuePair { name, value };
 		assert_eq!(pair.name, "commonName");
 		assert_eq!(pair.value, "Test Certificate");
