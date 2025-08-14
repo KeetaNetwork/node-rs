@@ -560,126 +560,24 @@ impl KeyPair for KeyED25519 {
 }
 
 /// Network identifier key implementation.
-///
-/// Used for network identification and validation.
 #[derive(Clone)]
 pub struct KeyNETWORK {
 	pub identifier: String,
 	pub public_key: String,
 }
 
-impl KeyPair for KeyNETWORK {
-	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::NETWORK;
-
-	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn to_public_key_string(&self) -> String {
-		self.public_key.clone()
-	}
-
-	fn encrypt<T: AsRef<[u8]>>(&self, _plaintext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
-
-	fn decrypt<T: AsRef<[u8]>>(&self, _ciphertext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
-
-	fn supports_encryption(&self) -> bool {
-		false
-	}
-
-	fn signature_size(&self) -> usize {
-		0
-	}
-}
-
 /// Token identifier key implementation.
-///
-/// Used for token-based authentication and identification.
 #[derive(Clone)]
 pub struct KeyTOKEN {
 	pub identifier: String,
 	pub public_key: String,
 }
 
-impl KeyPair for KeyTOKEN {
-	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::TOKEN;
-
-	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn to_public_key_string(&self) -> String {
-		self.public_key.clone()
-	}
-
-	fn encrypt<T: AsRef<[u8]>>(&self, _plaintext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
-
-	fn decrypt<T: AsRef<[u8]>>(&self, _ciphertext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
-
-	fn supports_encryption(&self) -> bool {
-		false
-	}
-
-	fn signature_size(&self) -> usize {
-		0
-	}
-}
-
 /// Storage identifier key implementation.
-///
-/// Used for storage access and encryption key identification.
 #[derive(Clone)]
 pub struct KeySTORAGE {
 	pub identifier: String,
 	pub public_key: String,
-}
-
-impl KeyPair for KeySTORAGE {
-	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::STORAGE;
-
-	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
-
-	fn to_public_key_string(&self) -> String {
-		self.public_key.clone()
-	}
-
-	fn encrypt<T: AsRef<[u8]>>(&self, _plaintext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
-
-	fn decrypt<T: AsRef<[u8]>>(&self, _ciphertext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
-
-	fn supports_encryption(&self) -> bool {
-		false
-	}
-
-	fn signature_size(&self) -> usize {
-		0
-	}
 }
 
 /// MULTISIG identifier key type
@@ -689,37 +587,49 @@ pub struct KeyMULTISIG {
 	pub public_key: String,
 }
 
-impl KeyPair for KeyMULTISIG {
-	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::MULTISIG;
+/// Macro to implement KeyPair for identifier types that do not support
+/// cryptographic operations.
+macro_rules! impl_identifier_keypair {
+	($key_type:ident, $pair_type:expr) => {
+		impl KeyPair for $key_type {
+			const KEY_PAIR_TYPE: KeyPairType = $pair_type;
 
-	fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
+			fn seed_to_private_key(_seed: &Seed, _index: Index) -> Result<AnyPrivateKey, AccountError> {
+				Err(AccountError::InvalidConstruction)
+			}
 
-	fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
-		Err(AccountError::InvalidConstruction)
-	}
+			fn derive_public_key_string(_key: &AnyPrivateKey) -> Result<String, AccountError> {
+				Err(AccountError::InvalidConstruction)
+			}
 
-	fn to_public_key_string(&self) -> String {
-		self.public_key.clone()
-	}
+			fn to_public_key_string(&self) -> String {
+				self.public_key.clone()
+			}
 
-	fn encrypt<T: AsRef<[u8]>>(&self, _plaintext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
+			fn encrypt<T: AsRef<[u8]>>(&self, _plaintext: T) -> Result<Vec<u8>, AccountError> {
+				Err(AccountError::EncryptionNotSupported)
+			}
 
-	fn decrypt<T: AsRef<[u8]>>(&self, _ciphertext: T) -> Result<Vec<u8>, AccountError> {
-		Err(AccountError::EncryptionNotSupported)
-	}
+			fn decrypt<T: AsRef<[u8]>>(&self, _ciphertext: T) -> Result<Vec<u8>, AccountError> {
+				Err(AccountError::EncryptionNotSupported)
+			}
 
-	fn supports_encryption(&self) -> bool {
-		false
-	}
+			fn supports_encryption(&self) -> bool {
+				false
+			}
 
-	fn signature_size(&self) -> usize {
-		0
-	}
+			fn signature_size(&self) -> usize {
+				0
+			}
+		}
+	};
 }
+
+// Generate identifier keypair implementations
+impl_identifier_keypair!(KeyNETWORK, KeyPairType::NETWORK);
+impl_identifier_keypair!(KeyTOKEN, KeyPairType::TOKEN);
+impl_identifier_keypair!(KeySTORAGE, KeyPairType::STORAGE);
+impl_identifier_keypair!(KeyMULTISIG, KeyPairType::MULTISIG);
 
 /// Enum to represent any account type for identifier generation results
 #[derive(Debug, Clone)]
@@ -1171,6 +1081,7 @@ macro_rules! impl_from_str {
 	};
 }
 
+// Implement FromStr for each key type
 impl_from_str!(KeyECDSASECP256K1, EcdsaSecp256k1);
 impl_from_str!(KeyECDSASECP256R1, EcdsaSecp256r1);
 impl_from_str!(KeyED25519, Ed25519);
@@ -1196,6 +1107,7 @@ macro_rules! impl_try_from {
 	};
 }
 
+/// Implement TryFrom for each key type
 impl_try_from!(KeyECDSASECP256K1, EcdsaSecp256k1);
 impl_try_from!(KeyECDSASECP256R1, EcdsaSecp256r1);
 impl_try_from!(KeyED25519, Ed25519);
@@ -1307,6 +1219,7 @@ macro_rules! impl_crypto_traits {
 	};
 }
 
+/// Implement crypto traits for cryptographic key types
 impl_crypto_traits!(
 	KeyECDSASECP256K1,
 	Secp256k1Signature,
@@ -1332,6 +1245,7 @@ macro_rules! impl_identifier_crypto_traits {
 	};
 }
 
+// Implement crypto traits for identifier key types
 impl_identifier_crypto_traits!(KeyNETWORK);
 impl_identifier_crypto_traits!(KeySTORAGE);
 impl_identifier_crypto_traits!(KeyTOKEN);
