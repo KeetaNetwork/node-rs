@@ -58,7 +58,6 @@ use crate::{error::CryptoError, KeyDerivation, PrivateKey, PublicKey};
 /// The inner secret key is kept private and only accessible through the trait
 /// methods. Debug formatting will show "\[REDACTED\]" to prevent accidental
 /// key exposure.
-#[derive(Clone)]
 pub struct Secp256k1PrivateKey {
 	inner: K256SecretKey,
 }
@@ -306,8 +305,8 @@ impl CryptoVerifier<Signature> for Secp256k1PublicKey {
 		self.into()
 	}
 
-	fn public_key_string(&self) -> Result<String, CryptoError> {
-		Ok(hex::encode(self.public_key_bytes()))
+	fn public_key_string(&self) -> String {
+		hex::encode(self.public_key_bytes())
 	}
 }
 
@@ -493,10 +492,11 @@ mod tests {
 		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 
 		// Test From<Secp256k1PrivateKey> for SecretBox<Vec<u8>>
-		let secret_box: SecretBox<Vec<u8>> = private_key.clone().into();
+		let secret_box: SecretBox<Vec<u8>> = private_key.into();
 		assert_eq!(secret_box.expose_secret().len(), 32);
 
 		// Test From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>>
+		let private_key = Secp256k1Derivation::derive_from_seed(seed).unwrap();
 		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
 		assert_eq!(secret_box_ref.expose_secret().len(), 32);
 
@@ -568,7 +568,7 @@ mod tests {
 		let public_key_bytes = public_key.public_key_bytes();
 		assert_eq!(public_key_bytes.len(), 33); // Compressed secp256k1 public key
 
-		let public_key_string = public_key.public_key_string().unwrap();
+		let public_key_string = public_key.public_key_string();
 		assert_eq!(public_key_string.len(), 66); // 33 bytes * 2 hex chars per byte
 		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
 

@@ -268,8 +268,8 @@ impl CryptoVerifier<Signature> for Ed25519PublicKey {
 		self.into()
 	}
 
-	fn public_key_string(&self) -> Result<String, CryptoError> {
-		Ok(hex::encode(self.public_key_bytes()))
+	fn public_key_string(&self) -> String {
+		hex::encode(self.public_key_bytes())
 	}
 }
 
@@ -1209,7 +1209,7 @@ mod tests {
 		assert_eq!(public_key_bytes, regular_bytes);
 
 		// Test public_key_string() method
-		let public_key_string = public_key.public_key_string().unwrap();
+		let public_key_string = public_key.public_key_string();
 		assert_eq!(public_key_string.len(), 64); // 32 bytes * 2 hex chars per byte
 		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
 		// Verify the string is valid hex

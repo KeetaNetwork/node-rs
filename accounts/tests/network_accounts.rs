@@ -12,7 +12,7 @@ fn test_network_address_generation() {
 	let network_id = 12345u64;
 
 	let network_account = Account::<KeyNETWORK>::generate_network_address(network_id).unwrap();
-	assert_eq!(network_account.keypair_type(), KeyPairType::NETWORK);
+	assert_eq!(network_account.to_keypair_type(), KeyPairType::NETWORK);
 	assert_eq!(network_account.signature_size(), 0);
 	assert!(network_account.is_identifier());
 	assert!(network_account.is_network());
@@ -47,7 +47,7 @@ fn test_identifier_generation() {
 	assert!(matches!(result, GenericAccount::Token(_)));
 
 	if let GenericAccount::Token(token_account) = result {
-		assert_eq!(token_account.keypair_type(), KeyPairType::TOKEN);
+		assert_eq!(token_account.to_keypair_type(), KeyPairType::TOKEN);
 		assert!(token_account.is_identifier());
 		assert!(token_account.is_token());
 		assert!(!token_account.has_private_key());

@@ -96,7 +96,7 @@ fn test_account_from_seed_creation() {
 			let accountable = Accountable::KeyAndType(seed, $key_type);
 			let account = Account::<$account_type>::try_from(accountable).unwrap();
 
-			assert_eq!(account.keypair_type(), $key_type, "Keypair type mismatch");
+			assert_eq!(account.to_keypair_type(), $key_type, "Keypair type mismatch");
 			assert_eq!(account.to_string(), $expected_pubkey, "Public key string mismatch");
 			assert_eq!(account.signature_size(), $signature_size, "Signature size mismatch");
 			assert_eq!(account.supports_encryption(), $supports_encryption, "Encryption support mismatch");

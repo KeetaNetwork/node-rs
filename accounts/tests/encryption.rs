@@ -13,7 +13,7 @@ fn test_encryption_round_trip_operations() {
 
 	fn test_encryption_round_trip_for_account<T>(account: &accounts::Account<T>, plaintext: &[u8], name: &str)
 	where
-		T: accounts::KeyPair + Clone,
+		T: accounts::KeyPair,
 	{
 		let encrypted = account.encrypt(plaintext).unwrap();
 		let decrypted = account.decrypt(&encrypted).unwrap();
@@ -163,7 +163,7 @@ fn test_typescript_encryption_compatibility() {
 	// Helper function to test encryption compatibility for a specific account type
 	fn test_account_encryption<T>(test_case: &EncryptionTestCase, account: &accounts::Account<T>)
 	where
-		T: accounts::KeyPair + Clone,
+		T: accounts::KeyPair,
 	{
 		// Decode base64 encrypted data
 		let encrypted_data = BASE64

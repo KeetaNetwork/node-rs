@@ -4,7 +4,6 @@
 //! and verification operations, leveraging the RustCrypto ecosystem.
 
 use crate::algorithms::CryptoAlgorithm;
-use crate::error::CryptoError;
 
 // Re-export key RustCrypto signature traits for easier use
 pub use signature::{DigestSigner, DigestVerifier, Error as SignatureError, RandomizedSigner, Signer, Verifier};
@@ -27,7 +26,7 @@ pub trait CryptoVerifier<S>: CryptoAlgorithm + Verifier<S> {
 	fn public_key_bytes(&self) -> Vec<u8>;
 
 	/// Get the formatted public key string
-	fn public_key_string(&self) -> Result<String, CryptoError>;
+	fn public_key_string(&self) -> String;
 }
 
 /// Signing and verification options for cryptographic operations.
@@ -82,11 +81,11 @@ pub trait CryptoVerifierWithOptions<S>: CryptoVerifier<S> {
 
 #[cfg(test)]
 mod tests {
-	use crate::algorithms::CryptoAlgorithm;
-	use crate::Algorithm;
+	use signature::{Signer, Verifier};
 
 	use super::*;
-	use signature::{Signer, Verifier};
+	use crate::algorithms::CryptoAlgorithm;
+	use crate::Algorithm;
 
 	/// Mock implementations for testing
 	/// Note: There are algorithm-specific tests for real implementations
@@ -191,8 +190,8 @@ mod tests {
 			vec![0x02, 0x03, 0x04, 0x05] // Mock 4-byte public key
 		}
 
-		fn public_key_string(&self) -> Result<String, CryptoError> {
-			Ok("02030405".to_string())
+		fn public_key_string(&self) -> String {
+			"02030405".to_string()
 		}
 	}
 
@@ -259,8 +258,8 @@ mod tests {
 			vec![] // Empty bytes to test edge case
 		}
 
-		fn public_key_string(&self) -> Result<String, CryptoError> {
-			Err(CryptoError::InvalidPublicKey) // Test error case
+		fn public_key_string(&self) -> String {
+			"InvalidPublicKey".to_string() // Test error case
 		}
 	}
 
@@ -294,7 +293,7 @@ mod tests {
 		let public_key_bytes = verifier.public_key_bytes();
 		assert_eq!(public_key_bytes, vec![0x02, 0x03, 0x04, 0x05]);
 
-		let public_key_string = verifier.public_key_string().unwrap();
+		let public_key_string = verifier.public_key_string();
 		assert_eq!(public_key_string, "02030405");
 
 		// Test the verify method
@@ -307,12 +306,9 @@ mod tests {
 
 		// Test that public_key_string() succeeds for valid keys
 		let result = verifier.public_key_string();
-		assert!(result.is_ok());
-
 		// Test that the string is valid hex
-		let hex_string = result.unwrap();
-		assert!(hex_string.chars().all(|c| c.is_ascii_hexdigit()));
-		assert_eq!(hex_string.len(), 8); // 4 bytes * 2 hex chars
+		assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
+		assert_eq!(result.len(), 8); // 4 bytes * 2 hex chars
 	}
 
 	#[test]
@@ -334,8 +330,7 @@ mod tests {
 
 		// Test public_key_string error
 		let result = failing_verifier.public_key_string();
-		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidPublicKey));
+		assert_eq!(result, "InvalidPublicKey".to_string());
 	}
 
 	#[test]
@@ -368,7 +363,7 @@ mod tests {
 		// Test CryptoVerifier as trait object
 		let crypto_verifier: &dyn CryptoVerifier<MockSignature> = &verifier;
 		assert!(!crypto_verifier.public_key_bytes().is_empty());
-		assert!(crypto_verifier.public_key_string().is_ok());
+		assert!(!crypto_verifier.public_key_string().is_empty());
 	}
 
 	#[test]

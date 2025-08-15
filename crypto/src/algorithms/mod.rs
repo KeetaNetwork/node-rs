@@ -29,6 +29,14 @@ pub use ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 pub use secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
 pub use secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey};
 
+// Re-export signature types
+#[cfg(feature = "signature")]
+pub use ed25519::Ed25519Signature;
+#[cfg(feature = "signature")]
+pub use secp256k1::Secp256k1Signature;
+#[cfg(feature = "signature")]
+pub use secp256r1::Secp256r1Signature;
+
 // Re-export ECIES implementations when encryption is enabled
 #[cfg(feature = "encryption")]
 pub use ecies::{Ecies, EciesSecp256k1, EciesSecp256r1, EciesX25519};
@@ -37,7 +45,7 @@ pub use ecies::{Ecies, EciesSecp256k1, EciesSecp256r1, EciesX25519};
 ///
 /// This extends RustCrypto's Keypair trait with serialization capabilities
 pub trait PrivateKey:
-	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<SecretBox<Vec<u8>>>
+	Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<SecretBox<Vec<u8>>>
 {
 	type PublicKey: PublicKey;
 	type Signature: Clone + Send + Sync + Debug;
@@ -57,14 +65,14 @@ pub trait PublicKey:
 	fn to_uncompressed_bytes(&self) -> Vec<u8>;
 }
 
-macro_rules! impl_any_key {
+macro_rules! impl_any_private_key {
 	(
 		$any_key_type:ident,
 		$any_public_key_type:ident,
 		$(($variant:ident, $key_type:ty, $algorithm:expr)),* $(,)?
 	) => {
 		/// Enum to hold different key types
-		#[derive(Debug, Clone)]
+		#[derive(Debug)]
 		pub enum $any_key_type {
 			$(
 				$variant($key_type),
@@ -73,7 +81,7 @@ macro_rules! impl_any_key {
 	};
 }
 
-impl_any_key!(
+impl_any_private_key!(
 	AnyPrivateKey,
 	AnyPublicKey,
 	(Secp256k1, Secp256k1PrivateKey, Algorithm::Secp256k1),
@@ -109,7 +117,23 @@ impl CryptoAlgorithm for AnyPrivateKey {
 	}
 }
 
-impl_any_key!(
+macro_rules! impl_any_public_key {
+	(
+		$any_key_type:ident,
+		$any_public_key_type:ident,
+		$(($variant:ident, $key_type:ty, $algorithm:expr)),* $(,)?
+	) => {
+		/// Enum to hold different key types
+		#[derive(Debug, Clone)]
+		pub enum $any_key_type {
+			$(
+				$variant($key_type),
+			)*
+		}
+	};
+}
+
+impl_any_public_key!(
 	AnyPublicKey,
 	AnyPublicKey,
 	(Secp256k1, Secp256k1PublicKey, Algorithm::Secp256k1),
@@ -133,6 +157,52 @@ impl CryptoAlgorithm for AnyPublicKey {
 			AnyPublicKey::Secp256k1(key) => key.into(),
 			AnyPublicKey::Ed25519(key) => key.into(),
 			AnyPublicKey::Secp256r1(key) => key.into(),
+		}
+	}
+}
+
+#[cfg(feature = "signature")]
+macro_rules! impl_any_signature {
+	(
+		$any_signature_type:ident,
+		$(($variant:ident, $signature_type:ty, $algorithm:expr)),* $(,)?
+	) => {
+		/// Enum to hold different signature types
+		#[derive(Debug, Clone)]
+		pub enum $any_signature_type {
+			$(
+				$variant($signature_type),
+			)*
+		}
+	};
+}
+
+#[cfg(feature = "signature")]
+impl_any_signature!(
+	AnySignature,
+	(Secp256k1, Secp256k1Signature, Algorithm::Secp256k1),
+	(Ed25519, Ed25519Signature, Algorithm::Ed25519),
+	(Secp256r1, Secp256r1Signature, Algorithm::Secp256r1),
+);
+
+#[cfg(feature = "signature")]
+impl AnySignature {
+	pub fn to_bytes(&self) -> Vec<u8> {
+		match self {
+			AnySignature::Secp256k1(sig) => sig.to_vec(),
+			AnySignature::Ed25519(sig) => sig.to_vec(),
+			AnySignature::Secp256r1(sig) => sig.to_vec(),
+		}
+	}
+}
+
+#[cfg(feature = "signature")]
+impl CryptoAlgorithm for AnySignature {
+	fn get_algorithm(&self) -> Algorithm {
+		match self {
+			AnySignature::Secp256k1(_) => Algorithm::Secp256k1,
+			AnySignature::Ed25519(_) => Algorithm::Ed25519,
+			AnySignature::Secp256r1(_) => Algorithm::Secp256r1,
 		}
 	}
 }
@@ -246,6 +316,9 @@ mod tests {
 	use super::*;
 	use secrecy::ExposeSecret;
 
+	#[cfg(feature = "signature")]
+	use crate::prelude::{CryptoSignerWithOptions, SigningOptions};
+
 	const TEST_SEED: &str =
 		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
 
@@ -284,6 +357,31 @@ mod tests {
 
 		fn create_any_public_key(&self, base_seed: &[u8]) -> AnyPublicKey {
 			self.create_any_private_key(base_seed).derive_public_key()
+		}
+
+		#[cfg(feature = "signature")]
+		fn create_any_signature(&self, base_seed: &[u8], message: &[u8]) -> AnySignature {
+			let private_key = self.create_any_private_key(base_seed);
+			match private_key {
+				AnyPrivateKey::Secp256k1(key) => {
+					let sig = key
+						.sign_with_options(message, SigningOptions::default())
+						.unwrap();
+					AnySignature::Secp256k1(sig)
+				}
+				AnyPrivateKey::Ed25519(key) => {
+					let sig = key
+						.sign_with_options(message, SigningOptions::default())
+						.unwrap();
+					AnySignature::Ed25519(sig)
+				}
+				AnyPrivateKey::Secp256r1(key) => {
+					let sig = key
+						.sign_with_options(message, SigningOptions::default())
+						.unwrap();
+					AnySignature::Secp256r1(sig)
+				}
+			}
 		}
 	}
 
@@ -406,6 +504,24 @@ mod tests {
 			let original_bytes = any_public_key.to_bytes();
 			let spki_bytes = subject_public_key_info.subject_public_key.raw_bytes();
 			assert_eq!(original_bytes, spki_bytes);
+		}
+	}
+
+	#[cfg(feature = "signature")]
+	#[test]
+	fn test_any_signature_operations() {
+		const TEST_MESSAGE: &[u8] = b"test message for signing";
+
+		for test_case in AlgorithmTestData::TEST_CASES {
+			let any_signature = test_case.create_any_signature(TEST_SEED.as_bytes(), TEST_MESSAGE);
+
+			// Test algorithm detection
+			assert_eq!(any_signature.get_algorithm(), test_case.algorithm);
+			assert_eq!(Algorithm::from(&any_signature), test_case.algorithm);
+
+			// Test to_bytes returns non-empty signature data
+			let signature_bytes = any_signature.to_bytes();
+			assert!(!signature_bytes.is_empty());
 		}
 	}
 }

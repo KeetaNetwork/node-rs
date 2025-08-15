@@ -130,6 +130,9 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// Get the signature size in bytes for this key type.
 	fn signature_size(&self) -> usize;
 
+	/// Extract the private key if available.
+	fn take_private_key(self) -> Option<AnyPrivateKey>;
+
 	/// Gets the public key as a string representation.
 	fn to_public_key_string(&self) -> String;
 
@@ -138,6 +141,26 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 		Self::KEY_PAIR_TYPE
 	}
 }
+
+/// Macro to implement converters for AnyPrivateKey
+macro_rules! impl_try_from_keypair {
+	($($key_type:ty),+ $(,)?) => {
+		$(
+			impl TryFrom<$key_type> for AnyPrivateKey {
+				type Error = AccountError;
+
+				fn try_from(keypair: $key_type) -> Result<Self, Self::Error> {
+					keypair
+						.take_private_key()
+						.ok_or(AccountError::InvalidConstruction)
+				}
+			}
+		)+
+	};
+}
+
+// Generate TryFrom implementations for all KeyPair types
+impl_try_from_keypair!(KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyNETWORK, KeyTOKEN, KeySTORAGE, KeyMULTISIG);
 
 /// Macro to generate Debug implementations for KeyPair types
 macro_rules! impl_debug_for_keypair {
@@ -239,7 +262,7 @@ impl From<(Vec<String>, Index)> for Keyable {
 	}
 }
 
-// Macro to generate TryFrom<Keyable> implementations for crypto key types
+// Macro to generate converter implementations for crypto key types
 macro_rules! impl_crypto_key_try_from {
 	(
 		$key_type:ident,
@@ -249,6 +272,22 @@ macro_rules! impl_crypto_key_try_from {
 		$public_key_len:expr,
 		$private_key_len:expr
 	) => {
+		impl From<$private_key_type> for $key_type {
+			fn from(key: $private_key_type) -> Self {
+				let public_key = key.as_public_key();
+				let public_key = public_key.public_key_string();
+
+				Self { private_key: Some(key), public_key }
+			}
+		}
+
+		impl From<$private_key_type> for Account<$key_type> {
+			fn from(key: $private_key_type) -> Self {
+				let keypair = $key_type::from(key);
+				Self { keypair }
+			}
+		}
+
 		impl TryFrom<Keyable> for $key_type {
 			type Error = AccountError;
 
@@ -278,6 +317,7 @@ macro_rules! impl_crypto_key_try_from {
 						let bytes: [u8; 32] = decoded
 							.try_into()
 							.or(Err(AccountError::InvalidConstruction))?;
+
 						let seed = SecretBox::new(Box::new(bytes));
 						derive_from_seed(seed, index)?
 					}
@@ -303,7 +343,6 @@ macro_rules! impl_crypto_key_try_from {
 
 						// Create formatted string from raw public key bytes
 						let formatted = format_public_key(&public_key_bytes, Algorithm::$algorithm)?;
-
 						(None, formatted)
 					}
 					Keyable::PrivateKey(private_key_bytes) => {
@@ -314,9 +353,11 @@ macro_rules! impl_crypto_key_try_from {
 
 						// Create private key from raw bytes
 						let private_key = $private_key_type::try_from(private_key_bytes.as_slice())?;
-						let any_private_key = AnyPrivateKey::$any_private_key_variant(private_key.clone());
-						let public_key_string = $key_type::derive_public_key_string(&any_private_key)?;
+						let any_private_key = AnyPrivateKey::$any_private_key_variant(private_key);
 
+						// Note: Private Key cannot be cloned
+						let private_key = $private_key_type::try_from(private_key_bytes.as_slice())?;
+						let public_key_string = $key_type::derive_public_key_string(&any_private_key)?;
 						(Some(private_key), public_key_string)
 					}
 					Keyable::Identifier(_) => {
@@ -378,7 +419,6 @@ impl_identifier_key_try_from!(KeyMULTISIG, "multisig", "keeta_a4", "keeta_a5", "
 ///
 /// This is the primary key type used for cryptographic operations.
 /// Private keys are stored securely and public keys are formatted as strings.
-#[derive(Clone)]
 pub struct KeyECDSASECP256K1 {
 	private_key: Option<Secp256k1PrivateKey>,
 	pub public_key: String,
@@ -437,9 +477,16 @@ impl KeyPair for KeyECDSASECP256K1 {
 	fn signature_size(&self) -> usize {
 		64 // secp256k1 ECDSA signatures are 64 bytes (32 bytes r + 32 bytes s)
 	}
+
+	fn take_private_key(self) -> Option<AnyPrivateKey> {
+		self.private_key.map(AnyPrivateKey::Secp256k1)
+	}
 }
 
-#[derive(Clone)]
+/// ECDSA key pair using the secp256r1 curve.
+///
+/// This is the primary key type used for cryptographic operations.
+/// Private keys are stored securely and public keys are formatted as strings.
 pub struct KeyECDSASECP256R1 {
 	private_key: Option<Secp256r1PrivateKey>,
 	pub public_key: String,
@@ -495,12 +542,15 @@ impl KeyPair for KeyECDSASECP256R1 {
 	fn signature_size(&self) -> usize {
 		64 // ECDSA secp256r1 signatures are 64 bytes (32 bytes r + 32 bytes s)
 	}
+
+	fn take_private_key(self) -> Option<AnyPrivateKey> {
+		self.private_key.map(AnyPrivateKey::Secp256r1)
+	}
 }
 
 /// Ed25519 key pair implementation.
 ///
 /// Provides Ed25519 digital signature algorithm support.
-#[derive(Clone)]
 pub struct KeyED25519 {
 	private_key: Option<Ed25519PrivateKey>,
 	pub public_key: String,
@@ -556,6 +606,10 @@ impl KeyPair for KeyED25519 {
 
 	fn signature_size(&self) -> usize {
 		64
+	}
+
+	fn take_private_key(self) -> Option<AnyPrivateKey> {
+		self.private_key.map(AnyPrivateKey::Ed25519)
 	}
 }
 
@@ -621,6 +675,10 @@ macro_rules! impl_identifier_keypair {
 			fn signature_size(&self) -> usize {
 				0
 			}
+
+			fn take_private_key(self) -> Option<AnyPrivateKey> {
+				None // Identifier types do not have private keys
+			}
 		}
 	};
 }
@@ -643,6 +701,83 @@ pub enum GenericAccount {
 	Token(Account<KeyTOKEN>),
 	Storage(Account<KeySTORAGE>),
 	Multisig(Account<KeyMULTISIG>),
+}
+
+impl GenericAccount {
+	/// Returns the key pair type for this instance.
+	pub fn to_keypair_type(&self) -> KeyPairType {
+		match self {
+			GenericAccount::EcdsaSecp256k1(_) => KeyPairType::ECDSASECP256K1,
+			GenericAccount::EcdsaSecp256r1(_) => KeyPairType::ECDSASECP256R1,
+			GenericAccount::Ed25519(_) => KeyPairType::ED25519,
+			GenericAccount::Network(_) => KeyPairType::NETWORK,
+			GenericAccount::Token(_) => KeyPairType::TOKEN,
+			GenericAccount::Storage(_) => KeyPairType::STORAGE,
+			GenericAccount::Multisig(_) => KeyPairType::MULTISIG,
+		}
+	}
+}
+
+// Macro to delegate method calls to all GenericAccount variants
+macro_rules! delegate_to_variants {
+	($self:ident, $method:ident $(, $param:expr)*) => {
+		match $self {
+			GenericAccount::EcdsaSecp256k1(account) => account.$method($($param),*),
+			GenericAccount::EcdsaSecp256r1(account) => account.$method($($param),*),
+			GenericAccount::Ed25519(account) => account.$method($($param),*),
+			GenericAccount::Network(account) => account.$method($($param),*),
+			GenericAccount::Token(account) => account.$method($($param),*),
+			GenericAccount::Storage(account) => account.$method($($param),*),
+			GenericAccount::Multisig(account) => account.$method($($param),*),
+		}
+	};
+}
+
+impl AccountSigner for GenericAccount {
+	fn sign<T: AsRef<[u8]>>(&self, message: T, options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		delegate_to_variants!(self, sign, message, options)
+	}
+}
+
+impl AccountVerifier for GenericAccount {
+	fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
+		&self,
+		message: T,
+		signature: S,
+		options: Option<SigningOptions>,
+	) -> Result<bool, AccountError> {
+		delegate_to_variants!(self, verify, message, signature, options)
+	}
+}
+
+impl TryFrom<AnyPrivateKey> for GenericAccount {
+	type Error = AccountError;
+
+	fn try_from(private_key: AnyPrivateKey) -> Result<Self, Self::Error> {
+		/// Macro to generate the repetitive private key conversion logic
+		macro_rules! convert_private_key {
+			($key:expr, $key_type:ty, $keypair_type:expr, $variant:ident) => {{
+				let key_secret_box: SecretBox<Vec<u8>> = $key.into();
+				let key_bytes = key_secret_box.expose_secret().clone();
+				let account = Account::<$key_type>::try_from(Accountable::KeyAndType(
+					Keyable::PrivateKey(key_bytes),
+					$keypair_type,
+				))?;
+
+				Ok(GenericAccount::$variant(account))
+			}};
+		}
+
+		match private_key {
+			AnyPrivateKey::Ed25519(key) => convert_private_key!(key, KeyED25519, KeyPairType::ED25519, Ed25519),
+			AnyPrivateKey::Secp256k1(key) => {
+				convert_private_key!(key, KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1, EcdsaSecp256k1)
+			}
+			AnyPrivateKey::Secp256r1(key) => {
+				convert_private_key!(key, KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1, EcdsaSecp256r1)
+			}
+		}
+	}
 }
 
 impl FromStr for GenericAccount {
@@ -725,12 +860,43 @@ where
 }
 
 /// A generic account object, which represents a keypair
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct Account<KEYTYPE>
 where
 	KEYTYPE: KeyPair,
 {
 	pub keypair: KEYTYPE,
+}
+
+impl<KEYTYPE> Clone for Account<KEYTYPE>
+where
+	KEYTYPE: KeyPair,
+{
+	fn clone(&self) -> Self {
+		let accountable = if self.is_identifier() {
+			// For identifier types, extract the raw identifier from the
+			// formatted string. The format is "{type}_{identifier}",
+			// so we need to extract the part after the first underscore.
+			let formatted_string = self.to_string();
+			let raw_identifier = if let Some(underscore_pos) = formatted_string.find('_') {
+				formatted_string[(underscore_pos + 1)..].to_string()
+			} else {
+				// Fallback: use the whole string if no underscore found
+				formatted_string
+			};
+			let identifier_keyable = Keyable::Identifier(raw_identifier);
+
+			Accountable::KeyAndType(identifier_keyable, KEYTYPE::KEY_PAIR_TYPE)
+		} else {
+			// Reconstruct from public key string as private keys cannot be copied
+			let public_key = self.keypair.to_public_key_string();
+			let keyable = Keyable::PublicKeyString(public_key);
+
+			Accountable::KeyAndType(keyable, KEYTYPE::KEY_PAIR_TYPE)
+		};
+
+		Account::<KEYTYPE>::try_from(accountable).expect("Already constructed accounts should be infallible.")
+	}
 }
 
 // Trait for types that have a keypair type
@@ -750,7 +916,7 @@ impl<KEYTYPE: KeyPair> HasKeypairType for Account<KEYTYPE> {
 
 impl<KEYTYPE> TryFrom<Accountable<KEYTYPE>> for Account<KEYTYPE>
 where
-	KEYTYPE: KeyPair + Clone,
+	KEYTYPE: KeyPair,
 {
 	type Error = AccountError;
 
@@ -772,9 +938,9 @@ where
 
 impl<KEYTYPE> Account<KEYTYPE>
 where
-	KEYTYPE: KeyPair + Clone,
+	KEYTYPE: KeyPair,
 {
-	pub fn keypair_type(&self) -> KeyPairType {
+	pub fn to_keypair_type(&self) -> KeyPairType {
 		self.keypair.to_keypair_type()
 	}
 
@@ -800,10 +966,12 @@ where
 		// Convert network ID to seed (32 bytes)
 		let mut seed_data = [0u8; 32];
 		seed_data[24..32].copy_from_slice(&network_id.to_be_bytes());
+
 		let seed = SecretBox::new(Box::new(seed_data));
+		let key = Keyable::Seed((seed, 0));
 
 		// Create network account from seed with index 0
-		Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::NETWORK))
+		Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(key, KeyPairType::NETWORK))
 	}
 
 	/// Encrypt data using the account's public key.
@@ -833,7 +1001,7 @@ where
 
 impl<KEYTYPE> Account<KEYTYPE>
 where
-	KEYTYPE: KeyPair + Clone,
+	KEYTYPE: KeyPair,
 {
 	/// Generate an identifier from this account
 	pub fn generate_identifier(
@@ -867,9 +1035,9 @@ where
 		};
 
 		// Validate identifier generation rules
-		if self.keypair_type().is_identifier() {
+		if self.to_keypair_type().is_identifier() {
 			// Only allow network -> token generation with specific conditions
-			let is_network = self.keypair_type() == KeyPairType::NETWORK;
+			let is_network = self.to_keypair_type() == KeyPairType::NETWORK;
 			let is_generating_token = identifier_type == KeyPairType::TOKEN;
 			let is_first_operation = operation_index == 0;
 			let is_opening = block_hash.is_none() || block_hash == Some("NO_PREVIOUS");
@@ -881,7 +1049,7 @@ where
 
 		// Create seed from public key + block hash (using hash abstraction)
 		let mut seed_data = Vec::new();
-		seed_data.push(self.keypair_type() as u8);
+		seed_data.push(self.to_keypair_type() as u8);
 		seed_data.extend_from_slice(self.get_public_key_bytes()?.as_slice());
 		seed_data.extend_from_slice(&hash_to_use);
 
@@ -916,7 +1084,7 @@ where
 		// In a full implementation, this would be the actual account opening hash
 		let mut data = Vec::new();
 
-		data.push(self.keypair_type() as u8);
+		data.push(self.to_keypair_type() as u8);
 
 		if let Ok(pubkey_bytes) = self.get_public_key_bytes() {
 			data.extend_from_slice(&pubkey_bytes);
@@ -928,7 +1096,7 @@ where
 
 	/// Helper method to get public key bytes
 	fn get_public_key_bytes(&self) -> Result<Vec<u8>, AccountError> {
-		match self.keypair_type() {
+		match self.to_keypair_type() {
 			KeyPairType::ECDSASECP256K1 | KeyPairType::ED25519 | KeyPairType::ECDSASECP256R1 => {
 				// For crypto algorithms, parse the formatted public key
 				if let Ok((pubkey_bytes, _)) = parse_public_key(&self.to_string()) {
@@ -948,7 +1116,7 @@ where
 					}};
 				}
 
-				match self.keypair_type() {
+				match self.to_keypair_type() {
 					KeyPairType::NETWORK => get_identifier_bytes!(NETWORK, KeyNETWORK),
 					KeyPairType::TOKEN => get_identifier_bytes!(TOKEN, KeyTOKEN),
 					KeyPairType::STORAGE => get_identifier_bytes!(STORAGE, KeySTORAGE),
@@ -961,27 +1129,27 @@ where
 
 	/// Determine if this account is an identifier account
 	pub fn is_identifier(&self) -> bool {
-		self.keypair_type().is_identifier()
+		self.to_keypair_type().is_identifier()
 	}
 
 	/// Determine if this account is a network identifier
 	pub fn is_network(&self) -> bool {
-		self.keypair_type() == KeyPairType::NETWORK
+		self.to_keypair_type() == KeyPairType::NETWORK
 	}
 
 	/// Determine if this account is a token identifier
 	pub fn is_token(&self) -> bool {
-		self.keypair_type() == KeyPairType::TOKEN
+		self.to_keypair_type() == KeyPairType::TOKEN
 	}
 
 	/// Determine if this account is a storage identifier
 	pub fn is_storage(&self) -> bool {
-		self.keypair_type() == KeyPairType::STORAGE
+		self.to_keypair_type() == KeyPairType::STORAGE
 	}
 
 	/// Determine if this account is a multisig identifier
 	pub fn is_multisig(&self) -> bool {
-		matches!(self.keypair_type(), KeyPairType::MULTISIG)
+		matches!(self.to_keypair_type(), KeyPairType::MULTISIG)
 	}
 
 	/// Determine if this account has a private key
@@ -993,7 +1161,7 @@ where
 			}};
 		}
 
-		match self.keypair_type() {
+		match self.to_keypair_type() {
 			KeyPairType::ECDSASECP256K1 => check_private_key!(KeyECDSASECP256K1),
 			KeyPairType::ED25519 => check_private_key!(KeyED25519),
 			KeyPairType::ECDSASECP256R1 => check_private_key!(KeyECDSASECP256R1),
@@ -1010,7 +1178,7 @@ where
 	/// Compare this account with another account
 	pub fn compare_account<T>(&self, other: &Account<T>) -> bool
 	where
-		T: KeyPair + Clone,
+		T: KeyPair,
 	{
 		self.to_string() == other.to_string()
 	}
@@ -1035,6 +1203,116 @@ where
 	}
 }
 
+impl<KEYTYPE> TryFrom<AnyPrivateKey> for Account<KEYTYPE>
+where
+	KEYTYPE: KeyPair + TryFrom<AnyPrivateKey>,
+	<KEYTYPE as TryFrom<AnyPrivateKey>>::Error: Into<AccountError>,
+{
+	type Error = AccountError;
+
+	fn try_from(value: AnyPrivateKey) -> Result<Self, Self::Error> {
+		let keypair = KEYTYPE::try_from(value).map_err(|e| e.into())?;
+		Ok(Self { keypair })
+	}
+}
+
+// Blanket implementations for Account<K> where K implements the required traits
+impl<K> AccountSigner for Account<K>
+where
+	K: AccountSigner + KeyPair,
+{
+	fn sign<T: AsRef<[u8]>>(&self, message: T, options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
+		self.keypair.sign(message, options)
+	}
+}
+
+impl<K> AccountVerifier for Account<K>
+where
+	K: AccountVerifier + KeyPair,
+{
+	fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
+		&self,
+		message: T,
+		signature: S,
+		options: Option<SigningOptions>,
+	) -> Result<bool, AccountError> {
+		self.keypair.verify(message, signature, options)
+	}
+}
+
+impl<K, S> Signer<S> for Account<K>
+where
+	K: Signer<S> + KeyPair,
+{
+	fn try_sign(&self, message: &[u8]) -> Result<S, SignatureError> {
+		self.keypair.try_sign(message)
+	}
+}
+
+impl<K, S> Verifier<S> for Account<K>
+where
+	K: Verifier<S> + KeyPair,
+{
+	fn verify(&self, message: &[u8], signature: &S) -> Result<(), SignatureError> {
+		<K as Verifier<S>>::verify(&self.keypair, message, signature)
+	}
+}
+
+impl<K> CryptoAlgorithm for Account<K>
+where
+	K: CryptoAlgorithm + KeyPair,
+{
+	fn get_algorithm(&self) -> Algorithm {
+		self.keypair.get_algorithm()
+	}
+}
+
+impl<K, S> CryptoSigner<S> for Account<K>
+where
+	K: CryptoSigner<S> + KeyPair,
+{
+	fn has_private_key(&self) -> bool {
+		self.keypair.has_private_key()
+	}
+}
+
+impl<K, S> CryptoVerifier<S> for Account<K>
+where
+	K: CryptoVerifier<S> + KeyPair,
+{
+	fn public_key_bytes(&self) -> Vec<u8> {
+		self.keypair.public_key_bytes()
+	}
+
+	fn public_key_string(&self) -> String {
+		self.keypair.public_key_string()
+	}
+}
+
+impl<K, S> CryptoSignerWithOptions<S> for Account<K>
+where
+	K: CryptoSignerWithOptions<S> + KeyPair,
+{
+	fn sign_with_options<T: AsRef<[u8]>>(&self, message: T, options: SigningOptions) -> Result<S, SignatureError> {
+		self.keypair.sign_with_options(message, options)
+	}
+}
+
+impl<K, S> CryptoVerifierWithOptions<S> for Account<K>
+where
+	K: CryptoVerifierWithOptions<S> + KeyPair,
+{
+	fn verify_with_options<T: AsRef<[u8]>>(
+		&self,
+		message: T,
+		signature: &S,
+		options: SigningOptions,
+	) -> Result<(), SignatureError> {
+		self.keypair
+			.verify_with_options(message, signature, options)
+	}
+}
+
 // Macro for type casting for public key access
 macro_rules! cast_and_get_public_key_string {
 	($self:expr, $key_type:ty) => {{
@@ -1046,10 +1324,10 @@ macro_rules! cast_and_get_public_key_string {
 // Display blanket implementation for Account types
 impl<KEYTYPE> core::fmt::Display for Account<KEYTYPE>
 where
-	KEYTYPE: KeyPair + Clone,
+	KEYTYPE: KeyPair,
 {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		let public_key_string = match self.keypair_type() {
+		let public_key_string = match self.to_keypair_type() {
 			KeyPairType::ECDSASECP256K1 => cast_and_get_public_key_string!(self, KeyECDSASECP256K1),
 			KeyPairType::ED25519 => cast_and_get_public_key_string!(self, KeyED25519),
 			KeyPairType::ECDSASECP256R1 => cast_and_get_public_key_string!(self, KeyECDSASECP256R1),
@@ -1107,7 +1385,7 @@ macro_rules! impl_try_from {
 	};
 }
 
-/// Implement TryFrom for each key type
+// Implement TryFrom for each key type
 impl_try_from!(KeyECDSASECP256K1, EcdsaSecp256k1);
 impl_try_from!(KeyECDSASECP256R1, EcdsaSecp256r1);
 impl_try_from!(KeyED25519, Ed25519);
@@ -1186,8 +1464,8 @@ macro_rules! impl_crypto_traits {
 				}
 			}
 
-			fn public_key_string(&self) -> Result<String, CryptoError> {
-				Ok(self.public_key.clone())
+			fn public_key_string(&self) -> String {
+				self.public_key.clone()
 			}
 		}
 
@@ -1219,7 +1497,7 @@ macro_rules! impl_crypto_traits {
 	};
 }
 
-/// Implement crypto traits for cryptographic key types
+// Implement crypto traits for cryptographic key types
 impl_crypto_traits!(
 	KeyECDSASECP256K1,
 	Secp256k1Signature,
@@ -1254,6 +1532,7 @@ impl_identifier_crypto_traits!(KeyMULTISIG);
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crypto::{Ed25519PrivateKey, Secp256k1PrivateKey, Secp256r1PrivateKey};
 	use secrecy::ExposeSecret;
 	use Algorithm;
 
@@ -1600,7 +1879,7 @@ mod tests {
 	/// to seed. If keyable is provided, uses it directly.
 	fn create_test_account<T>(keyable: Option<Keyable>) -> Account<T>
 	where
-		T: KeyPair + Clone,
+		T: KeyPair,
 		Account<T>: TryFrom<Accountable<T>, Error = AccountError>,
 	{
 		let keyable = match keyable {
@@ -1621,7 +1900,7 @@ mod tests {
 	/// This is useful for testing scenarios where you have hex-encoded public key strings.
 	fn create_test_account_from_pub_key_string<T>(pub_key_string: &str) -> Account<T>
 	where
-		T: KeyPair + Clone,
+		T: KeyPair,
 		Account<T>: TryFrom<Accountable<T>, Error = AccountError>,
 	{
 		let keyable = Keyable::PublicKeyString(pub_key_string.to_string());
@@ -1632,7 +1911,7 @@ mod tests {
 	/// This is useful for testing identifier-based accounts (TOKEN, STORAGE, MULTISIG).
 	fn create_test_account_from_identifier<T>(identifier: &str) -> Account<T>
 	where
-		T: KeyPair + Clone,
+		T: KeyPair,
 		Account<T>: TryFrom<Accountable<T>, Error = AccountError>,
 	{
 		let keyable = Keyable::Identifier(identifier.to_string());
@@ -1651,7 +1930,7 @@ mod tests {
 			($key_type:ty, $expected_key_pair_type:expr) => {
 				let account = create_test_account::<$key_type>(None);
 				assert_eq!(account.keypair.to_keypair_type(), $expected_key_pair_type);
-				assert_eq!(account.keypair_type(), $expected_key_pair_type);
+				assert_eq!(account.to_keypair_type(), $expected_key_pair_type);
 			};
 		}
 
@@ -1996,7 +2275,7 @@ mod tests {
 
 		// Verify it includes the key type and public key by manual calculation
 		let mut expected_data = Vec::new();
-		expected_data.push(account.keypair_type() as u8);
+		expected_data.push(account.to_keypair_type() as u8);
 		if let Ok(pubkey_bytes) = account.get_public_key_bytes() {
 			expected_data.extend_from_slice(&pubkey_bytes);
 		}
@@ -2019,7 +2298,7 @@ mod tests {
 				let token_result = crypto_account.generate_identifier(KeyPairType::TOKEN, None, 0);
 				let result = token_result.unwrap();
 				let token_account = Account::<KeyTOKEN>::try_from(result).unwrap();
-				assert_eq!(token_account.keypair_type(), KeyPairType::TOKEN);
+				assert_eq!(token_account.to_keypair_type(), KeyPairType::TOKEN);
 				assert!(!token_account.keypair.identifier.is_empty());
 				assert!(token_account.keypair.public_key.starts_with("token_"));
 
@@ -2076,7 +2355,7 @@ mod tests {
 
 		// Test network account generation - special case
 		let network_account = create_test_network_account(12345);
-		assert_eq!(network_account.keypair_type(), KeyPairType::NETWORK);
+		assert_eq!(network_account.to_keypair_type(), KeyPairType::NETWORK);
 		assert!(!network_account.keypair.identifier.is_empty());
 		assert!(network_account.keypair.public_key.starts_with("network_"));
 
@@ -2225,7 +2504,7 @@ mod tests {
 					assert!(result.is_ok());
 
 					let account = result.unwrap();
-					assert_eq!(account.keypair_type(), $key_type);
+					assert_eq!(account.to_keypair_type(), $key_type);
 					assert_eq!(account.to_string(), $pubkey);
 					assert!(!account.has_private_key());
 				}};
@@ -2335,7 +2614,7 @@ mod tests {
 				// Test that accounts can be created from generated seeds
 				let account = create_test_account::<$key_type>(Some(Keyable::Seed((seed, 0))));
 				assert!(account.has_private_key());
-				assert_eq!(account.keypair_type(), $keypair_type);
+				assert_eq!(account.to_keypair_type(), $keypair_type);
 			};
 		}
 
@@ -2536,13 +2815,19 @@ mod tests {
 
 	#[test]
 	fn test_clone_trait_implementation() {
-		// Macro to test cloning for any account type
+		// Macro to test cloning for any account type with appropriate security checks
 		macro_rules! test_clone {
 			($key_type:ty, $keyable:expr) => {
 				let original_account = create_test_account::<$key_type>(Some($keyable));
+
+				// Basic equality checks
 				let cloned_account = original_account.clone();
 				assert_eq!(original_account.to_string(), cloned_account.to_string());
-				assert_eq!(original_account.keypair_type(), cloned_account.keypair_type());
+				assert_eq!(original_account.to_keypair_type(), cloned_account.to_keypair_type());
+				assert_eq!(original_account.is_identifier(), cloned_account.is_identifier());
+				// For crypto accounts, cloned should not have private key
+				// For identifier accounts they never have a private key
+				assert!(!cloned_account.has_private_key());
 			};
 		}
 
@@ -2551,6 +2836,7 @@ mod tests {
 			test_clone!(KeyECDSASECP256K1, test_case.hex_seed.into());
 			test_clone!(KeyED25519, test_case.hex_seed.into());
 			test_clone!(KeyECDSASECP256R1, test_case.hex_seed.into());
+
 			// Test cloning identifier accounts
 			test_clone!(KeyTOKEN, Keyable::Identifier("test-token".to_string()));
 			test_clone!(KeySTORAGE, Keyable::Identifier("test-storage".to_string()));
@@ -2561,6 +2847,8 @@ mod tests {
 		let network_account = create_test_network_account(12345);
 		let cloned_network = network_account.clone();
 		assert_eq!(network_account.to_string(), cloned_network.to_string());
+		assert_eq!(network_account.is_identifier(), cloned_network.is_identifier());
+		assert_eq!(network_account.has_private_key(), cloned_network.has_private_key());
 	}
 
 	#[test]
@@ -2583,7 +2871,7 @@ mod tests {
 					(&cloned, &generic_account)
 				{
 					assert_eq!(cloned_acc.to_string(), orig_acc.to_string());
-					assert_eq!(cloned_acc.keypair_type(), orig_acc.keypair_type());
+					assert_eq!(cloned_acc.to_keypair_type(), orig_acc.to_keypair_type());
 					assert_eq!(cloned_acc.is_identifier(), orig_acc.is_identifier());
 					assert_eq!(cloned_acc.has_private_key(), orig_acc.has_private_key());
 				}
@@ -2639,7 +2927,7 @@ mod tests {
 						(&cloned, &original_account)
 					{
 						assert_eq!(cloned_acc.to_string(), orig_acc.to_string());
-						assert_eq!(cloned_acc.keypair_type(), orig_acc.keypair_type());
+						assert_eq!(cloned_acc.to_keypair_type(), orig_acc.to_keypair_type());
 						assert_eq!(cloned_acc.is_identifier(), orig_acc.is_identifier());
 						assert_eq!(cloned_acc.has_private_key(), orig_acc.has_private_key());
 						return; // Exit early since we found the matching variant
@@ -2661,116 +2949,134 @@ mod tests {
 	#[test]
 	fn test_try_from_trait_implementations() {
 		let passphrase = create_test_passphrase();
+		let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).unwrap();
+		let seed_array: [u8; 32] = seed_bytes.try_into().unwrap();
+
+		// Test error cases for crypto keys with invalid passphrases
+		let invalid_passphrase = vec!["too".to_string(), "short".to_string()];
+		let passphrase_secret = SecretBox::new(Box::new(invalid_passphrase));
+		let invalid_result = KeyECDSASECP256K1::try_from(Keyable::Passphrase((passphrase_secret, 0)));
+		assert!(invalid_result.is_err());
 
 		// Macro to test TryFrom for crypto key types
-		macro_rules! test_crypto_try_from {
-			($key_type:ty) => {
+		macro_rules! test_crypto_key_type {
+			($key_type:ty, $expected_type:expr) => {
+				// Find the test data for this key type
+				let public_test_data = TEST_PUBLIC_ACCOUNTS
+					.iter()
+					.find(|data| data.key_type == $expected_type)
+					.expect(&format!("Should have test data for {:?}", $expected_type));
+				let valid_pubkey = hex::decode(public_test_data.public_key).expect("Valid hex");
+
 				// Test passphrase variant
 				let passphrase_secret = SecretBox::new(Box::new(passphrase.clone()));
 				let key_from_passphrase = <$key_type>::try_from(Keyable::Passphrase((passphrase_secret, 0)));
 				assert!(key_from_passphrase.is_ok());
 
-				// Test private key variant
-				let valid_private_key = vec![
-					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-				]; // 32 bytes
-				let key_from_priv = <$key_type>::try_from(Keyable::PrivateKey(valid_private_key));
+				// Test private key variant using existing test data
+				let key_from_priv = <$key_type>::try_from(Keyable::PrivateKey(seed_array.to_vec()));
 				assert!(key_from_priv.is_ok());
 
-				// Test error cases - invalid key lengths
-				let invalid_pubkey = vec![0x12, 0x34]; // Too short
-				let invalid_pubkey_result = <$key_type>::try_from(Keyable::PublicKey(invalid_pubkey));
-				assert!(invalid_pubkey_result.is_err());
+				// Test public key variant with key-specific data
+				let key_from_pub = <$key_type>::try_from(Keyable::PublicKey(valid_pubkey));
+				assert!(key_from_pub.is_ok());
 
-				let invalid_priv_key = vec![0x12, 0x34]; // Too short
-				let invalid_priv_result = <$key_type>::try_from(Keyable::PrivateKey(invalid_priv_key));
-				assert!(invalid_priv_result.is_err());
+				// Test error cases - invalid key lengths
+				let invalid_key = vec![0x12, 0x34]; // Too short
+				assert!(<$key_type>::try_from(Keyable::PublicKey(invalid_key.clone())).is_err());
+				assert!(<$key_type>::try_from(Keyable::PrivateKey(invalid_key)).is_err());
+
+				// Test Account creation from successful key
+				let account = Account::<$key_type>::try_from(Accountable::Key(key_from_priv.unwrap())).unwrap();
+				assert_eq!(account.to_keypair_type(), $expected_type);
 			};
 		}
 
 		// Macro to test TryFrom for identifier key types
-		macro_rules! test_identifier_try_from {
-			($key_type:ty, $identifier:expr) => {
+		macro_rules! test_identifier_key_type {
+			($key_type:ty, $identifier:expr, $expected_type:expr) => {
 				let key = <$key_type>::try_from(Keyable::Identifier($identifier.to_string()));
 				assert!(key.is_ok());
+
+				// Test that passphrase doesn't work for identifier types
+				let passphrase_secret = SecretBox::new(Box::new(vec!["test".to_string()]));
+				let invalid_result = <$key_type>::try_from(Keyable::Passphrase((passphrase_secret, 0)));
+				assert!(invalid_result.is_err());
+
+				// Test Account creation
+				let account = Account::<$key_type>::try_from(Accountable::Key(key.unwrap())).unwrap();
+				assert_eq!(account.to_keypair_type(), $expected_type);
 			};
 		}
 
-		// Test crypto key types
-		test_crypto_try_from!(KeyECDSASECP256K1);
-		test_crypto_try_from!(KeyED25519);
-		test_crypto_try_from!(KeyECDSASECP256R1);
+		// Macro to test TryFrom for AnyPrivateKey to GenericAccount conversions
+		macro_rules! test_private_key_to_generic_account {
+			($private_key_type:ty, $any_variant:ident, $expected_type:expr) => {
+				let test_private_key_bytes = [0x42u8; 32];
+				let private_key = <$private_key_type>::try_from(test_private_key_bytes.as_slice()).unwrap();
+				let any_private_key = AnyPrivateKey::$any_variant(private_key);
 
-		// Test identifier key types
-		test_identifier_try_from!(KeyNETWORK, "test-network");
-		test_identifier_try_from!(KeyTOKEN, "test-token");
-		test_identifier_try_from!(KeySTORAGE, "test-storage");
+				let generic_account = GenericAccount::try_from(any_private_key).unwrap();
+				assert_eq!(generic_account.to_keypair_type(), $expected_type);
+			};
+		}
 
-		// Test PublicKey variant for crypto keys with specific lengths
-		let valid_secp256k1_pubkey = vec![
-			0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02,
-			0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98,
-		]; // 33 bytes compressed
-		let secp256k1_from_pubkey = KeyECDSASECP256K1::try_from(Keyable::PublicKey(valid_secp256k1_pubkey));
-		assert!(secp256k1_from_pubkey.is_ok());
+		// Test all crypto key types
+		test_crypto_key_type!(KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1);
+		test_crypto_key_type!(KeyED25519, KeyPairType::ED25519);
+		test_crypto_key_type!(KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1);
 
-		let valid_ed25519_pubkey = vec![
-			0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34,
-			0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-		]; // 32 bytes for Ed25519
-		let ed25519_from_pubkey = KeyED25519::try_from(Keyable::PublicKey(valid_ed25519_pubkey));
-		assert!(ed25519_from_pubkey.is_ok());
+		// Test all identifier key types
+		test_identifier_key_type!(KeyNETWORK, "test-network", KeyPairType::NETWORK);
+		test_identifier_key_type!(KeyTOKEN, "test-token", KeyPairType::TOKEN);
+		test_identifier_key_type!(KeySTORAGE, "test-storage", KeyPairType::STORAGE);
+		test_identifier_key_type!(KeyMULTISIG, "test-multisig", KeyPairType::MULTISIG);
 
-		// Test error cases - wrong input types
-		let passphrase_secret = SecretBox::new(Box::new(vec!["test".to_string()]));
-		let network_from_passphrase = KeyNETWORK::try_from(Keyable::Passphrase((passphrase_secret, 0)));
-		assert!(network_from_passphrase.is_err());
-
-		// Test error cases - invalid inputs for crypto keys
-		let invalid_passphrase = vec!["too".to_string(), "short".to_string()];
-		let passphrase_secret = SecretBox::new(Box::new(invalid_passphrase));
-		let secp256k1_invalid = KeyECDSASECP256K1::try_from(Keyable::Passphrase((passphrase_secret, 0)));
-		assert!(secp256k1_invalid.is_err());
+		// Test private key to GenericAccount conversions
+		test_private_key_to_generic_account!(Ed25519PrivateKey, Ed25519, KeyPairType::ED25519);
+		test_private_key_to_generic_account!(Secp256k1PrivateKey, Secp256k1, KeyPairType::ECDSASECP256K1);
+		test_private_key_to_generic_account!(Secp256r1PrivateKey, Secp256r1, KeyPairType::ECDSASECP256R1);
 	}
 
 	#[test]
 	fn test_account_try_from_accountable() {
 		let passphrase = create_test_passphrase();
 
-		// Macro to test Accountable::KeyAndType variant for crypto keys
-		macro_rules! test_crypto_key_and_type {
+		// Macro to test Accountable::KeyAndType variant
+		macro_rules! test_key_and_type {
 			($key_type:ty, $keypair_type:expr) => {
 				let accountable = Accountable::KeyAndType(passphrase.clone().into(), $keypair_type);
 				let account: Result<Account<$key_type>, AccountError> = Account::try_from(accountable);
-				assert!(account.is_ok());
+				assert!(account.is_ok(), "Failed to create account for {:?}", $keypair_type);
 
-				// Test that try_from works consistently
+				// Test consistency
 				let accountable2 = Accountable::KeyAndType(passphrase.clone().into(), $keypair_type);
 				let account_new = Account::<$key_type>::try_from(accountable2);
-				assert!(account_new.is_ok());
+				assert!(account_new.is_ok(), "Inconsistent behavior for {:?}", $keypair_type);
 			};
 		}
 
 		// Test all crypto key types
-		test_crypto_key_and_type!(KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1);
-		test_crypto_key_and_type!(KeyED25519, KeyPairType::ED25519);
-		test_crypto_key_and_type!(KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1);
+		test_key_and_type!(KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1);
+		test_key_and_type!(KeyED25519, KeyPairType::ED25519);
+		test_key_and_type!(KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1);
 
-		// Test Accountable::Key variant
+		// Test Accountable::Key and Accountable::Account variants
 		let key = KeyNETWORK::try_from(Keyable::Identifier("test-network".to_string())).unwrap();
+
+		// Test Key variant
 		let accountable_key = Accountable::Key(key);
 		let account_from_key: Result<Account<KeyNETWORK>, AccountError> = Account::try_from(accountable_key);
 		assert!(account_from_key.is_ok());
 
-		// Test Accountable::Account variant (should just clone the keypair)
+		// Test Account variant (should clone the keypair)
 		let original_account = account_from_key.unwrap();
 		let accountable_account = Accountable::Account(original_account.clone());
 		let account_from_account: Result<Account<KeyNETWORK>, AccountError> = Account::try_from(accountable_account);
 		assert!(account_from_account.is_ok());
 		assert_eq!(original_account.to_string(), account_from_account.unwrap().to_string());
 
-		// Test error case: wrong key type
+		// Test error case: wrong key type for identifier
 		let accountable_wrong_type = Accountable::KeyAndType(
 			Keyable::Identifier("test".to_string()),
 			KeyPairType::ECDSASECP256K1, // Wrong type for identifier
@@ -2789,7 +3095,7 @@ mod tests {
 					.parse::<Account<$key_type>>()
 					.unwrap();
 				assert_eq!(account.to_string(), $test_case.encoded_public_key);
-				assert_eq!(account.keypair_type(), $key_pair_type);
+				assert_eq!(account.to_keypair_type(), $key_pair_type);
 				assert_eq!(account.is_identifier(), $test_case.is_identifier);
 				assert!(account.compare_public_key($test_case.encoded_public_key));
 			}};
@@ -2840,7 +3146,7 @@ mod tests {
 				))
 				.unwrap();
 				assert!(account.compare_public_key($expected_pubkey));
-				assert_eq!(account.keypair_type(), $key_pair_type);
+				assert_eq!(account.to_keypair_type(), $key_pair_type);
 				assert!(account.has_private_key());
 				assert!(!account.is_identifier());
 			}};
@@ -3191,8 +3497,10 @@ mod tests {
 				let account = create_test_account::<$key_type>(Some(($seed, 0).into()));
 				assert!(account.has_private_key());
 				assert!(account.keypair.has_private_key());
+				assert!(account.keypair.public_key_string().len() > 0);
+				assert!(account.public_key_string().len() > 0);
+				assert!(!account.public_key_bytes().is_empty());
 				assert!(!account.keypair.public_key_bytes().is_empty());
-				assert!(account.keypair.public_key_string().is_ok());
 			};
 		}
 
@@ -3318,6 +3626,25 @@ mod tests {
 	}
 
 	#[test]
+	fn test_take_private_key_from_account() {
+		macro_rules! test_take_private_key {
+			($key_type:ident) => {
+				// Generate a test account
+				let account = create_test_account::<$key_type>(Some(([1u8; 32], 0).into()));
+				assert!(account.has_private_key());
+
+				// Take the private key
+				let private_key = account.keypair.take_private_key();
+				assert!(private_key.is_some());
+			};
+		}
+
+		test_take_private_key!(KeyECDSASECP256K1);
+		test_take_private_key!(KeyECDSASECP256R1);
+		test_take_private_key!(KeyED25519);
+	}
+
+	#[test]
 	fn test_identifier_key_utils() {
 		let seed = SecretBox::new(Box::new([1u8; 32]));
 		let dummy_key = AnyPrivateKey::Ed25519(Ed25519PrivateKey::try_from([1u8; 32].as_slice()).unwrap());
@@ -3345,7 +3672,7 @@ mod tests {
 		macro_rules! test_public_key_parsing {
 			($key_type:ident, $test_data:expr, $expected_type:expr) => {
 				let account = $test_data.parse::<Account<$key_type>>().unwrap();
-				assert_eq!(account.keypair_type(), $expected_type);
+				assert_eq!(account.to_keypair_type(), $expected_type);
 				assert_eq!(account.to_string(), $test_data);
 			};
 		}
@@ -3387,7 +3714,7 @@ mod tests {
 		let multisig_account = "keeta_a4test_multisig_example"
 			.parse::<Account<KeyMULTISIG>>()
 			.unwrap();
-		assert_eq!(multisig_account.keypair_type(), KeyPairType::MULTISIG);
+		assert_eq!(multisig_account.to_keypair_type(), KeyPairType::MULTISIG);
 		assert!(multisig_account.is_multisig());
 		assert!(multisig_account.is_identifier());
 		assert!(!multisig_account.is_network());
@@ -3494,7 +3821,7 @@ mod tests {
 		macro_rules! test_parsing {
 			($key_struct:ident, $key_enum:ident, $test_data:expr) => {{
 				let account = $test_data.parse::<Account<$key_struct>>().unwrap();
-				assert_eq!(account.keypair_type(), KeyPairType::$key_enum);
+				assert_eq!(account.to_keypair_type(), KeyPairType::$key_enum);
 			}};
 		}
 

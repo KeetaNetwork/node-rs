@@ -2245,6 +2245,7 @@ impl_try_from_der_encode_trait!(TbsCertificate);
 
 #[cfg(test)]
 mod tests {
+	use accounts::{Account, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
 	use asn1::oids;
 	use asn1::{BitString, Uint};
 	use chrono::Utc;
@@ -2881,10 +2882,28 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 				.with_subject_public_key(public_key.into())
 				.with_is_ca(false);
 
+			// Use direct key build first
+			let result = match &private_key {
+				AnyPrivateKey::Ed25519(key) => builder.build(key),
+				AnyPrivateKey::Secp256k1(key) => builder.build(key),
+				AnyPrivateKey::Secp256r1(key) => builder.build(key),
+			};
+			assert!(result.is_ok());
+
+			// Use account to build
 			let result = match private_key {
-				AnyPrivateKey::Ed25519(key) => builder.build(&key),
-				AnyPrivateKey::Secp256k1(key) => builder.build(&key),
-				AnyPrivateKey::Secp256r1(key) => builder.build(&key),
+				AnyPrivateKey::Ed25519(key) => {
+					let account = Account::<KeyED25519>::from(key);
+					builder.build(&account)
+				}
+				AnyPrivateKey::Secp256k1(key) => {
+					let account = Account::<KeyECDSASECP256K1>::from(key);
+					builder.build(&account)
+				}
+				AnyPrivateKey::Secp256r1(key) => {
+					let account = Account::<KeyECDSASECP256R1>::from(key);
+					builder.build(&account)
+				}
 			};
 			assert!(result.is_ok());
 

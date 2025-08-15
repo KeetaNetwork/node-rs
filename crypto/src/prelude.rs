@@ -44,6 +44,8 @@ pub use ::signature::{Keypair, SignatureEncoding, Signer, Verifier};
 pub use crate::operations::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
+#[cfg(feature = "signature")]
+pub use crate::AnySignature;
 
 // Re-export algorithm-specific signature types
 #[cfg(feature = "signature")]
