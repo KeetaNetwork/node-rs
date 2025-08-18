@@ -8,7 +8,7 @@
 //! ```
 
 // Re-export external resources required for usage.
-pub use secrecy::ExposeSecret;
+pub use secrecy::{ExposeSecret, SecretBox};
 
 // Core algorithm types and traits
 pub use crate::algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey};

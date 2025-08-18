@@ -3,7 +3,6 @@ use core::str::FromStr;
 use crypto::algorithms::{Algorithm, CryptoAlgorithm};
 use crypto::operations::SignatureError;
 use crypto::prelude::*;
-use secrecy::{ExposeSecret, SecretBox};
 use strum_macros::{Display, EnumIter, EnumString};
 use zeroize::Zeroize;
 
