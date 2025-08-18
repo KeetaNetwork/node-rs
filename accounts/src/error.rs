@@ -1,52 +1,85 @@
 use hex::FromHexError;
 use keetanet_error::KeetaNetError;
+use snafu::Snafu;
 use strum_macros::AsRefStr;
 
 use crypto::CryptoError;
 
-#[derive(Debug, AsRefStr, Clone, PartialEq, Eq)]
+/// Account error types that match TypeScript AccountErrorCode format
+#[derive(Debug, Snafu, AsRefStr, Clone, PartialEq, Eq)]
+#[snafu(visibility(pub))]
 pub enum AccountError {
+	#[snafu(display("Invalid account prefix"))]
 	#[strum(serialize = "INVALID_PREFIX")]
 	InvalidPrefix,
+
+	#[snafu(display("Invalid key type"))]
 	#[strum(serialize = "INVALID_KEYTYPE")]
 	InvalidKeyType,
+
+	#[snafu(display("Invalid external key type"))]
 	#[strum(serialize = "INVALID_KEYTYPE_EXTERNAL")]
 	InvalidKeyTypeExternal,
+
+	#[snafu(display("Invalid X.509 certificate"))]
 	#[strum(serialize = "INVALID_X509_CERTIFICATE")]
 	InvalidX509Certificate,
+
+	#[snafu(display("Passphrase is too weak"))]
 	#[strum(serialize = "PASSPHRASE_WEAK")]
 	PassphraseWeak,
+
+	#[snafu(display("Invalid construction parameters"))]
 	#[strum(serialize = "INVALID_CONSTRUCTION")]
 	InvalidConstruction,
+
+	#[snafu(display("Identifier accounts cannot sign data"))]
 	#[strum(serialize = "NO_IDENTIFIER_SIGN")]
 	NoIdentifierSign,
+
+	#[snafu(display("Identifier accounts cannot verify signatures"))]
 	#[strum(serialize = "NO_IDENTIFIER_VERIFY")]
 	NoIdentifierVerify,
+
+	#[snafu(display("Identifier accounts cannot verify certificates"))]
 	#[strum(serialize = "NO_IDENTIFIER_VERIFY_CERTIFICATE")]
 	NoIdentifierVerifyCertificate,
+
+	#[snafu(display("Invalid identifier construction"))]
 	#[strum(serialize = "INVALID_IDENTIFIER_CONSTRUCTION")]
 	InvalidIdentifierConstruction,
+
+	#[snafu(display("Seed index is undefined"))]
 	#[strum(serialize = "SEED_INDEX_UNDEFINED")]
 	SeedIndexUndefined,
+
+	#[snafu(display("Seed index cannot be negative"))]
 	#[strum(serialize = "SEED_INDEX_NEGATIVE")]
 	SeedIndexNegative,
+
+	#[snafu(display("Seed index must be an integer"))]
 	#[strum(serialize = "SEED_INDEX_NOT_INT")]
 	SeedIndexNotInt,
+
+	#[snafu(display("Seed index is too large"))]
 	#[strum(serialize = "SEED_INDEX_TOO_LARGE")]
 	SeedIndexTooLarge,
+
+	#[snafu(display("Encryption is not supported for this key type"))]
 	#[strum(serialize = "ENCRYPTION_NOT_SUPPORTED")]
 	EncryptionNotSupported,
 }
 
-impl std::fmt::Display for AccountError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{self:?}")
+impl AccountError {
+	/// Get the error code in TypeScript-compatible format (ACCOUNT_${variant})
+	pub fn error_code(&self) -> String {
+		format!("ACCOUNT_{}", self.as_ref())
 	}
 }
 
 impl From<AccountError> for KeetaNetError {
 	fn from(err: AccountError) -> Self {
-		KeetaNetError::Code { code: err.as_ref().to_string(), message: format!("{err:?}") }
+		KeetaNetError::Code { code: err.error_code(), message: err.to_string() }
 	}
 }
 
@@ -99,7 +132,12 @@ mod tests {
 	fn test_account_error_formatting() {
 		let error = AccountError::InvalidPrefix;
 		let display_string = format!("{error}");
-		assert_eq!(display_string, "InvalidPrefix");
+		assert_eq!(display_string, "Invalid account prefix");
+
+		// Test error code format (using strum AsRefStr)
+		assert_eq!(error.error_code(), "ACCOUNT_INVALID_PREFIX");
+		// Test strum serialization directly
+		assert_eq!(error.as_ref(), "INVALID_PREFIX");
 	}
 
 	#[test]
@@ -108,17 +146,17 @@ mod tests {
 		let account_error = AccountError::InvalidPrefix;
 		let keeta_error: KeetaNetError = account_error.into();
 		assert!(matches!(keeta_error, KeetaNetError::Code { 
-			code, 
-			message 
-		} if code == "INVALID_PREFIX" && message == "InvalidPrefix"));
+			code,
+			message: _
+		} if code == "ACCOUNT_INVALID_PREFIX"));
 
 		// Test another error type
 		let account_error2 = AccountError::PassphraseWeak;
 		let keeta_error2: KeetaNetError = account_error2.into();
 		assert!(matches!(keeta_error2, KeetaNetError::Code { 
-			code, 
-			message 
-		} if code == "PASSPHRASE_WEAK" && message == "PassphraseWeak"));
+			code,
+			message: _
+		} if code == "ACCOUNT_PASSPHRASE_WEAK"));
 	}
 
 	#[test]

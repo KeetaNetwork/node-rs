@@ -18,6 +18,7 @@ keetanet-error = { path = "../keetanet-error" }
 base32.workspace = true
 bip39-dict.workspace = true
 hex.workspace = true
+snafu.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 secrecy.workspace = true
