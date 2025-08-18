@@ -972,14 +972,22 @@ impl TryFrom<&[String]> for CertificateHashSet {
 impl From<CertificateHashSet> for Vec<String> {
 	fn from(cert_set: CertificateHashSet) -> Self {
 		// Convert certificates to their subject names as strings
-		cert_set.certificates.iter().map(|c| c.subject()).collect()
+		cert_set
+			.certificates
+			.iter()
+			.map(|c| c.to_subject())
+			.collect()
 	}
 }
 
 impl From<&CertificateHashSet> for Vec<String> {
 	fn from(cert_set: &CertificateHashSet) -> Self {
 		// Convert certificates to their subject names as strings
-		cert_set.certificates.iter().map(|c| c.subject()).collect()
+		cert_set
+			.certificates
+			.iter()
+			.map(|c| c.to_subject())
+			.collect()
 	}
 }
 
@@ -1486,27 +1494,17 @@ impl Certificate {
 	}
 
 	/// Get the subject distinguished name as a string
-	pub fn subject(&self) -> String {
+	pub fn to_subject(&self) -> String {
 		dn_to_string(&self.tbs_certificate.subject)
 	}
 
-	/// Get the subject distinguished name as a string (alias for backward compatibility)
-	pub fn subject_name(&self) -> String {
-		self.subject()
-	}
-
 	/// Get the issuer distinguished name as a string
-	pub fn issuer(&self) -> String {
+	pub fn to_issuer(&self) -> String {
 		dn_to_string(&self.tbs_certificate.issuer)
 	}
 
-	/// Get the issuer distinguished name as a string (alias for backward compatibility)
-	pub fn issuer_name(&self) -> String {
-		self.issuer()
-	}
-
 	/// Get the subject public key
-	pub fn subject_public_key(&self) -> &SubjectPublicKeyInfo {
+	pub fn to_subject_public_key(&self) -> &SubjectPublicKeyInfo {
 		&self.tbs_certificate.subject_public_key_info
 	}
 
@@ -1915,8 +1913,8 @@ impl Certificate {
 
 		Ok(CertificateJson {
 			serial: serial_hex,
-			subject: self.subject(),
-			issuer: self.issuer(),
+			subject: self.to_subject(),
+			issuer: self.to_issuer(),
 			subject_dn: dn_to_name_value_pairs(&self.tbs_certificate.subject),
 			issuer_dn: dn_to_name_value_pairs(&self.tbs_certificate.issuer),
 			not_before: not_before_dt.to_rfc3339(),
@@ -2553,8 +2551,8 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 	/// Helper to assert certificate properties
 	fn assert_cert_properties(cert: &Certificate, expected_ca: bool) {
-		assert!(!cert.issuer().is_empty());
-		assert!(!cert.subject().is_empty());
+		assert!(!cert.to_issuer().is_empty());
+		assert!(!cert.to_subject().is_empty());
 		assert!(cert.serial_number() > U256::ZERO);
 
 		if expected_ca {
@@ -2848,8 +2846,8 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			let issuer = user_with_chain.get_issuer_certificate().unwrap();
 			let root = user_with_chain.get_root_certificate().unwrap();
 
-			assert_eq!(issuer.subject(), intermediate_cert.subject());
-			assert_eq!(root.subject(), ca_cert.subject());
+			assert_eq!(issuer.to_subject(), intermediate_cert.to_subject());
+			assert_eq!(root.to_subject(), ca_cert.to_subject());
 			assert_eq!(user_with_chain.chain_length(), 3);
 		});
 	}
@@ -2924,7 +2922,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			assert!(certificate.is_currently_valid().unwrap());
 			// Verify basic certificate properties
 			assert!(certificate.is_self_signed());
-			assert_eq!(certificate.subject(), certificate.issuer());
+			assert_eq!(certificate.to_subject(), certificate.to_issuer());
 
 			// Test PEM/DER roundtrip to ensure the certificate is well-formed
 			let pem_output = certificate.to_pem();
@@ -3098,8 +3096,8 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			assert!(cert.is_currently_valid().unwrap());
 			assert!(cert.check_currently_valid());
 
-			let subject = cert.subject();
-			let issuer = cert.issuer();
+			let subject = cert.to_subject();
+			let issuer = cert.to_issuer();
 			let serial = cert.serial_number();
 			assert!(!subject.is_empty());
 			assert!(!issuer.is_empty());
@@ -3135,12 +3133,12 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			assert!(cert.age() >= chrono::Duration::hours(1));
 			assert!(cert.age() <= chrono::Duration::days(365 * 50));
 
-			let subject_name = cert.subject_name();
-			let issuer_name = cert.issuer_name();
+			let subject_name = cert.to_subject();
+			let issuer_name = cert.to_issuer();
 			assert!(!subject_name.is_empty());
 			assert!(!issuer_name.is_empty());
 
-			let public_key = cert.subject_public_key();
+			let public_key = cert.to_subject_public_key();
 			let raw_bytes = public_key.subject_public_key.raw_bytes();
 			assert!(!raw_bytes.is_empty());
 		});
@@ -3198,9 +3196,9 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			assert!(ca_cert != user_cert);
 
 			// Check name relationships (issuer/subject matching)
-			assert_eq!(user_cert.issuer(), intermediate_cert.subject());
-			assert_eq!(intermediate_cert.issuer(), ca_cert.subject());
-			assert_eq!(ca_cert.issuer(), ca_cert.subject()); // Self-signed
+			assert_eq!(user_cert.to_issuer(), intermediate_cert.to_subject());
+			assert_eq!(intermediate_cert.to_issuer(), ca_cert.to_subject());
+			assert_eq!(ca_cert.to_issuer(), ca_cert.to_subject()); // Self-signed
 
 			// Test cryptographic relationship
 			assert!(intermediate_cert.check_issued(ca_cert));
@@ -3344,9 +3342,9 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			// assert!(!ca_cert.verify_signature(client_key).unwrap());
 
 			// Test certificate chain relationships (subject/issuer matching)
-			assert_eq!(client_cert.issuer(), intermediate_cert.subject());
-			assert_eq!(intermediate_cert.issuer(), ca_cert.subject());
-			assert_eq!(ca_cert.issuer(), ca_cert.subject());
+			assert_eq!(client_cert.to_issuer(), intermediate_cert.to_subject());
+			assert_eq!(intermediate_cert.to_issuer(), ca_cert.to_subject());
+			assert_eq!(ca_cert.to_issuer(), ca_cert.to_subject());
 
 			// Test negative check_issued cases
 			assert!(!client_cert.check_issued(&client_cert));
@@ -3653,9 +3651,9 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 			// Test conversions to Vec<String> (subject names)
 			let subject_names: Vec<String> = cert_set_from_vec.clone().into();
 			assert_eq!(subject_names.len(), 3);
-			assert!(subject_names.contains(&bundle.ca_cert.subject()));
-			assert!(subject_names.contains(&bundle.intermediate_cert.subject()));
-			assert!(subject_names.contains(&bundle.client_cert.subject()));
+			assert!(subject_names.contains(&bundle.ca_cert.to_subject()));
+			assert!(subject_names.contains(&bundle.intermediate_cert.to_subject()));
+			assert!(subject_names.contains(&bundle.client_cert.to_subject()));
 
 			// Test reference conversion
 			let subject_names_ref: Vec<String> = (&cert_set_from_vec).into();

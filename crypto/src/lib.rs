@@ -15,6 +15,9 @@ pub mod operations;
 pub mod prelude;
 pub mod utils;
 
+// Re-exports from external libraries
+pub use secrecy::{ExposeSecret, SecretBox};
+
 // Re-exports for convenience
 pub use algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey};
 pub use error::CryptoError;

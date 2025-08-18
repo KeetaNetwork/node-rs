@@ -7,6 +7,9 @@
 //! use crypto::prelude::*;
 //! ```
 
+// Re-export external resources required for usage.
+pub use secrecy::ExposeSecret;
+
 // Core algorithm types and traits
 pub use crate::algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey};
 

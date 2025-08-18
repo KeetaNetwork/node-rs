@@ -1,10 +1,14 @@
 //! Utilities for working with ASN.1 types
 
+use std::collections::HashMap;
+
+use crate::{error::Asn1Error, ObjectIdentifier};
+
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 
 #[cfg(feature = "serde")]
-use crate::{BitString, ObjectIdentifier, OctetString};
+use crate::{BitString, OctetString};
 
 /// Serialize an ObjectIdentifier
 #[cfg(feature = "serde")]
@@ -68,6 +72,55 @@ where
 	BitString::from_bytes(&bytes).map_err(serde::de::Error::custom)
 }
 
+/// Get an OID string by algorithm name from an OID database
+pub fn get_oid(name: &str, oid_db: &HashMap<&str, &str>) -> Result<ObjectIdentifier, Asn1Error> {
+	let oid_str = oid_db
+		.get(name)
+		.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Unknown algorithm: {name}") })?;
+
+	ObjectIdentifier::new(oid_str)
+		.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format for algorithm {name}: {oid_str}") })
+}
+
+/// Look up an algorithm name by OID from an OID database.
+pub fn lookup_by_oid<'a>(oid: &str, oid_db: &'a HashMap<&'a str, &'a str>) -> Result<&'a str, Asn1Error> {
+	oid_db
+		.iter()
+		.find(|(_, &o)| o == oid)
+		.map(|(&name, _)| name)
+		.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Unknown OID: {oid}") })
+}
+
+/// Look up an algorithm name by ObjectIdentifier from an OID database.
+pub fn lookup_by_object_identifier<'a>(
+	oid: &ObjectIdentifier,
+	oid_db: &'a HashMap<&'a str, &'a str>,
+) -> Result<&'a str, Asn1Error> {
+	let oid_str = oid.to_string();
+	lookup_by_oid(&oid_str, oid_db)
+}
+
+/// Parse an OID string into an ObjectIdentifier.
+pub fn parse_oid_string(oid_str: &str) -> Result<ObjectIdentifier, Asn1Error> {
+	ObjectIdentifier::new(oid_str)
+		.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {oid_str}") })
+}
+
+/// Validate that an OID string contains only valid components.
+pub fn validate_oid_format(oid_str: &str) -> Result<Vec<u32>, Asn1Error> {
+	if oid_str.is_empty() {
+		return Err(Asn1Error::InvalidOid { reason: "OID string cannot be empty".to_string() });
+	}
+
+	oid_str
+		.split('.')
+		.map(|s| {
+			s.parse::<u32>()
+				.map_err(|e| Asn1Error::InvalidOid { reason: format!("Invalid OID component '{s}': {e}") })
+		})
+		.collect()
+}
+
 #[cfg(all(test, feature = "serde"))]
 mod tests {
 	use super::*;
@@ -82,6 +135,18 @@ mod tests {
 
 	const TEST_BIT_BYTES: &[u8] = &[0xfe, 0xdc, 0xba, 0x98];
 	const TEST_BIT_JSON: &str = r#""fedcba98""#;
+
+	// Test OID database
+	const TEST_OID_DB: &[(&str, &str)] = &[
+		("RSA", "1.2.840.113549.1.1.1"),
+		("SHA256", "2.16.840.1.101.3.4.2.1"),
+		("Ed25519", "1.3.101.112"),
+		("ECDSA_P256", "1.2.840.10045.3.1.7"),
+	];
+
+	fn get_test_oid_db() -> HashMap<&'static str, &'static str> {
+		TEST_OID_DB.iter().cloned().collect()
+	}
 
 	/// Macro to test our utility functions directly
 	macro_rules! test_utility_functions {
@@ -187,5 +252,78 @@ mod tests {
 
 		let result = deserialize_oid(&mut deserializer);
 		assert!(result.is_err());
+	}
+
+	#[test]
+	fn test_get_oid() {
+		let oid_db = get_test_oid_db();
+
+		// Test successful lookup
+		let result = get_oid("RSA", &oid_db).unwrap();
+		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
+
+		// Test unknown algorithm
+		let result = get_oid("UnknownAlgorithm", &oid_db);
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		// Test invalid OID format in database
+		let mut invalid_oid_db = HashMap::new();
+		invalid_oid_db.insert("InvalidOID", "invalid.oid.format");
+		let result = get_oid("InvalidOID", &invalid_oid_db);
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+	}
+
+	#[test]
+	fn test_lookup_by_oid() {
+		let oid_db = get_test_oid_db();
+
+		// Test successful lookup
+		let result = lookup_by_oid("1.2.840.113549.1.1.1", &oid_db).unwrap();
+		assert_eq!(result, "RSA");
+
+		// Test unknown OID (using a valid but non-existent OID)
+		let result = lookup_by_oid("1.2.3.4.5.6.7", &oid_db);
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+	}
+
+	#[test]
+	fn test_lookup_by_object_identifier() {
+		let oid_db = get_test_oid_db();
+
+		// Test successful lookup
+		let oid = ObjectIdentifier::new("1.2.840.113549.1.1.1").unwrap();
+		let result = lookup_by_object_identifier(&oid, &oid_db).unwrap();
+		assert_eq!(result, "RSA");
+
+		// Test unknown OID (using a valid but non-existent OID)
+		let unknown_oid = ObjectIdentifier::new("1.2.3.4.5.6.7").unwrap();
+		let result = lookup_by_object_identifier(&unknown_oid, &oid_db);
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+	}
+
+	#[test]
+	fn test_parse_oid_string() {
+		// Test successful parsing
+		let result = parse_oid_string("1.2.840.113549.1.1.1").unwrap();
+		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
+
+		// Test invalid OID format
+		let result = parse_oid_string("invalid.oid");
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+	}
+
+	#[test]
+	fn test_validate_oid_format() {
+		// Test successful validation
+		let result = validate_oid_format("1.2.840.113549.1.1.1").unwrap();
+		assert_eq!(result, vec![1, 2, 840, 113549, 1, 1, 1]);
+
+		// Test empty string
+		let result = validate_oid_format("");
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		// Test invalid component
+		let result = validate_oid_format("1.invalid.3");
+		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
 	}
 }

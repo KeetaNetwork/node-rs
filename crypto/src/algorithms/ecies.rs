@@ -3,6 +3,7 @@
 //! This module provides ECIES encryption.
 
 use hmac::{Hmac, Mac};
+use rand_core::{OsRng, TryRngCore};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
@@ -234,8 +235,8 @@ impl Ecies for EciesX25519 {
 	fn encrypt<T: AsRef<[u8]>>(recipient_public_key: &X25519PublicKey, plaintext: T) -> Result<Vec<u8>, CryptoError> {
 		// Generate ephemeral key pair
 		let ephemeral_private_bytes = {
-			use rand_core::{OsRng, TryRngCore};
 			let mut bytes = [0u8; 32];
+
 			OsRng
 				.try_fill_bytes(&mut bytes)
 				.map_err(|_| CryptoError::EncryptionFailed)?;

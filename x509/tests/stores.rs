@@ -74,8 +74,8 @@ fn test_certificate_stores_with_chain() {
 		user_cert_with_store
 			.get_issuer_certificate()
 			.unwrap()
-			.subject(),
-		ca_cert.subject()
+			.to_subject(),
+		ca_cert.to_subject()
 	);
 }
 
@@ -98,7 +98,7 @@ fn test_certificate_root_retrieval() {
 	// Test get_root_certificate functionality
 	let root = user_cert_with_store.get_root_certificate();
 	assert!(root.is_some());
-	assert_eq!(root.unwrap().subject(), ca_cert.subject());
+	assert_eq!(root.unwrap().to_subject(), ca_cert.to_subject());
 }
 
 #[test]
@@ -151,9 +151,9 @@ fn test_certificate_chain_operations() {
 
 	let issuer = user_cert_with_chain.get_issuer_certificate();
 	assert!(issuer.is_some());
-	assert_eq!(issuer.unwrap().subject(), ca_cert.subject());
+	assert_eq!(issuer.unwrap().to_subject(), ca_cert.to_subject());
 
 	let root = user_cert_with_chain.get_root_certificate();
 	assert!(root.is_some());
-	assert_eq!(root.unwrap().subject(), ca_cert.subject());
+	assert_eq!(root.unwrap().to_subject(), ca_cert.to_subject());
 }
