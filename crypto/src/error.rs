@@ -1,5 +1,9 @@
 use snafu::Snafu;
 
+// Re-export errors
+#[cfg(feature = "encryption")]
+pub use aead::Error as AeadError;
+
 /// Errors that can occur during cryptographic operations.
 #[derive(Debug, Snafu, Clone, PartialEq)]
 #[snafu(visibility(pub))]
