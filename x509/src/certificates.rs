@@ -2866,7 +2866,7 @@ BEkhHzClJegI9DOeMbFHYrpZwzAfBgNVHSMEGDAWgBQXW6jIsLo9pfZS4iuiUYf3
 
 			let serial = 1u64;
 			let now = chrono::Utc::now();
-			let valid_from = now;
+			let valid_from = now - chrono::Duration::hours(1); // Start 1 hour before now
 			let valid_to = now + chrono::Duration::days(365);
 			let subject_dn = utils::create_dn(&[(oids::CN, "Test Subject")]).unwrap();
 			let issuer_dn = subject_dn.clone();
