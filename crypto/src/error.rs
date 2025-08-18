@@ -92,6 +92,13 @@ impl From<cbc::cipher::inout::NotEqualError> for CryptoError {
 }
 
 #[cfg(feature = "encryption")]
+impl From<AeadError> for CryptoError {
+	fn from(error: AeadError) -> Self {
+		CryptoError::InternalError { message: error.to_string() }
+	}
+}
+
+#[cfg(feature = "encryption")]
 impl From<cbc::cipher::block_padding::UnpadError> for CryptoError {
 	fn from(_: cbc::cipher::block_padding::UnpadError) -> Self {
 		CryptoError::DecryptionFailed
@@ -215,6 +222,15 @@ mod tests {
 		let unpad_error = cbc::cipher::block_padding::UnpadError;
 		let crypto_error: CryptoError = unpad_error.into();
 		assert_eq!(crypto_error, CryptoError::DecryptionFailed);
+	}
+
+	#[cfg(feature = "encryption")]
+	#[test]
+	fn test_aead_error_conversion() {
+		// Create an AeadError and test conversion
+		let aead_error = AeadError;
+		let crypto_error: CryptoError = aead_error.into();
+		assert!(matches!(crypto_error, CryptoError::InternalError { message: _ }));
 	}
 
 	#[cfg(feature = "signature")]
