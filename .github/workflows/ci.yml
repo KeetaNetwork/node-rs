@@ -13,15 +13,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        features:
-          - name: "All Features"
-            flags: "--all-features"
-          - name: "No Features"
-            flags: "--no-default-features"
-          - name: "Default Features"
-            flags: ""
     steps:
     - uses: actions/checkout@v4
     
@@ -46,8 +37,8 @@ jobs:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Run tests (${{ matrix.features.name }})
-      run: cargo test --verbose ${{ matrix.features.flags }}
+    - name: Run all tests
+      run: make test-all
 
   lint:
     name: Lint
