@@ -838,6 +838,35 @@ impl TryFrom<AnyPrivateKey> for GenericAccount {
 	}
 }
 
+impl TryFrom<AnyPublicKey> for GenericAccount {
+	type Error = AccountError;
+
+	fn try_from(public_key: AnyPublicKey) -> Result<Self, Self::Error> {
+		/// Macro to generate the repetitive public key conversion logic
+		macro_rules! convert_public_key {
+			($key:expr, $key_type:ty, $keypair_type:expr, $variant:ident) => {{
+				let key_bytes: Vec<u8> = $key.into();
+				let account = Account::<$key_type>::try_from(Accountable::KeyAndType(
+					Keyable::PublicKey(key_bytes),
+					$keypair_type,
+				))?;
+
+				Ok(GenericAccount::$variant(account))
+			}};
+		}
+
+		match public_key {
+			AnyPublicKey::Ed25519(key) => convert_public_key!(key, KeyED25519, KeyPairType::ED25519, Ed25519),
+			AnyPublicKey::Secp256k1(key) => {
+				convert_public_key!(key, KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1, EcdsaSecp256k1)
+			}
+			AnyPublicKey::Secp256r1(key) => {
+				convert_public_key!(key, KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1, EcdsaSecp256r1)
+			}
+		}
+	}
+}
+
 impl FromStr for GenericAccount {
 	type Err = AccountError;
 
@@ -3118,6 +3147,37 @@ mod tests {
 		test_private_key_to_generic_account!(Ed25519PrivateKey, Ed25519, KeyPairType::ED25519);
 		test_private_key_to_generic_account!(Secp256k1PrivateKey, Secp256k1, KeyPairType::ECDSASECP256K1);
 		test_private_key_to_generic_account!(Secp256r1PrivateKey, Secp256r1, KeyPairType::ECDSASECP256R1);
+
+		// Macro to test TryFrom for AnyPublicKey to GenericAccount conversions
+		macro_rules! test_public_key_to_generic_account {
+			($test_case:expr, $public_key_type:ty, $any_variant:ident) => {
+				// Parse the public key hex string to bytes
+				let public_key_bytes = hex::decode($test_case.public_key).unwrap();
+				let public_key = <$public_key_type>::try_from(public_key_bytes.as_slice()).unwrap();
+				let any_public_key = AnyPublicKey::$any_variant(public_key);
+
+				let generic_account = GenericAccount::try_from(any_public_key).unwrap();
+				assert_eq!(generic_account.to_keypair_type(), $test_case.key_type);
+			};
+		}
+
+		// Test public key to GenericAccount conversions using existing test data
+		for test_case in TEST_PUBLIC_ACCOUNTS {
+			if !test_case.is_identifier {
+				match test_case.key_type {
+					KeyPairType::ED25519 => {
+						test_public_key_to_generic_account!(test_case, Ed25519PublicKey, Ed25519);
+					}
+					KeyPairType::ECDSASECP256K1 => {
+						test_public_key_to_generic_account!(test_case, Secp256k1PublicKey, Secp256k1);
+					}
+					KeyPairType::ECDSASECP256R1 => {
+						test_public_key_to_generic_account!(test_case, Secp256r1PublicKey, Secp256r1);
+					}
+					_ => continue, // Skip non-crypto key types
+				}
+			}
+		}
 	}
 
 	#[test]
