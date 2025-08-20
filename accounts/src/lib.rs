@@ -30,6 +30,12 @@ pub trait IntoSecret<T: Zeroize> {
 	fn into_secret(self) -> SecretBox<T>;
 }
 
+impl<T: Zeroize> IntoSecret<Vec<T>> for Vec<T> {
+	fn into_secret(self) -> SecretBox<Vec<T>> {
+		SecretBox::new(Box::new(self))
+	}
+}
+
 impl IntoSecret<[u8; 32]> for [u8; 32] {
 	fn into_secret(self) -> Seed {
 		SecretBox::new(Box::new(self))
@@ -38,12 +44,6 @@ impl IntoSecret<[u8; 32]> for [u8; 32] {
 
 impl IntoSecret<String> for String {
 	fn into_secret(self) -> HexSeed {
-		SecretBox::new(Box::new(self))
-	}
-}
-
-impl IntoSecret<Vec<String>> for Vec<String> {
-	fn into_secret(self) -> Passphrase {
 		SecretBox::new(Box::new(self))
 	}
 }
@@ -64,23 +64,19 @@ mod tests {
 	use secrecy::ExposeSecret;
 
 	#[test]
-	fn test_into_secret_for_seed() {
-		let seed_array = [1u8; 32];
-		let seed: Seed = seed_array.into_secret();
-		assert_eq!(*seed.expose_secret(), seed_array);
-	}
+	fn test_into_secret_implementations() {
+		// Macro to test IntoSecret implementations
+		macro_rules! test_into_secret {
+			($test_name:ident, $input:expr, $secret_type:ty) => {
+				let input = $input;
+				let secret: $secret_type = input.clone().into_secret();
+				assert_eq!(*secret.expose_secret(), input);
+			};
+		}
 
-	#[test]
-	fn test_into_secret_for_hex_seed() {
-		let hex_string = "deadbeef".to_string();
-		let hex_seed: HexSeed = hex_string.clone().into_secret();
-		assert_eq!(*hex_seed.expose_secret(), hex_string);
-	}
-
-	#[test]
-	fn test_into_secret_for_passphrase() {
-		let passphrase_vec = vec!["word1".to_string(), "word2".to_string()];
-		let passphrase: Passphrase = passphrase_vec.clone().into_secret();
-		assert_eq!(*passphrase.expose_secret(), passphrase_vec);
+		// Test data-driven cases
+		test_into_secret!(seed, [1u8; 32], Seed);
+		test_into_secret!(hex_seed, "deadbeef".to_string(), HexSeed);
+		test_into_secret!(passphrase, vec!["word1".to_string(), "word2".to_string()], Passphrase);
 	}
 }
