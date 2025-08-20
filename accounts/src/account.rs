@@ -3,6 +3,7 @@ use core::str::FromStr;
 use crypto::algorithms::{Algorithm, CryptoAlgorithm};
 use crypto::operations::SignatureError;
 use crypto::prelude::*;
+use crypto::utils::{generate_random_passphrase, seed_from_passphrase};
 use strum_macros::{Display, EnumIter, EnumString};
 use zeroize::Zeroize;
 
@@ -129,11 +130,14 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// Get the signature size in bytes for this key type.
 	fn signature_size(&self) -> usize;
 
-	/// Extract the private key if available.
-	fn take_private_key(self) -> Option<AnyPrivateKey>;
+	/// Convert the key pair to a public key.
+	fn to_public_key(&self) -> Option<AnyPublicKey>;
 
 	/// Gets the public key as a string representation.
-	fn to_public_key_string(&self) -> String;
+	fn to_public_key_string(&self) -> Option<String>;
+
+	/// Extract the private key if available.
+	fn take_private_key(self) -> Option<AnyPrivateKey>;
 
 	/// Returns the key pair type for this instance.
 	fn to_keypair_type(&self) -> KeyPairType {
@@ -168,7 +172,7 @@ macro_rules! impl_debug_for_keypair {
 			impl core::fmt::Debug for $type {
 				fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 					let name = self.to_keypair_type().to_string();
-					let public_key = self.to_public_key_string();
+					let public_key = self.to_public_key_string().unwrap_or_default();
 
 					f.debug_struct(&name).field("public_key", &public_key).finish()
 				}
@@ -266,6 +270,7 @@ macro_rules! impl_crypto_key_try_from {
 	(
 		$key_type:ident,
 		$private_key_type:ident,
+		$public_key_type:ident,
 		$algorithm:ident,
 		$any_private_key_variant:ident,
 		$public_key_len:expr,
@@ -274,9 +279,9 @@ macro_rules! impl_crypto_key_try_from {
 		impl From<$private_key_type> for $key_type {
 			fn from(key: $private_key_type) -> Self {
 				let public_key = key.as_public_key();
-				let public_key = public_key.public_key_string();
+				let public_key_string = public_key.public_key_string();
 
-				Self { private_key: Some(key), public_key }
+				Self { private_key: Some(key), public_key, public_key_string }
 			}
 		}
 
@@ -305,12 +310,20 @@ macro_rules! impl_crypto_key_try_from {
 					}
 				};
 
-				let (private_key, public_key) = match input {
+				match input {
 					Keyable::Passphrase((passphrase, index)) => {
 						let seed = seed_from_passphrase(&passphrase.expose_secret().join(" "))?;
-						derive_from_seed(seed, index)?
+						let (private_key, public_key_string) = derive_from_seed(seed, index)?;
+						let public_key = private_key.as_ref().unwrap().as_public_key();
+
+						Ok($key_type { private_key, public_key, public_key_string })
 					}
-					Keyable::Seed((seed, index)) => derive_from_seed(seed, index)?,
+					Keyable::Seed((seed, index)) => {
+						let (private_key, public_key_string) = derive_from_seed(seed, index)?;
+						let public_key = private_key.as_ref().unwrap().as_public_key();
+
+						Ok($key_type { private_key, public_key, public_key_string })
+					}
 					Keyable::HexSeed((seed, index)) => {
 						let decoded = hex::decode(seed.expose_secret())?;
 						let bytes: [u8; 32] = decoded
@@ -318,7 +331,10 @@ macro_rules! impl_crypto_key_try_from {
 							.or(Err(AccountError::InvalidConstruction))?;
 
 						let seed = SecretBox::new(Box::new(bytes));
-						derive_from_seed(seed, index)?
+						let (private_key, public_key_string) = derive_from_seed(seed, index)?;
+						let public_key = private_key.as_ref().unwrap().as_public_key();
+
+						Ok($key_type { private_key, public_key, public_key_string })
 					}
 					Keyable::PublicKeyString(public_key_string) => {
 						// Validate the prefix first
@@ -327,12 +343,16 @@ macro_rules! impl_crypto_key_try_from {
 						}
 
 						// Parse the public key string to extract key type and bytes
-						let (_, algorithm) = parse_public_key(&public_key_string)?;
+						let (public_key_bytes, algorithm) = parse_public_key(&public_key_string)?;
 						if algorithm != Algorithm::$algorithm {
 							return Err(AccountError::InvalidKeyType);
 						}
 
-						(None, public_key_string.clone())
+						// Create the public key object from parsed bytes
+						let public_key = $public_key_type::try_from(public_key_bytes.as_slice())
+							.map_err(|_| AccountError::InvalidConstruction)?;
+
+						Ok($key_type { private_key: None, public_key, public_key_string })
 					}
 					Keyable::PublicKey(public_key_bytes) => {
 						// Validate key length
@@ -341,8 +361,12 @@ macro_rules! impl_crypto_key_try_from {
 						}
 
 						// Create formatted string from raw public key bytes
-						let formatted = format_public_key(&public_key_bytes, Algorithm::$algorithm)?;
-						(None, formatted)
+						let public_key_string = format_public_key(&public_key_bytes, Algorithm::$algorithm)?;
+						// Create the public key object from raw bytes
+						let public_key = $public_key_type::try_from(public_key_bytes.as_slice())
+							.map_err(|_| AccountError::InvalidConstruction)?;
+
+						Ok($key_type { private_key: None, public_key, public_key_string })
 					}
 					Keyable::PrivateKey(private_key_bytes) => {
 						// Validate private key length
@@ -357,23 +381,38 @@ macro_rules! impl_crypto_key_try_from {
 						// Note: Private Key cannot be cloned
 						let private_key = $private_key_type::try_from(private_key_bytes.as_slice())?;
 						let public_key_string = $key_type::derive_public_key_string(&any_private_key)?;
-						(Some(private_key), public_key_string)
-					}
-					Keyable::Identifier(_) => {
-						return Err(AccountError::InvalidIdentifierConstruction);
-					}
-				};
+						let public_key = private_key.as_public_key();
 
-				Ok($key_type { private_key, public_key })
+						Ok($key_type { private_key: Some(private_key), public_key, public_key_string })
+					}
+
+					Keyable::Identifier(_) => Err(AccountError::InvalidIdentifierConstruction),
+				}
 			}
 		}
 	};
 }
 
 // Generate TryFrom<Keyable> implementations for crypto key types
-impl_crypto_key_try_from!(KeyECDSASECP256K1, Secp256k1PrivateKey, Secp256k1, Secp256k1, &[33, 65], 32);
-impl_crypto_key_try_from!(KeyECDSASECP256R1, Secp256r1PrivateKey, Secp256r1, Secp256r1, &[33, 65], 32);
-impl_crypto_key_try_from!(KeyED25519, Ed25519PrivateKey, Ed25519, Ed25519, &[32], 32);
+impl_crypto_key_try_from!(
+	KeyECDSASECP256K1,
+	Secp256k1PrivateKey,
+	Secp256k1PublicKey,
+	Secp256k1,
+	Secp256k1,
+	&[33, 65],
+	32
+);
+impl_crypto_key_try_from!(
+	KeyECDSASECP256R1,
+	Secp256r1PrivateKey,
+	Secp256r1PublicKey,
+	Secp256r1,
+	Secp256r1,
+	&[33, 65],
+	32
+);
+impl_crypto_key_try_from!(KeyED25519, Ed25519PrivateKey, Ed25519PublicKey, Ed25519, Ed25519, &[32], 32);
 
 // Macro to generate TryFrom<Keyable> implementations for identifier key types
 macro_rules! impl_identifier_key_try_from {
@@ -385,21 +424,21 @@ macro_rules! impl_identifier_key_try_from {
 				match input {
 					Keyable::Identifier(id) => Ok($key_type {
 						identifier: id.clone(),
-						public_key: format!("{}_{}", $prefix, id)
+						public_key_string: format!("{}_{}", $prefix, id)
 					}),
 					Keyable::PublicKeyString(public_key_string) => {
 						if $(public_key_string.starts_with($keeta_prefix))||+ {
 							Ok($key_type {
 								identifier: public_key_string.clone(),
-								public_key: public_key_string
+								public_key_string
 							})
 						} else {
 							Err(AccountError::InvalidConstruction)
 						}
 					}
 					Keyable::Seed((seed, index)) => {
-						let (identifier, public_key) = create_identifier_key(&seed, index, $prefix)?;
-						Ok($key_type { identifier, public_key })
+						let (identifier, public_key_string) = create_identifier_key(&seed, index, $prefix)?;
+						Ok($key_type { identifier, public_key_string })
 					}
 					_ => Err(AccountError::InvalidConstruction),
 				}
@@ -420,7 +459,8 @@ impl_identifier_key_try_from!(KeyMULTISIG, "multisig", "keeta_a4", "keeta_a5", "
 /// Private keys are stored securely and public keys are formatted as strings.
 pub struct KeyECDSASECP256K1 {
 	private_key: Option<Secp256k1PrivateKey>,
-	pub public_key: String,
+	pub public_key: Secp256k1PublicKey,
+	pub public_key_string: String,
 }
 
 impl KeyPair for KeyECDSASECP256K1 {
@@ -446,13 +486,13 @@ impl KeyPair for KeyECDSASECP256K1 {
 		}
 	}
 
-	fn to_public_key_string(&self) -> String {
-		self.public_key.clone()
+	fn to_public_key_string(&self) -> Option<String> {
+		Some(self.public_key_string.clone())
 	}
 
 	fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
 		// Parse the public key from the formatted string for encryption
-		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key_string)?;
 		let public_key = Secp256k1PublicKey::try_from(public_key_bytes.as_slice())?;
 
 		let ciphertext = public_key.encrypt(plaintext.as_ref())?;
@@ -477,6 +517,10 @@ impl KeyPair for KeyECDSASECP256K1 {
 		64 // secp256k1 ECDSA signatures are 64 bytes (32 bytes r + 32 bytes s)
 	}
 
+	fn to_public_key(&self) -> Option<AnyPublicKey> {
+		Some(AnyPublicKey::Secp256k1(self.public_key.clone()))
+	}
+
 	fn take_private_key(self) -> Option<AnyPrivateKey> {
 		self.private_key.map(AnyPrivateKey::Secp256k1)
 	}
@@ -488,7 +532,8 @@ impl KeyPair for KeyECDSASECP256K1 {
 /// Private keys are stored securely and public keys are formatted as strings.
 pub struct KeyECDSASECP256R1 {
 	private_key: Option<Secp256r1PrivateKey>,
-	pub public_key: String,
+	pub public_key: Secp256r1PublicKey,
+	pub public_key_string: String,
 }
 
 impl KeyPair for KeyECDSASECP256R1 {
@@ -514,12 +559,12 @@ impl KeyPair for KeyECDSASECP256R1 {
 		}
 	}
 
-	fn to_public_key_string(&self) -> String {
-		self.public_key.clone()
+	fn to_public_key_string(&self) -> Option<String> {
+		Some(self.public_key_string.clone())
 	}
 
 	fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
-		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key_string)?;
 		let public_key = Secp256r1PublicKey::try_from(public_key_bytes.as_slice())?;
 
 		Ok(public_key.encrypt(plaintext.as_ref())?)
@@ -542,6 +587,10 @@ impl KeyPair for KeyECDSASECP256R1 {
 		64 // ECDSA secp256r1 signatures are 64 bytes (32 bytes r + 32 bytes s)
 	}
 
+	fn to_public_key(&self) -> Option<AnyPublicKey> {
+		Some(AnyPublicKey::Secp256r1(self.public_key.clone()))
+	}
+
 	fn take_private_key(self) -> Option<AnyPrivateKey> {
 		self.private_key.map(AnyPrivateKey::Secp256r1)
 	}
@@ -552,7 +601,8 @@ impl KeyPair for KeyECDSASECP256R1 {
 /// Provides Ed25519 digital signature algorithm support.
 pub struct KeyED25519 {
 	private_key: Option<Ed25519PrivateKey>,
-	pub public_key: String,
+	pub public_key: Ed25519PublicKey,
+	pub public_key_string: String,
 }
 
 impl KeyPair for KeyED25519 {
@@ -579,12 +629,12 @@ impl KeyPair for KeyED25519 {
 		}
 	}
 
-	fn to_public_key_string(&self) -> String {
-		self.public_key.clone()
+	fn to_public_key_string(&self) -> Option<String> {
+		Some(self.public_key_string.clone())
 	}
 
 	fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
-		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+		let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key_string)?;
 
 		let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_slice())?;
 		Ok(public_key.encrypt(plaintext.as_ref())?)
@@ -607,6 +657,10 @@ impl KeyPair for KeyED25519 {
 		64
 	}
 
+	fn to_public_key(&self) -> Option<AnyPublicKey> {
+		Some(AnyPublicKey::Ed25519(self.public_key))
+	}
+
 	fn take_private_key(self) -> Option<AnyPrivateKey> {
 		self.private_key.map(AnyPrivateKey::Ed25519)
 	}
@@ -616,28 +670,28 @@ impl KeyPair for KeyED25519 {
 #[derive(Clone)]
 pub struct KeyNETWORK {
 	pub identifier: String,
-	pub public_key: String,
+	pub public_key_string: String,
 }
 
 /// Token identifier key implementation.
 #[derive(Clone)]
 pub struct KeyTOKEN {
 	pub identifier: String,
-	pub public_key: String,
+	pub public_key_string: String,
 }
 
 /// Storage identifier key implementation.
 #[derive(Clone)]
 pub struct KeySTORAGE {
 	pub identifier: String,
-	pub public_key: String,
+	pub public_key_string: String,
 }
 
 /// MULTISIG identifier key type
 #[derive(Clone)]
 pub struct KeyMULTISIG {
 	pub identifier: String,
-	pub public_key: String,
+	pub public_key_string: String,
 }
 
 /// Macro to implement KeyPair for identifier types that do not support
@@ -655,8 +709,8 @@ macro_rules! impl_identifier_keypair {
 				Err(AccountError::InvalidConstruction)
 			}
 
-			fn to_public_key_string(&self) -> String {
-				self.public_key.clone()
+			fn to_public_key_string(&self) -> Option<String> {
+				Some(self.public_key_string.clone())
 			}
 
 			fn encrypt<T: AsRef<[u8]>>(&self, _plaintext: T) -> Result<Vec<u8>, AccountError> {
@@ -675,6 +729,10 @@ macro_rules! impl_identifier_keypair {
 				0
 			}
 
+			fn to_public_key(&self) -> Option<AnyPublicKey> {
+				None // Identifier types do not have real public keys
+			}
+
 			fn take_private_key(self) -> Option<AnyPrivateKey> {
 				None // Identifier types do not have private keys
 			}
@@ -689,6 +747,7 @@ impl_identifier_keypair!(KeySTORAGE, KeyPairType::STORAGE);
 impl_identifier_keypair!(KeyMULTISIG, KeyPairType::MULTISIG);
 
 /// Enum to represent any account type for identifier generation results
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum GenericAccount {
 	// Cryptographic accounts
@@ -888,7 +947,7 @@ where
 			Accountable::KeyAndType(identifier_keyable, KEYTYPE::KEY_PAIR_TYPE)
 		} else {
 			// Reconstruct from public key string as private keys cannot be copied
-			let public_key = self.keypair.to_public_key_string();
+			let public_key = self.keypair.to_public_key_string().unwrap_or_default();
 			let keyable = Keyable::PublicKeyString(public_key);
 
 			Accountable::KeyAndType(keyable, KEYTYPE::KEY_PAIR_TYPE)
@@ -1316,7 +1375,7 @@ where
 macro_rules! cast_and_get_public_key_string {
 	($self:expr, $key_type:ty) => {{
 		let concrete_self = unsafe { &*($self as *const _ as *const Account<$key_type>) };
-		concrete_self.keypair.public_key.clone()
+		concrete_self.keypair.public_key_string.clone()
 	}};
 }
 
@@ -1435,7 +1494,7 @@ macro_rules! impl_crypto_traits {
 		impl Verifier<$signature_type> for $key_type {
 			fn verify(&self, message: &[u8], signature: &$signature_type) -> Result<(), SignatureError> {
 				// Parse the public key from the formatted string
-				let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+				let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key_string)?;
 				let public_key = <$public_key_type>::try_from(public_key_bytes.as_slice())?;
 
 				public_key.verify_with_options(message, signature, SigningOptions::default())
@@ -1456,15 +1515,11 @@ macro_rules! impl_crypto_traits {
 
 		impl CryptoVerifier<$signature_type> for $key_type {
 			fn public_key_bytes(&self) -> Vec<u8> {
-				if let Ok((public_key_bytes, _)) = parse_public_key(&self.public_key) {
-					public_key_bytes
-				} else {
-					Vec::new()
-				}
+				self.public_key.public_key_bytes()
 			}
 
 			fn public_key_string(&self) -> String {
-				self.public_key.clone()
+				self.public_key_string.clone()
 			}
 		}
 
@@ -1487,7 +1542,7 @@ macro_rules! impl_crypto_traits {
 				options: SigningOptions,
 			) -> Result<(), SignatureError> {
 				// Parse the public key from the formatted string
-				let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key)?;
+				let (public_key_bytes, _algorithm) = parse_public_key(&self.public_key_string)?;
 				let public_key = <$public_key_type>::try_from(public_key_bytes.as_slice())?;
 
 				public_key.verify_with_options(message, signature, options)
@@ -1620,16 +1675,16 @@ mod tests {
 			is_identifier: false,
 		},
 		TestPublicAccountData {
-			public_key: "03A79FEB218FF321F9EC29DC42E52074E658432F2F595EE770E74B8EE7E23EE4EE",
+			public_key: "02A343D16E4557B1F8DE83C399F8926F42CF905AFD39C140BD3E5EB848941C124A",
 			// cspell:disable-next-line
-			encoded_public_key: "keeta_ayb2ph7legh7gipz5qu5yqxfeb2omwcdf4xvsxxhodtuxdxh4i7oj3uyxwmldii",
+			encoded_public_key: "keeta_aybkgq6rnzcvpmpy32b4hgpysjxuft4qll6ttqkaxu7f5ocisqobesxrfuhyofi",
 			key_type: KeyPairType::ECDSASECP256R1,
 			is_identifier: false,
 		},
 		TestPublicAccountData {
-			public_key: "0F2115FA0C9A10680AEECB64AB2E0564AED1AF821A72BF987AABF87A1AD68251",
+			public_key: "C1DDA7698D58436DAB0D6DE9A482F1C3130498064793F1E26A8D09F88B555850",
 			// cspell:disable-next-line
-			encoded_public_key: "keeta_aehscfp2bsnba2ak53fwjkzoavsk5unpqinhfp4ypkv7q6q222bfcko6njrbw",
+			encoded_public_key: "keeta_aha53j3jrvmeg3nlbvw6tjec6hbrgbeyazdzh4pcnkgqt6elkvmfbuue55hz4",
 			key_type: KeyPairType::ED25519,
 			is_identifier: false,
 		},
@@ -1774,14 +1829,14 @@ mod tests {
 			"keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza",
 		),
 		ecdsa_secp256r1: (
-			"030F2115FA0C9A10680AEECB64AB2E0564AED1AF821A72BF987AABF87A1AD68251",
+			"02A343D16E4557B1F8DE83C399F8926F42CF905AFD39C140BD3E5EB848941C124A",
 			// cspell:disable-next-line
-			"keeta_ayb2ph7legh7gipz5qu5yqxfeb2omwcdf4xvsxxhodtuxdxh4i7oj3uyxwmldii",
+			"keeta_aybkgq6rnzcvpmpy32b4hgpysjxuft4qll6ttqkaxu7f5ocisqobesxrfuhyofi",
 		),
 		ed25519: (
-			"0F2115FA0C9A10680AEECB64AB2E0564AED1AF821A72BF987AABF87A1AD68251",
+			"C1DDA7698D58436DAB0D6DE9A482F1C3130498064793F1E26A8D09F88B555850",
 			// cspell:disable-next-line
-			"keeta_aehscfp2bsnba2ak53fwjkzoavsk5unpqinhfp4ypkv7q6q222bfcko6njrbw",
+			"keeta_aha53j3jrvmeg3nlbvw6tjec6hbrgbeyazdzh4pcnkgqt6elkvmfbuue55hz4",
 		),
 		token: (
 			"724E371B944A48E95B91EE059B7CB7110E5866CA707915C287C49CAB9B774AF1",
@@ -1963,7 +2018,10 @@ mod tests {
 					// Test passphrase -> seed conversion
 					let seed1 = Account::<$key_type>::compute_seed_from_passphrase(passphrase.clone()).unwrap();
 					let account1 = create_test_account::<$key_type>(Some(passphrase.clone().into()));
-					assert!(account1.keypair.public_key.starts_with($expected_prefix));
+					assert!(account1
+						.keypair
+						.public_key_string
+						.starts_with($expected_prefix));
 
 					// Test hex seed with different construction methods
 					let account2 = create_test_account::<$key_type>(Some(test_case.hex_seed.to_string().into()));
@@ -1976,8 +2034,8 @@ mod tests {
 					// Verify that the same passphrase produces the same seed
 					assert_eq!(seed1.expose_secret(), seed2.expose_secret());
 					// Verify deterministic behavior for different construction methods
-					assert_eq!(account2.keypair.public_key, account3.keypair.public_key);
-					assert_eq!(account2.keypair.public_key, account4.keypair.public_key);
+					assert_eq!(account2.keypair.public_key_string, account3.keypair.public_key_string);
+					assert_eq!(account2.keypair.public_key_string, account4.keypair.public_key_string);
 
 					// Verify against expected public key from test case
 					let expected_pubkey = match stringify!($key_type) {
@@ -1986,7 +2044,7 @@ mod tests {
 						"KeyECDSASECP256R1" => test_case.expected_secp256r1_pubkey,
 						_ => panic!("Unsupported key type for deterministic test"),
 					};
-					assert_eq!(account2.keypair.public_key, expected_pubkey);
+					assert_eq!(account2.keypair.public_key_string, expected_pubkey);
 				}
 			};
 		}
@@ -2003,7 +2061,7 @@ mod tests {
 		macro_rules! create_account_with_seed {
 			($key_type:ty, $seed:expr) => {{
 				let account = create_test_account::<$key_type>(Some($seed.clone().into()));
-				account.keypair.public_key.clone()
+				account.keypair.public_key_string.clone()
 			}};
 		}
 
@@ -2051,7 +2109,7 @@ mod tests {
 			($key_type:ty, $test_id:expr, $expected_prefix:expr, $key_pair_type:expr) => {
 				let key = <$key_type>::try_from(Keyable::Identifier($test_id.into())).unwrap();
 				assert_eq!(key.identifier, $test_id);
-				assert_eq!(key.public_key, format!("{}{}", $expected_prefix, $test_id));
+				assert_eq!(key.public_key_string, format!("{}{}", $expected_prefix, $test_id));
 				assert_eq!(key.to_keypair_type(), $key_pair_type);
 			};
 		}
@@ -2089,7 +2147,7 @@ mod tests {
 			macro_rules! test_crypto_derivation {
 				($key_type:ty, $expected_field:ident) => {
 					let account = create_test_account::<$key_type>(Some((seed_data, index as u32).into()));
-					assert_eq!(account.keypair.public_key, test_case.$expected_field);
+					assert_eq!(account.keypair.public_key_string, test_case.$expected_field);
 				};
 			}
 
@@ -2168,7 +2226,7 @@ mod tests {
 					// Test creating account from formatted public key string
 					let account = create_test_account::<$key_type>(Some(test_case.hex_seed.into()));
 					let account_from_pubkey =
-						create_test_account_from_pub_key_string::<$key_type>(&account.keypair.public_key);
+						create_test_account_from_pub_key_string::<$key_type>(&account.keypair.public_key_string);
 
 					// Verify public keys match
 					assert_eq!(account.keypair.public_key, account_from_pubkey.keypair.public_key);
@@ -2248,12 +2306,28 @@ mod tests {
 			}
 
 			// Test all wrong algorithm combinations
-			test_wrong_algorithm!(KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1, ed25519_account.keypair.public_key);
-			test_wrong_algorithm!(KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1, secp256r1_account.keypair.public_key);
-			test_wrong_algorithm!(KeyED25519, KeyPairType::ED25519, secp256k1_account.keypair.public_key);
-			test_wrong_algorithm!(KeyED25519, KeyPairType::ED25519, secp256r1_account.keypair.public_key);
-			test_wrong_algorithm!(KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1, secp256k1_account.keypair.public_key);
-			test_wrong_algorithm!(KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1, ed25519_account.keypair.public_key);
+			test_wrong_algorithm!(
+				KeyECDSASECP256K1,
+				KeyPairType::ECDSASECP256K1,
+				ed25519_account.keypair.public_key_string
+			);
+			test_wrong_algorithm!(
+				KeyECDSASECP256K1,
+				KeyPairType::ECDSASECP256K1,
+				secp256r1_account.keypair.public_key_string
+			);
+			test_wrong_algorithm!(KeyED25519, KeyPairType::ED25519, secp256k1_account.keypair.public_key_string);
+			test_wrong_algorithm!(KeyED25519, KeyPairType::ED25519, secp256r1_account.keypair.public_key_string);
+			test_wrong_algorithm!(
+				KeyECDSASECP256R1,
+				KeyPairType::ECDSASECP256R1,
+				secp256k1_account.keypair.public_key_string
+			);
+			test_wrong_algorithm!(
+				KeyECDSASECP256R1,
+				KeyPairType::ECDSASECP256R1,
+				ed25519_account.keypair.public_key_string
+			);
 		}
 	}
 
@@ -2299,7 +2373,10 @@ mod tests {
 				let token_account = Account::<KeyTOKEN>::try_from(result).unwrap();
 				assert_eq!(token_account.to_keypair_type(), KeyPairType::TOKEN);
 				assert!(!token_account.keypair.identifier.is_empty());
-				assert!(token_account.keypair.public_key.starts_with("token_"));
+				assert!(token_account
+					.keypair
+					.public_key_string
+					.starts_with("token_"));
 
 				crypto_account
 			}};
@@ -2356,7 +2433,10 @@ mod tests {
 		let network_account = create_test_network_account(12345);
 		assert_eq!(network_account.to_keypair_type(), KeyPairType::NETWORK);
 		assert!(!network_account.keypair.identifier.is_empty());
-		assert!(network_account.keypair.public_key.starts_with("network_"));
+		assert!(network_account
+			.keypair
+			.public_key_string
+			.starts_with("network_"));
 
 		// Test network -> token generation (should succeed)
 		let token_from_network = network_account.generate_identifier(KeyPairType::TOKEN, None, 0);
@@ -2585,9 +2665,9 @@ mod tests {
 		// cspell:disable-next-line
 		test_parse_pubkey!("keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza", KeyECDSASECP256K1);
 		// cspell:disable-next-line
-		test_parse_pubkey!("keeta_aehscfp2bsnba2ak53fwjkzoavsk5unpqinhfp4ypkv7q6q222bfcko6njrbw", KeyED25519);
+		test_parse_pubkey!("keeta_aha53j3jrvmeg3nlbvw6tjec6hbrgbeyazdzh4pcnkgqt6elkvmfbuue55hz4", KeyED25519);
 		// cspell:disable-next-line
-		test_parse_pubkey!("keeta_ayb2ph7legh7gipz5qu5yqxfeb2omwcdf4xvsxxhodtuxdxh4i7oj3uyxwmldii", KeyECDSASECP256R1);
+		test_parse_pubkey!("keeta_aybkgq6rnzcvpmpy32b4hgpysjxuft4qll6ttqkaxu7f5ocisqobesxrfuhyofi", KeyECDSASECP256R1);
 
 		// Test identifier accounts created from seeds also do not have private keys
 		let network_from_seed = create_test_account::<KeyNETWORK>(None);
@@ -2678,7 +2758,7 @@ mod tests {
 				let key = <$key_type>::try_from(Keyable::Identifier($identifier.to_string())).unwrap();
 				let account = Account::<$key_type>::try_from(Accountable::Key(key)).unwrap();
 				let pubkey = account.to_string();
-				let pubkey_to_string = account.keypair.to_public_key_string();
+				let pubkey_to_string = account.keypair.to_public_key_string().unwrap_or_default();
 				assert!(pubkey.starts_with($expected_prefix));
 				assert_eq!(pubkey, $expected_full);
 				assert_eq!(pubkey_to_string, pubkey);
@@ -2717,7 +2797,10 @@ mod tests {
 				KeyPairType::NETWORK => {
 					let network_account = create_test_network_account(12345);
 					let network_pubkey = network_account.to_string();
-					let network_pubkey_to_string = network_account.keypair.to_public_key_string();
+					let network_pubkey_to_string = network_account
+						.keypair
+						.to_public_key_string()
+						.unwrap_or_default();
 					assert!(network_pubkey.starts_with("network_"));
 					assert_eq!(network_pubkey, network_pubkey_to_string);
 				}
@@ -2862,7 +2945,7 @@ mod tests {
 
 				// Test successful conversion back to specific type
 				let converted_account: Account<$key_type> = generic_account.clone().try_into().unwrap();
-				assert_eq!(converted_account.keypair.public_key, original_account.keypair.public_key);
+				assert_eq!(converted_account.keypair.public_key_string, original_account.keypair.public_key_string);
 
 				// Test cloning behavior
 				let cloned = generic_account.clone();

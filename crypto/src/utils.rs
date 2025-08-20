@@ -13,16 +13,14 @@ use crate::{Algorithm, AnyPrivateKey, AnyPublicKey};
 
 // Helper functions for error creation
 // Note: These are necessary for test coverage
+#[inline]
 fn create_rng_error() -> CryptoError {
 	CryptoError::InternalError { message: "Failed to generate random number".to_string() }
 }
 
+#[inline]
 fn create_string_conversion_error() -> CryptoError {
 	CryptoError::InternalError { message: "Failed to convert word to string".to_string() }
-}
-
-fn create_seed_generation_error() -> CryptoError {
-	CryptoError::InternalError { message: "Failed to generate random seed".to_string() }
 }
 
 /// Derive a seed from a passphrase using PBKDF2 with SHA3-256.
@@ -75,14 +73,23 @@ pub fn generate_random_passphrase(
 
 /// Generates a random 32-byte seed using the OS RNG.
 /// Returns an error if the OS RNG fails.
+#[inline]
 pub fn generate_random_seed() -> Result<SecretBox<[u8; 32]>, CryptoError> {
-	let mut seed_buffer = [0u8; 32];
+	let random_bytes = generate_random_bytes::<32>()?;
+	Ok(SecretBox::new(Box::new(random_bytes)))
+}
+
+/// Generate random bytes of the specified length using the OS RNG.
+/// Returns an error if the OS RNG fails.
+#[inline]
+pub fn generate_random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
+	let mut bytes = [0u8; N];
 
 	rand_core::OsRng
-		.try_fill_bytes(&mut seed_buffer)
-		.map_err(|_| create_seed_generation_error())?;
+		.try_fill_bytes(&mut bytes)
+		.map_err(|_| CryptoError::InternalError { message: "Failed to generate random bytes".to_string() })?;
 
-	Ok(SecretBox::new(Box::new(seed_buffer)))
+	Ok(bytes)
 }
 
 /// Create a key pair for the specified algorithm
@@ -289,6 +296,24 @@ mod tests {
 	}
 
 	#[test]
+	fn test_generate_random_bytes() {
+		// Test 16-byte generation
+		let bytes16 = generate_random_bytes::<16>().unwrap();
+		assert_eq!(bytes16.len(), 16);
+		assert_ne!(bytes16, [0u8; 16]); // Should not be all zeros
+
+		// Test 32-byte generation
+		let bytes32 = generate_random_bytes::<32>().unwrap();
+		assert_eq!(bytes32.len(), 32);
+		assert_ne!(bytes32, [0u8; 32]); // Should not be all zeros
+
+		// Test that multiple calls produce different results
+		let bytes1 = generate_random_bytes::<16>().unwrap();
+		let bytes2 = generate_random_bytes::<16>().unwrap();
+		assert_ne!(bytes1, bytes2); // Should be different
+	}
+
+	#[test]
 	fn test_create_keypair_from_seed() {
 		let seed = b"test seed for keypair creation!!!!!";
 
@@ -311,7 +336,6 @@ mod tests {
 	fn test_error_creation_functions() {
 		// Test that error creation functions work correctly and return InternalError variants
 		assert!(matches!(create_rng_error(), CryptoError::InternalError { .. }));
-		assert!(matches!(create_seed_generation_error(), CryptoError::InternalError { .. }));
 		assert!(matches!(create_string_conversion_error(), CryptoError::InternalError { .. }));
 	}
 

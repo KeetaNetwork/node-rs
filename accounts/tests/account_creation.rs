@@ -179,7 +179,11 @@ fn test_cross_platform_account_compatibility() {
 	// Macro to test public key parsing
 	macro_rules! test_public_key_parsing {
 		($encoded_key:expr, $account_type:ty) => {
-			assert!($encoded_key.parse::<Account<$account_type>>().is_ok(), "Failed to parse public key");
+			assert!(
+				$encoded_key.parse::<Account<$account_type>>().is_ok(),
+				"Failed to parse public key for type: {}",
+				stringify!($account_type)
+			);
 		};
 	}
 

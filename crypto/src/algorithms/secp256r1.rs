@@ -236,7 +236,7 @@ impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 ///
 /// Public keys can be safely displayed, serialized, and shared as they contain
 /// no secret information.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Secp256r1PublicKey {
 	inner: p256::PublicKey,
 }
@@ -255,9 +255,7 @@ impl PublicKey for Secp256r1PublicKey {
 
 impl From<Secp256r1PublicKey> for Vec<u8> {
 	fn from(key: Secp256r1PublicKey) -> Self {
-		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
-		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner.to_encoded_point(true).as_bytes().to_vec()
+		(&key).into()
 	}
 }
 

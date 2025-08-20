@@ -3,7 +3,6 @@
 //! This module provides ECIES encryption.
 
 use hmac::{Hmac, Mac};
-use rand_core::{OsRng, TryRngCore};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
@@ -16,6 +15,7 @@ use crate::algorithms::PublicKey;
 use crate::error::CryptoError;
 use crate::hash::HashAlgorithm;
 use crate::operations::encryption::{KeyExchange, KeyGeneration, SymmetricEncryption};
+use crate::utils::generate_random_bytes;
 use crate::PrivateKey;
 
 /// Algorithm identifier for ECIES with secp256k1
@@ -234,14 +234,7 @@ impl Ecies for EciesX25519 {
 	/// Format: iv (16 bytes) + ephemeral_public_key (32 bytes) + mac (32 bytes) + ciphertext
 	fn encrypt<T: AsRef<[u8]>>(recipient_public_key: &X25519PublicKey, plaintext: T) -> Result<Vec<u8>, CryptoError> {
 		// Generate ephemeral key pair
-		let ephemeral_private_bytes = {
-			let mut bytes = [0u8; 32];
-
-			OsRng
-				.try_fill_bytes(&mut bytes)
-				.map_err(|_| CryptoError::EncryptionFailed)?;
-			bytes
-		};
+		let ephemeral_private_bytes = generate_random_bytes::<32>()?;
 
 		// Create X25519 private key from random bytes
 		let ephemeral_private = X25519PrivateKey::try_from(ephemeral_private_bytes.as_slice())?;
@@ -256,14 +249,7 @@ impl Ecies for EciesX25519 {
 		let mac_key = &sha512_hash[32..]; // Remaining bytes
 
 		// Generate IV for AES-CBC (16 bytes)
-		let iv = {
-			use rand_core::{OsRng, TryRngCore};
-			let mut bytes = [0u8; 16];
-			OsRng
-				.try_fill_bytes(&mut bytes)
-				.map_err(|_| CryptoError::EncryptionFailed)?;
-			bytes
-		};
+		let iv = generate_random_bytes::<16>()?;
 
 		// Encrypt with AES-CBC
 		let cipher = Aes256Cbc;
@@ -383,14 +369,7 @@ impl Ecies for EciesSecp256r1 {
 		let (encryption_key, mac_key) = Self::derive_keys(&ephemeral_public_uncompressed, shared_secret_x)?;
 
 		// Generate IV for AES-256-CBC (16 bytes)
-		let iv = {
-			use rand_core::{OsRng, TryRngCore};
-			let mut bytes = [0u8; 16];
-			OsRng
-				.try_fill_bytes(&mut bytes)
-				.map_err(|_| CryptoError::EncryptionFailed)?;
-			bytes
-		};
+		let iv = generate_random_bytes::<16>()?;
 
 		// Encrypt with AES-256-CBC
 		let cipher = Aes256Cbc;
@@ -440,13 +419,10 @@ impl Ecies for EciesSecp256r1 {
 
 		// Parse ephemeral public key
 		let ephemeral_public = Secp256r1PublicKey::try_from(ephemeral_public_bytes)?;
-
 		// Perform ECDH to get shared secret
 		let shared_secret = recipient_private_key.ecdh(&ephemeral_public)?;
-
 		// Extract shared secret X coordinate (the full 32 bytes)
 		let shared_secret_x = &shared_secret;
-
 		// Derive keys using TypeScript-compatible KDF
 		let (encryption_key, mac_key) = Self::derive_keys(ephemeral_public_bytes, shared_secret_x)?;
 
@@ -469,8 +445,8 @@ impl Ecies for EciesSecp256r1 {
 		let mut iv_and_ciphertext = Vec::with_capacity(16 + encrypted_data.len());
 		iv_and_ciphertext.extend_from_slice(iv);
 		iv_and_ciphertext.extend_from_slice(encrypted_data);
-		let plaintext = SymmetricEncryption::decrypt(&cipher, encryption_key, &iv_and_ciphertext)?;
 
+		let plaintext = SymmetricEncryption::decrypt(&cipher, encryption_key, &iv_and_ciphertext)?;
 		Ok(plaintext)
 	}
 

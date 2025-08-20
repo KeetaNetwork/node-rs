@@ -27,11 +27,6 @@ pub use crate::{AnyPrivateKey, AnyPublicKey};
 // Error handling
 pub use crate::error::CryptoError;
 
-// Utility functions
-pub use crate::utils::{
-	create_keypair_from_seed, generate_random_passphrase, generate_random_seed, seed_from_passphrase,
-};
-
 // Hash functions
 // Hash functions and KDF
 // Hash functions and KDF

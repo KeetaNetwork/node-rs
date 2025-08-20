@@ -101,6 +101,7 @@ mod tests {
 	use secrecy::{ExposeSecret, SecretBox};
 
 	use super::*;
+	use crypto::utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
 
 	#[test]
 	fn test_combine_seed_and_index() {
@@ -162,29 +163,23 @@ mod tests {
 	}
 
 	#[test]
-	fn test_format_and_parse_secp256k1() {
-		// 33-byte compressed secp256k1 public key
-		let pubkey = vec![0x02; 33];
+	fn test_format_and_parse_algorithms() {
+		let test_cases = [
+			(Algorithm::Secp256k1, vec![0x02; 33], 33),
+			(Algorithm::Ed25519, vec![0x03; 32], 32),
+			(Algorithm::Secp256r1, vec![0x03; 33], 33),
+		];
 
-		let formatted = format_public_key(&pubkey, Algorithm::Secp256k1).unwrap();
-		assert!(formatted.starts_with("keeta_"));
+		for (algorithm, pubkey, expected_size) in test_cases {
+			assert_eq!(pubkey.len(), expected_size);
 
-		let (parsed_pubkey, algorithm) = parse_public_key(&formatted).unwrap();
-		assert_eq!(pubkey, parsed_pubkey);
-		assert_eq!(algorithm, Algorithm::Secp256k1);
-	}
+			let formatted = format_public_key(&pubkey, algorithm).unwrap();
+			assert!(formatted.starts_with("keeta_"));
 
-	#[test]
-	fn test_format_and_parse_ed25519() {
-		// 32-byte ed25519 public key
-		let pubkey = vec![0x03; 32];
-
-		let formatted = format_public_key(&pubkey, Algorithm::Ed25519).unwrap();
-		assert!(formatted.starts_with("keeta_"));
-
-		let (parsed_pubkey, algorithm) = parse_public_key(&formatted).unwrap();
-		assert_eq!(pubkey, parsed_pubkey);
-		assert_eq!(algorithm, Algorithm::Ed25519);
+			let (parsed_pubkey, parsed_algorithm) = parse_public_key(&formatted).unwrap();
+			assert_eq!(pubkey, parsed_pubkey);
+			assert_eq!(algorithm, parsed_algorithm);
+		}
 	}
 
 	#[test]

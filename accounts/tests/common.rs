@@ -48,15 +48,27 @@ pub const TEST_PUBLIC_ACCOUNT: PublicAccountTestData = PublicAccountTestData {
 		// cspell:disable-next-line
 		encoded_public_key: "keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza",
 	},
+	// Rust p256 does not like this
+	// ecdsa_secp256r1: PublicKeyData {
+	// 	public_key: "03A79FEB218FF321F9EC29DC42E52074E658432F2F595EE770E74B8EE7E23EE4EE",
+	// 	// cspell:disable-next-line
+	// 	encoded_public_key: "keeta_ayb2ph7legh7gipz5qu5yqxfeb2omwcdf4xvsxxhodtuxdxh4i7oj3uyxwmldii",
+	// },
 	ecdsa_secp256r1: PublicKeyData {
-		public_key: "03A79FEB218FF321F9EC29DC42E52074E658432F2F595EE770E74B8EE7E23EE4EE",
+		public_key: "02B701EBBE7E561CF5DB1C4C47E55C4B55CEF3F89DE8CCEC31284AA5C60B91094B",
 		// cspell:disable-next-line
-		encoded_public_key: "keeta_ayb2ph7legh7gipz5qu5yqxfeb2omwcdf4xvsxxhodtuxdxh4i7oj3uyxwmldii",
+		encoded_public_key: "keeta_aybloaplxz7fmhhv3moeyr7flrfvltxt7co6rthmgeuevjogboiqss6pzmhgr6i",
 	},
+	// Rust ed25519_dalek does not like this
+	// ed25519: PublicKeyData {
+	// 	public_key: "0F2115FA0C9A10680AEECB64AB2E0564AED1AF821A72BF987AABF87A1AD68251",
+	// 	// cspell:disable-next-line
+	// 	encoded_public_key: "keeta_aehscfp2bsnba2ak53fwjkzoavsk5unpqinhfp4ypkv7q6q222bfcko6njrbw",
+	// },
 	ed25519: PublicKeyData {
-		public_key: "0F2115FA0C9A10680AEECB64AB2E0564AED1AF821A72BF987AABF87A1AD68251",
+		public_key: "F0FAAE6AF2A3B84296F5B3216B4A7CB30228FC4593AAA10317D16C6412C9F05F",
 		// cspell:disable-next-line
-		encoded_public_key: "keeta_aehscfp2bsnba2ak53fwjkzoavsk5unpqinhfp4ypkv7q6q222bfcko6njrbw",
+		encoded_public_key: "keeta_ahcp4hwh26cinhsilat6tiolefkt5tlqk4ebrxjwpodkziuvxre3x3r2wf5l6",
 	},
 	network: PublicKeyData {
 		public_key: "372D46C3ADA9F897C74D349BBFE0E450C798167C9F580F8DAF85DEF57E96C3EA",

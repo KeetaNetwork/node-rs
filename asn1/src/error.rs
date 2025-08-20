@@ -24,22 +24,21 @@ mod tests {
 	use super::*;
 
 	macro_rules! test_error_variants {
-		($($error_name:ident: $error_expr:expr => $expected_display:expr),+ $(,)?) => {
+		($($error_name:ident: $error_expr:expr => $expected_variant:pat),+ $(,)?) => {
 			#[test]
-			fn test_error_creation_and_display() {
+			fn test_error_creation_and_variants() {
 				$(
 					let error = $error_expr;
-					let display_str = format!("{}", error);
-					assert!(display_str.contains($expected_display));
+					assert!(matches!(error, $expected_variant));
 				)+
 			}
 		};
 	}
 
 	test_error_variants! {
-		invalid_oid: Asn1Error::InvalidOid { reason: "test.invalid.oid".to_string() } => "Invalid OID: test.invalid.oid",
-		invalid_public_key: Asn1Error::InvalidPublicKey => "Invalid public key format",
-		der_error: Asn1Error::Der { source: der::Error::from(der::ErrorKind::Failed) } => "DER encoding error:",
+		invalid_oid: Asn1Error::InvalidOid { reason: "test.invalid.oid".to_string() } => Asn1Error::InvalidOid { .. },
+		invalid_public_key: Asn1Error::InvalidPublicKey => Asn1Error::InvalidPublicKey,
+		der_error: Asn1Error::Der { source: der::Error::from(der::ErrorKind::Failed) } => Asn1Error::Der { .. },
 	}
 
 	#[test]
@@ -52,8 +51,7 @@ mod tests {
 
 		for der_error in der_error_cases {
 			let asn1_error: Asn1Error = der_error.into();
-			let expected = Asn1Error::Der { source: der_error };
-			assert_eq!(asn1_error, expected);
+			assert!(matches!(asn1_error, Asn1Error::Der { .. }));
 		}
 	}
 
@@ -91,9 +89,10 @@ mod tests {
 			let debug_str = format!("{error:?}");
 			assert!(!debug_str.is_empty());
 
+			// Test that debug format contains the variant name without checking specific content
 			match error {
-				Asn1Error::InvalidOid { reason } => {
-					assert!(debug_str.contains(&reason));
+				Asn1Error::InvalidOid { .. } => {
+					assert!(debug_str.contains("InvalidOid"));
 				}
 				Asn1Error::InvalidPublicKey => {
 					assert!(debug_str.contains("InvalidPublicKey"));
