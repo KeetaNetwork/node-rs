@@ -207,39 +207,6 @@ impl Ed25519PublicKey {
 	pub fn to_x25519(&self) -> Result<X25519PublicKey, CryptoError> {
 		ed25519_to_x25519_public(self)
 	}
-
-	pub fn nist_verify(bytes: [u8; 32]) -> bool {
-		// MUST ensure `bytes.len() == 32` before calling.
-		const fn x_is_neg(bytes: &[u8]) -> bool {
-			bytes[31] > 127
-		}
-		// MUST ensure `bytes.len() == 32` before calling.
-		// MUST ensure `x_is_neg(bytes)` returns `false` as well since we assume the sign bit is not set.
-		fn y_is_one(bytes: &[u8]) -> bool {
-			const fn is_zero(byte: &u8) -> bool {
-				*byte == 0
-			}
-			bytes[0] == 1 && bytes[1..].iter().all(is_zero)
-		}
-		// MUST ensure `bytes.len() == 32` before calling.
-		// MUST ensure `x_is_neg(bytes)` returns `false` as well since we assume the sign bit is not set.
-		fn y_is_too_great(bytes: &[u8]) -> bool {
-			const fn is_255(byte: &u8) -> bool {
-				*byte == 255
-			}
-			bytes[0] > 236 && bytes[31] == 127 && bytes[1..31].iter().all(is_255)
-		}
-		let slice = bytes.as_slice();
-		// Ensures x > -1, (x, y) ≠ (0, 1), and y ∈ [0, 2^255 - 20].
-		!(x_is_neg(slice) || y_is_one(slice) || y_is_too_great(slice))
-			&& CompressedEdwardsY(bytes)
-				// Ensures the point is on the curve.
-				.decompress()
-				.is_some_and(|point| {
-					// Ensures the point belongs to the prime order subgroup.
-					point.is_torsion_free()
-				})
-	}
 }
 
 impl CryptoAlgorithm for Ed25519PublicKey {
