@@ -7,14 +7,17 @@ use der::asn1::ObjectIdentifier;
 use der::asn1::{Any, SetOfVec};
 use der::Sequence;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
+pub mod builder;
 pub mod certificates;
 pub mod error;
 pub mod oids;
 pub mod time;
 pub mod utils;
+
+#[cfg(feature = "serde")]
+pub mod serde;
+#[cfg(test)]
+pub mod testing;
 
 /// Relative Distinguished Name (SET OF AttributeTypeAndValue)
 /// This represents a single RDN component in an X.509 Distinguished Name
@@ -61,14 +64,6 @@ impl der::ValueOrd for AttributeTypeAndValue {
 			other => Ok(other),
 		}
 	}
-}
-
-/// Name-value pair for Distinguished Names
-#[cfg(feature = "serde")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NameValuePair {
-	pub name: String,
-	pub value: String,
 }
 
 #[cfg(test)]
@@ -247,25 +242,5 @@ mod tests {
 		assert_eq!(multi_dn.len(), 2);
 		assert_eq!(*multi_dn[0].get(0).unwrap(), attr1);
 		assert_eq!(*multi_dn[1].get(0).unwrap(), attr2);
-	}
-
-	#[cfg(feature = "serde")]
-	#[test]
-	fn test_name_value_pair_serde() {
-		let name = "commonName".to_string();
-		let value = "Test Certificate".to_string();
-
-		let pair = NameValuePair { name, value };
-		assert_eq!(pair.name, "commonName");
-		assert_eq!(pair.value, "Test Certificate");
-
-		let cloned = pair.clone();
-		assert_eq!(pair.name, cloned.name);
-		assert_eq!(pair.value, cloned.value);
-
-		let debug_str = format!("{pair:?}");
-		assert!(debug_str.contains("NameValuePair"));
-		assert!(debug_str.contains("commonName"));
-		assert!(debug_str.contains("Test Certificate"));
 	}
 }

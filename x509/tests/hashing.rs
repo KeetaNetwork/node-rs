@@ -82,11 +82,16 @@ fn test_hash_json_serialization() {
 		intermediate: HashSet::new(),
 	};
 
-	let ca_json = ca_bundle.to_json(true).unwrap();
-	let user_json = user_bundle.to_json(true).unwrap();
-	assert!(!ca_json.hash_field.is_empty());
-	assert_eq!(ca_json.hash_field, ca_hash_hex);
-	assert!(!user_json.hash_field.is_empty());
-	assert_eq!(user_json.hash_field, user_hash_hex);
-	assert_ne!(ca_json.hash_field, user_json.hash_field);
+	// Serialize to JSON and verify hash consistency
+	let ca_json = serde_json::to_value(&ca_bundle).unwrap();
+	let user_json = serde_json::to_value(&user_bundle).unwrap();
+
+	// Extract hash fields from JSON
+	let ca_hash_field = ca_json["certificate"]["hash"].as_str().unwrap();
+	let user_hash_field = user_json["certificate"]["hash"].as_str().unwrap();
+	assert!(!ca_hash_field.is_empty());
+	assert_eq!(ca_hash_field, ca_hash_hex);
+	assert!(!user_hash_field.is_empty());
+	assert_eq!(user_hash_field, user_hash_hex);
+	assert_ne!(ca_hash_field, user_hash_field);
 }

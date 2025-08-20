@@ -12,7 +12,7 @@ use crate::{AttributeTypeAndValue, DistinguishedName};
 #[cfg(feature = "serde")]
 use crate::oids;
 #[cfg(feature = "serde")]
-use crate::NameValuePair;
+use crate::serde::NameValuePair;
 
 /// Create a Distinguished Name from name-value pairs.
 ///
@@ -137,7 +137,7 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 /// # #[cfg(feature = "serde")]
 /// # {
 /// use x509::utils::name_value_pairs_to_dn;
-/// use x509::NameValuePair;
+/// use x509::serde::NameValuePair;
 ///
 /// let pairs = vec![
 ///     NameValuePair { name: "commonName".to_string(), value: "example.com".to_string() },

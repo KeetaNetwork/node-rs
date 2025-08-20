@@ -25,11 +25,13 @@ fn test_json_serialization() {
 	};
 
 	// Test that JSON contains hash field
-	let json_struct = bundle.to_json(true).unwrap();
-	let json_string = serde_json::to_string(&json_struct).unwrap();
-	assert!(json_string.contains("\"$hash\""));
-	assert!(!json_struct.hash_field.is_empty());
-	assert!(json_struct.chain_field.is_none());
+	let json_value = serde_json::to_value(&bundle).unwrap();
+	let json_string = serde_json::to_string(&json_value).unwrap();
+	assert!(json_string.contains("\"hash\""));
+
+	// Verify the certificate hash is present in the serialized JSON
+	let cert_hash = json_value["certificate"]["hash"].as_str().unwrap();
+	assert!(!cert_hash.is_empty());
 }
 
 #[test]
@@ -117,11 +119,14 @@ fn test_json_hash_consistency() {
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
 
-	let ca_json = ca_cert.to_json(true).unwrap();
-	let user_json = user_cert.to_json(true).unwrap();
-	assert_eq!(ca_json.hash_field, ca_hash_hex);
-	assert_eq!(user_json.hash_field, user_hash_hex);
-	assert_ne!(ca_json.hash_field, user_json.hash_field);
+	let ca_json = serde_json::to_value(&ca_cert).unwrap();
+	let user_json = serde_json::to_value(&user_cert).unwrap();
+
+	let ca_hash_field = ca_json["hash"].as_str().unwrap();
+	let user_hash_field = user_json["hash"].as_str().unwrap();
+	assert_eq!(ca_hash_field, ca_hash_hex);
+	assert_eq!(user_hash_field, user_hash_hex);
+	assert_ne!(ca_hash_field, user_hash_field);
 }
 
 #[test]
