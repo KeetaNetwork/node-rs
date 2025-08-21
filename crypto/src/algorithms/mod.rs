@@ -124,12 +124,37 @@ macro_rules! impl_any_public_key {
 		$(($variant:ident, $key_type:ty, $algorithm:expr)),* $(,)?
 	) => {
 		/// Enum to hold different key types
-		#[derive(Debug, Clone)]
+		#[derive(Clone, Debug, Eq, PartialEq)]
 		pub enum $any_key_type {
 			$(
 				$variant($key_type),
 			)*
 		}
+
+		// From implementations for AnyPublicKey
+		$(
+			impl From<$key_type> for $any_key_type {
+				fn from(key: $key_type) -> Self {
+					$any_key_type::$variant(key)
+				}
+			}
+		)*
+
+		// TryFrom implementations from AnyPublicKey to specific types
+		$(
+			impl TryFrom<$any_key_type> for $key_type {
+				type Error = CryptoError;
+
+				fn try_from(key: $any_key_type) -> Result<Self, Self::Error> {
+					match key {
+						$any_key_type::$variant(key) => Ok(key),
+						_ => Err(CryptoError::UnsupportedAlgorithm {
+							algorithm: format!("Expected {}, found {:?}", stringify!($variant), key.get_algorithm()),
+						}),
+					}
+				}
+			}
+		)*
 	};
 }
 
@@ -209,18 +234,25 @@ impl CryptoAlgorithm for AnySignature {
 
 #[cfg(feature = "der")]
 macro_rules! impl_subject_public_key_info {
-	($(($variant:ident, $oid:expr, $params_oid:expr)),* $(,)?) => {
+	($(($variant:ident, $public_key_type:ty, $oid:expr, $params_oid:expr)),* $(,)?) => {
+		$(
+			impl From<$public_key_type> for SubjectPublicKeyInfo {
+				fn from(public_key: $public_key_type) -> Self {
+					let algorithm = ObjectIdentifier::new($oid).unwrap();
+					let parameters = $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).unwrap()));
+					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
+					let public_key_bytes = public_key.to_uncompressed_bytes();
+
+					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).unwrap()
+				}
+			}
+		)*
+
 		impl From<AnyPublicKey> for SubjectPublicKeyInfo {
 			fn from(key: AnyPublicKey) -> Self {
 				match key {
 					$(
-						AnyPublicKey::$variant(public_key) => {
-							let algorithm = ObjectIdentifier::new($oid).unwrap();
-							let parameters = $params_oid.map(|oid| Any::from(ObjectIdentifier::new(oid).unwrap()));
-							let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
-
-							SubjectPublicKeyInfo::new(algorithm_id, &Vec::<u8>::from(public_key)).unwrap()
-						}
+						AnyPublicKey::$variant(public_key) => SubjectPublicKeyInfo::from(public_key),
 					)*
 				}
 			}
@@ -230,9 +262,9 @@ macro_rules! impl_subject_public_key_info {
 
 #[cfg(feature = "der")]
 impl_subject_public_key_info!(
-	(Secp256k1, oids::EC_PUBLIC_KEY, Some(oids::SECP256K1)),
-	(Ed25519, oids::ED25519, None),
-	(Secp256r1, oids::EC_PUBLIC_KEY, Some(oids::SECP256R1)),
+	(Secp256k1, Secp256k1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256K1)),
+	(Ed25519, Ed25519PublicKey, oids::ED25519, None),
+	(Secp256r1, Secp256r1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256R1)),
 );
 
 /// Trait for key derivation algorithms
@@ -440,6 +472,40 @@ mod tests {
 			assert!(!any_pub_bytes.is_empty());
 			// Test algorithm detection
 			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
+		}
+	}
+
+	#[test]
+	fn test_any_public_key_conversions() {
+		macro_rules! test_conversion {
+			($test_case:expr, $key_type:ty) => {{
+				// Create keys using existing test data
+				// Test From conversion (specific -> Any)
+				let any_key = $test_case.create_any_public_key(TEST_SEED.as_bytes());
+				assert_eq!(any_key.get_algorithm(), $test_case.algorithm);
+
+				// Test round-trip conversion (Any -> specific -> Any)
+				let converted_specific: $key_type = any_key.clone().try_into().unwrap();
+				let converted_back: AnyPublicKey = converted_specific.into();
+				assert_eq!(converted_back, any_key);
+
+				// Test wrong type conversions fail
+				for other_case in AlgorithmTestData::TEST_CASES {
+					if other_case.algorithm != $test_case.algorithm {
+						let other_key = other_case.create_any_public_key(TEST_SEED.as_bytes());
+						let wrong_conversion: Result<$key_type, _> = other_key.try_into();
+						assert!(wrong_conversion.is_err());
+					}
+				}
+			}};
+		}
+
+		for test_case in AlgorithmTestData::TEST_CASES {
+			match test_case.algorithm {
+				Algorithm::Secp256k1 => test_conversion!(test_case, Secp256k1PublicKey),
+				Algorithm::Ed25519 => test_conversion!(test_case, Ed25519PublicKey),
+				Algorithm::Secp256r1 => test_conversion!(test_case, Secp256r1PublicKey),
+			}
 		}
 	}
 

@@ -178,7 +178,6 @@ impl Keypair for Secp256r1PrivateKey {
 
 	fn verifying_key(&self) -> Self::VerifyingKey {
 		let signing_key = SigningKey::from(&self.inner);
-
 		let verifying_key = signing_key.verifying_key();
 		Secp256r1PublicKey { inner: verifying_key.into() }
 	}

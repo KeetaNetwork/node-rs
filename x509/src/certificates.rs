@@ -48,14 +48,41 @@ pub struct BasicConstraints {
 	pub path_len_constraint: Option<u32>,
 }
 
-/// Certificate extension according to RFC 5280 Section 4.2.
-/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2>
+/// X.509 certificate extension following RFC 5280 standards.
 ///
+/// Extensions provide additional information and constraints for X.509
+/// certificates beyond the basic certificate fields. Each extension is
+/// identified by an Object Identifier (OID) and can be marked as critical
+/// or non-critical.
+///
+/// # Critical vs Non-Critical Extensions
+///
+/// - **Critical extensions** must be processed by all certificate-using applications.
+/// - **Non-critical extensions** may be ignored by applications that don't recognize them.
+///
+/// # ASN.1 Structure
+///
+/// ```text
 /// Extension ::= SEQUENCE {
 ///     extnID                  OBJECT IDENTIFIER,
 ///     critical                BOOLEAN DEFAULT FALSE,
 ///     extnValue               OCTET STRING
 /// }
+/// ```
+///
+/// The `extnValue` field contains the DER-encoded extension-specific data.
+///
+/// # Extension creation
+///
+/// Extensions are typically created using the [`ExtensionBuilder`]:
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` and can be safely shared across threads.
+///
+/// # References
+///
+/// - [RFC 5280 Section 4.2 - Certificate Extensions](https://datatracker.ietf.org/doc/html/rfc5280#section-4.2)
 #[derive(Debug, Clone, PartialEq, Eq, Sequence)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Extension {
@@ -74,7 +101,33 @@ pub struct Extension {
 	pub value: OctetString,
 }
 
-/// Base extensions commonly found in certificates.
+/// Common X.509 certificate extensions following RFC 5280 standards.
+///
+/// BaseExtensions provides a convenient way to access the most commonly used
+/// X.509 certificate extensions. These extensions are typically found in most
+/// certificates and provide essential information about certificate constraints
+/// and identifiers.
+///
+/// # Extension Parsing
+///
+/// BaseExtensions are typically extracted from a certificate using the
+/// [`parse_base_extensions()`] method.
+///
+/// The extension values are automatically parsed from their DER-encoded form:
+///
+/// - Basic Constraints are parsed into a [`BasicConstraints`] struct
+/// - Key identifiers are parsed as hex-encoded strings for easy display
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` and can be safely shared across threads.
+///
+/// # References
+///
+/// - [RFC 5280 Section 4.2 - Standard Extensions](https://datatracker.ietf.org/doc/html/rfc5280#section-4.2)
+/// - [RFC 5280 Section 4.2.1.9 - Basic Constraints](https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9)
+/// - [RFC 5280 Section 4.2.1.2 - Subject Key Identifier](https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2)
+/// - [RFC 5280 Section 4.2.1.1 - Authority Key Identifier](https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1)
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BaseExtensions {
@@ -99,29 +152,93 @@ impl Extension {
 	}
 }
 
-/// Certificate validity period according to RFC 5280 Section 4.1.2.5.
-/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5>
+/// Certificate validity period following RFC 5280 standards.
+///
+/// The Validity structure defines the time period during which a certificate
+/// is considered valid. It consists of two timestamps: `not_before` (when the
+/// certificate becomes valid) and `not_after` (when the certificate expires).
+///
+/// # Time Representation
+///
+/// Both timestamps use the ASN.1 Time type, which can represent dates as either:
+/// - **UTCTime** - For dates between 1950-2049
+/// - **GeneralizedTime** - For dates outside the UTC range
+///
+/// Times are always expressed in UTC (Coordinated Universal Time).
+///
+/// # Validation Rules
+///
+/// A certificate is considered valid at a given time `t` if:
+/// ```text
+/// not_before <= t <= not_after
+/// ```
+///
+/// # References
+///
+/// - [RFC 5280 Section 4.1.2.5 - Validity](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5)
+/// - [ASN.1 Time Types](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5.1)
 #[derive(Debug, Clone, PartialEq, Eq, Sequence)]
 pub struct Validity {
 	pub not_before: Time,
 	pub not_after: Time,
 }
 
-/// TBS Certificate structure according to RFC 5280 Section 4.1.2.
-/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2>
+/// "To Be Signed" certificate data structure following RFC 5280 standards.
 ///
-/// TBSCertificate  ::=  SEQUENCE  {
-///     version         \[0\]  EXPLICIT Version DEFAULT v1,
+/// TbsCertificate contains all the actual certificate data that gets digitally
+/// signed by the issuer. This includes the subject identity, public key,
+/// validity period, extensions, and other certificate metadata. The entire
+/// TbsCertificate structure is what gets hashed and signed to create the
+/// certificate's signature.
+///
+/// # Structure Overview
+///
+/// The TBS certificate contains these key components:
+///
+/// - **Version** - X.509 certificate version (v1=0, v2=1, v3=2)
+/// - **Serial Number** - Unique identifier assigned by the issuer
+/// - **Signature Algorithm** - Algorithm used for signing (must match outer certificate)
+/// - **Issuer** - Distinguished name of the certificate authority
+/// - **Validity** - Certificate validity period (not_before, not_after)
+/// - **Subject** - Distinguished name of the certificate holder
+/// - **Subject Public Key Info** - The subject's public key and algorithm
+/// - **Extensions** - Additional certificate constraints and information (v3 only)
+///
+/// # Certificate Versions
+///
+/// - **v1 (value 0)** - Basic certificate with required fields only
+/// - **v2 (value 1)** - Adds issuer and subject unique identifiers
+/// - **v3 (value 2)** - Adds extensions support (most common)
+///
+/// # ASN.1 Definition
+///
+/// ```text
+/// TBSCertificate ::= SEQUENCE {
+///     version         [0]  EXPLICIT Version DEFAULT v1,
 ///     serialNumber         CertificateSerialNumber,
 ///     signature            AlgorithmIdentifier,
 ///     issuer               Name,
 ///     validity             Validity,
 ///     subject              Name,
 ///     subjectPublicKeyInfo SubjectPublicKeyInfo,
-///     issuerUniqueID  \[1\]  IMPLICIT UniqueIdentifier OPTIONAL,
-///     subjectUniqueID \[2\]  IMPLICIT UniqueIdentifier OPTIONAL,
-///     extensions      \[3\]  EXPLICIT Extensions OPTIONAL
+///     issuerUniqueID  [1]  IMPLICIT UniqueIdentifier OPTIONAL,
+///     subjectUniqueID [2]  IMPLICIT UniqueIdentifier OPTIONAL,
+///     extensions      [3]  EXPLICIT Extensions OPTIONAL
 /// }
+/// ```
+///
+/// # TBS certificate creation
+///
+/// TBS certificates are typically created through the [`CertificateBuilder`]:
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` and can be safely shared across threads.
+///
+/// # References
+///
+/// - [RFC 5280 Section 4.1.2 - TBSCertificate](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2)
+/// - [X.509 Certificate Versions](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.1)
 #[derive(Debug, Clone, PartialEq, Eq, Sequence)]
 pub struct TbsCertificate {
 	#[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
@@ -140,7 +257,74 @@ pub struct TbsCertificate {
 	pub extensions: Option<Vec<Extension>>,
 }
 
-/// Options for certificate construction.
+/// Configuration options for certificate validation and processing.
+///
+/// CertificateOptions allows customization of how certificates are validated
+/// and processed. These options control validation timing, trust overrides,
+/// and other behavioral aspects of certificate handling.
+///
+/// # Validation Time
+///
+/// The `moment` field specifies the time at which certificate validation
+/// should be performed. This is crucial because certificates have validity
+/// periods and may be valid at one time but not another.
+///
+/// # Trust Overrides
+///
+/// The `is_trusted_root` field allows manual override of root certificate
+/// trust decisions, useful for testing or special trust scenarios.
+///
+/// # Examples
+///
+/// Basic validation at current time:
+///
+/// ```rust
+/// use x509::certificates::CertificateOptions;
+/// use chrono::Utc;
+///
+/// let options = CertificateOptions {
+///     moment: Some(Utc::now()),
+///     is_trusted_root: None,
+/// };
+/// ```
+///
+/// Validation at specific historical time:
+///
+/// ```rust
+/// use x509::certificates::CertificateOptions;
+/// use chrono::{Utc, DateTime};
+///
+/// // Validate as if it were 30 days ago
+/// let thirty_days_ago = Utc::now() - chrono::Duration::days(30);
+/// let options = CertificateOptions {
+///     moment: Some(thirty_days_ago),
+///     is_trusted_root: None,
+/// };
+/// ```
+///
+/// Trust override for testing:
+///
+/// ```rust
+/// use x509::certificates::CertificateOptions;
+///
+/// // Force trust a certificate (useful for testing)
+/// let test_options = CertificateOptions {
+///     moment: None, // Use current time
+///     is_trusted_root: Some(true),
+/// };
+/// ```
+///
+/// # Default Behavior
+///
+/// ```rust
+/// use x509::certificates::CertificateOptions;
+/// use chrono::Utc;
+///
+/// // Default uses current time and no trust overrides
+/// let default_options = CertificateOptions::default();
+/// assert_eq!(default_options.moment, None);
+/// assert_eq!(default_options.is_trusted_root, None);
+/// ```
 #[derive(Debug, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CertificateOptions {
@@ -150,8 +334,29 @@ pub struct CertificateOptions {
 	pub is_trusted_root: Option<bool>,
 }
 
-/// Certificate bundle containing a certificate, options, and trusted
-/// roots/intermediates certificates.
+/// Certificate bundle containing a primary certificate with validation context.
+///
+/// A CertificateBundle groups together a primary certificate along with the
+/// trusted root certificates, intermediate certificates, and validation options
+/// needed to verify and validate the certificate chain. This is essential for
+/// proper certificate validation in real-world scenarios.
+///
+/// # Certificate Chain Validation
+///
+/// Certificate validation typically requires:
+/// 1. **Primary Certificate** - The certificate being validated
+/// 2. **Intermediate Certificates** - Certificates that form the chain
+/// 3. **Root Certificates** - Self-signed certificates from trusted CAs
+/// 4. **Validation Options** - Time constraints and trust overrides
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` and can be safely shared across threads.
+///
+/// # References
+///
+/// - [RFC 5280 Section 6 - Certification Path Validation](https://datatracker.ietf.org/doc/html/rfc5280#section-6)
+/// - [Certificate Chain Validation](https://datatracker.ietf.org/doc/html/rfc5280#section-6.1)
 #[derive(Debug, Clone, PartialEq)]
 pub struct CertificateBundle {
 	/// The core certificate
@@ -637,14 +842,56 @@ impl From<&CertificateHashSet> for Vec<String> {
 	}
 }
 
-/// Complete X.509 Certificate structure according to RFC 5280 Section 4.1.
-/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1>
+/// Complete X.509 certificate following RFC 5280 standards.
 ///
-/// Certificate  ::=  SEQUENCE  {
+/// A Certificate is the top-level X.509 structure that contains the certificate
+/// data (`tbsCertificate`), the signature algorithm, and the digital signature
+/// that binds the certificate data to the issuer's private key.
+///
+/// # ASN.1 Definition
+///
+/// ```text
+/// Certificate ::= SEQUENCE {
 ///     tbsCertificate       TBSCertificate,
 ///     signatureAlgorithm   AlgorithmIdentifier,
 ///     signatureValue       BIT STRING
 /// }
+/// ```
+///
+/// # Certificate Creation
+///
+/// Certificates are typically created using the [`CertificateBuilder`]:
+///
+/// # Serialization
+///
+/// Certificates can be serialized to standard formats:
+///
+/// ```rust
+/// # use x509::doc_utils::create_test_certificate;
+/// # use accounts::{Account, KeyED25519};
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # let certificate = create_test_certificate("Test CA", None);
+/// // Convert to DER (binary) format
+/// let der_bytes = certificate.to_der()?;
+/// assert!(!der_bytes.is_empty());
+/// // Convert to PEM (text) format
+/// let pem_string = certificate.to_pem()?;
+/// assert!(pem_string.starts_with("-----BEGIN CERTIFICATE-----"));
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` and can be safely shared across threads.
+///
+/// # References
+///
+/// - [RFC 5280 Section 4.1 - Basic Certificate Fields](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1)
+/// - [X.509 Certificate Profile](https://datatracker.ietf.org/doc/html/rfc5280)
+///
+/// [`CertificateBuilder`]: crate::builder::CertificateBuilder
+/// [`TbsCertificate`]: crate::certificates::TbsCertificate
 #[derive(Debug, Clone, PartialEq, Eq, Sequence)]
 pub struct Certificate {
 	pub tbs_certificate: TbsCertificate,

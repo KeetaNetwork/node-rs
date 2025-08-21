@@ -14,6 +14,8 @@ pub mod oids;
 pub mod time;
 pub mod utils;
 
+#[doc(hidden)]
+pub mod doc_utils;
 #[cfg(feature = "serde")]
 pub mod serde;
 #[cfg(test)]

@@ -88,8 +88,8 @@ pub struct SubjectPublicKeyInfo {
 
 impl SubjectPublicKeyInfo {
 	/// Create a new SubjectPublicKeyInfo
-	pub fn new(algorithm: AlgorithmIdentifier, public_key_bytes: &[u8]) -> Result<Self, Asn1Error> {
-		let public_key = BitString::from_bytes(public_key_bytes)?;
+	pub fn new<T: AsRef<[u8]>>(algorithm: AlgorithmIdentifier, public_key_bytes: T) -> Result<Self, Asn1Error> {
+		let public_key = BitString::from_bytes(public_key_bytes.as_ref())?;
 		Ok(Self { algorithm, subject_public_key: public_key })
 	}
 }
@@ -260,7 +260,7 @@ mod tests {
 	fn test_subject_public_key_info_with_invalid_bit_string() {
 		// Test with empty key bytes
 		let alg_id = AlgorithmIdentifier::new(oids::ED25519).unwrap();
-		let empty_key_result = SubjectPublicKeyInfo::new(alg_id.clone(), &[]);
+		let empty_key_result = SubjectPublicKeyInfo::new(alg_id.clone(), []);
 		assert!(empty_key_result.is_ok()); // Empty bytes should be valid for BitString
 
 		// Test with various key sizes
