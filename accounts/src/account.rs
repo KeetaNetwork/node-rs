@@ -1039,10 +1039,6 @@ where
 		Ok(generate_random_passphrase(None)?)
 	}
 
-	pub fn generate_seed() -> Result<Seed, AccountError> {
-		Ok(crypto::generate_random_seed()?)
-	}
-
 	/// Generate a random seed (alternative interface)
 	pub fn generate_random_seed() -> Result<Seed, AccountError> {
 		Ok(crypto::generate_random_seed()?)
@@ -2709,7 +2705,7 @@ mod tests {
 		macro_rules! test_seed_generation {
 			($key_type:ty, $keypair_type:expr) => {
 				// Seeds should be 32 bytes
-				let seed = Account::<$key_type>::generate_seed().unwrap();
+				let seed = Account::<$key_type>::generate_random_seed().unwrap();
 				assert_eq!(seed.expose_secret().len(), 32);
 
 				// Random seeds should be different

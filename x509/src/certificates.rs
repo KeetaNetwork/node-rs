@@ -2498,39 +2498,31 @@ mod tests {
 					"2001:0db8:85a3:0000:0000:8a2e:0370:7334", // IPv6 address
 					"user@example.com",
 					"https://example.com",
-				])
-				.build()
-				.unwrap(),
+				]),
 				expected_oid: oids::SUBJECT_ALT_NAME,
 				expected_critical: false,
 			},
 			ExtensionTest {
 				name: "extended key usage",
-				extension: ExtensionBuilder::for_extended_key_usage(vec![oids::SERVER_AUTH, oids::CLIENT_AUTH])
-					.build()
-					.unwrap(),
+				extension: ExtensionBuilder::for_extended_key_usage(vec![oids::SERVER_AUTH, oids::CLIENT_AUTH]),
 				expected_oid: oids::EXTENDED_KEY_USAGE,
 				expected_critical: false,
 			},
 			ExtensionTest {
 				name: "basic constraints (CA)",
-				extension: ExtensionBuilder::for_basic_constraints(true, Some(5))
-					.build()
-					.unwrap(),
+				extension: ExtensionBuilder::for_basic_constraints(true, Some(5)),
 				expected_oid: oids::BASIC_CONSTRAINTS,
 				expected_critical: true,
 			},
 			ExtensionTest {
 				name: "basic constraints (end entity)",
-				extension: ExtensionBuilder::for_basic_constraints(false, None)
-					.build()
-					.unwrap(),
+				extension: ExtensionBuilder::for_basic_constraints(false, None),
 				expected_oid: oids::BASIC_CONSTRAINTS,
 				expected_critical: true,
 			},
 			ExtensionTest {
 				name: "key usage",
-				extension: ExtensionBuilder::for_key_usage(0x0186).build().unwrap(),
+				extension: ExtensionBuilder::for_key_usage(0x0186),
 				expected_oid: oids::KEY_USAGE,
 				expected_critical: true,
 			},
@@ -2585,14 +2577,19 @@ mod tests {
 
 			// Add SAN extension if specified
 			if let Some(critical) = san_critical {
-				let san_ext = ExtensionBuilder::for_subject_alt_name(vec!["example.com"])
-					.with_critical(critical)
-					.build()
-					.expect("Failed to build SAN extension");
+				// Create a SAN extension manually with the critical flag set correctly
+				let san_ext = if critical {
+					ExtensionBuilder::new()
+						.with_oid(oids::SUBJECT_ALT_NAME)
+						.with_subject_alt_name_value(vec!["example.com"])
+						.as_critical()
+						.build()
+						.expect("Failed to build SAN extension")
+				} else {
+					ExtensionBuilder::for_subject_alt_name(vec!["example.com"])
+				};
 				builder = builder.with_extension(san_ext);
-			}
-
-			// Build the full certificate for validation
+			} // Build the full certificate for validation
 			let tbs_certificate = builder.build_tbs().unwrap();
 			let cert = Certificate { tbs_certificate, signature_algorithm, signature };
 			let result = cert.validate_distinguished_names();
