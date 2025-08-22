@@ -86,14 +86,51 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorith
 }
 
 /// Create an identifier key from seed and index
-pub(crate) fn create_identifier_key(seed: &Seed, index: Index, prefix: &str) -> Result<(String, String), AccountError> {
+pub(crate) fn create_identifier_key(seed: &Seed, index: Index) -> Result<(String, String), AccountError> {
 	let seed_buffer = combine_seed_and_index(seed, index);
 	let hash_result: [u8; 32] = crypto::hash_array(seed_buffer, None)?;
 
-	// Use first 16 bytes as identifier
-	let identifier = hex::encode(&hash_result[..16]);
-	let public_key = format!("{prefix}_{identifier}");
+	// Use the full 32-byte hash as the identifier (as hex for internal use)
+	let identifier = hex::encode(hash_result);
+
+	// For the public key string, we'll use the full hash data
+	// The actual "keeta_" formatting will be done by each key type
+	let public_key = identifier.clone();
 	Ok((identifier, public_key))
+}
+
+/// Format an identifier key with proper keeta_ encoding
+pub(crate) fn format_identifier_key_string(key_data: &[u8], key_type: u8) -> Result<String, AccountError> {
+	// For identifier keys, we need exactly 32 bytes of key data
+	// If the input is smaller, hash it to get 32 bytes
+	let key_32_bytes = if key_data.len() == 32 {
+		key_data.to_vec()
+	} else {
+		// Hash the input to get exactly 32 bytes
+		let hash_result: [u8; 32] = crypto::hash_array(key_data, None)?;
+		hash_result.to_vec()
+	};
+
+	// Build the key data: [key_type, key_data[32], checksum[5]]
+	let mut pub_key_values = Vec::with_capacity(38);
+	// Add key type as first byte
+	pub_key_values.push(key_type);
+	// Add the 32 bytes of key data
+	pub_key_values.extend_from_slice(&key_32_bytes);
+
+	// Calculate checksum over [key_type + key_data]
+	let full_checksum: [u8; 32] = crypto::hash_array(&pub_key_values, None)?;
+	// Take first 5 bytes as checksum
+	pub_key_values.extend_from_slice(&full_checksum[..5]);
+
+	// Should be 38 bytes total: 1 (type) + 32 (key) + 5 (checksum)
+	if pub_key_values.len() != 38 {
+		return Err(AccountError::InvalidConstruction);
+	}
+
+	// Encode as base32
+	let pub_key_formatted = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &pub_key_values);
+	Ok(format!("keeta_{pub_key_formatted}"))
 }
 
 #[cfg(test)]
@@ -102,6 +139,21 @@ mod tests {
 
 	use super::*;
 	use crypto::utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
+
+	#[test]
+	fn test_format_identifier_key_string() {
+		let test_data = b"test";
+		let result = format_identifier_key_string(test_data, 3); // TOKEN type
+		match result {
+			Ok(formatted) => {
+				println!("Formatted string: {formatted}");
+				assert!(formatted.starts_with("keeta_"));
+			}
+			Err(e) => {
+				panic!("Failed to format identifier key string: {e:?}");
+			}
+		}
+	}
 
 	#[test]
 	fn test_combine_seed_and_index() {
@@ -123,11 +175,10 @@ mod tests {
 		let seed = SecretBox::new(Box::new(seed_data));
 		let index = 42;
 
-		let result = create_identifier_key(&seed, index, "test").unwrap();
+		let result = create_identifier_key(&seed, index).unwrap();
 		let (identifier, public_key) = result;
-		assert_eq!(identifier.len(), 32); // 16 bytes as hex = 32 chars
-		assert!(public_key.starts_with("test_"));
-		assert!(public_key.ends_with(&identifier));
+		assert_eq!(identifier.len(), 64); // 32 bytes as hex = 64 chars
+		assert_eq!(public_key, identifier); // No prefix, raw identifier like TypeScript
 	}
 
 	#[test]

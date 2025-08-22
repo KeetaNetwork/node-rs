@@ -16,14 +16,15 @@ features = ["ecdsa", "ecdh"]
 
 [dependencies.ed25519-dalek]
 version = "2.0"
-features = ["std", "rand_core"]
+features = ["std", "rand_core", "zeroize"]
 
 [dependencies.x25519-dalek]
 version = "2.0"
 features = ["zeroize"]
 
 [dependencies.curve25519-dalek]
-version = "4.0"
+version = "4.1.3"
+features = ["zeroize"]
 
 [dependencies.hkdf]
 version = "0.12.4"

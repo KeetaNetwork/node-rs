@@ -5,7 +5,7 @@ use accounts::{Account, GenericAccount, KeyPairType};
 use accounts::{Accountable, Keyable};
 use accounts::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
 use accounts::{KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};
-use secrecy::SecretBox;
+use crypto::prelude::SecretBox;
 
 mod common;
 use common::*;
@@ -29,20 +29,55 @@ const INVALID_PREFIX_ADDRESSES: &[&str] = &[
 	"notkeeta_aguijv77cohs3fks62isqa4ywdvwlyhfddwpq4pqnvl6lssoyug2k7vkqfwui",
 ];
 
+// Test data for account parsing
+struct AccountParsingTestCase {
+	encoded_public_key: &'static str,
+	expected_type: KeyPairType,
+	is_identifier: bool,
+}
+
+const ACCOUNT_PARSING_TEST_CASES: &[AccountParsingTestCase] = &[
+	AccountParsingTestCase {
+		encoded_public_key: TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key,
+		expected_type: KeyPairType::ECDSASECP256K1,
+		is_identifier: false,
+	},
+	AccountParsingTestCase {
+		encoded_public_key: TEST_PUBLIC_ACCOUNT.ecdsa_secp256r1.encoded_public_key,
+		expected_type: KeyPairType::ECDSASECP256R1,
+		is_identifier: false,
+	},
+	AccountParsingTestCase {
+		encoded_public_key: TEST_PUBLIC_ACCOUNT.ed25519.encoded_public_key,
+		expected_type: KeyPairType::ED25519,
+		is_identifier: false,
+	},
+	AccountParsingTestCase {
+		encoded_public_key: TEST_PUBLIC_ACCOUNT.network.encoded_public_key,
+		expected_type: KeyPairType::NETWORK,
+		is_identifier: true,
+	},
+	AccountParsingTestCase {
+		encoded_public_key: TEST_PUBLIC_ACCOUNT.token.encoded_public_key,
+		expected_type: KeyPairType::TOKEN,
+		is_identifier: true,
+	},
+	AccountParsingTestCase {
+		encoded_public_key: TEST_PUBLIC_ACCOUNT.storage.encoded_public_key,
+		expected_type: KeyPairType::STORAGE,
+		is_identifier: true,
+	},
+	AccountParsingTestCase {
+		encoded_public_key: TEST_PUBLIC_ACCOUNT.multisig.encoded_public_key,
+		expected_type: KeyPairType::MULTISIG,
+		is_identifier: true,
+	},
+];
+
 #[test]
 fn test_account_from_public_key_parsing() {
-	let check_passes = [
-		(TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key, KeyPairType::ECDSASECP256K1, false),
-		(TEST_PUBLIC_ACCOUNT.ecdsa_secp256r1.encoded_public_key, KeyPairType::ECDSASECP256R1, false),
-		(TEST_PUBLIC_ACCOUNT.ed25519.encoded_public_key, KeyPairType::ED25519, false),
-		(TEST_PUBLIC_ACCOUNT.network.encoded_public_key, KeyPairType::NETWORK, true),
-		(TEST_PUBLIC_ACCOUNT.token.encoded_public_key, KeyPairType::TOKEN, true),
-		(TEST_PUBLIC_ACCOUNT.storage.encoded_public_key, KeyPairType::STORAGE, true),
-		(TEST_PUBLIC_ACCOUNT.multisig.encoded_public_key, KeyPairType::MULTISIG, true),
-	];
-
-	for (encoded_public_key, expected_type, is_identifier) in check_passes {
-		let account: GenericAccount = encoded_public_key.parse().unwrap();
+	for test_case in ACCOUNT_PARSING_TEST_CASES {
+		let account: GenericAccount = test_case.encoded_public_key.parse().unwrap();
 
 		// Extract account properties and verify them
 		let (actual_type, actual_is_identifier, actual_public_key) = match &account {
@@ -55,9 +90,13 @@ fn test_account_from_public_key_parsing() {
 			GenericAccount::Multisig(acc) => (KeyPairType::MULTISIG, true, acc.to_string()),
 		};
 
-		assert_eq!(actual_type, expected_type, "Key type mismatch for {encoded_public_key}");
-		assert_eq!(actual_is_identifier, is_identifier, "Identifier flag mismatch for {encoded_public_key}");
-		assert_eq!(actual_public_key, encoded_public_key, "Public key string mismatch");
+		assert_eq!(actual_type, test_case.expected_type, "Key type mismatch for {}", test_case.encoded_public_key);
+		assert_eq!(
+			actual_is_identifier, test_case.is_identifier,
+			"Identifier flag mismatch for {}",
+			test_case.encoded_public_key
+		);
+		assert_eq!(actual_public_key, test_case.encoded_public_key, "Public key string mismatch");
 	}
 }
 

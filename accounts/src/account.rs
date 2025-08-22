@@ -7,6 +7,7 @@ use crypto::utils::{generate_random_passphrase, seed_from_passphrase};
 use strum_macros::{Display, EnumIter, EnumString};
 use zeroize::Zeroize;
 
+use crate::constants::NO_PREVIOUS;
 use crate::error::AccountError;
 use crate::utils::*;
 use crate::IntoSecret;
@@ -16,7 +17,30 @@ use crate::{HexSeedAndIndex, Index, PassphraseAndIndex, Seed, SeedAndIndex};
 const IDENTIFIER_KEY_TYPES: &[KeyPairType] =
 	&[KeyPairType::NETWORK, KeyPairType::TOKEN, KeyPairType::STORAGE, KeyPairType::MULTISIG];
 
-/// Supported cryptographic key pair types
+/// Supported cryptographic key pair types for the Keeta Network.
+///
+/// This enum defines all key types supported by the account system, including
+/// both cryptographic keys for signing operations and identifier keys for
+/// network addressing and resource identification.
+///
+/// # Cryptographic Key Types
+///
+/// These key types support full cryptographic operations including signing,
+/// verification, and key derivation:
+///
+/// - [`ECDSASECP256K1`](KeyPairType::ECDSASECP256K1) - Bitcoin-style elliptic curve signatures
+/// - [`ED25519`](KeyPairType::ED25519) - EdDSA signatures using Curve25519
+/// - [`ECDSASECP256R1`](KeyPairType::ECDSASECP256R1) - NIST P-256 elliptic curve signatures
+///
+/// # Identifier Key Types
+///
+/// These key types are used for network addressing and resource identification
+/// but do not support cryptographic operations:
+///
+/// - [`NETWORK`](KeyPairType::NETWORK) - Network node identification
+/// - [`TOKEN`](KeyPairType::TOKEN) - Token and asset identification  
+/// - [`STORAGE`](KeyPairType::STORAGE) - Storage resource identification
+/// - [`MULTISIG`](KeyPairType::MULTISIG) - Multi-signature wallet identification
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Display, EnumString, EnumIter)]
 pub enum KeyPairType {
 	/// ECDSA over secp256k1 curve
@@ -416,16 +440,20 @@ impl_crypto_key_try_from!(KeyED25519, Ed25519PrivateKey, Ed25519PublicKey, Ed255
 
 // Macro to generate TryFrom<Keyable> implementations for identifier key types
 macro_rules! impl_identifier_key_try_from {
-	($key_type:ident, $prefix:literal, $($keeta_prefix:literal),+) => {
+	($key_type:ident, $key_type_value:literal, $($keeta_prefix:literal),+) => {
 		impl TryFrom<Keyable> for $key_type {
 			type Error = AccountError;
 
 			fn try_from(input: Keyable) -> Result<Self, AccountError> {
 				match input {
-					Keyable::Identifier(id) => Ok($key_type {
-						identifier: id.clone(),
-						public_key_string: format!("{}_{}", $prefix, id)
-					}),
+					Keyable::Identifier(id) => {
+						let id_bytes = id.as_bytes();
+						let public_key_string = format_identifier_key_string(id_bytes, $key_type_value)?;
+						Ok($key_type {
+							identifier: id,
+							public_key_string
+						})
+					}
 					Keyable::PublicKeyString(public_key_string) => {
 						if $(public_key_string.starts_with($keeta_prefix))||+ {
 							Ok($key_type {
@@ -437,7 +465,9 @@ macro_rules! impl_identifier_key_try_from {
 						}
 					}
 					Keyable::Seed((seed, index)) => {
-						let (identifier, public_key_string) = create_identifier_key(&seed, index, $prefix)?;
+						let (identifier, _) = create_identifier_key(&seed, index)?;
+						let key_data = hex::decode(&identifier)?;
+						let public_key_string = format_identifier_key_string(&key_data, $key_type_value)?;
 						Ok($key_type { identifier, public_key_string })
 					}
 					_ => Err(AccountError::InvalidConstruction),
@@ -448,15 +478,45 @@ macro_rules! impl_identifier_key_try_from {
 }
 
 // Generate TryFrom<Keyable> implementations for identifier key types
-impl_identifier_key_try_from!(KeyNETWORK, "network", "keeta_ai", "keeta_aj", "keeta_ak", "keeta_al");
-impl_identifier_key_try_from!(KeyTOKEN, "token", "keeta_an", "keeta_am", "keeta_ao", "keeta_ap");
-impl_identifier_key_try_from!(KeySTORAGE, "storage", "keeta_aq", "keeta_ar", "keeta_as", "keeta_at");
-impl_identifier_key_try_from!(KeyMULTISIG, "multisig", "keeta_a4", "keeta_a5", "keeta_a6", "keeta_a7");
+impl_identifier_key_try_from!(KeyNETWORK, 2, "keeta_ai", "keeta_aj", "keeta_ak", "keeta_al");
+impl_identifier_key_try_from!(KeyTOKEN, 3, "keeta_an", "keeta_am", "keeta_ao", "keeta_ap");
+impl_identifier_key_try_from!(KeySTORAGE, 4, "keeta_aq", "keeta_ar", "keeta_as", "keeta_at");
+impl_identifier_key_try_from!(KeyMULTISIG, 7, "keeta_a4", "keeta_a5", "keeta_a6", "keeta_a7");
 
-/// ECDSA key pair using the secp256k1 curve.
+/// ECDSA key pair using the secp256k1 elliptic curve.
 ///
-/// This is the primary key type used for cryptographic operations.
-/// Private keys are stored securely and public keys are formatted as strings.
+/// This key type implements ECDSA (Elliptic Curve Digital Signature Algorithm)
+/// over the secp256k1 curve, which is the same curve used by Bitcoin.
+///
+/// # Examples
+///
+/// ```rust
+/// use accounts::{Account, KeyECDSASECP256K1, KeyPair};
+/// use crypto::algorithms::secp256k1::Secp256k1Derivation;
+/// use crypto::KeyDerivation;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create an account from a seed
+/// let seed = b"abandon abandon abandon abandon abandon abandon";
+/// let private_key = Secp256k1Derivation::derive_from_seed(seed)?;
+///
+/// let account = Account::<KeyECDSASECP256K1>::from(private_key);
+/// // Verify it's a cryptographic key type
+/// assert!(account.keypair.to_keypair_type().supports_crypto());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` when the private key is not present, but
+/// private keys should be handled carefully in multi-threaded environments.
+///
+/// # References
+///
+/// - [SEC 2: Recommended Elliptic Curve Domain Parameters](http://www.secg.org/sec2-v2.pdf)
+/// - [Bitcoin's use of secp256k1](https://en.bitcoin.it/wiki/Secp256k1)
+/// - [RFC 6090: Fundamental Elliptic Curve Cryptography Algorithms](https://tools.ietf.org/html/rfc6090)
 pub struct KeyECDSASECP256K1 {
 	private_key: Option<Secp256k1PrivateKey>,
 	pub public_key: Secp256k1PublicKey,
@@ -526,10 +586,40 @@ impl KeyPair for KeyECDSASECP256K1 {
 	}
 }
 
-/// ECDSA key pair using the secp256r1 curve.
+/// ECDSA key pair using the secp256r1 elliptic curve (NIST P-256).
 ///
-/// This is the primary key type used for cryptographic operations.
-/// Private keys are stored securely and public keys are formatted as strings.
+/// This key type implements ECDSA (Elliptic Curve Digital Signature Algorithm)
+/// over the secp256r1 curve, also known as NIST P-256 or prime256v1.
+///
+/// # Examples
+///
+/// ```rust
+/// use accounts::{Account, KeyECDSASECP256R1, KeyPair};
+/// use crypto::algorithms::secp256r1::Secp256r1Derivation;
+/// use crypto::KeyDerivation;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create an account from a seed
+/// let seed = b"abandon abandon abandon abandon abandon abandon";
+/// let private_key = Secp256r1Derivation::derive_from_seed(seed)?;
+///
+/// let account = Account::<KeyECDSASECP256R1>::from(private_key);
+/// // Verify it's a cryptographic key type
+/// assert!(account.keypair.to_keypair_type().supports_crypto());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` when the private key is not present, but
+/// private keys should be handled carefully in multi-threaded environments.
+///
+/// # References
+///
+/// - [NIST FIPS 186-4: Digital Signature Standard](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-4.pdf)
+/// - [RFC 5480: Elliptic Curve Cryptography Subject Public Key Info](https://tools.ietf.org/html/rfc5480)
+/// - [SEC 1: Elliptic Curve Cryptography](http://www.secg.org/sec1-v2.pdf)
 pub struct KeyECDSASECP256R1 {
 	private_key: Option<Secp256r1PrivateKey>,
 	pub public_key: Secp256r1PublicKey,
@@ -596,9 +686,43 @@ impl KeyPair for KeyECDSASECP256R1 {
 	}
 }
 
-/// Ed25519 key pair implementation.
+/// Ed25519 digital signature key pair implementation.
 ///
-/// Provides Ed25519 digital signature algorithm support.
+/// This key type implements the Ed25519 signature algorithm, which uses the
+/// Edwards-curve Digital Signature Algorithm (EdDSA) with Curve25519. Ed25519
+/// is designed for high performance and security, offering faster signature
+/// generation and verification compared to traditional ECDSA implementations.
+///
+/// # Examples
+///
+/// ```rust
+/// use accounts::{Account, KeyED25519, KeyPair};
+/// use crypto::algorithms::ed25519::Ed25519Derivation;
+/// use crypto::KeyDerivation;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create an account from a seed
+/// let seed = b"abandon abandon abandon abandon abandon abandon";
+/// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+///
+/// let account = Account::<KeyED25519>::from(private_key);
+/// // Verify it's a cryptographic key type
+/// assert!(account.keypair.to_keypair_type().supports_crypto());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Send + Sync` when the private key is not present, but
+/// private keys should be handled carefully in multi-threaded environments.
+///
+/// # References
+///
+/// - [RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA)](https://tools.ietf.org/html/rfc8032)
+/// - [Curve25519: high-speed elliptic-curve cryptography](https://cr.yp.to/ecdh/curve25519-20060209.pdf)
+/// - [Ed25519: high-speed high-security signatures](https://ed25519.cr.yp.to/)
+/// - [RFC 8410: Algorithm Identifiers for Ed25519 in X.509](https://tools.ietf.org/html/rfc8410)
 pub struct KeyED25519 {
 	private_key: Option<Ed25519PrivateKey>,
 	pub public_key: Ed25519PublicKey,
@@ -666,29 +790,130 @@ impl KeyPair for KeyED25519 {
 	}
 }
 
-/// Network identifier key implementation.
+/// Network identifier key for node addressing and discovery.
+///
+/// This key type is used specifically for network-level operations including
+/// node identification, peer discovery, and routing within the Keeta Network.
+/// Unlike cryptographic key types, network identifiers do not support signing
+/// operations but serve as unique network addresses.
+
+/// # Examples
+///
+/// ```rust
+/// use accounts::{Account, KeyNETWORK, KeyPair};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create a network identifier from a network ID (like TypeScript does)
+/// let account = Account::<KeyNETWORK>::generate_network_address(12345)?;
+/// // Verify it's an identifier type (not cryptographic)
+/// assert!(account.is_identifier());
+/// assert!(!account.keypair.to_keypair_type().supports_crypto());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
+/// All fields are immutable after creation, making it safe for concurrent access.
 #[derive(Clone)]
 pub struct KeyNETWORK {
 	pub identifier: String,
 	pub public_key_string: String,
 }
 
-/// Token identifier key implementation.
+/// Token identifier key for asset and resource addressing.
+///
+/// This key type is used for identifying tokens, assets, and other fungible or
+/// non-fungible resources within the Keeta Network ecosystem. Token identifiers
+/// enable unique addressing of digital assets without requiring cryptographic
+/// operations for basic identification and tracking.
+///
+/// # Examples
+///
+/// ```rust
+/// use accounts::{Account, KeyTOKEN, KeyPair, Keyable, Accountable};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create a token identifier directly from an identifier string
+/// let keyable = Keyable::Identifier("test-token-id".to_string());
+/// let account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(keyable, accounts::KeyPairType::TOKEN))?;
+/// // Verify it's an identifier type (not cryptographic)
+/// assert!(account.is_identifier());
+/// assert!(!account.keypair.to_keypair_type().supports_crypto());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
+/// All fields are immutable after creation, making it safe for concurrent access.
 #[derive(Clone)]
 pub struct KeyTOKEN {
 	pub identifier: String,
 	pub public_key_string: String,
 }
 
-/// Storage identifier key implementation.
+/// Storage identifier key for storage addresses.
+///
+/// This key type is used for derived storage accounts.
+///
+/// # Examples
+///
+/// ```rust
+/// use accounts::{Account, KeySTORAGE, KeyPair, Keyable, Accountable};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create a storage identifier directly from an identifier string
+/// let keyable = Keyable::Identifier("test-storage-id".to_string());
+/// let account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(keyable, accounts::KeyPairType::STORAGE))?;
+///
+/// // Access the identifier
+/// let _identifier = &account.keypair.identifier;
+///
+/// // Verify it's an identifier type (not cryptographic)
+/// assert!(account.is_identifier());
+/// assert!(!account.keypair.to_keypair_type().supports_crypto());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
+/// All fields are immutable after creation, making it safe for concurrent access.
 #[derive(Clone)]
 pub struct KeySTORAGE {
 	pub identifier: String,
 	pub public_key_string: String,
 }
 
-/// MULTISIG identifier key type
-#[derive(Clone)]
+/// Multi-signature wallet identifier key for coordinated signing operations.
+///
+/// This key type is used for  multi-signature wallets and coordinated signing
+/// schemes within the Keeta Network.
+///
+/// # Examples
+///
+/// ```rust
+/// use accounts::{Account, KeyMULTISIG, KeyPair, Keyable, Accountable};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create a multisig identifier directly from an identifier string
+/// let keyable = Keyable::Identifier("test-multisig-id".to_string());
+/// let account = Account::<KeyMULTISIG>::try_from(Accountable::KeyAndType(keyable, accounts::KeyPairType::MULTISIG))?;
+/// // Verify it's an identifier type (not cryptographic)
+/// assert!(account.is_identifier());
+/// assert!(!account.keypair.to_keypair_type().supports_crypto());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
+/// All fields are immutable after creation, making it safe for concurrent access.
 pub struct KeyMULTISIG {
 	pub identifier: String,
 	pub public_key_string: String,
@@ -946,7 +1171,92 @@ where
 	KeyAndType(Keyable, KeyPairType),
 }
 
-/// A generic account object, which represents a keypair
+/// A generic account representing a cryptographic key pair or identifier.
+///
+/// The `Account` struct is the primary interface for working with cryptographic
+/// keys and network identifiers in the Keeta Network. It provides a unified
+/// abstraction over different key types while maintaining type safety through
+/// the generic `KEYTYPE` parameter.
+///
+/// - **Cryptographic Types**: [`KeyECDSASECP256K1`], [`KeyED25519`], [`KeyECDSASECP256R1`]
+/// - **Identifier Types**: [`KeyNETWORK`], [`KeyTOKEN`], [`KeySTORAGE`], [`KeyMULTISIG`]
+
+/// # Examples
+///
+/// ## Creating Cryptographic Accounts
+///
+/// ```rust
+/// use accounts::{Account, KeyED25519, KeyPair};
+/// use crypto::algorithms::ed25519::Ed25519Derivation;
+/// use crypto::prelude::KeyDerivation;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create an Ed25519 account from a seed
+/// let seed = b"abandon abandon abandon abandon abandon abandon";
+/// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+/// let account = Account::from(private_key);
+///
+/// // Check capabilities
+/// assert!(account.keypair.to_keypair_type().supports_crypto());
+/// assert!(!account.is_identifier());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Creating Identifier Accounts
+///
+/// ```rust
+/// use accounts::{Account, KeyNETWORK, KeyPair};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create a network identifier account from a network ID
+/// let account = Account::<KeyNETWORK>::generate_network_address(5)?;
+///
+/// // Check capabilities
+/// assert!(!account.keypair.to_keypair_type().supports_crypto());
+/// assert!(account.is_identifier());
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Account Operations
+///
+/// Accounts support various operations depending on their type:
+///
+/// ## Cryptographic Operations
+/// ```rust,no_run
+/// # use accounts::{Account, KeyED25519};
+/// # fn example(account: Account<KeyED25519>) -> Result<(), Box<dyn std::error::Error>> {
+/// // Sign data (requires private key)
+/// let data = b"Hello, World!";
+/// let signature = account.sign(data, None)?;
+///
+/// // Verify signatures (public operation)
+/// let is_valid = account.verify(data, &signature, None)?;
+/// assert!(is_valid);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Identifier Operations
+/// ```rust,no_run
+/// # use accounts::{Account, KeyNETWORK};
+/// # fn example(account: Account<KeyNETWORK>) -> Result<(), Box<dyn std::error::Error>> {
+/// // Get formatted identifier string
+/// let identifier_string = account.to_string();
+/// println!("Formatted: {}", identifier_string);
+///
+/// // Extract raw identifier
+/// let raw_id = &account.keypair.identifier;
+/// println!("Raw ID: {}", raw_id);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Thread Safety
+///
+/// Accounts are `Send + Sync` when the underlying key type supports it.
+/// Private keys should be handled carefully in multi-threaded environments.
 #[derive(Debug)]
 pub struct Account<KEYTYPE>
 where
@@ -960,28 +1270,11 @@ where
 	KEYTYPE: KeyPair,
 {
 	fn clone(&self) -> Self {
-		let accountable = if self.is_identifier() {
-			// For identifier types, extract the raw identifier from the
-			// formatted string. The format is "{type}_{identifier}",
-			// so we need to extract the part after the first underscore.
-			let formatted_string = self.to_string();
-			let raw_identifier = if let Some(underscore_pos) = formatted_string.find('_') {
-				formatted_string[(underscore_pos + 1)..].to_string()
-			} else {
-				// Fallback: use the whole string if no underscore found
-				formatted_string
-			};
-			let identifier_keyable = Keyable::Identifier(raw_identifier);
+		// Reconstruct from public key string as private keys cannot be copied
+		let public_key = self.keypair.to_public_key_string().unwrap_or_default();
+		let keyable = Keyable::PublicKeyString(public_key);
 
-			Accountable::KeyAndType(identifier_keyable, KEYTYPE::KEY_PAIR_TYPE)
-		} else {
-			// Reconstruct from public key string as private keys cannot be copied
-			let public_key = self.keypair.to_public_key_string().unwrap_or_default();
-			let keyable = Keyable::PublicKeyString(public_key);
-
-			Accountable::KeyAndType(keyable, KEYTYPE::KEY_PAIR_TYPE)
-		};
-
+		let accountable = Accountable::KeyAndType(keyable, KEYTYPE::KEY_PAIR_TYPE);
 		Account::<KEYTYPE>::try_from(accountable).expect("Already constructed accounts should be infallible.")
 	}
 }
@@ -1046,15 +1339,18 @@ where
 
 	/// Generate a network address from a network ID
 	pub fn generate_network_address(network_id: u64) -> Result<Account<KeyNETWORK>, AccountError> {
-		// Convert network ID to seed (32 bytes)
-		let mut seed_data = [0u8; 32];
-		seed_data[24..32].copy_from_slice(&network_id.to_be_bytes());
+		// Convert network ID to bytes
+		let seed_bytes = network_id.to_be_bytes();
+		let mut seed = [0u8; 32];
+		// Place the u64 bytes at the end of the 32-byte array (big-endian)
+		seed[24..32].copy_from_slice(&seed_bytes);
 
-		let seed = SecretBox::new(Box::new(seed_data));
-		let key = Keyable::Seed((seed, 0));
+		// Create network account from seed
+		let seed_and_index = (seed.into_secret(), 0);
+		let keyable = Keyable::Seed(seed_and_index);
+		let accountable = Accountable::KeyAndType(keyable, KeyPairType::NETWORK);
 
-		// Create network account from seed with index 0
-		Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(key, KeyPairType::NETWORK))
+		Account::<KeyNETWORK>::try_from(accountable)
 	}
 
 	/// Encrypt data using the account's public key.
@@ -1090,6 +1386,7 @@ where
 	pub fn generate_identifier(
 		&self,
 		identifier_type: KeyPairType,
+		// TODO Use Hashable once block crate is written
 		block_hash: Option<&str>,
 		operation_index: u32,
 	) -> Result<GenericAccount, AccountError> {
@@ -1100,10 +1397,9 @@ where
 
 		// Get the account opening hash (for now, use a placeholder)
 		let account_opening_hash = self.get_account_opening_hash();
-
 		// Determine the block hash to use
 		let hash_to_use = match block_hash {
-			Some("NO_PREVIOUS") | None => account_opening_hash,
+			Some(NO_PREVIOUS) | None => account_opening_hash,
 			Some(hash_str) => {
 				// Validate hex string format - must not be empty
 				if hash_str.is_empty()
@@ -1123,7 +1419,7 @@ where
 			let is_network = self.to_keypair_type() == KeyPairType::NETWORK;
 			let is_generating_token = identifier_type == KeyPairType::TOKEN;
 			let is_first_operation = operation_index == 0;
-			let is_opening = block_hash.is_none() || block_hash == Some("NO_PREVIOUS");
+			let is_opening = block_hash.is_none() || block_hash == Some(NO_PREVIOUS);
 
 			if !(is_network && is_generating_token && is_first_operation && is_opening) {
 				return Err(AccountError::InvalidIdentifierConstruction);
@@ -2131,27 +2427,28 @@ mod tests {
 	fn test_identifier_key_types() {
 		// Macro to test identifier key creation for any key type
 		macro_rules! test_identifier_key {
-			($key_type:ty, $test_id:expr, $expected_prefix:expr, $key_pair_type:expr) => {
+			($key_type:ty, $test_id:expr, $key_pair_type:expr) => {
 				let key = <$key_type>::try_from(Keyable::Identifier($test_id.into())).unwrap();
 				assert_eq!(key.identifier, $test_id);
-				assert_eq!(key.public_key_string, format!("{}{}", $expected_prefix, $test_id));
+				assert!(key.public_key_string.starts_with("keeta_"));
+				assert_ne!(key.public_key_string, $test_id);
 				assert_eq!(key.to_keypair_type(), $key_pair_type);
 			};
 		}
 
 		// Macro to test all identifier types
 		macro_rules! test_all_identifier_types {
-			($(($key_type:ty, $test_id:expr, $expected_prefix:expr, $key_pair_type:expr)),* $(,)?) => {
+			($(($key_type:ty, $test_id:expr, $key_pair_type:expr)),* $(,)?) => {
 				$(
-					test_identifier_key!($key_type, $test_id, $expected_prefix, $key_pair_type);
+					test_identifier_key!($key_type, $test_id, $key_pair_type);
 				)*
 			};
 		}
 
 		test_all_identifier_types!(
-			(KeyNETWORK, "test-network-id", "network_", KeyPairType::NETWORK),
-			(KeyTOKEN, "test-token-id", "token_", KeyPairType::TOKEN),
-			(KeySTORAGE, "test-storage-id", "storage_", KeyPairType::STORAGE),
+			(KeyNETWORK, "test-network-id", KeyPairType::NETWORK),
+			(KeyTOKEN, "test-token-id", KeyPairType::TOKEN),
+			(KeySTORAGE, "test-storage-id", KeyPairType::STORAGE),
 		);
 
 		let passphrase = vec!["test".into()];
@@ -2214,31 +2511,6 @@ mod tests {
 		// Test error cases for identifier types (cannot convert to Algorithm)
 		for keypair_type in IDENTIFIER_ACCOUNT_TYPES {
 			assert!(Algorithm::try_from(keypair_type.to_owned()).is_err());
-		}
-	}
-
-	#[test]
-	fn test_passphrase_to_seed_compatibility() {
-		struct PassphraseTest {
-			passphrase: &'static str,
-			expected_seed: &'static str,
-		}
-
-		let passphrase_tests = &[
-			PassphraseTest {
-				passphrase: "this is the example length for a sufficient passphrase to be set secured",
-				expected_seed: "df6ad96e3900ea44eca45d01362a32bfa875e8b1cccc4b4b8758926a68698e42",
-			},
-			PassphraseTest {
-				passphrase: "one one one one one one one one one one one one one one one one one one one one",
-				expected_seed: "d1d26dce216ae8633c98d8ebe9b4048ae4ef9fa51db317328d9e0ab11ac79717",
-			},
-		];
-
-		for test in passphrase_tests {
-			let result_seed = seed_from_passphrase(test.passphrase).unwrap();
-			let result_hex = hex::encode(*result_seed.expose_secret()).to_lowercase();
-			assert_eq!(result_hex, test.expected_seed);
 		}
 	}
 
@@ -2401,7 +2673,8 @@ mod tests {
 				assert!(token_account
 					.keypair
 					.public_key_string
-					.starts_with("token_"));
+					.starts_with("keeta_"));
+				assert_ne!(token_account.keypair.public_key_string, token_account.keypair.identifier);
 
 				crypto_account
 			}};
@@ -2461,7 +2734,8 @@ mod tests {
 		assert!(network_account
 			.keypair
 			.public_key_string
-			.starts_with("network_"));
+			.starts_with("keeta_"));
+		assert_ne!(network_account.keypair.public_key_string, network_account.keypair.identifier);
 
 		// Test network -> token generation (should succeed)
 		let token_from_network = network_account.generate_identifier(KeyPairType::TOKEN, None, 0);
@@ -2555,11 +2829,11 @@ mod tests {
 
 		// Test identifier public key strings
 		let network_account = create_test_network_account(12345);
-		assert!(network_account.to_string().starts_with("network_"));
+		assert!(network_account.to_string().starts_with("keeta_"));
 
 		// Test token from conversion
 		let token_account = create_test_account_from_identifier::<KeyTOKEN>("test-token");
-		assert!(token_account.to_string().starts_with("token_"));
+		assert!(token_account.to_string().starts_with("keeta_"));
 	}
 
 	#[test]
@@ -2779,13 +3053,13 @@ mod tests {
 	fn test_identifier_public_key_string_methods() {
 		// Macro to test identifier account public key string methods
 		macro_rules! test_identifier_pubkey {
-			($key_type:ty, $identifier:expr, $expected_prefix:expr, $expected_full:expr) => {
+			($key_type:ty, $identifier:expr) => {
 				let key = <$key_type>::try_from(Keyable::Identifier($identifier.to_string())).unwrap();
 				let account = Account::<$key_type>::try_from(Accountable::Key(key)).unwrap();
+
 				let pubkey = account.to_string();
 				let pubkey_to_string = account.keypair.to_public_key_string().unwrap_or_default();
-				assert!(pubkey.starts_with($expected_prefix));
-				assert_eq!(pubkey, $expected_full);
+				assert!(pubkey.starts_with("keeta_"));
 				assert_eq!(pubkey_to_string, pubkey);
 			};
 		}
@@ -2801,13 +3075,13 @@ mod tests {
 		for test_data in KEY_TYPE_TEST_DATA.iter() {
 			match test_data.key_type {
 				KeyPairType::TOKEN => {
-					test_identifier_pubkey!(KeyTOKEN, "test-token", "token_", "token_test-token");
+					test_identifier_pubkey!(KeyTOKEN, "test-token");
 				}
 				KeyPairType::STORAGE => {
-					test_identifier_pubkey!(KeySTORAGE, "test-storage", "storage_", "storage_test-storage");
+					test_identifier_pubkey!(KeySTORAGE, "test-storage");
 				}
 				KeyPairType::MULTISIG => {
-					test_identifier_pubkey!(KeyMULTISIG, "test-multisig", "multisig_", "multisig_test-multisig");
+					test_identifier_pubkey!(KeyMULTISIG, "test-multisig");
 				}
 				KeyPairType::ECDSASECP256K1 => {
 					test_crypto_identifier_error!(KeyECDSASECP256K1);
@@ -2826,7 +3100,7 @@ mod tests {
 						.keypair
 						.to_public_key_string()
 						.unwrap_or_default();
-					assert!(network_pubkey.starts_with("network_"));
+					assert!(network_pubkey.starts_with("keeta_"));
 					assert_eq!(network_pubkey, network_pubkey_to_string);
 				}
 			}
@@ -2848,12 +3122,13 @@ mod tests {
 
 		// Macro to test identifier account types
 		macro_rules! test_identifier_debug {
-			($key_type:ty, $type_name:literal, $prefix:literal, $identifier:expr) => {
-				let account = create_test_account::<$key_type>(Some(Keyable::Identifier($identifier)));
+			($key_type:ty, $type_name:literal, $identifier:literal) => {
+				let account = create_test_account::<$key_type>(Some(Keyable::Identifier($identifier.to_string())));
 				let debug_string = format!("{account:?}");
 				assert!(debug_string.contains($type_name));
 				assert!(debug_string.contains("public_key"));
-				assert!(debug_string.contains($prefix));
+				// The identifier is now properly formatted as a keeta_ string, not the raw identifier
+				assert!(debug_string.contains("keeta_"));
 			};
 		}
 
@@ -2873,10 +3148,10 @@ mod tests {
 
 				// Macro to handle all identifier types uniformly
 				macro_rules! test_identifier_types {
-					($($key_type:ty, $type_name:literal, $prefix:literal, $identifier:expr),*) => {
+					($($key_type:ty, $type_name:literal, $identifier:literal),*) => {
 						$(
 							if test_data.key_type == <$key_type>::keypair_type() && test_data.is_identifier {
-								test_identifier_debug!($key_type, $type_name, $prefix, $identifier);
+								test_identifier_debug!($key_type, $type_name, $identifier);
 							}
 						)*
 					};
@@ -2896,16 +3171,13 @@ mod tests {
 				test_identifier_types!(
 					KeyTOKEN,
 					"TOKEN",
-					"token_",
-					"test-token".to_string(),
+					"test-token",
 					KeySTORAGE,
 					"STORAGE",
-					"storage_",
-					"test-storage".to_string(),
+					"test-storage",
 					KeyMULTISIG,
 					"MULTISIG",
-					"multisig_",
-					"test-multisig".to_string()
+					"test-multisig"
 				);
 
 				// Special case for NETWORK
@@ -2914,7 +3186,7 @@ mod tests {
 					let debug_string = format!("{account:?}");
 					assert!(debug_string.contains("NETWORK"));
 					assert!(debug_string.contains("public_key"));
-					assert!(debug_string.contains("network_"));
+					assert!(debug_string.contains("keeta_"));
 				}
 			}
 		}

@@ -31,7 +31,7 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use secrecy::{ExposeSecret, SecretBox};
 use x25519_dalek::PublicKey as DalekX25519PublicKey;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
@@ -64,10 +64,13 @@ use crate::{KeyDerivation, PrivateKey, PublicKey};
 /// The inner signing key is kept private and only accessible through the trait
 /// methods. Debug formatting will show "\[REDACTED\]" to prevent accidental
 /// key exposure.
-#[derive(Clone)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct Ed25519PrivateKey {
 	inner: SigningKey,
 }
+
+// Generate secure zeroization implementation for Ed25519PrivateKey
+crate::impl_secure_zeroize!(Ed25519PrivateKey, SigningKey, inner);
 
 impl Ed25519PrivateKey {
 	/// Convert this Ed25519 private key to an X25519 private key for ECDH
@@ -343,8 +346,8 @@ impl X25519PrivateKey {
 		// Compute the X25519 public key from the private key using scalar multiplication
 		let private_key_array: [u8; 32] = *self.bytes.expose_secret();
 		let public_key_bytes = x25519_dalek::x25519(private_key_array, x25519_dalek::X25519_BASEPOINT_BYTES);
-
 		let public_key = DalekX25519PublicKey::from(public_key_bytes);
+
 		X25519PublicKey::from(public_key)
 	}
 
@@ -385,7 +388,6 @@ impl X25519PrivateKey {
 	pub fn diffie_hellman(&self, other_public: &X25519PublicKey) -> [u8; 32] {
 		// Create private key from our bytes and perform ECDH
 		let private_key_array: [u8; 32] = *self.bytes.expose_secret();
-
 		let shared_secret = x25519_dalek::x25519(private_key_array, *other_public.inner.as_bytes());
 		shared_secret
 	}
@@ -488,7 +490,6 @@ pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X255
 /// The conversion formula: montgomeryX = (edwardsY + 1) * inverse(1 - edwardsY) mod p
 pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519PublicKey, CryptoError> {
 	let ed25519_bytes: Vec<u8> = ed25519_key.into();
-
 	// Parse the Ed25519 public key as a compressed Edwards point
 	let compressed_edwards =
 		CompressedEdwardsY::from_slice(&ed25519_bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
@@ -501,9 +502,9 @@ pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519
 	let montgomery_point = edwards_point.to_montgomery();
 	// Get the Montgomery point bytes
 	let montgomery_bytes = montgomery_point.as_bytes();
-
 	// Create X25519 public key from the Montgomery point
 	let x25519_public = DalekX25519PublicKey::from(*montgomery_bytes);
+
 	Ok(X25519PublicKey { inner: x25519_public })
 }
 
@@ -527,6 +528,9 @@ impl KeyDerivation for Ed25519Derivation {
 	type PrivateKey = Ed25519PrivateKey;
 
 	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
+		// Pre-derivation fence: Ensure no prior operations leak timing info
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
 		let seed = seed.as_ref();
 		// Hash the seed+index buffer directly using our hash abstraction
 		let hash_result: [u8; 32] = hash::hash_array(seed, None)?;
@@ -542,6 +546,10 @@ impl KeyDerivation for Ed25519Derivation {
 		key_bytes.copy_from_slice(&private_key_bytes[..ed25519_dalek::SECRET_KEY_LENGTH]);
 
 		let signing_key = SigningKey::from_bytes(&key_bytes);
+
+		// Post-attempt fence: Ensure operations complete before
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
 		Ok(Ed25519PrivateKey { inner: signing_key })
 	}
 

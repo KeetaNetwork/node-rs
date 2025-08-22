@@ -111,7 +111,7 @@ pub struct Extension {
 /// # Extension Parsing
 ///
 /// BaseExtensions are typically extracted from a certificate using the
-/// [`parse_base_extensions()`] method.
+/// `parse_base_extensions()` method.
 ///
 /// The extension values are automatically parsed from their DER-encoded form:
 ///

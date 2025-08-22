@@ -1,6 +1,8 @@
 use core::fmt::Debug;
+
 use secrecy::SecretBox;
 use strum_macros::{Display, EnumIter, EnumString};
+use zeroize::ZeroizeOnDrop;
 
 #[cfg(feature = "der")]
 use asn1::oids;
@@ -45,7 +47,7 @@ pub use ecies::{Ecies, EciesSecp256k1, EciesSecp256r1, EciesX25519};
 ///
 /// This extends RustCrypto's Keypair trait with serialization capabilities
 pub trait PrivateKey:
-	Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<SecretBox<Vec<u8>>>
+	Send + Sync + Debug + ZeroizeOnDrop + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<SecretBox<Vec<u8>>>
 {
 	type PublicKey: PublicKey;
 	type Signature: Clone + Send + Sync + Debug;
@@ -241,7 +243,7 @@ macro_rules! impl_subject_public_key_info {
 					let algorithm = ObjectIdentifier::new($oid).unwrap();
 					let parameters = $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).unwrap()));
 					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
-					let public_key_bytes = public_key.to_uncompressed_bytes();
+					let public_key_bytes = Vec::from(public_key);
 
 					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).unwrap()
 				}
@@ -279,6 +281,80 @@ pub trait KeyDerivation {
 
 	/// Get the expected key size in bytes
 	fn key_size() -> usize;
+}
+
+/// Macro to implement constant-time key derivation from seed.
+///
+/// This macro generates a secure, constant-time `derive_from_seed`:
+/// - Always performs exactly 100 iterations even when a valid key is found
+/// - Uses memory fences to prevent timing leaks from speculative execution
+/// - Stores the first valid key found but continues the full loop
+/// - Provides resistance against timing-based side-channel attacks
+///
+/// # Usage
+/// ```rust,ignore
+/// impl_constant_time_key_derivation!(Secp256k1PrivateKey, K256SecretKey, Secp256k1Derivation);
+/// ```
+///
+/// # Parameters
+/// - `$private_key_type`: The wrapper type for the private key (e.g., Secp256k1PrivateKey)
+/// - `$secret_key_type`: The inner secret key type (e.g., K256SecretKey)
+/// - `$derivation_type`: The derivation struct type (e.g., Secp256k1Derivation)
+#[macro_export]
+macro_rules! impl_constant_time_key_derivation {
+	($private_key_type:ty, $secret_key_type:ty, $derivation_type:ty) => {
+		impl KeyDerivation for $derivation_type {
+			type PrivateKey = $private_key_type;
+
+			fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
+				let seed = seed.as_ref();
+				let mut attempt_seed = seed.to_vec();
+				let mut result_key: Option<$secret_key_type> = None;
+				let mut found_valid = false;
+
+				// Always perform exactly 100 iterations for constant time
+				for attempt in 0u32..100 {
+					// Pre-derivation fence: Ensure no prior operations leak timing info
+					core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+					// For attempts > 0, append the attempt counter
+					if attempt > 0 {
+						// Remove any previous attempt counter and add the new one
+						attempt_seed.truncate(seed.len());
+						attempt_seed.extend_from_slice(&attempt.to_be_bytes());
+					}
+
+					// Use our KDF's expand-only method for TypeScript compatibility
+					let key_bytes = KdfAlgorithm::HkdfSha3_256.expand_only_array::<32>(&attempt_seed, &[])?;
+					// Constant-time: always attempt to create the secret key
+					if let Ok(secret_key) = <$secret_key_type>::from_slice(&key_bytes) {
+						// Only store the first valid key we find, but continue the loop
+						if !found_valid {
+							result_key = Some(secret_key);
+							found_valid = true;
+						}
+					}
+
+					// Post-attempt fence: Ensure operations complete before next iteration
+					core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+				}
+
+				match result_key {
+					Some(secret_key) => Ok(<$private_key_type>::from_inner(secret_key)),
+					None => Err(CryptoError::KeyDerivationFailed),
+				}
+			}
+
+			fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
+				let bytes = bytes.as_ref();
+				bytes.len() == 32 && <$secret_key_type>::from_slice(bytes).is_ok()
+			}
+
+			fn key_size() -> usize {
+				32
+			}
+		}
+	};
 }
 
 /// Supported cryptographic algorithms

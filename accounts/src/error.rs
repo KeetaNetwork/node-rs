@@ -96,7 +96,7 @@ impl From<CryptoError> for AccountError {
 			CryptoError::KeyDerivationFailed => AccountError::InvalidConstruction,
 			CryptoError::InvalidPrivateKey => AccountError::InvalidConstruction,
 			CryptoError::InvalidPublicKey => AccountError::InvalidPrefix,
-			CryptoError::InvalidLength => AccountError::InvalidConstruction,
+			CryptoError::InvalidLength { .. } => AccountError::PassphraseWeak,
 			CryptoError::InvalidInput => AccountError::PassphraseWeak,
 			CryptoError::UnsupportedAlgorithm { .. } => AccountError::InvalidKeyType,
 			CryptoError::SignatureVerificationFailed => AccountError::InvalidConstruction,
@@ -177,7 +177,6 @@ mod tests {
 			CryptoError::InvalidKeyMaterial,
 			CryptoError::KeyDerivationFailed,
 			CryptoError::InvalidPrivateKey,
-			CryptoError::InvalidLength,
 			CryptoError::SignatureVerificationFailed,
 			CryptoError::SignatureError,
 			CryptoError::EncryptionFailed,
@@ -188,7 +187,12 @@ mod tests {
 		];
 
 		for crypto_error in invalid_construction_variants {
-			assert_eq!(AccountError::from(crypto_error), AccountError::InvalidConstruction);
+			let account_error: AccountError = crypto_error.into();
+			assert_eq!(account_error, AccountError::InvalidConstruction);
 		}
+
+		// Test that InvalidLength maps to PassphraseWeak
+		let passphrase_weak_error: AccountError = CryptoError::InvalidLength { message: "test".to_string() }.into();
+		assert_eq!(passphrase_weak_error, AccountError::PassphraseWeak);
 	}
 }

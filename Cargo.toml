@@ -45,7 +45,7 @@ version = "0.10.3"
 features = ["serde"]
 
 [workspace.dependencies.snafu]
-version = "0.8.6"
+version = "0.8.7"
 features = ["std"]
 
 [workspace.dependencies.strum]

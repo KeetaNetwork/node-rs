@@ -33,8 +33,8 @@ pub enum CryptoError {
 	#[snafu(display("Internal cryptographic error: {message}"))]
 	InternalError { message: String },
 	/// Invalid length specified
-	#[snafu(display("Invalid length specified"))]
-	InvalidLength,
+	#[snafu(display("Invalid length specified: {message}"))]
+	InvalidLength { message: String },
 	/// Invalid input provided
 	#[snafu(display("Invalid input provided"))]
 	InvalidInput,

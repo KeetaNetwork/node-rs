@@ -61,6 +61,18 @@ pub struct Secp256r1PrivateKey {
 	inner: P256SecretKey,
 }
 
+impl Secp256r1PrivateKey {
+	/// Create a new private key from the inner secret key.
+	/// Used by the constant-time key derivation macro.
+	pub(crate) fn from_inner(inner: P256SecretKey) -> Self {
+		Self { inner }
+	}
+}
+
+// Generate secure zeroization implementation for Secp256r1PrivateKey
+crate::impl_secure_zeroize!(Secp256r1PrivateKey, P256SecretKey, inner);
+impl zeroize::ZeroizeOnDrop for Secp256r1PrivateKey {}
+
 impl CryptoAlgorithm for Secp256r1PrivateKey {
 	fn get_algorithm(&self) -> Algorithm {
 		Algorithm::Secp256r1
@@ -354,44 +366,7 @@ impl AsymmetricEncryption for Secp256r1PublicKey {
 /// ensuring generated keys are always valid for the curve.
 pub struct Secp256r1Derivation;
 
-impl KeyDerivation for Secp256r1Derivation {
-	type PrivateKey = Secp256r1PrivateKey;
-
-	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
-		let seed = seed.as_ref();
-
-		// Try with the seed as-is first (index 0 case)
-		let mut attempt_seed = seed.to_vec();
-		for attempt in 0u32..1000 {
-			// For attempts > 0, append the attempt counter
-			if attempt > 0 {
-				// Remove any previous attempt counter and add the new one
-				attempt_seed.truncate(seed.len());
-				attempt_seed.extend_from_slice(&attempt.to_be_bytes());
-			}
-
-			// Use our KDF's expand-only method for TypeScript compatibility
-			let key_bytes = KdfAlgorithm::HkdfSha3_256.expand_only_array::<32>(&attempt_seed, &[])?;
-			if let Ok(secret_key) = P256SecretKey::from_slice(&key_bytes) {
-				// Try to create the secret key - this will fail if key_bytes is zero or >= curve order
-				return Ok(Secp256r1PrivateKey { inner: secret_key });
-			}
-
-			// If the key was invalid, continue to next attempt
-		}
-
-		Err(CryptoError::KeyDerivationFailed)
-	}
-
-	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
-		let bytes = bytes.as_ref();
-		bytes.len() == 32 && P256SecretKey::from_slice(bytes).is_ok()
-	}
-
-	fn key_size() -> usize {
-		32
-	}
-}
+crate::impl_constant_time_key_derivation!(Secp256r1PrivateKey, P256SecretKey, Secp256r1Derivation);
 
 #[cfg(test)]
 mod tests {

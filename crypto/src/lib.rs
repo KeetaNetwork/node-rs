@@ -46,6 +46,7 @@ pub use algorithms::{Ed25519Signature, Secp256k1Signature, Secp256r1Signature};
 
 // Utility functions
 pub use utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
+
 // Keypair trait when signature feature is enabled
 #[cfg(feature = "signature")]
 pub use ::signature::Keypair;

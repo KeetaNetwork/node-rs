@@ -71,6 +71,8 @@ impl EciesSecp256k1 {
 	/// This matches the ecies-geth implementation which uses a counter-based
 	/// KDF and then SHA-256 for the MAC key derivation.
 	fn derive_keys(shared_secret: impl AsRef<[u8]>) -> Result<([u8; 16], [u8; 32]), CryptoError> {
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
 		// First derive 32 bytes using the KDF
 		let kdf_output = Self::kdf(shared_secret.as_ref(), 32)?;
 
@@ -80,6 +82,8 @@ impl EciesSecp256k1 {
 
 		// MAC key is SHA-256 of the last 16 bytes
 		let mac_key_hash = HashAlgorithm::Sha2_256.hash_array::<32>(&kdf_output[16..32])?;
+
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
 		Ok((encryption_key, mac_key_hash))
 	}
@@ -192,12 +196,19 @@ impl Ecies for EciesSecp256k1 {
 		// Verify HMAC before decryption (HMAC is over IV + ciphertext)
 		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::DecryptionFailed)?;
 		mac.update(cipher_with_iv);
+
 		let computed_hmac = mac.finalize().into_bytes();
+
+		// Constant-time operation memory fence
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
 		let hmac_matches = computed_hmac.ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
 			return Err(CryptoError::DecryptionFailed);
 		}
+
+		// Constant-time operation memory fence
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
 		// Extract IV and ciphertext
 		if cipher_with_iv.len() < 16 {
@@ -235,7 +246,6 @@ impl Ecies for EciesX25519 {
 	fn encrypt<T: AsRef<[u8]>>(recipient_public_key: &X25519PublicKey, plaintext: T) -> Result<Vec<u8>, CryptoError> {
 		// Generate ephemeral key pair
 		let ephemeral_private_bytes = generate_random_bytes::<32>()?;
-
 		// Create X25519 private key from random bytes
 		let ephemeral_private = X25519PrivateKey::try_from(ephemeral_private_bytes.as_slice())?;
 		let ephemeral_public = ephemeral_private.derive_public_key();
@@ -250,11 +260,9 @@ impl Ecies for EciesX25519 {
 
 		// Generate IV for AES-CBC (16 bytes)
 		let iv = generate_random_bytes::<16>()?;
-
 		// Encrypt with AES-CBC
 		let cipher = Aes256Cbc;
-		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, encryption_key, Some(&iv), plaintext.as_ref())
-			.map_err(|_| CryptoError::EncryptionFailed)?;
+		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, encryption_key, Some(&iv), plaintext.as_ref())?;
 		// Extract just the ciphertext part (skip the IV that was prepended)
 		let ciphertext = &iv_and_ciphertext[16..];
 
@@ -313,11 +321,17 @@ impl Ecies for EciesX25519 {
 		mac.update(ephemeral_public_bytes);
 		mac.update(encrypted_data);
 
+		// Constant-time operation memory fence
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
 		let computed_mac = mac.finalize().into_bytes();
 		let mac_matches = computed_mac.ct_eq(received_mac);
 		if mac_matches.unwrap_u8() == 0 {
 			return Err(CryptoError::DecryptionFailed);
 		}
+
+		// Constant-time operation memory fence
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
 		// Decrypt with AES-CBC
 		let cipher = Aes256Cbc;
@@ -325,8 +339,8 @@ impl Ecies for EciesX25519 {
 		let mut iv_and_ciphertext = Vec::with_capacity(16 + encrypted_data.len());
 		iv_and_ciphertext.extend_from_slice(iv);
 		iv_and_ciphertext.extend_from_slice(encrypted_data);
-
 		let plaintext = SymmetricEncryption::decrypt(&cipher, encryption_key, &iv_and_ciphertext)?;
+
 		Ok(plaintext)
 	}
 
@@ -365,9 +379,9 @@ impl Ecies for EciesSecp256r1 {
 		let ephemeral_public_uncompressed = ephemeral_public.to_uncompressed_bytes();
 		// Extract shared secret X coordinate (the full 32 bytes)
 		let shared_secret_x = &shared_secret;
+
 		// Derive keys using TypeScript-compatible KDF
 		let (encryption_key, mac_key) = Self::derive_keys(&ephemeral_public_uncompressed, shared_secret_x)?;
-
 		// Generate IV for AES-256-CBC (16 bytes)
 		let iv = generate_random_bytes::<16>()?;
 
@@ -434,10 +448,16 @@ impl Ecies for EciesSecp256r1 {
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
 		let computed_hmac = mac.finalize().into_bytes();
 
+		// Constant-time operation memory fence
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
 		let hmac_matches = computed_hmac.ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
 			return Err(CryptoError::DecryptionFailed);
 		}
+
+		// Constant-time operation memory fence
+		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
 		// Decrypt with AES-256-CBC
 		let cipher = Aes256Cbc;

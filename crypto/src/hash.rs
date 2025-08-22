@@ -75,7 +75,9 @@ impl HashAlgorithm {
 	/// Hash data and return as a fixed-size array
 	pub fn hash_array<const N: usize>(&self, data: impl AsRef<[u8]>) -> Result<[u8; N], CryptoError> {
 		if N != self.length() {
-			return Err(CryptoError::InvalidLength);
+			return Err(CryptoError::InvalidLength {
+				message: format!("Expected length: {}, got: {}", N, self.length()),
+			});
 		}
 
 		let hash = self.hash(data);
@@ -87,7 +89,9 @@ impl HashAlgorithm {
 	/// Hash data and truncate to specified length
 	pub fn hash_truncated(&self, data: impl AsRef<[u8]>, length: usize) -> Result<Vec<u8>, CryptoError> {
 		if length > self.length() {
-			return Err(CryptoError::InvalidLength);
+			return Err(CryptoError::InvalidLength {
+				message: format!("Expected length: {}, got: {}", length, self.length()),
+			});
 		}
 
 		let hash = self.hash(data);
@@ -103,9 +107,8 @@ impl HashAlgorithm {
 /// - For truncation, N must be <= algorithm's output length
 pub fn hash<const N: usize>(data: impl AsRef<[u8]>, algorithm: Option<HashAlgorithm>) -> Result<[u8; N], CryptoError> {
 	let algo = algorithm.unwrap_or(DEFAULT_HASH_ALGORITHM);
-
 	if N > algo.length() {
-		return Err(CryptoError::InvalidLength);
+		return Err(CryptoError::InvalidLength { message: format!("Expected length: {}, got: {}", N, algo.length()) });
 	}
 
 	let hash_result = algo.hash(data);
@@ -232,7 +235,7 @@ mod tests {
 	/// Generic helper function for testing invalid hash array sizes
 	fn test_invalid_hash_array<const N: usize>(algorithm: HashAlgorithm, input: &[u8]) {
 		let result: Result<[u8; N], CryptoError> = algorithm.hash_array(input);
-		assert_eq!(result.unwrap_err(), CryptoError::InvalidLength);
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidLength { .. }));
 	}
 
 	/// Generic helper function for testing main hash API
@@ -327,7 +330,7 @@ mod tests {
 			let invalid = test_case
 				.algorithm
 				.hash_truncated(b"test data", test_case.length + 1);
-			assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
+			assert!(matches!(invalid.unwrap_err(), CryptoError::InvalidLength { .. }));
 
 			// Test zero-length truncation
 			let zero_length = test_case.algorithm.hash_truncated(b"test data", 0).unwrap();
@@ -365,7 +368,7 @@ mod tests {
 
 		// Test invalid length
 		let invalid: Result<[u8; 100], CryptoError> = hash(b"test", Some(HashAlgorithm::Sha3_256));
-		assert_eq!(invalid.unwrap_err(), CryptoError::InvalidLength);
+		assert!(matches!(invalid.unwrap_err(), CryptoError::InvalidLength { .. }));
 	}
 
 	#[test]

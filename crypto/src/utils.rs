@@ -4,12 +4,89 @@ use bip39_dict::DefaultDictionary;
 use pbkdf2;
 use rand_core::TryRngCore;
 use secrecy::SecretBox;
-use sha3;
 
 use crate::algorithms::{Ed25519Derivation, KeyDerivation, PrivateKey, Secp256k1Derivation};
 use crate::constants::*;
 use crate::error::CryptoError;
 use crate::{Algorithm, AnyPrivateKey, AnyPublicKey};
+
+/// Macro to implement secure zeroization for wrapper structs.
+///
+/// This macro generates a `Zeroize` implementation that:
+/// - Uses memory fences to prevent CPU and compiler reordering
+/// - Uses `write_volatile` for compiler-resistant memory clearing
+/// - Provides cryptographically robust memory clearing
+/// - Supports multiple fields in a single invocation
+/// - Auto-implements `ZeroizeOnDrop`
+///
+/// # Single Field Usage
+/// ```rust,ignore
+/// impl_secure_zeroize!(Secp256k1PrivateKey, K256SecretKey, inner);
+/// ```
+///
+/// # Multiple Fields Usage
+/// ```rust,ignore
+/// impl_secure_zeroize!(MyPrivateKey, {
+///     key_data: SecretKeyType,
+///     nonce: NonceType,
+///     salt: SaltType
+/// });
+/// ```
+#[macro_export]
+macro_rules! impl_secure_zeroize {
+	// Helper macro for the actual zeroization logic
+	(@zeroize_field $field_ptr:expr, $field_type:ty) => {
+		unsafe {
+			let ptr = $field_ptr as *mut $field_type as *mut u8;
+			let size = core::mem::size_of::<$field_type>();
+			for i in 0..size {
+				// Use write_volatile in a loop for cryptographically
+				// secure memory clearing. write_volatile prevents the
+				// compiler from optimizing away these writes, ensuring
+				// that sensitive data is actually overwritten in memory.
+				core::ptr::write_volatile(ptr.add(i), 0u8);
+			}
+		}
+	};
+
+	// Single field variant
+	($wrapper_type:ty, $inner_type:ty, $field_name:ident) => {
+		impl zeroize::Zeroize for $wrapper_type {
+			fn zeroize(&mut self) {
+				// Pre-clear fence: Ensure all prior operations using this key
+				// complete. This prevents speculative execution and ensures
+				// cache coherency.
+				core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+				// Zeroize the field
+				$crate::impl_secure_zeroize!(@zeroize_field &mut self.$field_name, $inner_type);
+
+				// Post-clear fence: Ensure the write is completed before any
+				// subsequent operations. This prevents both compiler and CPU
+				// reordering that could leave sensitive data exposed.
+				core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+			}
+		}
+	};
+
+	// Multiple fields variant
+	($wrapper_type:ty, { $($field_name:ident: $field_type:ty),+ $(,)? }) => {
+		impl zeroize::Zeroize for $wrapper_type {
+			fn zeroize(&mut self) {
+				// Pre-clear fence
+				core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+				// Zeroize each field safely
+				$(
+					$crate::impl_secure_zeroize!(@zeroize_field &mut self.$field_name, $field_type);
+				)+
+
+				// Post-clear fence
+				core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+			}
+		}
+	};
+}
 
 // Helper functions for error creation
 // Note: These are necessary for test coverage
@@ -23,28 +100,28 @@ fn create_string_conversion_error() -> CryptoError {
 	CryptoError::InternalError { message: "Failed to convert word to string".to_string() }
 }
 
-/// Derive a seed from a passphrase using PBKDF2 with SHA3-256.
+/// Derive a seed from a passphrase using PBKDF2 with SHA-256.
 ///
 /// This function applies PBKDF2 key derivation to convert a passphrase
 /// into a 32-byte seed suitable for key derivation.
 pub fn seed_from_passphrase(passphrase: &str) -> Result<SecretBox<[u8; 32]>, CryptoError> {
 	// Normalize passphrase (lowercase, remove spaces)
 	let clean_passphrase = passphrase.to_lowercase().replace(" ", "");
-
 	let clean_passphrase_buffer = clean_passphrase.as_bytes();
 	if clean_passphrase_buffer.len() < MIN_PASSPHRASE_LENGTH {
-		return Err(CryptoError::InvalidInput);
+		return Err(CryptoError::InvalidLength {
+			message: format!(
+				"Invalid passphrase, must be at least {} bytes after internal processing, got {}",
+				MIN_PASSPHRASE_LENGTH,
+				clean_passphrase_buffer.len()
+			),
+		});
 	}
 
 	let mut key = [0u8; 32];
 
-	// Use PBKDF2 with SHA3-256, 64000 iterations, using passphrase as both input and salt
-	pbkdf2::pbkdf2_hmac::<sha3::Sha3_256>(
-		clean_passphrase_buffer,
-		clean_passphrase_buffer,
-		PBKDF2_ITERATIONS,
-		&mut key,
-	);
+	// Use PBKDF2 with SHA-256, 64000 iterations, using passphrase as both input and salt
+	pbkdf2::pbkdf2_hmac::<sha2::Sha256>(clean_passphrase_buffer, clean_passphrase_buffer, PBKDF2_ITERATIONS, &mut key);
 
 	Ok(SecretBox::new(Box::new(key)))
 }
@@ -231,9 +308,11 @@ pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]
 
 #[cfg(test)]
 mod tests {
+	use secrecy::ExposeSecret;
+	use zeroize::Zeroize;
+
 	use super::*;
 	use crate::Algorithm;
-	use secrecy::ExposeSecret;
 
 	#[test]
 	fn test_seed_from_passphrase() {
@@ -249,13 +328,13 @@ mod tests {
 		let short_passphrase = "short"; // Only 5 characters
 		let result = seed_from_passphrase(short_passphrase);
 		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidInput));
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidLength { .. }));
 
 		// Test with passphrase that's just under the limit
 		let almost_long_passphrase = "a".repeat(59); // 59 characters, 1 under limit
 		let result = seed_from_passphrase(&almost_long_passphrase);
 		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidInput));
+		assert!(matches!(result.unwrap_err(), CryptoError::InvalidLength { .. }));
 
 		// Test with passphrase that meets the minimum length
 		let min_length_passphrase = "a".repeat(60); // Exactly 60 characters
@@ -407,6 +486,68 @@ mod tests {
 
 		for (input, description) in complex_cases {
 			assert!(parse_der_ecdsa_signature(input).is_err(), "Failed case: {description}");
+		}
+	}
+
+	#[test]
+	fn test_impl_secure_zeroize() {
+		// Test single field variant
+		struct TestSingleKey {
+			inner: [u8; 32],
+		}
+
+		impl_secure_zeroize!(TestSingleKey, [u8; 32], inner);
+		impl zeroize::ZeroizeOnDrop for TestSingleKey {}
+
+		let mut single_key = TestSingleKey { inner: [0x42u8; 32] };
+		assert!(single_key.inner.iter().all(|&b| b == 0x42));
+		single_key.zeroize();
+		assert!(single_key.inner.iter().all(|&b| b == 0x00));
+
+		// Test multiple fields variant with different types
+		struct TestMultiKey {
+			key_data: [u8; 32],
+			nonce: [u8; 16],
+			salt: u64,
+			counter: [u32; 4],
+			flag: u8,
+		}
+
+		impl_secure_zeroize!(TestMultiKey, {
+			key_data: [u8; 32],
+			nonce: [u8; 16],
+			salt: u64,
+			counter: [u32; 4],
+			flag: u8
+		});
+		impl zeroize::ZeroizeOnDrop for TestMultiKey {}
+
+		let mut multi_key = TestMultiKey {
+			key_data: [0x11u8; 32],
+			nonce: [0x22u8; 16],
+			salt: 0x1234567890ABCDEF,
+			counter: [0x11111111, 0x22222222, 0x33333333, 0x44444444],
+			flag: 0xFF,
+		};
+
+		// Verify initial state
+		assert!(multi_key.key_data.iter().all(|&b| b == 0x11));
+		assert!(multi_key.nonce.iter().all(|&b| b == 0x22));
+		assert_eq!(multi_key.salt, 0x1234567890ABCDEF);
+		assert_eq!(multi_key.counter[0], 0x11111111);
+		assert_eq!(multi_key.flag, 0xFF);
+
+		// Zero and verify all fields cleared
+		multi_key.zeroize();
+		assert!(multi_key.key_data.iter().all(|&b| b == 0x00));
+		assert!(multi_key.nonce.iter().all(|&b| b == 0x00));
+		assert_eq!(multi_key.salt, 0);
+		assert!(multi_key.counter.iter().all(|&v| v == 0));
+		assert_eq!(multi_key.flag, 0);
+
+		// Test ZeroizeOnDrop works without panics
+		{
+			let _drop_test = TestSingleKey { inner: [0x77u8; 32] };
 		}
 	}
 }

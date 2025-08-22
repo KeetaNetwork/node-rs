@@ -3,7 +3,7 @@
 use core::convert::TryFrom;
 
 use accounts::{Account, Accountable, KeyPairType, Keyable};
-use secrecy::SecretBox;
+use crypto::prelude::SecretBox;
 
 #[allow(dead_code)]
 pub struct PublicAccountTestData {

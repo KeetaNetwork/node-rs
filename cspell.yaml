@@ -46,6 +46,7 @@ words:
   - secp256k1
   - ciphertext
   - zeroization
+  - zeroized
   - keystream
   - passphrase
   - hexseed

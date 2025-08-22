@@ -62,6 +62,14 @@ pub struct Secp256k1PrivateKey {
 	inner: K256SecretKey,
 }
 
+impl Secp256k1PrivateKey {
+	/// Create a new private key from the inner secret key.
+	/// Used by the constant-time key derivation macro.
+	pub(crate) fn from_inner(inner: K256SecretKey) -> Self {
+		Self { inner }
+	}
+}
+
 impl core::fmt::Debug for Secp256k1PrivateKey {
 	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
 		f.debug_struct("Secp256k1PrivateKey")
@@ -69,6 +77,10 @@ impl core::fmt::Debug for Secp256k1PrivateKey {
 			.finish()
 	}
 }
+
+// Generate secure zeroization implementation for Secp256k1PrivateKey
+crate::impl_secure_zeroize!(Secp256k1PrivateKey, K256SecretKey, inner);
+impl zeroize::ZeroizeOnDrop for Secp256k1PrivateKey {}
 
 impl CryptoAlgorithm for Secp256k1PrivateKey {
 	fn get_algorithm(&self) -> Algorithm {
@@ -83,7 +95,6 @@ impl PrivateKey for Secp256k1PrivateKey {
 	fn as_public_key(&self) -> Self::PublicKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
-
 		Secp256k1PublicKey { inner: verifying_key.into() }
 	}
 }
@@ -105,7 +116,6 @@ impl TryFrom<&[u8]> for Secp256k1PrivateKey {
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let secret_key = K256SecretKey::from_slice(bytes).map_err(|_| CryptoError::InvalidPrivateKey)?;
-
 		Ok(Secp256k1PrivateKey { inner: secret_key })
 	}
 }
@@ -125,7 +135,6 @@ impl KeyGeneration for Secp256k1PrivateKey {
 	fn generate_random() -> Result<Self, Self::Error> {
 		// Generate a random 32-byte seed and derive a key from it
 		let random_seed = generate_random_seed()?;
-
 		Secp256k1Derivation::derive_from_seed(random_seed.expose_secret())
 	}
 }
@@ -138,14 +147,12 @@ impl KeyExchange for Secp256k1PrivateKey {
 	fn ecdh(&self, other_public_key: &Secp256k1PublicKey) -> Result<Vec<u8>, CryptoError> {
 		// Perform ECDH directly using the k256 function
 		let shared_secret = diffie_hellman(self.inner.to_nonzero_scalar(), other_public_key.inner.as_affine());
-
 		// Return the raw bytes of the shared secret
 		Ok(shared_secret.raw_secret_bytes().to_vec())
 	}
 
 	fn key_exchange<K: AsRef<[u8]>>(&self, their_public_key: K) -> Result<Self::SharedSecret, CryptoError> {
 		let public_key = Secp256k1PublicKey::try_from(their_public_key.as_ref())?;
-
 		self.ecdh(&public_key)
 	}
 
@@ -163,7 +170,6 @@ impl AsymmetricEncryption for Secp256k1PrivateKey {
 	fn encrypt<P: AsRef<[u8]>>(&self, plaintext: P) -> Result<Vec<u8>, CryptoError> {
 		// Use the public key for encryption
 		let public_key = self.as_public_key();
-
 		public_key.encrypt(plaintext)
 	}
 
@@ -183,7 +189,6 @@ impl Keypair for Secp256k1PrivateKey {
 	fn verifying_key(&self) -> Self::VerifyingKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
-
 		Secp256k1PublicKey { inner: verifying_key.into() }
 	}
 }
@@ -192,7 +197,6 @@ impl Keypair for Secp256k1PrivateKey {
 impl Signer<Signature> for Secp256k1PrivateKey {
 	fn try_sign(&self, msg: &[u8]) -> Result<Signature, ::signature::Error> {
 		let signing_key = SigningKey::from(&self.inner);
-
 		signing_key.try_sign(msg)
 	}
 }
@@ -368,49 +372,14 @@ impl AsymmetricEncryption for Secp256k1PublicKey {
 /// 1. **HKDF Expansion**: Use the seed as PRK material for HKDF-SHA3-256
 /// 2. **Validation**: Check if the derived 32 bytes form a valid secp256k1 key
 /// 3. **Retry Logic**: If invalid (zero or >= curve order), try again
-/// 4. **Error Handling**: Fail after 1000 attempts (unlikely to happen)
+/// 4. **Error Handling**: Fail after 100 attempts (unlikely to happen)
 ///
 /// This process ensures we always generate valid secp256k1 private keys while
 /// maintaining deterministic derivation from the same seed.
 pub struct Secp256k1Derivation;
 
-impl KeyDerivation for Secp256k1Derivation {
-	type PrivateKey = Secp256k1PrivateKey;
-
-	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
-		let seed = seed.as_ref();
-		// Try with the seed as-is first (index 0 case)
-		let mut attempt_seed = seed.to_vec();
-		for attempt in 0u32..1000 {
-			// For attempts > 0, append the attempt counter
-			if attempt > 0 {
-				// Remove any previous attempt counter and add the new one
-				attempt_seed.truncate(seed.len());
-				attempt_seed.extend_from_slice(&attempt.to_be_bytes());
-			}
-
-			// Use our KDF's expand-only method for TypeScript compatibility
-			let key_bytes = KdfAlgorithm::HkdfSha3_256.expand_only_array::<32>(&attempt_seed, &[])?;
-			if let Ok(secret_key) = K256SecretKey::from_slice(&key_bytes) {
-				// Try to create the secret key - this will fail if key_bytes is zero or >= curve order
-				return Ok(Secp256k1PrivateKey { inner: secret_key });
-			}
-
-			// If the key was invalid, continue to next attempt
-		}
-
-		Err(CryptoError::KeyDerivationFailed)
-	}
-
-	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
-		let bytes = bytes.as_ref();
-		bytes.len() == 32 && K256SecretKey::from_slice(bytes).is_ok()
-	}
-
-	fn key_size() -> usize {
-		32
-	}
-}
+// Use the constant-time key derivation macro
+crate::impl_constant_time_key_derivation!(Secp256k1PrivateKey, K256SecretKey, Secp256k1Derivation);
 
 #[cfg(test)]
 mod tests {

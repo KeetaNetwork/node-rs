@@ -60,7 +60,9 @@ impl KdfAlgorithm {
 		let info = info.as_ref();
 
 		if output_length > self.max_output_length() {
-			return Err(CryptoError::InvalidLength);
+			return Err(CryptoError::InvalidLength {
+				message: format!("Output length {} exceeds maximum {}", output_length, self.max_output_length()),
+			});
 		}
 
 		match self {
@@ -111,7 +113,9 @@ impl KdfAlgorithm {
 		let info = info.as_ref();
 
 		if output_length > self.max_output_length() {
-			return Err(CryptoError::InvalidLength);
+			return Err(CryptoError::InvalidLength {
+				message: format!("Output length {} exceeds maximum {}", output_length, self.max_output_length()),
+			});
 		}
 
 		match self {
@@ -293,7 +297,7 @@ mod tests {
 		// Test invalid output length
 		let max_len = algo.max_output_length();
 		let invalid_result = algo.derive(ikm, None, b"", max_len + 1);
-		assert_eq!(invalid_result.unwrap_err(), CryptoError::InvalidLength);
+		assert!(matches!(invalid_result.unwrap_err(), CryptoError::InvalidLength { .. }));
 
 		// Test zero-length output (should work)
 		let zero_result = algo.derive(ikm, None, b"", 0).unwrap();

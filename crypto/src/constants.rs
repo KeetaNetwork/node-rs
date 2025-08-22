@@ -3,6 +3,9 @@
 use crate::HashAlgorithm;
 
 /// Minimum length for passphrases.
+/// The BIP39 english word list is 2048 words long, so we can encode 11 bits
+/// per word.  The average word length is 5.4 characters, so we can encode
+/// 121 bits in 60 bytes (an average of 11 words).
 pub const MIN_PASSPHRASE_LENGTH: usize = 60;
 
 /// Default hash algorithm for KeetaNet (SHA3-256)
