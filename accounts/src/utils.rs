@@ -17,45 +17,53 @@ pub(crate) fn combine_seed_and_index(seed: &Seed, index: Index) -> [u8; 36] {
 	indexed_seed
 }
 
-/// Format a public key with checksum and base32 encoding.
-pub(crate) fn format_public_key(
-	public_key_bytes: impl AsRef<[u8]>,
-	algorithm: Algorithm,
-) -> Result<String, AccountError> {
-	// Start with algorithm identifier
-	let mut pub_key_values = vec![algorithm.id()];
+/// Format a key with checksum and base32 encoding (works for both cryptographic and identifier keys)
+pub(crate) fn format_public_key_string(key_data: impl AsRef<[u8]>, key_type: u8) -> Result<String, AccountError> {
+	let key_data = key_data.as_ref();
 
-	// Add the public key bytes
-	pub_key_values.extend_from_slice(public_key_bytes.as_ref());
-
-	// Calculate checksum using crypto crate hash abstraction
-	let checksum_of = Vec::from(&pub_key_values[..]);
-	let checksum = crypto::hash::hash_default(&checksum_of);
-
-	// Add first 5 bytes of checksum
-	pub_key_values.extend_from_slice(&checksum[..5]);
-
-	// Expected lengths:
-	// secp256k1: 1 (algo) + 33 (compressed pubkey) + 5 (checksum) = 39 bytes
-	// ed25519: 1 (algo) + 32 (pubkey) + 5 (checksum) = 38 bytes
-	let expected_lengths = match algorithm {
-		Algorithm::Secp256k1 => vec![39],
-		Algorithm::Ed25519 => vec![38],
-		Algorithm::Secp256r1 => vec![39], // Same as secp256k1
+	// For identifier keys (2, 3, 4, 7), ensure exactly 32 bytes by hashing if needed
+	let normalized_key_data = match key_type {
+		2 | 3 | 4 | 7 => {
+			// Identifier key types - need exactly 32 bytes
+			if key_data.len() == 32 {
+				key_data.to_vec()
+			} else {
+				// Hash the input to get exactly 32 bytes
+				let hash_result: [u8; 32] = crypto::hash_array(key_data, None)?;
+				hash_result.to_vec()
+			}
+		}
+		_ => {
+			// Cryptographic key types - use as-is
+			key_data.to_vec()
+		}
 	};
 
-	if !expected_lengths.contains(&pub_key_values.len()) {
-		return Err(AccountError::InvalidPrefix);
-	}
+	// Start with key type identifier
+	let mut pub_key_values = vec![key_type];
+	// Add the key bytes
+	pub_key_values.extend_from_slice(&normalized_key_data);
+
+	// Calculate checksum
+	let calculated_checksum: [u8; 32] = crypto::hash_array(&pub_key_values, None)?;
+	// Add first 5 bytes of checksum
+	pub_key_values.extend_from_slice(&calculated_checksum[..5]);
 
 	// Encode as base32
 	let pub_key_formatted = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &pub_key_values);
 	Ok(format!("keeta_{pub_key_formatted}"))
 }
 
-/// Parse a formatted public key string
-pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorithm), AccountError> {
-	// Remove "keeta_" prefix
+/// Parse a formatted public key string or hex format
+/// Returns the public key bytes and optionally the algorithm (None for identifier keys)
+pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<Algorithm>), AccountError> {
+	// Check if it's hex format (0x[type][pubkey])
+	if formatted_key.starts_with("0x") {
+		let (bytes, algorithm) = parse_public_key_hex(formatted_key)?;
+		return Ok((bytes, Some(algorithm)));
+	}
+
+	// Remove "keeta_" prefix for base32 format
 	let encoded = formatted_key
 		.strip_prefix("keeta_")
 		.ok_or(AccountError::InvalidPrefix)?;
@@ -64,15 +72,29 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Algorith
 	let decoded = base32::decode(base32::Alphabet::Rfc4648Lower { padding: false }, encoded)
 		.ok_or(AccountError::InvalidPrefix)?;
 	if decoded.len() < 6 {
-		// At least 1 byte algorithm + 1 byte pubkey + 5 bytes checksum
+		// At least 1 byte type + 1 byte key + 5 bytes checksum
 		return Err(AccountError::InvalidPrefix);
 	}
 
-	// Extract algorithm
-	let algorithm = Algorithm::from_id(decoded[0]).map_err(AccountError::from)?;
+	// Extract key type (could be algorithm or identifier type)
+	let key_type = decoded[0];
+
+	// Try to parse as algorithm first, then check if it's a valid identifier type
+	let algorithm = match Algorithm::from_id(key_type) {
+		Ok(alg) => Some(alg),
+		Err(_) => {
+			// Check if it's a valid identifier key type
+			match key_type {
+				2 | 3 | 4 | 7 => None, // NETWORK, TOKEN, STORAGE, MULTISIG
+				_ => return Err(AccountError::InvalidKeyType),
+			}
+		}
+	};
+
 	// Extract public key bytes (everything except first byte and last 5 bytes)
 	let pubkey_end = decoded.len() - 5;
 	let public_key_bytes = decoded[1..pubkey_end].to_vec();
+
 	// Verify checksum
 	let checksum_input = decoded[..pubkey_end].to_vec();
 	let calculated_checksum: [u8; 32] = hash_array(&checksum_input, None).map_err(AccountError::from)?;
@@ -99,38 +121,37 @@ pub(crate) fn create_identifier_key(seed: &Seed, index: Index) -> Result<(String
 	Ok((identifier, public_key))
 }
 
-/// Format an identifier key with proper keeta_ encoding
-pub(crate) fn format_identifier_key_string(key_data: &[u8], key_type: u8) -> Result<String, AccountError> {
-	// For identifier keys, we need exactly 32 bytes of key data
-	// If the input is smaller, hash it to get 32 bytes
-	let key_32_bytes = if key_data.len() == 32 {
-		key_data.to_vec()
-	} else {
-		// Hash the input to get exactly 32 bytes
-		let hash_result: [u8; 32] = crypto::hash_array(key_data, None)?;
-		hash_result.to_vec()
+/// Helper function to parse hex format public key (`0x[type][pubkey]`)
+fn parse_public_key_hex(hex_key: &str) -> Result<(Vec<u8>, Algorithm), AccountError> {
+	// Remove "0x" prefix
+	let hex_data = hex_key
+		.strip_prefix("0x")
+		.ok_or(AccountError::InvalidPrefix)?;
+
+	// Decode hex
+	let decoded = hex::decode(hex_data).map_err(|_| AccountError::InvalidPrefix)?;
+
+	if decoded.is_empty() {
+		return Err(AccountError::InvalidPrefix);
+	}
+
+	// First byte is the algorithm type
+	let algorithm = Algorithm::from_id(decoded[0]).map_err(AccountError::from)?;
+
+	// Rest is the public key
+	let public_key_bytes = decoded[1..].to_vec();
+
+	// Validate public key length based on algorithm
+	let expected_lengths = match algorithm {
+		Algorithm::Secp256k1 | Algorithm::Secp256r1 => &[33, 65][..], // compressed or uncompressed
+		Algorithm::Ed25519 => &[32][..],                              // Ed25519 public keys are always 32 bytes
 	};
 
-	// Build the key data: [key_type, key_data[32], checksum[5]]
-	let mut pub_key_values = Vec::with_capacity(38);
-	// Add key type as first byte
-	pub_key_values.push(key_type);
-	// Add the 32 bytes of key data
-	pub_key_values.extend_from_slice(&key_32_bytes);
-
-	// Calculate checksum over [key_type + key_data]
-	let full_checksum: [u8; 32] = crypto::hash_array(&pub_key_values, None)?;
-	// Take first 5 bytes as checksum
-	pub_key_values.extend_from_slice(&full_checksum[..5]);
-
-	// Should be 38 bytes total: 1 (type) + 32 (key) + 5 (checksum)
-	if pub_key_values.len() != 38 {
+	if !expected_lengths.contains(&public_key_bytes.len()) {
 		return Err(AccountError::InvalidConstruction);
 	}
 
-	// Encode as base32
-	let pub_key_formatted = base32::encode(base32::Alphabet::Rfc4648Lower { padding: false }, &pub_key_values);
-	Ok(format!("keeta_{pub_key_formatted}"))
+	Ok((public_key_bytes, algorithm))
 }
 
 #[cfg(test)]
@@ -141,16 +162,32 @@ mod tests {
 	use crypto::utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
 
 	#[test]
-	fn test_format_identifier_key_string() {
-		let test_data = b"test";
-		let result = format_identifier_key_string(test_data, 3); // TOKEN type
-		match result {
-			Ok(formatted) => {
-				println!("Formatted string: {formatted}");
-				assert!(formatted.starts_with("keeta_"));
-			}
-			Err(e) => {
-				panic!("Failed to format identifier key string: {e:?}");
+	fn test_format_public_key_string() {
+		let test_cases = [
+			// Cryptographic key types
+			(Algorithm::Secp256k1.id(), vec![0x02; 33]),
+			(Algorithm::Ed25519.id(), vec![0x03; 32]),
+			(Algorithm::Secp256r1.id(), vec![0x04; 33]),
+			// Identifier key types
+			(2, b"test-network-id".to_vec()),
+			(3, b"test-token-id".to_vec()),
+			(4, b"test-storage-id".to_vec()),
+			(7, b"test-multisig-id".to_vec()),
+		];
+
+		for (key_type, test_data) in test_cases {
+			let result = format_public_key_string(&test_data, key_type).unwrap();
+			assert!(result.starts_with("keeta_"));
+
+			// Verify we can parse it back
+			let (parsed_bytes, parsed_algorithm) = parse_public_key(&result).unwrap();
+			// For identifier keys, the parsed bytes should be the normalized 32-byte version
+			if matches!(key_type, 2 | 3 | 4 | 7) {
+				assert_eq!(parsed_bytes.len(), 32, "Identifier keys should normalize to 32 bytes");
+				assert!(parsed_algorithm.is_none(), "Identifier keys should not have an algorithm");
+			} else {
+				assert_eq!(parsed_bytes, test_data, "Cryptographic key bytes should match");
+				assert!(parsed_algorithm.is_some(), "Cryptographic keys should have an algorithm");
 			}
 		}
 	}
@@ -214,26 +251,6 @@ mod tests {
 	}
 
 	#[test]
-	fn test_format_and_parse_algorithms() {
-		let test_cases = [
-			(Algorithm::Secp256k1, vec![0x02; 33], 33),
-			(Algorithm::Ed25519, vec![0x03; 32], 32),
-			(Algorithm::Secp256r1, vec![0x03; 33], 33),
-		];
-
-		for (algorithm, pubkey, expected_size) in test_cases {
-			assert_eq!(pubkey.len(), expected_size);
-
-			let formatted = format_public_key(&pubkey, algorithm).unwrap();
-			assert!(formatted.starts_with("keeta_"));
-
-			let (parsed_pubkey, parsed_algorithm) = parse_public_key(&formatted).unwrap();
-			assert_eq!(pubkey, parsed_pubkey);
-			assert_eq!(algorithm, parsed_algorithm);
-		}
-	}
-
-	#[test]
 	fn test_invalid_format() {
 		// Wrong prefix
 		assert!(parse_public_key("wrong_prefix").is_err());
@@ -246,12 +263,47 @@ mod tests {
 	#[test]
 	fn test_checksum_validation() {
 		let pubkey = vec![0x04; 33];
-		let mut formatted = format_public_key(&pubkey, Algorithm::Secp256k1).unwrap();
+		let mut formatted = format_public_key_string(&pubkey, Algorithm::Secp256k1.id()).unwrap();
 
 		// Corrupt the last character (checksum)
 		formatted.pop();
 		formatted.push('x');
 
 		assert!(parse_public_key(&formatted).is_err());
+	}
+
+	#[test]
+	fn test_hex_format_parsing() {
+		let test_cases = [
+			(Algorithm::Secp256k1, vec![0x02; 33]),
+			(Algorithm::Ed25519, vec![0x03; 32]),
+			(Algorithm::Secp256r1, vec![0x04; 33]),
+		];
+
+		for (algorithm, pubkey) in test_cases {
+			// Test that base32 format works
+			let base32_formatted = format_public_key_string(&pubkey, algorithm.id()).unwrap();
+			let (parsed_pubkey, parsed_algorithm) = parse_public_key(&base32_formatted).unwrap();
+			assert_eq!(pubkey, parsed_pubkey);
+			assert_eq!(Some(algorithm), parsed_algorithm);
+		}
+	}
+
+	#[test]
+	fn test_invalid_hex_format() {
+		// Missing 0x prefix
+		assert!(parse_public_key("00123456").is_err());
+
+		// Invalid hex characters
+		assert!(parse_public_key("0xZZZZ").is_err());
+
+		// Empty after 0x
+		assert!(parse_public_key("0x").is_err());
+
+		// Invalid algorithm ID
+		assert!(parse_public_key("0xFF123456789012345678901234567890123456789012345678901234567890123456").is_err());
+
+		// Wrong length for Ed25519 (should be 32 bytes)
+		assert!(parse_public_key("0x01123456").is_err());
 	}
 }

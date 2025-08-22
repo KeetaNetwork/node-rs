@@ -58,7 +58,7 @@ pub trait PrivateKey:
 
 /// Trait for cryptographic public keys that can be used for verification
 pub trait PublicKey:
-	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>>
+	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>> + AsRef<[u8]>
 {
 	/// Get uncompressed public key bytes.
 	///
@@ -110,7 +110,7 @@ impl AnyPrivateKey {
 }
 
 impl CryptoAlgorithm for AnyPrivateKey {
-	fn get_algorithm(&self) -> Algorithm {
+	fn to_algorithm(&self) -> Algorithm {
 		match self {
 			AnyPrivateKey::Secp256k1(key) => key.into(),
 			AnyPrivateKey::Ed25519(key) => key.into(),
@@ -151,7 +151,7 @@ macro_rules! impl_any_public_key {
 					match key {
 						$any_key_type::$variant(key) => Ok(key),
 						_ => Err(CryptoError::UnsupportedAlgorithm {
-							algorithm: format!("Expected {}, found {:?}", stringify!($variant), key.get_algorithm()),
+							algorithm: format!("Expected {}, found {:?}", stringify!($variant), key.to_algorithm()),
 						}),
 					}
 				}
@@ -179,7 +179,7 @@ impl AnyPublicKey {
 }
 
 impl CryptoAlgorithm for AnyPublicKey {
-	fn get_algorithm(&self) -> Algorithm {
+	fn to_algorithm(&self) -> Algorithm {
 		match self {
 			AnyPublicKey::Secp256k1(key) => key.into(),
 			AnyPublicKey::Ed25519(key) => key.into(),
@@ -225,7 +225,7 @@ impl AnySignature {
 
 #[cfg(feature = "signature")]
 impl CryptoAlgorithm for AnySignature {
-	fn get_algorithm(&self) -> Algorithm {
+	fn to_algorithm(&self) -> Algorithm {
 		match self {
 			AnySignature::Secp256k1(_) => Algorithm::Secp256k1,
 			AnySignature::Ed25519(_) => Algorithm::Ed25519,
@@ -409,13 +409,13 @@ impl TryFrom<u8> for Algorithm {
 /// Core cryptographic algorithm trait
 pub trait CryptoAlgorithm: Send + Sync {
 	/// Get the cryptographic algorithm used by this implementation
-	fn get_algorithm(&self) -> Algorithm;
+	fn to_algorithm(&self) -> Algorithm;
 }
 
 /// Blanket implementation: anything that implements CryptoAlgorithm can be converted to Algorithm
 impl<T: CryptoAlgorithm> From<&T> for Algorithm {
 	fn from(crypto_algo: &T) -> Self {
-		crypto_algo.get_algorithm()
+		crypto_algo.to_algorithm()
 	}
 }
 
@@ -494,14 +494,14 @@ mod tests {
 	}
 
 	#[test]
-	fn test_get_algorithm() {
+	fn test_to_algorithm() {
 		for test_case in AlgorithmTestData::TEST_CASES {
 			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes());
-			assert_eq!(any_private_key.get_algorithm(), test_case.algorithm);
+			assert_eq!(any_private_key.to_algorithm(), test_case.algorithm);
 			assert_eq!(Algorithm::from(&any_private_key), test_case.algorithm);
 
 			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes());
-			assert_eq!(any_public_key.get_algorithm(), test_case.algorithm);
+			assert_eq!(any_public_key.to_algorithm(), test_case.algorithm);
 			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
 		}
 	}
@@ -558,7 +558,7 @@ mod tests {
 				// Create keys using existing test data
 				// Test From conversion (specific -> Any)
 				let any_key = $test_case.create_any_public_key(TEST_SEED.as_bytes());
-				assert_eq!(any_key.get_algorithm(), $test_case.algorithm);
+				assert_eq!(any_key.to_algorithm(), $test_case.algorithm);
 
 				// Test round-trip conversion (Any -> specific -> Any)
 				let converted_specific: $key_type = any_key.clone().try_into().unwrap();
@@ -658,7 +658,7 @@ mod tests {
 			let any_signature = test_case.create_any_signature(TEST_SEED.as_bytes(), TEST_MESSAGE);
 
 			// Test algorithm detection
-			assert_eq!(any_signature.get_algorithm(), test_case.algorithm);
+			assert_eq!(any_signature.to_algorithm(), test_case.algorithm);
 			assert_eq!(Algorithm::from(&any_signature), test_case.algorithm);
 
 			// Test to_bytes returns non-empty signature data

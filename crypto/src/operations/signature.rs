@@ -24,9 +24,6 @@ pub trait CryptoSigner<S>: CryptoAlgorithm + Signer<S> {
 pub trait CryptoVerifier<S>: CryptoAlgorithm + Verifier<S> {
 	/// Get the public key bytes for this verifier
 	fn public_key_bytes(&self) -> Vec<u8>;
-
-	/// Get the formatted public key string
-	fn public_key_string(&self) -> String;
 }
 
 /// Signing and verification options for cryptographic operations.
@@ -93,13 +90,13 @@ mod tests {
 	struct MockVerifier;
 
 	impl CryptoAlgorithm for MockSigner {
-		fn get_algorithm(&self) -> Algorithm {
+		fn to_algorithm(&self) -> Algorithm {
 			Algorithm::Ed25519
 		}
 	}
 
 	impl CryptoAlgorithm for MockVerifier {
-		fn get_algorithm(&self) -> Algorithm {
+		fn to_algorithm(&self) -> Algorithm {
 			Algorithm::Ed25519
 		}
 	}
@@ -189,10 +186,6 @@ mod tests {
 		fn public_key_bytes(&self) -> Vec<u8> {
 			vec![0x02, 0x03, 0x04, 0x05] // Mock 4-byte public key
 		}
-
-		fn public_key_string(&self) -> String {
-			"02030405".to_string()
-		}
 	}
 
 	impl CryptoVerifierWithOptions<MockSignature> for MockVerifier {
@@ -242,7 +235,7 @@ mod tests {
 	struct FailingMockVerifier;
 
 	impl CryptoAlgorithm for FailingMockVerifier {
-		fn get_algorithm(&self) -> Algorithm {
+		fn to_algorithm(&self) -> Algorithm {
 			Algorithm::Ed25519
 		}
 	}
@@ -257,10 +250,6 @@ mod tests {
 		fn public_key_bytes(&self) -> Vec<u8> {
 			vec![] // Empty bytes to test edge case
 		}
-
-		fn public_key_string(&self) -> String {
-			"InvalidPublicKey".to_string() // Test error case
-		}
 	}
 
 	#[test]
@@ -270,7 +259,7 @@ mod tests {
 		assert!(signer.has_private_key());
 
 		// Test getting the algorithm
-		let algorithm = signer.get_algorithm();
+		let algorithm = signer.to_algorithm();
 		assert_eq!(algorithm, Algorithm::Ed25519);
 
 		// Test signing a message
@@ -287,28 +276,14 @@ mod tests {
 		let signature = signer.try_sign(message).unwrap();
 
 		// Test CryptoVerifier trait methods
-		let algorithm = verifier.get_algorithm();
+		let algorithm = verifier.to_algorithm();
 		assert_eq!(algorithm, Algorithm::Ed25519);
 
 		let public_key_bytes = verifier.public_key_bytes();
 		assert_eq!(public_key_bytes, vec![0x02, 0x03, 0x04, 0x05]);
 
-		let public_key_string = verifier.public_key_string();
-		assert_eq!(public_key_string, "02030405");
-
 		// Test the verify method
 		assert!(verifier.verify(message, &signature).is_ok());
-	}
-
-	#[test]
-	fn test_crypto_verifier_error_handling() {
-		let verifier = MockVerifier;
-
-		// Test that public_key_string() succeeds for valid keys
-		let result = verifier.public_key_string();
-		// Test that the string is valid hex
-		assert!(result.chars().all(|c| c.is_ascii_hexdigit()));
-		assert_eq!(result.len(), 8); // 4 bytes * 2 hex chars
 	}
 
 	#[test]
@@ -317,7 +292,7 @@ mod tests {
 		let signer = MockSigner;
 		let message = b"test message";
 
-		let algorithm = failing_verifier.get_algorithm();
+		let algorithm = failing_verifier.to_algorithm();
 		assert_eq!(algorithm, Algorithm::Ed25519);
 
 		// Test verification failure
@@ -327,10 +302,6 @@ mod tests {
 		// Test empty public key bytes
 		let empty_bytes = failing_verifier.public_key_bytes();
 		assert!(empty_bytes.is_empty());
-
-		// Test public_key_string error
-		let result = failing_verifier.public_key_string();
-		assert_eq!(result, "InvalidPublicKey".to_string());
 	}
 
 	#[test]
@@ -363,7 +334,6 @@ mod tests {
 		// Test CryptoVerifier as trait object
 		let crypto_verifier: &dyn CryptoVerifier<MockSignature> = &verifier;
 		assert!(!crypto_verifier.public_key_bytes().is_empty());
-		assert!(!crypto_verifier.public_key_string().is_empty());
 	}
 
 	#[test]

@@ -84,12 +84,13 @@ impl PrivateKey for Ed25519PrivateKey {
 	type Signature = Signature;
 
 	fn as_public_key(&self) -> Self::PublicKey {
-		Ed25519PublicKey { inner: self.inner.verifying_key() }
+		let bytes = self.inner.verifying_key().to_bytes().to_vec();
+		Ed25519PublicKey { inner: self.inner.verifying_key(), bytes }
 	}
 }
 
 impl CryptoAlgorithm for Ed25519PrivateKey {
-	fn get_algorithm(&self) -> Algorithm {
+	fn to_algorithm(&self) -> Algorithm {
 		Algorithm::Ed25519
 	}
 }
@@ -148,10 +149,6 @@ impl AsymmetricEncryption for Ed25519PrivateKey {
 		let x25519_private = self.to_x25519()?;
 		EciesX25519::decrypt(&x25519_private, cipher_text.as_ref())
 	}
-
-	fn algorithm_info(&self) -> &'static str {
-		"ECIES-Ed25519-via-X25519-AES128CTR"
-	}
 }
 
 #[cfg(feature = "signature")]
@@ -159,7 +156,8 @@ impl Keypair for Ed25519PrivateKey {
 	type VerifyingKey = Ed25519PublicKey;
 
 	fn verifying_key(&self) -> Self::VerifyingKey {
-		Ed25519PublicKey { inner: self.inner.verifying_key() }
+		let bytes = self.inner.verifying_key().to_bytes().to_vec();
+		Ed25519PublicKey { inner: self.inner.verifying_key(), bytes }
 	}
 }
 
@@ -200,8 +198,9 @@ impl CryptoSignerWithOptions<Signature> for Ed25519PrivateKey {
 /// This struct wraps the ed25519-dalek VerifyingKey and provides the PublicKey
 /// trait implementation. Ed25519 public keys are 32 bytes long and represent
 /// points on the Ed25519 curve.
-#[derive(Debug, Copy, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Ed25519PublicKey {
+	bytes: Vec<u8>,
 	inner: VerifyingKey,
 }
 
@@ -213,7 +212,7 @@ impl Ed25519PublicKey {
 }
 
 impl CryptoAlgorithm for Ed25519PublicKey {
-	fn get_algorithm(&self) -> Algorithm {
+	fn to_algorithm(&self) -> Algorithm {
 		Algorithm::Ed25519
 	}
 }
@@ -246,7 +245,13 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 			.map_err(|_| CryptoError::InvalidPublicKey)?;
 
 		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
-		Ok(Ed25519PublicKey { inner: verifying_key })
+		Ok(Ed25519PublicKey { inner: verifying_key, bytes: bytes.to_vec() })
+	}
+}
+
+impl AsRef<[u8]> for Ed25519PublicKey {
+	fn as_ref(&self) -> &[u8] {
+		self.bytes.as_ref()
 	}
 }
 
@@ -269,10 +274,6 @@ impl Verifier<Signature> for Ed25519PublicKey {
 impl CryptoVerifier<Signature> for Ed25519PublicKey {
 	fn public_key_bytes(&self) -> Vec<u8> {
 		self.into()
-	}
-
-	fn public_key_string(&self) -> String {
-		hex::encode(self.public_key_bytes())
 	}
 }
 
@@ -306,10 +307,6 @@ impl AsymmetricEncryption for Ed25519PublicKey {
 	fn decrypt<C: AsRef<[u8]>>(&self, _cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 		// Public keys cannot decrypt
 		Err(CryptoError::InvalidOperation)
-	}
-
-	fn algorithm_info(&self) -> &'static str {
-		"ECIES-Ed25519-via-X25519-AES128CTR"
 	}
 }
 
@@ -820,13 +817,13 @@ mod tests {
 		assert_eq!(Vec::<u8>::from(&public_key), Vec::<u8>::from(&recovered_public));
 
 		// Test SecretBox From conversions for Ed25519PrivateKey
-		let secret_box_owned: SecretBox<Vec<u8>> = private_key.clone().into();
 		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
+		let secret_box_owned: SecretBox<Vec<u8>> = private_key.clone().into();
 		assert_eq!(secret_box_owned.expose_secret(), secret_box_ref.expose_secret());
 
 		// Test Vec<u8> From conversions for Ed25519PublicKey
-		let public_vec_owned: Vec<u8> = public_key.into();
 		let public_vec_ref: Vec<u8> = (&public_key).into();
+		let public_vec_owned: Vec<u8> = public_key.into();
 		assert_eq!(public_vec_owned, public_vec_ref);
 	}
 
@@ -936,7 +933,7 @@ mod tests {
 		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
 		assert!(private_key.has_private_key());
 
-		let algorithm = private_key.get_algorithm();
+		let algorithm = private_key.to_algorithm();
 		assert_eq!(algorithm, Algorithm::Ed25519);
 	}
 
@@ -1094,34 +1091,6 @@ mod tests {
 		assert_eq!(zeroed_bytes.expose_secret(), &vec![0u8; 32]);
 	}
 
-	#[test]
-	fn test_ed25519_comprehensive_serialization() {
-		let seed = b"comprehensive serialization test seed!";
-		let private_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.as_public_key();
-
-		// Test all From implementations for Ed25519PrivateKey
-		let secret_box_owned: SecretBox<Vec<u8>> = private_key.clone().into();
-		let secret_box_ref: SecretBox<Vec<u8>> = (&private_key).into();
-		assert_eq!(secret_box_owned.expose_secret(), secret_box_ref.expose_secret());
-		assert_eq!(secret_box_owned.expose_secret().len(), 32);
-
-		// Test all From implementations for Ed25519PublicKey
-		let public_vec_owned: Vec<u8> = public_key.into();
-		let public_vec_ref: Vec<u8> = (&public_key).into();
-		assert_eq!(public_vec_owned, public_vec_ref);
-		assert_eq!(public_vec_owned.len(), 32);
-
-		// Test round-trip conversions
-		let recovered_private = Ed25519PrivateKey::try_from(secret_box_owned.expose_secret().as_slice()).unwrap();
-		let recovered_private_bytes: SecretBox<Vec<u8>> = (&recovered_private).into();
-		assert_eq!(secret_box_owned.expose_secret(), recovered_private_bytes.expose_secret());
-
-		let recovered_public = Ed25519PublicKey::try_from(public_vec_owned.as_slice()).unwrap();
-		let recovered_public_bytes: Vec<u8> = (&recovered_public).into();
-		assert_eq!(public_vec_owned, recovered_public_bytes);
-	}
-
 	#[cfg(feature = "signature")]
 	#[test]
 	fn test_ed25519_crypto_signer_with_options() {
@@ -1215,17 +1184,6 @@ mod tests {
 		// Should match the regular Vec conversion
 		let regular_bytes: Vec<u8> = (&public_key).into();
 		assert_eq!(public_key_bytes, regular_bytes);
-
-		// Test public_key_string() method
-		let public_key_string = public_key.public_key_string();
-		assert_eq!(public_key_string.len(), 64); // 32 bytes * 2 hex chars per byte
-		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
-		// Verify the string is valid hex
-		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
-
-		// Test that we can decode the hex string back to the original bytes
-		let decoded_bytes = hex::decode(&public_key_string).unwrap();
-		assert_eq!(decoded_bytes, public_key_bytes);
 	}
 
 	#[cfg(feature = "encryption")]
@@ -1244,10 +1202,6 @@ mod tests {
 		// Test decryption via AsymmetricEncryption trait
 		let decrypted = private_key.decrypt(&ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
-
-		// Test algorithm info
-		assert_eq!(public_key.algorithm_info(), "ECIES-Ed25519-via-X25519-AES128CTR");
-		assert_eq!(private_key.algorithm_info(), "ECIES-Ed25519-via-X25519-AES128CTR");
 
 		// Test that public key cannot decrypt
 		let fake_ciphertext = [0u8; 100];

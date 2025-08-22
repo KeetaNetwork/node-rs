@@ -97,10 +97,6 @@ impl SymmetricEncryption for Aes256Cbc {
 		Ok(decrypted)
 	}
 
-	fn algorithm_info(&self) -> &'static str {
-		"AES-256-CBC"
-	}
-
 	fn key_size(&self) -> usize {
 		32 // AES-256 uses 32-byte keys
 	}
@@ -135,7 +131,6 @@ mod tests {
 		let aes_cbc = Aes256Cbc;
 		assert_eq!(aes_cbc.key_size(), 32);
 		assert_eq!(aes_cbc.block_size(), 16);
-		assert_eq!(aes_cbc.algorithm_info(), "AES-256-CBC");
 	}
 
 	#[test]

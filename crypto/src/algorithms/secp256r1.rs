@@ -74,7 +74,7 @@ crate::impl_secure_zeroize!(Secp256r1PrivateKey, P256SecretKey, inner);
 impl zeroize::ZeroizeOnDrop for Secp256r1PrivateKey {}
 
 impl CryptoAlgorithm for Secp256r1PrivateKey {
-	fn get_algorithm(&self) -> Algorithm {
+	fn to_algorithm(&self) -> Algorithm {
 		Algorithm::Secp256r1
 	}
 }
@@ -86,8 +86,9 @@ impl PrivateKey for Secp256r1PrivateKey {
 	fn as_public_key(&self) -> Self::PublicKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
+		let bytes = verifying_key.to_encoded_point(true).as_bytes().to_vec();
 
-		Secp256r1PublicKey { inner: verifying_key.into() }
+		Secp256r1PublicKey { inner: verifying_key.into(), bytes }
 	}
 }
 
@@ -152,10 +153,6 @@ impl AsymmetricEncryption for Secp256r1PrivateKey {
 	fn decrypt<C: AsRef<[u8]>>(&self, cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 		EciesSecp256r1::decrypt(self, cipher_text.as_ref())
 	}
-
-	fn algorithm_info(&self) -> &'static str {
-		"ECIES-secp256r1-AES256CBC"
-	}
 }
 
 #[cfg(feature = "encryption")]
@@ -191,7 +188,9 @@ impl Keypair for Secp256r1PrivateKey {
 	fn verifying_key(&self) -> Self::VerifyingKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
-		Secp256r1PublicKey { inner: verifying_key.into() }
+		let bytes = verifying_key.to_encoded_point(true).as_bytes().to_vec();
+
+		Secp256r1PublicKey { inner: verifying_key.into(), bytes }
 	}
 }
 
@@ -249,11 +248,12 @@ impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 /// no secret information.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Secp256r1PublicKey {
+	bytes: Vec<u8>,
 	inner: p256::PublicKey,
 }
 
 impl CryptoAlgorithm for Secp256r1PublicKey {
-	fn get_algorithm(&self) -> Algorithm {
+	fn to_algorithm(&self) -> Algorithm {
 		Algorithm::Secp256r1
 	}
 }
@@ -283,7 +283,13 @@ impl TryFrom<&[u8]> for Secp256r1PublicKey {
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let public_key = p256::PublicKey::from_sec1_bytes(bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
-		Ok(Secp256r1PublicKey { inner: public_key })
+		Ok(Secp256r1PublicKey { inner: public_key, bytes: bytes.to_vec() })
+	}
+}
+
+impl AsRef<[u8]> for Secp256r1PublicKey {
+	fn as_ref(&self) -> &[u8] {
+		self.bytes.as_ref()
 	}
 }
 
@@ -307,10 +313,6 @@ impl Verifier<Signature> for Secp256r1PublicKey {
 impl CryptoVerifier<Signature> for Secp256r1PublicKey {
 	fn public_key_bytes(&self) -> Vec<u8> {
 		self.into()
-	}
-
-	fn public_key_string(&self) -> String {
-		hex::encode(self.public_key_bytes())
 	}
 }
 
@@ -353,10 +355,6 @@ impl AsymmetricEncryption for Secp256r1PublicKey {
 	fn decrypt<C: AsRef<[u8]>>(&self, _cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 		// Public key cannot decrypt
 		Err(CryptoError::InvalidOperation)
-	}
-
-	fn algorithm_info(&self) -> &'static str {
-		"ECIES-secp256r1-AES256CBC"
 	}
 }
 
@@ -588,20 +586,6 @@ mod tests {
 
 	#[cfg(feature = "encryption")]
 	#[test]
-	fn test_algorithm_info_methods() {
-		let mut seed = [0u8; 36]; // Proper seed + index length
-		seed[..23].copy_from_slice(b"test seed for algorithm");
-
-		let private_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
-		let public_key = private_key.as_public_key();
-		// Test algorithm_info for private key
-		assert_eq!(private_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
-		// Test algorithm_info for public key
-		assert_eq!(public_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
-	}
-
-	#[cfg(feature = "encryption")]
-	#[test]
 	fn test_secp256r1_key_exchange_trait() {
 		let seed1 = b"test seed for secp256r1 key exchange 1";
 		let seed2 = b"test seed for secp256r1 key exchange 2";
@@ -657,7 +641,7 @@ mod tests {
 		let private_key = Secp256r1Derivation::derive_from_seed(seed).unwrap();
 		assert!(private_key.has_private_key());
 
-		let algorithm = private_key.get_algorithm();
+		let algorithm = private_key.to_algorithm();
 		assert_eq!(algorithm, Algorithm::Secp256r1);
 
 		let verifying_key = private_key.verifying_key();
@@ -677,13 +661,6 @@ mod tests {
 
 		let public_key_bytes = public_key.public_key_bytes();
 		assert_eq!(public_key_bytes.len(), 33); // Compressed secp256r1 public key
-
-		let public_key_string = public_key.public_key_string();
-		assert_eq!(public_key_string.len(), 66); // 33 bytes * 2 hex chars per byte
-		assert_eq!(public_key_string, hex::encode(&public_key_bytes));
-
-		// Test that all characters are valid hex
-		assert!(public_key_string.chars().all(|c| c.is_ascii_hexdigit()));
 	}
 
 	#[cfg(feature = "signature")]

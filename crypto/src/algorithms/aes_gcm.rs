@@ -73,11 +73,7 @@ impl AeadCore for Aes256Gcm {
 	type CiphertextOverhead = <AesGcmCipher as AeadCore>::CiphertextOverhead;
 }
 
-impl CryptoAead for Aes256Gcm {
-	fn algorithm_info(&self) -> &'static str {
-		"AES-256-GCM"
-	}
-}
+impl CryptoAead for Aes256Gcm {}
 
 impl NonceGeneration for Aes256Gcm {
 	type Nonce = aes_gcm::aead::Nonce<Self>;
@@ -115,10 +111,6 @@ mod tests {
 
 	#[test]
 	fn test_aes_256_gcm_properties() {
-		let key = [0x42u8; 32];
-
-		let aes_gcm = Aes256Gcm::new(key).unwrap();
-		assert_eq!(aes_gcm.algorithm_info(), "AES-256-GCM");
 		assert_eq!(Aes256Gcm::key_size(), 32);
 		assert_eq!(Aes256Gcm::nonce_size(), 12);
 		assert_eq!(Aes256Gcm::tag_size(), 16);

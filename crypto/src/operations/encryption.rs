@@ -13,10 +13,7 @@ pub use aead::{Aead, AeadCore, AeadInPlace, KeyInit};
 /// This trait extends the RustCrypto Aead trait with additional convenience
 /// methods while avoiding method name conflicts. It provides the standard
 /// AEAD interface through inheritance from Aead.
-pub trait CryptoAead: Aead {
-	/// Get algorithm-specific metadata or configuration
-	fn algorithm_info(&self) -> &'static str;
-}
+pub trait CryptoAead: Aead {}
 
 /// Symmetric encryption operations.
 ///
@@ -49,9 +46,6 @@ pub trait SymmetricEncryption {
 	/// Decrypted plaintext data
 	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError>;
 
-	/// Get algorithm-specific metadata or configuration
-	fn algorithm_info(&self) -> &'static str;
-
 	/// Get the expected key size in bytes
 	fn key_size(&self) -> usize;
 
@@ -74,9 +68,6 @@ pub trait AsymmetricEncryption {
 	///
 	/// This typically uses the private key for decryption.
 	fn decrypt<C: AsRef<[u8]>>(&self, cipher_text: C) -> Result<Vec<u8>, CryptoError>;
-
-	/// Get algorithm-specific metadata or configuration
-	fn algorithm_info(&self) -> &'static str;
 }
 
 /// Key generation operations for cryptographic keys.
@@ -202,10 +193,6 @@ mod tests {
 
 			Ok(result)
 		}
-
-		fn algorithm_info(&self) -> &'static str {
-			"Mock-Asymmetric-Encryption"
-		}
 	}
 
 	// Mock KeyExchange implementation
@@ -266,10 +253,6 @@ mod tests {
 		fn decrypt<C: AsRef<[u8]>>(&self, _cipher_text: C) -> Result<Vec<u8>, CryptoError> {
 			Err(CryptoError::DecryptionFailed)
 		}
-
-		fn algorithm_info(&self) -> &'static str {
-			"Failing-Mock-Encryption"
-		}
 	}
 
 	#[test]
@@ -288,8 +271,6 @@ mod tests {
 		assert_eq!(decrypted, plaintext);
 		// Public key cannot decrypt
 		assert!(public_enc.decrypt(&ciphertext1).is_err());
-		// Test algorithm info
-		assert_eq!(private_enc.algorithm_info(), "Mock-Asymmetric-Encryption");
 	}
 
 	#[test]
@@ -342,9 +323,6 @@ mod tests {
 		let failing_enc = FailingMockAsymmetricEncryption;
 		let plaintext = b"test data";
 
-		// Test algorithm info
-		assert_eq!(failing_enc.algorithm_info(), "Failing-Mock-Encryption");
-
 		// Test encryption failure
 		let encrypt_result = failing_enc.encrypt(plaintext);
 		assert!(encrypt_result.is_err());
@@ -367,7 +345,6 @@ mod tests {
 
 		let decrypted = mock_encryption.decrypt(&ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext_vec);
-		assert!(!mock_encryption.algorithm_info().is_empty());
 	}
 
 	#[test]

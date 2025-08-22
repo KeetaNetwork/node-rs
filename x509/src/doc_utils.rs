@@ -39,7 +39,7 @@ pub fn create_test_keys(seed: Option<&[u8]>) -> (Ed25519PrivateKey, Ed25519Publi
 /// Panics if certificate creation fails.
 pub fn create_test_certificate(subject_name: &str, signer: Option<Account<KeyED25519>>) -> Certificate {
 	let (_, _, account) = create_test_keys(None);
-	let public_key_info = account.keypair.to_public_key().unwrap().into();
+	let public_key_info = account.keypair.to_public_key().into();
 
 	// Create a distinguished name
 	let subject_dn = utils::create_dn(&[(oids::CN, subject_name)]).expect("Failed to create subject DN");
@@ -84,7 +84,7 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 	};
 
 	// Create root CA
-	let root_public_key_info = root_account.keypair.to_public_key().unwrap().into();
+	let root_public_key_info = root_account.keypair.to_public_key().into();
 	let root_dn = utils::create_dn(&[(oids::CN, "Test Root CA")]).expect("Failed to create root DN");
 
 	let root_cert = create_cert(
@@ -99,7 +99,7 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 	);
 
 	// Create intermediate CA signed by root
-	let intermediate_public_key_info = intermediate_account.keypair.to_public_key().unwrap().into();
+	let intermediate_public_key_info = intermediate_account.keypair.to_public_key().into();
 	let intermediate_dn =
 		utils::create_dn(&[(oids::CN, "Test Intermediate CA")]).expect("Failed to create intermediate DN");
 	let root_dn = utils::create_dn(&[(oids::CN, "Test Root CA")]).expect("Failed to create root DN");
@@ -116,7 +116,7 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 	);
 
 	// Create client certificate signed by intermediate
-	let client_public_key_info = client_account.keypair.to_public_key().unwrap().into();
+	let client_public_key_info = client_account.keypair.to_public_key().into();
 	let client_dn = utils::create_dn(&[(oids::CN, "Test Client")]).expect("Failed to create client DN");
 	let intermediate_dn =
 		utils::create_dn(&[(oids::CN, "Test Intermediate CA")]).expect("Failed to create intermediate DN");
@@ -146,8 +146,8 @@ mod tests {
 		assert_eq!(public_key, private_key.as_public_key());
 
 		// Verify account was created from the private key
-		let account_public_key = account.keypair.to_public_key().unwrap();
-		assert_eq!(account_public_key, public_key.into());
+		let account_public_key = account.keypair.to_public_key();
+		assert_eq!(account_public_key, public_key);
 	}
 
 	#[test]

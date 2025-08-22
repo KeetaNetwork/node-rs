@@ -21,7 +21,7 @@
 //! let seed = b"abandon abandon abandon abandon abandon abandon";
 //! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
 //! let account = Account::<KeyED25519>::from(private_key);
-//! let public_key = account.keypair.to_public_key().unwrap();
+//! let public_key = account.keypair.to_public_key();
 //! // Create the public key info structure
 //! let public_key_info = SubjectPublicKeyInfo::from(public_key);
 //!
@@ -2240,7 +2240,7 @@ impl CertificateBuilder {
 	/// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
 	/// let account = Account::<KeyED25519>::from(private_key);
 	/// // Get the public key info from the account public key
-	/// let public_key = account.keypair.to_public_key().unwrap();
+	/// let public_key = account.keypair.to_public_key();
 	/// // Convert the public key to the SubjectPublicKeyInfo format
 	/// let public_key_info = SubjectPublicKeyInfo::from(public_key);
 	/// // Create the subject distinguished name (DN)
@@ -2278,7 +2278,7 @@ impl CertificateBuilder {
 	{
 		// Determine signature algorithm OID based on the algorithm
 		// Get the algorithm from the signer
-		let algorithm = signer.get_algorithm();
+		let algorithm = signer.to_algorithm();
 		let signature_algorithm_oid = match algorithm {
 			Algorithm::Ed25519 => oids::ED25519,
 			Algorithm::Secp256k1 => oids::ECDSA_WITH_SHA256,

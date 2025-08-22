@@ -57,9 +57,6 @@ pub trait Ecies {
 	/// Decrypted plaintext data
 	fn decrypt<T: AsRef<[u8]>>(recipient_private_key: &Self::PrivateKey, ciphertext: T)
 		-> Result<Vec<u8>, CryptoError>;
-
-	/// Get algorithm information string.
-	fn algorithm_info() -> &'static str;
 }
 
 /// ECIES encryption using secp256k1 and AES-128-CTR.
@@ -225,10 +222,6 @@ impl Ecies for EciesSecp256k1 {
 
 		Ok(plaintext)
 	}
-
-	fn algorithm_info() -> &'static str {
-		ECIES_SECP256K1_ALGORITHM
-	}
 }
 
 /// ECIES encryption using X25519 and AES-128-CTR.
@@ -342,10 +335,6 @@ impl Ecies for EciesX25519 {
 		let plaintext = SymmetricEncryption::decrypt(&cipher, encryption_key, &iv_and_ciphertext)?;
 
 		Ok(plaintext)
-	}
-
-	fn algorithm_info() -> &'static str {
-		ECIES_X25519_ALGORITHM
 	}
 }
 
@@ -469,10 +458,6 @@ impl Ecies for EciesSecp256r1 {
 		let plaintext = SymmetricEncryption::decrypt(&cipher, encryption_key, &iv_and_ciphertext)?;
 		Ok(plaintext)
 	}
-
-	fn algorithm_info() -> &'static str {
-		ECIES_SECP256R1_ALGORITHM
-	}
 }
 
 impl EciesSecp256r1 {
@@ -564,10 +549,6 @@ mod tests {
 		let ciphertext = public_key.encrypt(plaintext).unwrap();
 		let decrypted = private_key.decrypt(&ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
-
-		// Test algorithm info
-		assert_eq!(public_key.algorithm_info(), "ECIES-secp256k1-AES128CTR");
-		assert_eq!(private_key.algorithm_info(), "ECIES-secp256k1-AES128CTR");
 	}
 
 	#[test]
@@ -583,9 +564,6 @@ mod tests {
 		// Test decryption via trait
 		let decrypted = EciesSecp256k1::decrypt(&private_key, ciphertext.unwrap()).unwrap();
 		assert_eq!(decrypted, plaintext);
-
-		// Test algorithm info via trait
-		assert_eq!(EciesSecp256k1::algorithm_info(), "ECIES-secp256k1-AES128CTR");
 	}
 
 	#[test]
@@ -802,10 +780,6 @@ mod tests {
 		let ciphertext = public_key.encrypt(plaintext).unwrap();
 		let decrypted = private_key.decrypt(&ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
-
-		// Test algorithm info
-		assert_eq!(public_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
-		assert_eq!(private_key.algorithm_info(), "ECIES-secp256r1-AES256CBC");
 	}
 
 	#[test]
@@ -863,14 +837,6 @@ mod tests {
 		let decrypted2 = EciesSecp256r1::decrypt(&private_key, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
-	}
-
-	#[test]
-	fn test_ecies_algorithm_info() {
-		// Test algorithm_info methods for all implementations
-		assert_eq!(EciesSecp256k1::algorithm_info(), ECIES_SECP256K1_ALGORITHM);
-		assert_eq!(EciesX25519::algorithm_info(), ECIES_X25519_ALGORITHM);
-		assert_eq!(EciesSecp256r1::algorithm_info(), ECIES_SECP256R1_ALGORITHM);
 	}
 
 	#[test]

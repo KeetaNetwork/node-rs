@@ -187,10 +187,6 @@ impl SymmetricEncryption for Aes128CtrCipher {
 		self.decrypt_with_iv(key, iv, encrypted_data)
 	}
 
-	fn algorithm_info(&self) -> &'static str {
-		"AES-128-CTR"
-	}
-
 	fn key_size(&self) -> usize {
 		16
 	}
@@ -225,8 +221,6 @@ mod tests {
 	#[test]
 	fn test_aes_128_ctr_properties() {
 		let cipher = Aes128CtrCipher::new();
-
-		assert_eq!(cipher.algorithm_info(), "AES-128-CTR");
 		assert_eq!(cipher.key_size(), 16);
 		assert_eq!(cipher.block_size(), 16);
 		assert_eq!(Aes128CtrCipher::key_size(), 16);
