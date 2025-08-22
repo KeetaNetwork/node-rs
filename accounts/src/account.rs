@@ -796,7 +796,7 @@ impl KeyPair for KeyED25519 {
 /// node identification, peer discovery, and routing within the Keeta Network.
 /// Unlike cryptographic key types, network identifiers do not support signing
 /// operations but serve as unique network addresses.
-
+///
 /// # Examples
 ///
 /// ```rust
@@ -1180,7 +1180,7 @@ where
 ///
 /// - **Cryptographic Types**: [`KeyECDSASECP256K1`], [`KeyED25519`], [`KeyECDSASECP256R1`]
 /// - **Identifier Types**: [`KeyNETWORK`], [`KeyTOKEN`], [`KeySTORAGE`], [`KeyMULTISIG`]
-
+///
 /// # Examples
 ///
 /// ## Creating Cryptographic Accounts
