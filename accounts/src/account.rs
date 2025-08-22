@@ -1676,6 +1676,19 @@ macro_rules! impl_identifier_keypair {
 				None // Identifier types do not have private keys
 			}
 		}
+
+		impl From<IdentifierKey> for $key_type {
+			fn from(public_key: IdentifierKey) -> Self {
+				Self { public_key }
+			}
+		}
+
+		impl From<IdentifierKey> for Account<$key_type> {
+			fn from(public_key: IdentifierKey) -> Self {
+				let keypair = $key_type::from(public_key);
+				Self { keypair }
+			}
+		}
 	};
 }
 
@@ -2601,6 +2614,18 @@ mod tests {
 				assert_eq!(key.to_keypair_type(), $key_pair_type);
 				// For identifier keys, algorithm should be None
 				assert!(algorithm.is_none());
+
+				// Test From<IdentifierKey> implementations
+				let identifier_key = IdentifierKey::try_from(vec![0u8; 32]).unwrap();
+
+				// Test From<IdentifierKey> for key type
+				let key_from_identifier = <$key_type>::from(identifier_key.clone());
+				assert_eq!(key_from_identifier.to_keypair_type(), $key_pair_type);
+
+				// Test From<IdentifierKey> for Account<KeyType>
+				let account_from_identifier = Account::<$key_type>::from(identifier_key);
+				assert_eq!(account_from_identifier.to_keypair_type(), $key_pair_type);
+				assert!(account_from_identifier.is_identifier());
 			};
 		}
 
@@ -2617,6 +2642,7 @@ mod tests {
 			(KeyNETWORK, "test-network-id", KeyPairType::NETWORK),
 			(KeyTOKEN, "test-token-id", KeyPairType::TOKEN),
 			(KeySTORAGE, "test-storage-id", KeyPairType::STORAGE),
+			(KeyMULTISIG, "test-multisig-id", KeyPairType::MULTISIG),
 		);
 
 		let passphrase = vec!["test".into()];
@@ -4595,5 +4621,39 @@ mod tests {
 		test_hex_format!(KeyECDSASECP256K1, TEST_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1);
 		test_hex_format!(KeyED25519, TEST_PUBLIC_ACCOUNT_DATA.ed25519.1);
 		test_hex_format!(KeyECDSASECP256R1, TEST_PUBLIC_ACCOUNT_DATA.ecdsa_secp256r1.1);
+	}
+
+	#[test]
+	fn test_identifier_key_error_cases() {
+		// Test invalid IdentifierKey construction with wrong sizes
+		let invalid_sizes = [0, 1, 3, 16, 31, 33, 64];
+		for size in invalid_sizes {
+			let invalid_bytes = vec![0u8; size];
+			let result = IdentifierKey::try_from(invalid_bytes);
+			assert!(result.is_err());
+		}
+
+		// Test IdentifierKey encryption/decryption not supported
+		let valid_bytes = vec![0u8; 32];
+		let identifier_key = IdentifierKey::try_from(valid_bytes).unwrap();
+
+		let encrypt_result = identifier_key.encrypt(b"test data");
+		assert!(encrypt_result.is_err());
+
+		let decrypt_result = identifier_key.decrypt(b"test data");
+		assert!(decrypt_result.is_err());
+	}
+
+	#[test]
+	fn test_identifier_generation_invalid_cases() {
+		// Test data for invalid identifier generation
+		let identifier_key = IdentifierKey::try_from(vec![0u8; 32]).unwrap();
+		let network_account = Account::<KeyNETWORK>::from(identifier_key);
+
+		let invalid_types = [KeyPairType::ECDSASECP256K1, KeyPairType::ED25519, KeyPairType::ECDSASECP256R1];
+		for invalid_type in invalid_types {
+			let result = network_account.generate_identifier(invalid_type, None, 0);
+			assert!(result.is_err());
+		}
 	}
 }

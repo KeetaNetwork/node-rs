@@ -239,8 +239,11 @@ fn test_identifier_account_error_handling() {
 	assert!(decrypt_result.is_err());
 
 	// Test that token identifiers cannot generate storage identifiers
-	let token_account = // cspell:disable-next-line
-		"keeta_anze4ny3srfer2k3shxalg34w4iq4wdgzjyhsfocq7cjzk43o5fpc2igkuifg".parse::<GenericAccount>().unwrap();
+	let token_account = TEST_PUBLIC_ACCOUNT
+		.token
+		.encoded_public_key
+		.parse::<GenericAccount>()
+		.unwrap();
 	let token_account = Account::<KeyTOKEN>::try_from(token_account).unwrap();
 	let invalid_generation = token_account.generate_identifier(KeyPairType::STORAGE, None, 0);
 	assert!(invalid_generation.is_err());
