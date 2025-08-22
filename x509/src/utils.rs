@@ -422,7 +422,6 @@ fn try_verify_ecdsa_generic<K, S, F>(
 	public_key: K,
 	signature_bytes: impl AsRef<[u8]>,
 	tbs_der: impl AsRef<[u8]>,
-	hash_algorithm: HashAlgorithm,
 	sig_from_bytes: F,
 ) -> Result<bool, CertificateError>
 where
@@ -437,12 +436,10 @@ where
 		if let Ok(sig_array) = der_to_raw_signature(signature_bytes) {
 			let signature = sig_from_bytes(&sig_array)?;
 
-			// For X.509 certificates, hash the TBS data with the specified algorithm
-			// then verify using raw mode (matching TypeScript implementation)
-			let hash_bytes = hash_algorithm.hash(tbs_der);
-			let options = SigningOptions::raw(); // Use raw verification with pre-hashed data
+			// For X.509 certificates, use for_cert option which matches the signing process
+			let options = SigningOptions::for_cert();
 			if public_key
-				.verify_with_options(&hash_bytes, &signature, options)
+				.verify_with_options(tbs_der, &signature, options)
 				.is_ok()
 			{
 				return Ok(true);
@@ -456,11 +453,10 @@ where
 			.map_err(|_| CertificateError::InvalidCertificate)?;
 		let signature = sig_from_bytes(&sig_array)?;
 
-		// For raw signatures, also use the raw hash approach
-		let hash_bytes = hash_algorithm.hash(tbs_der);
-		let options = SigningOptions::raw();
+		// For raw signatures, also use for_cert option to match signing
+		let options = SigningOptions::for_cert();
 		if public_key
-			.verify_with_options(&hash_bytes, &signature, options)
+			.verify_with_options(tbs_der, &signature, options)
 			.is_ok()
 		{
 			return Ok(true);
@@ -482,7 +478,6 @@ where
 /// * `public_key_bytes` - Raw bytes of the Secp256r1 public key
 /// * `signature_bytes` - Signature bytes (DER or raw format)
 /// * `tbs_der` - To-be-signed certificate data in DER format
-/// * `hash_algorithm` - Hash algorithm to use for fallback verification
 ///
 /// # Returns
 ///
@@ -494,7 +489,6 @@ where
 ///
 /// ```rust,no_run
 /// use x509::utils::try_verify_ecdsa_secp256r1;
-/// use crypto::HashAlgorithm;
 ///
 /// let public_key_bytes = &[/* 65 bytes of uncompressed public key */];
 /// let signature_bytes = &[/* DER or raw signature bytes */];
@@ -503,20 +497,18 @@ where
 /// let result = try_verify_ecdsa_secp256r1(
 ///     public_key_bytes,
 ///     signature_bytes,
-///     tbs_data,
-///     HashAlgorithm::Sha2_256
+///     tbs_data
 /// );
 /// ```
 pub fn try_verify_ecdsa_secp256r1(
 	public_key_bytes: impl AsRef<[u8]>,
 	signature_bytes: impl AsRef<[u8]>,
 	tbs_der: impl AsRef<[u8]>,
-	hash_algorithm: HashAlgorithm,
 ) -> Result<bool, CertificateError> {
 	let public_key =
 		Secp256r1PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
 
-	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, hash_algorithm, |sig_array| {
+	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, |sig_array| {
 		Secp256r1Signature::from_bytes((sig_array).into()).map_err(|_| CertificateError::InvalidCertificate)
 	})
 }
@@ -533,7 +525,6 @@ pub fn try_verify_ecdsa_secp256r1(
 /// * `public_key_bytes` - Raw bytes of the Secp256k1 public key
 /// * `signature_bytes` - Signature bytes (DER or raw format)
 /// * `tbs_der` - To-be-signed certificate data in DER format
-/// * `hash_algorithm` - Hash algorithm to use for fallback verification
 ///
 /// # Returns
 ///
@@ -545,7 +536,6 @@ pub fn try_verify_ecdsa_secp256r1(
 ///
 /// ```rust,no_run
 /// use x509::utils::try_verify_ecdsa_secp256k1;
-/// use crypto::HashAlgorithm;
 ///
 /// let public_key_bytes = &[/* 65 bytes of uncompressed public key */];
 /// let signature_bytes = &[/* DER or raw signature bytes */];
@@ -555,19 +545,17 @@ pub fn try_verify_ecdsa_secp256r1(
 ///     public_key_bytes,
 ///     signature_bytes,
 ///     tbs_data,
-///     HashAlgorithm::Sha2_256
 /// );
 /// ```
 pub fn try_verify_ecdsa_secp256k1(
 	public_key_bytes: impl AsRef<[u8]>,
 	signature_bytes: impl AsRef<[u8]>,
 	tbs_der: impl AsRef<[u8]>,
-	hash_algorithm: HashAlgorithm,
 ) -> Result<bool, CertificateError> {
 	let public_key =
 		Secp256k1PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
 
-	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, hash_algorithm, |sig_array| {
+	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, |sig_array| {
 		Secp256k1Signature::from_bytes((sig_array).into()).map_err(|_| CertificateError::InvalidCertificate)
 	})
 }
@@ -645,7 +633,6 @@ pub fn verify_ed25519_signature(
 /// * `public_key_bytes` - Raw bytes of the ECDSA public key
 /// * `signature_bytes` - Signature bytes (DER or raw format)
 /// * `tbs_der` - To-be-signed certificate data in DER format
-/// * `hash_algorithm` - Hash algorithm to use for verification
 ///
 /// # Returns
 ///
@@ -657,7 +644,6 @@ pub fn verify_ed25519_signature(
 ///
 /// ```rust,no_run
 /// use x509::utils::verify_ecdsa_signature;
-/// use crypto::HashAlgorithm;
 ///
 /// // This example shows the function signature but does not run
 /// // because it would require valid cryptographic data
@@ -668,25 +654,23 @@ pub fn verify_ed25519_signature(
 /// let result = verify_ecdsa_signature(
 ///     public_key_bytes,
 ///     signature_bytes,
-///     tbs_data,
-///     HashAlgorithm::Sha2_256
+///     tbs_data
 /// );
 /// ```
 pub fn verify_ecdsa_signature(
 	public_key_bytes: impl AsRef<[u8]>,
 	signature_bytes: impl AsRef<[u8]>,
 	tbs_der: impl AsRef<[u8]>,
-	hash_algorithm: HashAlgorithm,
 ) -> Result<bool, CertificateError> {
 	// Try Secp256r1 first (more common in X.509)
-	if let Ok(result) = try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, &tbs_der, hash_algorithm) {
+	if let Ok(result) = try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, &tbs_der) {
 		if result {
 			return Ok(true);
 		}
 	}
 
 	// Try Secp256k1 if Secp256r1 failed
-	try_verify_ecdsa_secp256k1(public_key_bytes, signature_bytes, tbs_der, hash_algorithm)
+	try_verify_ecdsa_secp256k1(public_key_bytes, signature_bytes, tbs_der)
 }
 
 #[cfg(test)]
@@ -799,7 +783,6 @@ mod tests {
 		];
 
 		let mut previous_hashes = Vec::new();
-
 		for (key_bytes, description) in test_cases {
 			let bit_string = BitString::new(0, key_bytes).unwrap();
 			let key_id = generate_key_identifier(&bit_string).unwrap();
@@ -1088,9 +1071,6 @@ mod tests {
 
 	#[test]
 	fn test_der_to_raw_signature() {
-		// Test cases for DER to raw signature conversion
-		// These test vectors represent valid DER SEQUENCE structures for ECDSA signatures
-
 		// Test with valid DER signature (minimal valid structure)
 		// This represents: SEQUENCE { INTEGER r (32 bytes), INTEGER s (32 bytes) }
 		let valid_der = vec![
@@ -1184,7 +1164,7 @@ mod tests {
 			($curve_fn:ident) => {
 				for (pub_key_len, signature_bytes, should_error) in &test_cases {
 					let public_key_bytes = vec![0u8; *pub_key_len];
-					let result = $curve_fn(&public_key_bytes, signature_bytes, tbs_der, HashAlgorithm::Sha2_256);
+					let result = $curve_fn(&public_key_bytes, signature_bytes, tbs_der);
 
 					if *should_error {
 						assert!(result.is_err() || result.unwrap() == false);
@@ -1206,11 +1186,11 @@ mod tests {
 		let signature_bytes = vec![0u8; 64];
 		let tbs_der = b"test data to sign";
 
-		let result = verify_ecdsa_signature(&public_key_bytes, &signature_bytes, tbs_der, HashAlgorithm::Sha2_256);
+		let result = verify_ecdsa_signature(&public_key_bytes, &signature_bytes, tbs_der);
 		assert!(result.is_err());
 
 		let public_key_bytes = vec![0u8; 16];
-		let result = verify_ecdsa_signature(&public_key_bytes, &signature_bytes, tbs_der, HashAlgorithm::Sha2_256);
+		let result = verify_ecdsa_signature(&public_key_bytes, &signature_bytes, tbs_der);
 		assert!(result.is_err());
 	}
 
@@ -1235,29 +1215,12 @@ mod tests {
 		];
 
 		for (signature_bytes, should_error) in test_cases {
-			let result =
-				try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, tbs_der, HashAlgorithm::Sha2_256);
+			let result = try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, tbs_der);
 			if should_error {
 				assert!(result.is_err());
 			} else {
 				assert!(result.is_ok());
 			}
-		}
-	}
-
-	#[test]
-	fn test_hash_algorithm_support() {
-		let public_key_bytes = vec![0u8; 65];
-		let signature_bytes = vec![0u8; 64];
-		let tbs_der = b"test data";
-
-		let hash_algorithms = [HashAlgorithm::Sha2_256, HashAlgorithm::Sha3_256];
-		for hash_algo in hash_algorithms {
-			let result = try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, tbs_der, hash_algo);
-			assert!(result.is_err());
-
-			let result = try_verify_ecdsa_secp256k1(&public_key_bytes, &signature_bytes, tbs_der, hash_algo);
-			assert!(result.is_err());
 		}
 	}
 }

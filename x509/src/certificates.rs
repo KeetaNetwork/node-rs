@@ -1111,12 +1111,12 @@ impl Certificate {
 
 			oids::ECDSA_WITH_SHA3_256 => {
 				// For ECDSA, try both curves since the verification function handles curve detection
-				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha3_256)
+				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der)
 			}
 
 			oids::ECDSA_WITH_SHA256 => {
 				// For ECDSA, try both curves since the verification function handles curve detection
-				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha2_256)
+				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der)
 			}
 
 			oids::SHA256_WITH_RSA => Err(CertificateError::InvalidCertificate),
