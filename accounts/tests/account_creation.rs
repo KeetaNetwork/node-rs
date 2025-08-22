@@ -6,6 +6,7 @@ use accounts::{Accountable, Keyable};
 use accounts::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
 use accounts::{KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};
 use crypto::prelude::SecretBox;
+use hex::{FromHex, ToHex};
 
 mod common;
 use common::*;
@@ -233,4 +234,84 @@ fn test_cross_platform_account_compatibility() {
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.token.encoded_public_key, KeyTOKEN);
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.storage.encoded_public_key, KeySTORAGE);
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.multisig.encoded_public_key, KeyMULTISIG);
+}
+
+#[test]
+fn test_hex_format_functionality() {
+	// Macro to test hex format round-trip for specific account types
+	macro_rules! test_hex_round_trip {
+		($encoded_key:expr, $account_type:ty, $expected_key_type:expr) => {{
+			// Parse from keeta format
+			let account: Account<$account_type> = $encoded_key.parse().unwrap();
+			assert_eq!(account.to_keypair_type(), $expected_key_type);
+
+			// Convert to hex format
+			let hex_string: String = account.encode_hex();
+			assert!(!hex_string.is_empty());
+
+			// Parse back from hex
+			let account_from_hex = Account::<$account_type>::from_hex(&hex_string).unwrap();
+			assert_eq!(account_from_hex.to_string(), account.to_string());
+			assert_eq!(account_from_hex.to_keypair_type(), $expected_key_type);
+		}};
+	}
+
+	// Test cryptographic account types
+	test_hex_round_trip!(
+		TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key,
+		KeyECDSASECP256K1,
+		KeyPairType::ECDSASECP256K1
+	);
+	test_hex_round_trip!(
+		TEST_PUBLIC_ACCOUNT.ecdsa_secp256r1.encoded_public_key,
+		KeyECDSASECP256R1,
+		KeyPairType::ECDSASECP256R1
+	);
+	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.ed25519.encoded_public_key, KeyED25519, KeyPairType::ED25519);
+
+	// Test identifier account types
+	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.network.encoded_public_key, KeyNETWORK, KeyPairType::NETWORK);
+	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.token.encoded_public_key, KeyTOKEN, KeyPairType::TOKEN);
+	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.storage.encoded_public_key, KeySTORAGE, KeyPairType::STORAGE);
+	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.multisig.encoded_public_key, KeyMULTISIG, KeyPairType::MULTISIG);
+}
+
+#[test]
+fn test_generic_account_hex_format() {
+	for test_case in ACCOUNT_PARSING_TEST_CASES {
+		// Parse as GenericAccount
+		let generic_account: GenericAccount = test_case.encoded_public_key.parse().unwrap();
+		assert_eq!(generic_account.to_keypair_type(), test_case.expected_type);
+
+		// Convert to hex format
+		let hex_string: String = generic_account.encode_hex();
+		assert!(!hex_string.is_empty());
+
+		// Verify the type byte is correct (first byte should match the key type)
+		let hex_bytes = hex::decode(&hex_string).unwrap();
+		assert_eq!(hex_bytes[0], test_case.expected_type as u8);
+
+		// Parse back from hex
+		let generic_from_hex = GenericAccount::from_hex(&hex_string).unwrap();
+		assert_eq!(generic_from_hex.to_keypair_type(), test_case.expected_type);
+
+		// Round-trip should preserve the original public key string
+		assert_eq!(generic_from_hex.to_string(), test_case.encoded_public_key);
+	}
+}
+
+#[test]
+fn test_hex_format_invalid_cases() {
+	let invalid_hex_cases = [
+		"",                  // Empty string
+		"1",                 // Too short
+		"FF123456789ABCDEF", // Invalid key type (0xFF)
+		"GG123456789ABCDEF", // Invalid hex characters
+		"0123456789ABCDEF",  // Too short for actual key data
+	];
+
+	for invalid_hex in invalid_hex_cases {
+		let result = GenericAccount::from_hex(invalid_hex);
+		assert!(result.is_err(), "Expected error for invalid hex: {invalid_hex}");
+	}
 }

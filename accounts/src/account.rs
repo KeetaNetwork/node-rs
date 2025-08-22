@@ -98,7 +98,7 @@ impl TryFrom<KeyPairType> for Algorithm {
 	}
 }
 
-/// Signing trait for accounts. Compatibility with TS signing interface.
+/// Signing trait for accounts.
 pub trait AccountSigner {
 	/// Sign a message with the private key.
 	///
@@ -113,7 +113,7 @@ pub trait AccountSigner {
 	}
 }
 
-/// Verifier trait for accounts. Compatibility with TS signing interface.
+/// Verifier trait for accounts.
 pub trait AccountVerifier {
 	/// Verify a signature against a message using the public key.
 	///
@@ -131,8 +131,7 @@ pub trait AccountVerifier {
 /// Trait for types that can provide raw public key bytes.
 ///
 /// This trait provides a unified interface for both cryptographic public keys
-/// and identifier keys to return their raw byte representation. This mirrors
-/// the TypeScript `PublicKeyStorage` interface and `getBuffer()` method.
+/// and identifier keys to return their raw byte representation.
 pub trait PublicKeyStorage: Into<Vec<u8>> + AsRef<[u8]> + AsymmetricEncryption + Send + Sync {}
 
 /// Identifier key for non-cryptographic account types.
@@ -140,7 +139,7 @@ pub trait PublicKeyStorage: Into<Vec<u8>> + AsRef<[u8]> + AsymmetricEncryption +
 /// This type represents identifiers for network addresses, tokens, storage,
 /// and multisig accounts. Unlike cryptographic keys, these are simple 32-byte
 /// identifiers that cannot be used for signing operations.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct IdentifierKey {
 	/// The raw bytes of the identifier key.
 	raw_bytes: Vec<u8>,
@@ -180,6 +179,12 @@ impl TryFrom<Vec<u8>> for IdentifierKey {
 impl AsRef<[u8]> for IdentifierKey {
 	fn as_ref(&self) -> &[u8] {
 		&self.raw_bytes
+	}
+}
+
+impl core::fmt::Debug for IdentifierKey {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		write!(f, "{}", hex::encode(&self.raw_bytes))
 	}
 }
 
@@ -592,7 +597,7 @@ impl KeyPair for KeyED25519 {
 /// use accounts::{Account, KeyNETWORK, KeyPair};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Create a network identifier from a network ID (like TypeScript does)
+/// // Create a network identifier from a network ID
 /// let account = Account::<KeyNETWORK>::generate_network_address(12345)?;
 /// // Verify it's an identifier type (not cryptographic)
 /// assert!(account.is_identifier());
@@ -850,14 +855,13 @@ impl FromHex for GenericAccount {
 
 	fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
 		let data = hex::decode(hex).map_err(|_| AccountError::InvalidConstruction)?;
-
 		if data.is_empty() {
 			return Err(AccountError::InvalidConstruction);
 		}
 
+		// Extract key type and public key bytes
 		let key_type_byte = data[0];
 		let public_key_bytes = &data[1..];
-
 		// Map type byte to KeyPairType
 		let key_type = match key_type_byte {
 			0 => KeyPairType::ECDSASECP256K1,
@@ -870,57 +874,38 @@ impl FromHex for GenericAccount {
 			_ => return Err(AccountError::InvalidKeyType),
 		};
 
+		// Macro for crypto account creation
+		macro_rules! create_crypto_account {
+			($key_type_enum:ident, $key_struct:ty, $variant:ident) => {
+				Account::<$key_struct>::try_from(Accountable::KeyAndType(
+					Keyable::PublicKey(public_key_bytes.to_vec()),
+					KeyPairType::$key_type_enum,
+				))
+				.map(GenericAccount::$variant)
+			};
+		}
+
+		// Macro for identifier account creation
+		macro_rules! create_identifier_account {
+			($key_type_enum:ident, $key_struct:ty, $variant:ident) => {{
+				let public_key_string = format_public_key_string(public_key_bytes, KeyPairType::$key_type_enum as u8)?;
+				Account::<$key_struct>::try_from(Accountable::KeyAndType(
+					Keyable::PublicKeyString(public_key_string),
+					KeyPairType::$key_type_enum,
+				))
+				.map(GenericAccount::$variant)
+			}};
+		}
+
 		// Create account based on type
 		match key_type {
-			KeyPairType::ECDSASECP256K1 => {
-				let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-					Keyable::PublicKey(public_key_bytes.to_vec()),
-					KeyPairType::ECDSASECP256K1,
-				))?;
-				Ok(GenericAccount::EcdsaSecp256k1(account))
-			}
-			KeyPairType::ED25519 => {
-				let account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
-					Keyable::PublicKey(public_key_bytes.to_vec()),
-					KeyPairType::ED25519,
-				))?;
-				Ok(GenericAccount::Ed25519(account))
-			}
-			KeyPairType::ECDSASECP256R1 => {
-				let account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
-					Keyable::PublicKey(public_key_bytes.to_vec()),
-					KeyPairType::ECDSASECP256R1,
-				))?;
-				Ok(GenericAccount::EcdsaSecp256r1(account))
-			}
-			KeyPairType::NETWORK => {
-				let account = Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(
-					Keyable::Identifier(hex::encode(public_key_bytes)),
-					KeyPairType::NETWORK,
-				))?;
-				Ok(GenericAccount::Network(account))
-			}
-			KeyPairType::TOKEN => {
-				let account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
-					Keyable::Identifier(hex::encode(public_key_bytes)),
-					KeyPairType::TOKEN,
-				))?;
-				Ok(GenericAccount::Token(account))
-			}
-			KeyPairType::STORAGE => {
-				let account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(
-					Keyable::Identifier(hex::encode(public_key_bytes)),
-					KeyPairType::STORAGE,
-				))?;
-				Ok(GenericAccount::Storage(account))
-			}
-			KeyPairType::MULTISIG => {
-				let account = Account::<KeyMULTISIG>::try_from(Accountable::KeyAndType(
-					Keyable::Identifier(hex::encode(public_key_bytes)),
-					KeyPairType::MULTISIG,
-				))?;
-				Ok(GenericAccount::Multisig(account))
-			}
+			KeyPairType::ECDSASECP256K1 => create_crypto_account!(ECDSASECP256K1, KeyECDSASECP256K1, EcdsaSecp256k1),
+			KeyPairType::ED25519 => create_crypto_account!(ED25519, KeyED25519, Ed25519),
+			KeyPairType::ECDSASECP256R1 => create_crypto_account!(ECDSASECP256R1, KeyECDSASECP256R1, EcdsaSecp256r1),
+			KeyPairType::NETWORK => create_identifier_account!(NETWORK, KeyNETWORK, Network),
+			KeyPairType::TOKEN => create_identifier_account!(TOKEN, KeyTOKEN, Token),
+			KeyPairType::STORAGE => create_identifier_account!(STORAGE, KeySTORAGE, Storage),
+			KeyPairType::MULTISIG => create_identifier_account!(MULTISIG, KeyMULTISIG, Multisig),
 		}
 	}
 }
@@ -1621,23 +1606,17 @@ macro_rules! impl_identifier_key_try_from {
 				match input {
 					Keyable::Identifier(id) => {
 						// For identifier strings, hash them directly to get 32-byte identifiers
-						// This matches the TypeScript implementation where identifier strings
-						// are processed into 32-byte keys
 						let id_bytes = id.as_bytes();
 						let hash_result: [u8; 32] = crypto::hash_array(id_bytes, None)?;
 						let public_key = IdentifierKey::new(hash_result.to_vec())?;
-						Ok($key_type {
-							public_key
-						})
+						Ok($key_type { public_key })
 					}
 					Keyable::PublicKeyString(public_key_string) => {
 						if $(public_key_string.starts_with($keeta_prefix))||+ {
 							// Extract the raw bytes from the public key string
 							let (decoded_bytes, _) = parse_public_key(&public_key_string)?;
-							let public_key = IdentifierKey::new(decoded_bytes.try_into().map_err(|_| AccountError::InvalidConstruction)?)?;
-							Ok($key_type {
-								public_key
-							})
+							let public_key = IdentifierKey::new(decoded_bytes)?;
+							Ok($key_type { public_key })
 						} else {
 							Err(AccountError::InvalidConstruction)
 						}
@@ -1645,8 +1624,7 @@ macro_rules! impl_identifier_key_try_from {
 					Keyable::Seed((seed, index)) => {
 						let (identifier, _) = create_identifier_key(&seed, index)?;
 						let key_data = hex::decode(&identifier)?;
-						let _public_key_string = format_public_key_string(&key_data, $key_type_value)?;
-						let public_key = IdentifierKey::new(key_data.try_into().map_err(|_| AccountError::InvalidConstruction)?)?;
+						let public_key = IdentifierKey::new(key_data)?;
 						Ok($key_type { public_key })
 					}
 					_ => Err(AccountError::InvalidConstruction),
@@ -1760,31 +1738,6 @@ macro_rules! map_all_variants {
 	};
 }
 
-impl ToHex for GenericAccount {
-	fn encode_hex<T: FromIterator<char>>(&self) -> T {
-		let key_type_byte = self.to_keypair_type() as u8;
-
-		// Get public key bytes based on account type
-		let public_key_bytes = map_all_variants!(self, account, {
-			parse_public_key(&account.to_string())
-				.map(|(bytes, _)| bytes)
-				.unwrap_or_default()
-		});
-
-		// Combine type byte and public key bytes
-		let mut data = Vec::with_capacity(1 + public_key_bytes.len());
-		data.push(key_type_byte);
-		data.extend_from_slice(&public_key_bytes);
-
-		// Convert to hex string and collect into desired type
-		hex::encode(data).to_uppercase().chars().collect()
-	}
-
-	fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
-		self.encode_hex()
-	}
-}
-
 /// Macro to implement converters for AnyPrivateKey
 macro_rules! impl_try_from_keypair {
 	($($key_type:ty),+ $(,)?) => {
@@ -1840,7 +1793,7 @@ impl_debug_for_keypair!(
 // FromHex implementations for specific Account types
 // Unified macro to implement FromHex for all account types
 macro_rules! impl_from_hex {
-	($key_type:ty, $keypair_type:expr) => {
+	($key_type:ty, $keypair_type:expr, $is_identifier:expr) => {
 		impl FromHex for Account<$key_type> {
 			type Error = AccountError;
 
@@ -1856,24 +1809,29 @@ macro_rules! impl_from_hex {
 					return Err(AccountError::InvalidConstruction);
 				}
 
-				// Always use PublicKey since parse_public_key handles both types uniformly
-				Account::<$key_type>::try_from(Accountable::KeyAndType(
-					Keyable::PublicKey(data_bytes.to_vec()),
-					$keypair_type,
-				))
+				let keyable = if $is_identifier {
+					// For identifier types, convert bytes back to public key string
+					let public_key_string = format_public_key_string(data_bytes, key_type_byte)?;
+					Keyable::PublicKeyString(public_key_string)
+				} else {
+					// For crypto types, use raw bytes
+					Keyable::PublicKey(data_bytes.to_vec())
+				};
+
+				Account::<$key_type>::try_from(Accountable::KeyAndType(keyable, $keypair_type))
 			}
 		}
 	};
 }
 
 // Generate FromHex implementations for all account types
-impl_from_hex!(KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1);
-impl_from_hex!(KeyED25519, KeyPairType::ED25519);
-impl_from_hex!(KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1);
-impl_from_hex!(KeyNETWORK, KeyPairType::NETWORK);
-impl_from_hex!(KeyTOKEN, KeyPairType::TOKEN);
-impl_from_hex!(KeySTORAGE, KeyPairType::STORAGE);
-impl_from_hex!(KeyMULTISIG, KeyPairType::MULTISIG);
+impl_from_hex!(KeyECDSASECP256K1, KeyPairType::ECDSASECP256K1, false);
+impl_from_hex!(KeyED25519, KeyPairType::ED25519, false);
+impl_from_hex!(KeyECDSASECP256R1, KeyPairType::ECDSASECP256R1, false);
+impl_from_hex!(KeyNETWORK, KeyPairType::NETWORK, true);
+impl_from_hex!(KeyTOKEN, KeyPairType::TOKEN, true);
+impl_from_hex!(KeySTORAGE, KeyPairType::STORAGE, true);
+impl_from_hex!(KeyMULTISIG, KeyPairType::MULTISIG, true);
 
 // Unified macro to implement ToHex for all account types
 macro_rules! impl_to_hex {
@@ -1897,6 +1855,16 @@ macro_rules! impl_to_hex {
 			}
 		}
 	};
+}
+
+impl ToHex for GenericAccount {
+	fn encode_hex<T: FromIterator<char>>(&self) -> T {
+		map_all_variants!(self, account, { account.encode_hex() })
+	}
+
+	fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+		self.encode_hex()
+	}
 }
 
 // Generate ToHex implementations for all account types
@@ -4549,24 +4517,16 @@ mod tests {
 
 	#[test]
 	fn test_hex_format_parsing_and_conversion() {
-		// Test data with known public keys
-		let test_cases = [
-			(
-				// ECDSA SECP256K1 (type 0)
-				"keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza",
-				KeyPairType::ECDSASECP256K1,
-			),
-			(
-				// ED25519 (type 1)
-				"keeta_ahcp4hwh26cinhsilat6tiolefkt5tlqk4ebrxjwpodkziuvxre3x3r2wf5l6",
-				KeyPairType::ED25519,
-			),
-		];
+		// Use existing test data instead of redefining
+		for test_case in TEST_PUBLIC_ACCOUNTS {
+			// Skip identifier types as they use different hex format handling
+			if test_case.is_identifier {
+				continue;
+			}
 
-		for (keeta_format, expected_type) in test_cases {
 			// Test parsing keeta format
-			let account_from_keeta: GenericAccount = keeta_format.parse().unwrap();
-			assert_eq!(account_from_keeta.to_keypair_type(), expected_type);
+			let account_from_keeta: GenericAccount = test_case.encoded_public_key.parse().unwrap();
+			assert_eq!(account_from_keeta.to_keypair_type(), test_case.key_type);
 
 			// Test conversion to hex format using ToHex trait
 			let hex_string: String = account_from_keeta.encode_hex();
@@ -4574,12 +4534,12 @@ mod tests {
 
 			// Test parsing hex format using FromHex trait
 			let account_from_hex = GenericAccount::from_hex(&hex_string).unwrap();
-			assert_eq!(account_from_hex.to_keypair_type(), expected_type);
+			assert_eq!(account_from_hex.to_keypair_type(), test_case.key_type);
 
 			// Test round-trip consistency (keeta -> hex -> keeta)
 			let back_to_keeta = account_from_hex.to_string();
 			let final_account: GenericAccount = back_to_keeta.parse().unwrap();
-			assert_eq!(final_account.to_keypair_type(), expected_type);
+			assert_eq!(final_account.to_keypair_type(), test_case.key_type);
 		}
 	}
 
@@ -4600,49 +4560,10 @@ mod tests {
 
 	#[test]
 	fn test_hex_format_all_key_types() {
-		// Test that each key type can be converted to hex and back
-		let key_types = [
-			KeyPairType::ECDSASECP256K1,
-			KeyPairType::ED25519,
-			KeyPairType::ECDSASECP256R1,
-			KeyPairType::NETWORK,
-			KeyPairType::TOKEN,
-			KeyPairType::STORAGE,
-			KeyPairType::MULTISIG,
-		];
-
-		for &key_type in &key_types {
-			// Create a test account of each type
-			let account = match key_type {
-				KeyPairType::ECDSASECP256K1 => {
-					let test_key = "keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza";
-					GenericAccount::EcdsaSecp256k1(test_key.parse().unwrap())
-				}
-				KeyPairType::ED25519 => {
-					let test_key = "keeta_ahcp4hwh26cinhsilat6tiolefkt5tlqk4ebrxjwpodkziuvxre3x3r2wf5l6";
-					GenericAccount::Ed25519(test_key.parse().unwrap())
-				}
-				KeyPairType::ECDSASECP256R1 => {
-					let test_key = "keeta_aybloaplxz7fmhhv3moeyr7flrfvltxt7co6rthmgeuevjogboiqss6pzmhgr6i";
-					GenericAccount::EcdsaSecp256r1(test_key.parse().unwrap())
-				}
-				KeyPairType::NETWORK => {
-					let test_key = "keeta_ai3s2rwdvwu7rf6hju2jxp7a4rimpgawpspvqd4nv6c555l6s3b6uj6cr5klc";
-					GenericAccount::Network(test_key.parse().unwrap())
-				}
-				KeyPairType::TOKEN => {
-					let test_key = "keeta_anze4ny3srfer2k3shxalg34w4iq4wdgzjyhsfocq7cjzk43o5fpc2igkuifg";
-					GenericAccount::Token(test_key.parse().unwrap())
-				}
-				KeyPairType::STORAGE => {
-					let test_key = "keeta_atps2qkpm4bdi7w3xuyy3khddhysfh4d4o2nylemcnopm7czkkyh2pbfk7svy";
-					GenericAccount::Storage(test_key.parse().unwrap())
-				}
-				KeyPairType::MULTISIG => {
-					let test_key = "keeta_a4mfr2fs6qxn2eds5jy6thlhib7fnuoljmqkezjff6wodk7yu5wrt52ks62sa";
-					GenericAccount::Multisig(test_key.parse().unwrap())
-				}
-			};
+		for test_case in TEST_PUBLIC_ACCOUNTS {
+			// Parse the test account
+			let account: GenericAccount = test_case.encoded_public_key.parse().unwrap();
+			assert_eq!(account.to_keypair_type(), test_case.key_type);
 
 			// Convert to hex format using ToHex trait
 			let hex_string: String = account.encode_hex();
@@ -4650,34 +4571,29 @@ mod tests {
 
 			// Parse back from hex using FromHex trait
 			let parsed_back = GenericAccount::from_hex(&hex_string).unwrap();
-			assert_eq!(parsed_back.to_keypair_type(), key_type);
+			assert_eq!(parsed_back.to_keypair_type(), test_case.key_type);
 
 			// Verify the type byte is correct
 			let hex_bytes = hex::decode(&hex_string).unwrap();
-			assert_eq!(hex_bytes[0], key_type as u8);
+			assert_eq!(hex_bytes[0], test_case.key_type as u8);
 		}
 	}
 
 	#[test]
 	fn test_account_specific_hex_format() {
-		// Test FromHex and ToHex for specific Account<T> types
+		// Macro to test hex format for specific account types
+		macro_rules! test_hex_format {
+			($key_type:ty, $test_data:expr) => {
+				let account: Account<$key_type> = $test_data.parse().unwrap();
+				let hex_string: String = account.encode_hex();
+				let from_hex = Account::<$key_type>::from_hex(&hex_string).unwrap();
+				assert_eq!(account.to_string(), from_hex.to_string());
+			};
+		}
 
-		// Test ECDSA SECP256K1
-		let ecdsa_account: Account<KeyECDSASECP256K1> =
-			"keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza"
-				.parse()
-				.unwrap();
-		let ecdsa_hex: String = ecdsa_account.encode_hex();
-		let ecdsa_from_hex = Account::<KeyECDSASECP256K1>::from_hex(&ecdsa_hex).unwrap();
-		assert_eq!(ecdsa_account.to_string(), ecdsa_from_hex.to_string());
-
-		// Test ED25519
-		let ed25519_account: Account<KeyED25519> =
-			"keeta_ahcp4hwh26cinhsilat6tiolefkt5tlqk4ebrxjwpodkziuvxre3x3r2wf5l6"
-				.parse()
-				.unwrap();
-		let ed25519_hex: String = ed25519_account.encode_hex();
-		let ed25519_from_hex = Account::<KeyED25519>::from_hex(&ed25519_hex).unwrap();
-		assert_eq!(ed25519_account.to_string(), ed25519_from_hex.to_string());
+		// Test all cryptographic account types
+		test_hex_format!(KeyECDSASECP256K1, TEST_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1.1);
+		test_hex_format!(KeyED25519, TEST_PUBLIC_ACCOUNT_DATA.ed25519.1);
+		test_hex_format!(KeyECDSASECP256R1, TEST_PUBLIC_ACCOUNT_DATA.ecdsa_secp256r1.1);
 	}
 }
