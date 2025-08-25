@@ -61,6 +61,10 @@ pub use operations::KeyExchange;
 #[cfg(feature = "encryption")]
 pub use operations::{AsymmetricEncryption, CryptoAead};
 
+// Testing
+#[cfg(test)]
+pub mod test_utils;
+
 /// Trait for converting types into their corresponding SecretBox versions.
 pub trait IntoSecret<T: zeroize::Zeroize> {
 	/// Convert the value into a SecretBox.
@@ -73,8 +77,8 @@ impl<T: zeroize::Zeroize> IntoSecret<Vec<T>> for Vec<T> {
 	}
 }
 
-impl IntoSecret<[u8; 32]> for [u8; 32] {
-	fn into_secret(self) -> SecretBox<[u8; 32]> {
+impl<const N: usize> IntoSecret<[u8; N]> for [u8; N] {
+	fn into_secret(self) -> SecretBox<[u8; N]> {
 		SecretBox::new(Box::new(self))
 	}
 }
@@ -82,6 +86,24 @@ impl IntoSecret<[u8; 32]> for [u8; 32] {
 impl IntoSecret<String> for String {
 	fn into_secret(self) -> SecretBox<String> {
 		SecretBox::new(Box::new(self))
+	}
+}
+
+impl IntoSecret<String> for &str {
+	fn into_secret(self) -> SecretBox<String> {
+		SecretBox::new(Box::new(self.to_string()))
+	}
+}
+
+impl IntoSecret<Vec<String>> for &[&str] {
+	fn into_secret(self) -> SecretBox<Vec<String>> {
+		SecretBox::new(Box::new(self.iter().map(|s| s.to_string()).collect()))
+	}
+}
+
+impl IntoSecret<Vec<String>> for Vec<&str> {
+	fn into_secret(self) -> SecretBox<Vec<String>> {
+		self.as_slice().into_secret()
 	}
 }
 
@@ -106,5 +128,17 @@ mod tests {
 		test_into_secret!(seed, [1u8; 32], [u8; 32]);
 		test_into_secret!(hex_seed, "deadbeef".to_string(), String);
 		test_into_secret!(passphrase, vec!["word1".to_string(), "word2".to_string()], Vec<String>);
+
+		// Test &str
+		let secret = "deadbeef".into_secret();
+		assert_eq!(*secret.expose_secret(), "deadbeef".to_string());
+
+		// Test Vec<&str>
+		let secret = vec!["word1", "word2"].into_secret();
+		assert_eq!(*secret.expose_secret(), vec!["word1".to_string(), "word2".to_string()]);
+
+		// Test &[&str]
+		let secret = &["word1", "word2"].into_secret();
+		assert_eq!(*secret.expose_secret(), vec!["word1".to_string(), "word2".to_string()]);
 	}
 }

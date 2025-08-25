@@ -7,7 +7,9 @@ use base64::Engine;
 use crypto::algorithms::ed25519::ed25519_to_x25519_private;
 #[cfg(feature = "encryption")]
 use crypto::algorithms::{Ecies, EciesSecp256k1, EciesSecp256r1, EciesX25519};
-use crypto::{Algorithm, Ed25519Derivation, KeyDerivation, PrivateKey, Secp256k1Derivation, Secp256r1Derivation};
+use crypto::{
+	Algorithm, Ed25519Derivation, IntoSecret, KeyDerivation, PrivateKey, Secp256k1Derivation, Secp256r1Derivation,
+};
 
 struct TypeScriptTestCase {
 	seed_hex: &'static str,
@@ -52,7 +54,7 @@ fn test_ecies_typescript_compatibility() {
 				indexed_seed[..32].copy_from_slice(&seed);
 				indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
 
-				let private_key = Secp256k1Derivation::derive_from_seed(indexed_seed).unwrap();
+				let private_key = Secp256k1Derivation::derive_from_seed(indexed_seed.into_secret()).unwrap();
 				let public_key = private_key.as_public_key();
 
 				// Test decryption of TypeScript data
@@ -73,7 +75,7 @@ fn test_ecies_typescript_compatibility() {
 				indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
 
 				// Derive Ed25519 key first, then convert to X25519
-				let ed25519_private = Ed25519Derivation::derive_from_seed(indexed_seed).unwrap();
+				let ed25519_private = Ed25519Derivation::derive_from_seed(indexed_seed.into_secret()).unwrap();
 				let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
 				let x25519_public = x25519_private.derive_public_key();
 
@@ -88,7 +90,7 @@ fn test_ecies_typescript_compatibility() {
 				assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
 			}
 			Algorithm::Secp256r1 => {
-				let private_key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
+				let private_key = Secp256r1Derivation::derive_from_seed(seed.into_secret()).unwrap();
 				let public_key = private_key.as_public_key();
 
 				// Test decryption of TypeScript data

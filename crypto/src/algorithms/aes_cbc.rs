@@ -18,7 +18,15 @@ type Aes256CbcDec = Decryptor<Aes256>;
 /// AES-256-CBC symmetric encryption implementation.
 ///
 /// This implementation provides AES-CBC encryption.
+#[derive(Debug, Default, Copy, Clone)]
 pub struct Aes256Cbc;
+
+impl Aes256Cbc {
+	/// Create a new AES-256-CBC instance
+	pub fn new() -> Self {
+		Self
+	}
+}
 
 impl SymmetricEncryption for Aes256Cbc {
 	/// Encrypt data using AES-256-CBC.
@@ -110,46 +118,8 @@ impl SymmetricEncryption for Aes256Cbc {
 mod tests {
 	use super::*;
 
-	#[test]
-	fn test_aes_256_cbc_basic() {
-		let aes_cbc = Aes256Cbc;
-		let key = [0x42u8; 32]; // 256-bit key
-		let plaintext = b"Hello, AES-CBC world!";
-
-		// Test encryption
-		let ciphertext = aes_cbc.encrypt(key, None, plaintext).unwrap();
-		assert_ne!(ciphertext.as_slice(), plaintext); // Should be different
-		assert!(ciphertext.len() > plaintext.len()); // Should include IV and padding
-
-		// Test decryption
-		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
-		assert_eq!(decrypted, plaintext);
-	}
-
-	#[test]
-	fn test_aes_256_cbc_properties() {
-		let aes_cbc = Aes256Cbc;
-		assert_eq!(aes_cbc.key_size(), 32);
-		assert_eq!(aes_cbc.block_size(), 16);
-	}
-
-	#[test]
-	fn test_aes_256_cbc_wrong_key_size() {
-		let aes_cbc = Aes256Cbc;
-		let wrong_key = [0x42u8; 16]; // Wrong size (should be 32)
-		let plaintext = b"test";
-
-		// Test encryption with wrong key size
-		let result = aes_cbc.encrypt(wrong_key, None, plaintext);
-		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
-
-		// Test decryption with wrong key size
-		let fake_ciphertext = [0u8; 32];
-		let result = aes_cbc.decrypt(wrong_key, fake_ciphertext);
-		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidKeySize));
-	}
+	// Use the comprehensive AES symmetric encryption test macro
+	crate::test_utils::test_aes_symmetric!(Aes256Cbc, 32, "AES-256-CBC");
 
 	#[test]
 	fn test_aes_256_cbc_short_ciphertext() {
@@ -160,25 +130,6 @@ mod tests {
 		let result = aes_cbc.decrypt(key, short_ciphertext);
 		assert!(result.is_err());
 		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
-	}
-
-	#[test]
-	fn test_aes_256_cbc_random_iv() {
-		let aes_cbc = Aes256Cbc;
-		let key = [0x42u8; 32];
-		let plaintext = b"Same plaintext";
-
-		// Encrypt the same plaintext twice
-		// Cipher texts should be different due to random IV
-		let ciphertext1 = aes_cbc.encrypt(key, None, plaintext).unwrap();
-		let ciphertext2 = aes_cbc.encrypt(key, None, plaintext).unwrap();
-		assert_ne!(ciphertext1, ciphertext2);
-
-		// But both should decrypt to the same plaintext
-		let decrypted1 = aes_cbc.decrypt(key, &ciphertext1).unwrap();
-		let decrypted2 = aes_cbc.decrypt(key, &ciphertext2).unwrap();
-		assert_eq!(decrypted1, plaintext);
-		assert_eq!(decrypted2, plaintext);
 	}
 
 	#[test]

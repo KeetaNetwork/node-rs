@@ -7,7 +7,7 @@
 use crypto::algorithms::ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 use crypto::algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
 use crypto::algorithms::secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey};
-use crypto::prelude::{KeyDerivation, PrivateKey};
+use crypto::prelude::{IntoSecret, KeyDerivation, PrivateKey};
 
 use crate::{Account, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyNETWORK};
 
@@ -31,12 +31,12 @@ macro_rules! create_test_keys_fn {
 		/// components needed for documentation examples.
 		pub fn $fn_name(seed: Option<&[u8]>) -> ($private_key, $public_key, Account<$account_type>) {
 			let seed = seed.unwrap_or(DOC_TEST_SEED);
-			let private_key = <$derivation>::derive_from_seed(seed)
+			let private_key = <$derivation>::derive_from_seed(seed.to_vec().into_secret())
 				.expect(&format!("Failed to derive {} test private key", $algorithm));
 			let public_key = private_key.as_public_key();
 
 			// Create a second private key for the account since From consumes the original
-			let account_private_key = <$derivation>::derive_from_seed(seed)
+			let account_private_key = <$derivation>::derive_from_seed(seed.to_vec().into_secret())
 				.expect(&format!("Failed to derive {} test private key for account", $algorithm));
 			let account = Account::from(account_private_key);
 

@@ -242,9 +242,9 @@ macro_rules! impl_subject_public_key_info {
 				fn from(public_key: $public_key_type) -> Self {
 					let algorithm = ObjectIdentifier::new($oid).unwrap();
 					let parameters = $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).unwrap()));
+
 					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
 					let public_key_bytes = Vec::from(public_key);
-
 					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).unwrap()
 				}
 			}
@@ -274,7 +274,9 @@ pub trait KeyDerivation {
 	type PrivateKey: PrivateKey;
 
 	/// Derive a private key from seed material
-	fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError>;
+	fn derive_from_seed<T>(seed: SecretBox<T>) -> Result<Self::PrivateKey, CryptoError>
+	where
+		T: IntoIterator<Item = u8> + AsRef<[u8]> + zeroize::Zeroize + Clone;
 
 	/// Validate that bytes represent valid key material
 	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool;
@@ -306,9 +308,15 @@ macro_rules! impl_constant_time_key_derivation {
 		impl KeyDerivation for $derivation_type {
 			type PrivateKey = $private_key_type;
 
-			fn derive_from_seed<T: AsRef<[u8]>>(seed: T) -> Result<Self::PrivateKey, CryptoError> {
-				let seed = seed.as_ref();
-				let mut attempt_seed = seed.to_vec();
+			fn derive_from_seed<T>(seed: SecretBox<T>) -> Result<Self::PrivateKey, CryptoError>
+			where
+				T: IntoIterator<Item = u8> + AsRef<[u8]> + zeroize::Zeroize + Clone + ?Sized,
+			{
+				use secrecy::ExposeSecret;
+
+				let seed_iter = <T as Clone>::clone(&seed.expose_secret()).into_iter();
+				let mut attempt_seed = seed_iter.collect::<Vec<u8>>();
+				let original_seed_len = attempt_seed.len();
 				let mut result_key: Option<$secret_key_type> = None;
 				let mut found_valid = false;
 
@@ -320,7 +328,7 @@ macro_rules! impl_constant_time_key_derivation {
 					// For attempts > 0, append the attempt counter
 					if attempt > 0 {
 						// Remove any previous attempt counter and add the new one
-						attempt_seed.truncate(seed.len());
+						attempt_seed.truncate(original_seed_len);
 						attempt_seed.extend_from_slice(&attempt.to_be_bytes());
 					}
 
@@ -422,7 +430,7 @@ impl<T: CryptoAlgorithm> From<&T> for Algorithm {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use secrecy::ExposeSecret;
+	use crate::prelude::{ExposeSecret, IntoSecret};
 
 	#[cfg(feature = "signature")]
 	use crate::prelude::{CryptoSignerWithOptions, SigningOptions};
@@ -446,18 +454,19 @@ mod tests {
 		fn create_any_private_key(&self, base_seed: &[u8]) -> AnyPrivateKey {
 			let mut seed = base_seed.to_vec();
 			seed.extend_from_slice(self.seed_suffix.as_bytes());
+			let secret_seed = seed.into_secret();
 
 			match self.algorithm {
 				Algorithm::Secp256k1 => {
-					let key = Secp256k1Derivation::derive_from_seed(&seed).unwrap();
+					let key = Secp256k1Derivation::derive_from_seed(secret_seed).unwrap();
 					AnyPrivateKey::Secp256k1(key)
 				}
 				Algorithm::Ed25519 => {
-					let key = Ed25519Derivation::derive_from_seed(&seed).unwrap();
+					let key = Ed25519Derivation::derive_from_seed(secret_seed).unwrap();
 					AnyPrivateKey::Ed25519(key)
 				}
 				Algorithm::Secp256r1 => {
-					let key = Secp256r1Derivation::derive_from_seed(&seed).unwrap();
+					let key = Secp256r1Derivation::derive_from_seed(secret_seed).unwrap();
 					AnyPrivateKey::Secp256r1(key)
 				}
 			}

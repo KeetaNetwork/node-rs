@@ -1,3 +1,224 @@
+//! # Keeta Network Account System
+//!
+//! This module provides a comprehensive cryptographic account system for the
+//! Keeta Network, supporting both traditional cryptographic operations and
+//! network identifier management. The system is designed around type-safe
+//! account management with unified interfaces for different cryptographic
+//! algorithms and identifier types.
+//!
+//! ## Cryptographic Operations
+//!
+//! The system supports multiple cryptographic algorithms:
+//!
+//! ### Ed25519
+//! - **Algorithm**: Edwards-curve Digital Signature Algorithm (EdDSA)
+//! - **Curve**: Curve25519
+//!
+//! ### ECDSA secp256k1 (Bitcoin-compatible)
+//! - **Algorithm**: Elliptic Curve Digital Signature Algorithm
+//! - **Curve**: secp256k1 (same as Bitcoin)
+//!
+//! ### ECDSA secp256r1 (NIST P-256)
+//! - **Algorithm**: Elliptic Curve Digital Signature Algorithm
+//! - **Curve**: NIST P-256 (prime256v1)
+//!
+//! ## Identifiers
+//!
+//! The system provides four types of identifiers:
+//!
+//! - **Network**: Network initialization
+//! - **Token**: Digital asset and currency identification
+//! - **Storage**: Resource addressing
+//! - **Multisig**: Multi-signature wallet coordination
+//!
+//! ## Basic Usage
+//!
+//! ### Creating Cryptographic Accounts
+//!
+//! ```rust
+//! use accounts::{Account, KeyED25519};
+//! use crypto::utils::generate_random_seed;
+//! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Generate a random seed
+//! let seed = generate_random_seed()?;
+//! // Derive the private key
+//! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+//! // Create an Ed25519 account using the private key
+//! let account = Account::<KeyED25519>::from(private_key);
+//!
+//! // Sign and verify a message
+//! let message = b"Hello, Keeta Network!";
+//! let signature = account.sign(message, None)?;
+//! let is_valid = account.verify(message, &signature, None);
+//! assert!(is_valid.is_ok());
+//!
+//! // Get the public key string (network address)
+//! let address = account.to_string();
+//! println!("Account address: {}", address);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Creating Network Identifiers
+//!
+//! ```rust
+//! use accounts::{Account, KeyNETWORK, KeyTOKEN, KeyPair};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a network identifier from network ID
+//! let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
+//! println!("Network address: {}", network_account.to_string());
+//!
+//! // Generate a token identifier from the network account
+//! let token_account = network_account.generate_identifier(
+//!     accounts::KeyPairType::TOKEN,
+//!     None, // Use account opening hash
+//!     0,    // First operation
+//! )?;
+//!
+//! if let accounts::GenericAccount::Token(token) = token_account {
+//!     println!("Token address: {}", token.to_string());
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Working with Passphrases
+//!
+//! ```rust
+//! use accounts::{Account, KeyED25519};
+//! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Generate a random BIP39 passphrase
+//! let passphrase = Account::<KeyED25519>::generate_passphrase()?;
+//!
+//! // Convert passphrase to seed
+//! let seed = Account::<KeyED25519>::compute_seed_from_passphrase(passphrase)?;
+//! // Derive the private key
+//! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+//! // Create an Ed25519 account using the private key
+//! let account = Account::<KeyED25519>::from(private_key);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Advanced Features
+//!
+//! ### Encryption and Decryption
+//!
+//! ```rust
+//! use accounts::{Account, KeyED25519};
+//! use crypto::utils::generate_random_seed;
+//! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create account with encryption support
+//! let seed = generate_random_seed()?;
+//! // Derive the private key
+//! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+//! // Create an Ed25519 account using the private key
+//! let account = Account::<KeyED25519>::from(private_key);
+//!
+//! // Encrypt sensitive data
+//! let plaintext = b"Secret message for the Keeta Network";
+//! let ciphertext = account.encrypt(plaintext)?;
+//!
+//! // Decrypt the data
+//! let decrypted = account.decrypt(&ciphertext)?;
+//! assert_eq!(plaintext, decrypted.as_slice());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Multi-Algorithm Support
+//!
+//! ```rust
+//! use accounts::{GenericAccount, KeyPair, KeyPairType};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Parse accounts from address strings (using valid test addresses)
+//! # // cspell:disable-next-line
+//! let ed25519_addr = "keeta_ahcp4hwh26cinhsilat6tiolefkt5tlqk4ebrxjwpodkziuvxre3x3r2wf5l6";
+//! # // cspell:disable-next-line
+//! let secp256k1_addr = "keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza";
+//!
+//! // The system automatically detects the key type from the address
+//! let account1: GenericAccount = ed25519_addr.parse()?;
+//! let account2: GenericAccount = secp256k1_addr.parse()?;
+//!
+//! // Check account types
+//! assert_eq!(account1.to_keypair_type(), KeyPairType::ED25519);
+//! assert_eq!(account2.to_keypair_type(), KeyPairType::ECDSASECP256K1);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Security Considerations
+//!
+//! ### Private Key Management
+//! - Private keys are stored in secure memory containers that zero on drop
+//! - Uses a `SecretBox` for all sensitive data handling
+//! - Private keys are never logged or included in debug output
+//!
+//! ## Error Handling
+//!
+//! The system uses the [`AccountError`] type for comprehensive error reporting:
+//!
+//! ```rust
+//! use accounts::{Account, KeyED25519, AccountError};
+//! use crypto::prelude::IntoSecret;
+//!
+//! # fn main() {
+//! // Handle various error conditions
+//! match Account::<KeyED25519>::compute_seed_from_passphrase(vec!["short"].into_secret()) {
+//!     Ok(seed) => println!("Seed generated successfully"),
+//!     Err(AccountError::PassphraseWeak) => {
+//!         println!("Passphrase too short or weak");
+//!     }
+//!     Err(AccountError::InvalidConstruction) => {
+//!         println!("Invalid account construction");
+//!     }
+//!     Err(other) => println!("Other error: {:?}", other),
+//! }
+//! # }
+//! ```
+//!
+//! ## Thread Safety
+//!
+//! All types implement `Send + Sync` and can be safely used across threads:
+//!
+//! ```rust
+//! use std::sync::Arc;
+//! use std::thread;
+//! use accounts::{Account, KeyED25519};
+//! use crypto::utils::generate_random_seed;
+//! use crypto::prelude::{Ed25519Derivation, ExposeSecret, KeyDerivation};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let seed = generate_random_seed()?;
+//! // Derive the private key
+//! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+//! // Create an Ed25519 account using the private key
+//! let account = Account::<KeyED25519>::from(private_key);
+//!
+//! // Share account across threads
+//! let account = Arc::new(account);
+//! let account_clone = Arc::clone(&account);
+//!
+//! let handle = thread::spawn(move || {
+//!     // Use account in another thread
+//!     let message = b"Multi-threaded signing";
+//!     account_clone.verify(message, &[0u8; 64], None)
+//! });
+//!
+//! handle.join().unwrap();
+//! # Ok(())
+//! # }
+//! ```
+
 use core::str::FromStr;
 
 use crypto::algorithms::{Algorithm, CryptoAlgorithm};
@@ -129,7 +350,7 @@ pub trait AccountVerifier {
 ///
 /// This trait provides a unified interface for both cryptographic public keys
 /// and identifier keys to return their raw byte representation.
-pub trait PublicKeyStorage: Into<Vec<u8>> + AsRef<[u8]> + AsymmetricEncryption + Send + Sync + Clone {}
+pub trait PublicKeyStorage: Into<Vec<u8>> + AsRef<[u8]> + PublicKey + AsymmetricEncryption {}
 
 /// Identifier key for non-cryptographic account types.
 ///
@@ -149,6 +370,12 @@ impl IdentifierKey {
 	}
 }
 
+impl PublicKey for IdentifierKey {
+	fn to_uncompressed_bytes(&self) -> Vec<u8> {
+		self.raw_bytes.clone()
+	}
+}
+
 impl From<&IdentifierKey> for Vec<u8> {
 	fn from(key: &IdentifierKey) -> Self {
 		key.raw_bytes.clone()
@@ -161,15 +388,23 @@ impl From<IdentifierKey> for Vec<u8> {
 	}
 }
 
+impl TryFrom<&[u8]> for IdentifierKey {
+	type Error = CryptoError;
+
+	fn try_from(raw_bytes: &[u8]) -> Result<Self, Self::Error> {
+		if raw_bytes.len() != 32 {
+			Err(CryptoError::InvalidKeyMaterial)
+		} else {
+			Ok(Self { raw_bytes: raw_bytes.to_vec() })
+		}
+	}
+}
+
 impl TryFrom<Vec<u8>> for IdentifierKey {
 	type Error = AccountError;
 
 	fn try_from(raw_bytes: Vec<u8>) -> Result<Self, Self::Error> {
-		if raw_bytes.len() != 32 {
-			return Err(AccountError::InvalidConstruction);
-		}
-
-		Ok(Self { raw_bytes })
+		raw_bytes.as_slice().try_into().map_err(AccountError::from)
 	}
 }
 
@@ -258,7 +493,6 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// # Examples
 	///
 	/// ```rust
-	/// # use accounts::doc_utils;
 	/// # use crypto::generate_random_seed;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
@@ -635,11 +869,11 @@ impl From<(Vec<String>, Index)> for Keyable {
 /// ```rust
 /// use accounts::{Account, KeyECDSASECP256K1, KeyPair};
 /// use crypto::algorithms::secp256k1::Secp256k1Derivation;
-/// use crypto::KeyDerivation;
+/// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an account from a seed
-/// let seed = b"abandon abandon abandon abandon abandon abandon";
+/// let seed = b"abandon abandon abandon abandon abandon abandon".into_secret();
 /// let private_key = Secp256k1Derivation::derive_from_seed(seed)?;
 ///
 /// let account = Account::<KeyECDSASECP256K1>::from(private_key);
@@ -665,7 +899,7 @@ impl KeyPair for KeyECDSASECP256K1 {
 
 	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
 		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index);
+		let seed_buffer = combine_seed_and_index(seed, index).into_secret();
 		// Use the crypto crate's secp256k1 derivation
 		let private_key = Secp256k1Derivation::derive_from_seed(seed_buffer)?;
 
@@ -715,12 +949,12 @@ impl KeyPair for KeyECDSASECP256K1 {
 /// ```rust
 /// use accounts::{Account, KeyECDSASECP256R1, KeyPair};
 /// use crypto::algorithms::secp256r1::Secp256r1Derivation;
-/// use crypto::KeyDerivation;
+/// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an account from a seed
 /// let seed = b"abandon abandon abandon abandon abandon abandon";
-/// let private_key = Secp256r1Derivation::derive_from_seed(seed)?;
+/// let private_key = Secp256r1Derivation::derive_from_seed(seed.into_secret())?;
 ///
 /// let account = Account::<KeyECDSASECP256R1>::from(private_key);
 /// // Verify it's a cryptographic key type
@@ -745,7 +979,7 @@ impl KeyPair for KeyECDSASECP256R1 {
 
 	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
 		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index);
+		let seed_buffer = combine_seed_and_index(seed, index).into_secret();
 		// Use the crypto crate's secp256r1 derivation
 		let private_key = Secp256r1Derivation::derive_from_seed(seed_buffer)?;
 		Ok(AnyPrivateKey::Secp256r1(private_key))
@@ -795,12 +1029,12 @@ impl KeyPair for KeyECDSASECP256R1 {
 /// ```rust
 /// use accounts::{Account, KeyED25519, KeyPair};
 /// use crypto::algorithms::ed25519::Ed25519Derivation;
-/// use crypto::KeyDerivation;
+/// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an account from a seed
 /// let seed = b"abandon abandon abandon abandon abandon abandon";
-/// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+/// let private_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
 ///
 /// let account = Account::<KeyED25519>::from(private_key);
 /// // Verify it's a cryptographic key type
@@ -826,7 +1060,7 @@ impl KeyPair for KeyED25519 {
 
 	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
 		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index);
+		let seed_buffer = combine_seed_and_index(seed, index).into_secret();
 		// Use the crypto crate's Ed25519 derivation
 		let private_key = Ed25519Derivation::derive_from_seed(seed_buffer)?;
 		Ok(AnyPrivateKey::Ed25519(private_key))
@@ -1198,12 +1432,12 @@ where
 /// ```rust
 /// use accounts::{Account, KeyED25519, KeyPair};
 /// use crypto::algorithms::ed25519::Ed25519Derivation;
-/// use crypto::prelude::KeyDerivation;
+/// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an Ed25519 account from a seed
 /// let seed = b"abandon abandon abandon abandon abandon abandon";
-/// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
+/// let private_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
 /// let account = Account::from(private_key);
 /// // Check capabilities
 /// assert!(account.keypair.to_keypair_type().supports_crypto());
@@ -1352,23 +1586,26 @@ where
 	///
 	/// ```rust
 	/// use accounts::{Account, KeyED25519};
+	/// use crypto::prelude::IntoSecret;
 	///
 	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // From a word vector (minimum 12 words)
 	/// let words = vec![
 	///     "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
 	///     "abandon", "abandon", "abandon", "abandon", "abandon", "abandon"
-	/// ];
+	/// ].into_secret();
 	/// let seed = Account::<KeyED25519>::compute_seed_from_passphrase(words)?;
 	/// # Ok(())
 	/// # }
 	/// ```
-	pub fn compute_seed_from_passphrase<I, S>(passphrase: I) -> Result<Seed, AccountError>
+	pub fn compute_seed_from_passphrase<P, I>(passphrase: SecretBox<P>) -> Result<Seed, AccountError>
 	where
-		I: IntoIterator<Item = S>,
-		S: AsRef<str>,
+		P: IntoIterator<Item = I> + zeroize::Zeroize + Clone,
+		I: AsRef<str>,
 	{
+		let passphrase = passphrase.expose_secret();
 		let joined = passphrase
+			.clone()
 			.into_iter()
 			.map(|s| s.as_ref().to_string())
 			.collect::<Vec<String>>()
@@ -3221,8 +3458,7 @@ mod tests {
 		let keyable = match keyable {
 			Some(k) => k,
 			None => {
-				let generated_passphrase = Account::<T>::generate_passphrase().unwrap();
-				let passphrase = generated_passphrase.expose_secret().clone();
+				let passphrase = Account::<T>::generate_passphrase().unwrap();
 				let seed = Account::<T>::compute_seed_from_passphrase(passphrase).unwrap();
 
 				Keyable::Seed((seed, 0))
@@ -3298,7 +3534,7 @@ mod tests {
 					let passphrase: Vec<String> = test_case.passphrase.iter().map(|s| s.to_string()).collect();
 
 					// Test passphrase -> seed conversion
-					let seed1 = Account::<$key_type>::compute_seed_from_passphrase(passphrase.clone()).unwrap();
+					let seed1 = Account::<$key_type>::compute_seed_from_passphrase(passphrase.clone().into_secret()).unwrap();
 					let account1 = create_test_account::<$key_type>(Some(passphrase.clone().into()));
 					let public_key_string = account1.keypair.to_public_key_string();
 					assert!(public_key_string.starts_with($expected_prefix));
@@ -3309,7 +3545,7 @@ mod tests {
 					let account4 = Account::<$key_type>::try_from(Accountable::Account(account2.clone())).unwrap();
 
 					// Test deterministic passphrase behavior
-					let seed2 = Account::<$key_type>::compute_seed_from_passphrase(passphrase).unwrap();
+					let seed2 = Account::<$key_type>::compute_seed_from_passphrase(passphrase.into_secret()).unwrap();
 
 					// Verify that the same passphrase produces the same seed
 					assert_eq!(seed1.expose_secret(), seed2.expose_secret());

@@ -105,9 +105,9 @@ fn create_string_conversion_error() -> CryptoError {
 ///
 /// This function applies PBKDF2 key derivation to convert a passphrase
 /// into a 32-byte seed suitable for key derivation.
-pub fn seed_from_passphrase(passphrase: &str) -> Result<SecretBox<[u8; 32]>, CryptoError> {
+pub fn seed_from_passphrase(passphrase: impl AsRef<str>) -> Result<SecretBox<[u8; 32]>, CryptoError> {
 	// Normalize passphrase (lowercase, remove spaces)
-	let clean_passphrase = passphrase.to_lowercase().replace(" ", "");
+	let clean_passphrase = passphrase.as_ref().to_lowercase().replace(" ", "");
 	let passphrase_buffer = clean_passphrase.as_bytes();
 	if passphrase_buffer.len() < MIN_PASSPHRASE_LENGTH {
 		return Err(CryptoError::InvalidLength {
@@ -192,7 +192,7 @@ pub fn generate_random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
 
 /// Create a key pair for the specified algorithm
 pub fn create_keypair_from_seed(
-	seed: &[u8],
+	seed: SecretBox<Vec<u8>>,
 	algorithm: Algorithm,
 ) -> Result<(AnyPrivateKey, AnyPublicKey), CryptoError> {
 	match algorithm {
@@ -329,11 +329,10 @@ pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]
 
 #[cfg(test)]
 mod tests {
-	use secrecy::ExposeSecret;
 	use zeroize::Zeroize;
 
 	use super::*;
-	use crate::Algorithm;
+	use crate::prelude::{Algorithm, ExposeSecret, IntoSecret};
 
 	#[test]
 	fn test_seed_from_passphrase() {
@@ -418,17 +417,19 @@ mod tests {
 		let seed = b"test seed for keypair creation!!!!!";
 
 		// Test secp256k1 creation
-		let (private_key, public_key) = create_keypair_from_seed(seed, Algorithm::Secp256k1).unwrap();
+		let (private_key, public_key) =
+			create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Secp256k1).unwrap();
 		assert_eq!(Algorithm::from(&private_key), Algorithm::Secp256k1);
 		assert_eq!(Algorithm::from(&public_key), Algorithm::Secp256k1);
 
 		// Test Ed25519 creation
-		let (private_key, public_key) = create_keypair_from_seed(seed, Algorithm::Ed25519).unwrap();
+		let (private_key, public_key) =
+			create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Ed25519).unwrap();
 		assert_eq!(Algorithm::from(&private_key), Algorithm::Ed25519);
 		assert_eq!(Algorithm::from(&public_key), Algorithm::Ed25519);
 
 		// Test unsupported algorithm
-		let result = create_keypair_from_seed(seed, Algorithm::Secp256r1);
+		let result = create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Secp256r1);
 		assert!(result.is_err());
 	}
 

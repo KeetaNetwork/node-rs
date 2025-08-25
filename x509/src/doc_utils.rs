@@ -7,7 +7,7 @@
 use accounts::{Account, KeyED25519, KeyPair};
 use crypto::algorithms::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 use crypto::bigint::U256;
-use crypto::prelude::{KeyDerivation, PrivateKey};
+use crypto::prelude::{IntoSecret, KeyDerivation, PrivateKey};
 
 use crate::builder::CertificateBuilder;
 use crate::certificates::Certificate;
@@ -21,7 +21,7 @@ pub const DOC_TEST_SEED: &[u8] = b"abandon abandon abandon abandon abandon aband
 /// Returns (private_key, public_key, account) tuple with all the cryptographic
 /// components needed for certificate examples.
 pub fn create_test_keys(seed: Option<&[u8]>) -> (Ed25519PrivateKey, Ed25519PublicKey, Account<KeyED25519>) {
-	let seed = seed.unwrap_or(DOC_TEST_SEED);
+	let seed = seed.unwrap_or(DOC_TEST_SEED).to_vec().into_secret();
 	let private_key = Ed25519Derivation::derive_from_seed(seed).expect("Failed to derive test private key");
 	let public_key = private_key.as_public_key();
 	let account = Account::from(private_key.clone());

@@ -45,6 +45,7 @@ words:
   - encryptor
   - secp256k1
   - ciphertext
+  - ciphertexts
   - zeroization
   - zeroized
   - keystream

@@ -14,17 +14,18 @@
 //! use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 //! use crypto::bigint::U256;
 //! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+//! use crypto::utils::generate_random_seed;
 //! use x509::builder::{CertificateBuilder, ExtensionBuilder};
 //! use x509::{utils, oids};
 //!
 //! // Generate a keypair for signing
-//! let seed = b"abandon abandon abandon abandon abandon abandon";
+//! let seed = generate_random_seed()?;
 //! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
 //! let account = Account::<KeyED25519>::from(private_key);
 //! let public_key = account.keypair.to_public_key();
+//!
 //! // Create the public key info structure
 //! let public_key_info = SubjectPublicKeyInfo::from(public_key);
-//!
 //! // Create a distinguished name
 //! let subject_dn = utils::create_dn(&[
 //!     (oids::CN, "Example Certificate"),
@@ -2231,22 +2232,26 @@ impl CertificateBuilder {
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 	/// use crypto::bigint::U256;
 	/// use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+	/// use crypto::utils::generate_random_seed;
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::{utils, oids};
 	///
 	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create an account for signing
-	/// let seed = b"abandon abandon abandon abandon abandon abandon";
+	/// let seed = generate_random_seed()?;
 	/// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
 	/// let account = Account::<KeyED25519>::from(private_key);
+	///
 	/// // Get the public key info from the account public key
 	/// let public_key = account.keypair.to_public_key();
 	/// // Convert the public key to the SubjectPublicKeyInfo format
 	/// let public_key_info = SubjectPublicKeyInfo::from(public_key);
 	/// // Create the subject distinguished name (DN)
 	/// let subject_dn = utils::create_dn(&[(oids::CN, "Test Certificate")])?;
+	///
+	/// // Build the certificate
 	/// let builder = CertificateBuilder::new()
-	///     .with_subject_public_key(public_key_info)
+	///     .with_subject_public_key(public_key_info.clone())
 	///     .with_subject_dn(subject_dn.clone())
 	///     .with_issuer_dn(subject_dn) // Self-signed
 	///     .with_serial_number(U256::from(1u128))
@@ -2254,7 +2259,7 @@ impl CertificateBuilder {
 	///
 	/// match builder.build(&account) {
 	///     Ok(certificate) => {
-	///         // Complete signed certificate ready for use
+	///         assert!(certificate.verify_signature(&public_key_info).is_ok());
 	///     },
 	///     Err(e) => {
 	///         // Handle signing error
@@ -2366,13 +2371,14 @@ mod tests {
 	use asn1::{AlgorithmIdentifier, BitString, ObjectIdentifier, Uint};
 	use chrono::Utc;
 	use crypto::operations::encryption::KeyGeneration;
-	use crypto::prelude::{AnyPrivateKey, Ed25519Derivation, KeyDerivation, Secp256k1PrivateKey, Secp256r1PrivateKey};
+	use crypto::prelude::{AnyPrivateKey, Secp256k1PrivateKey, Secp256r1PrivateKey};
+	use crypto::Ed25519PrivateKey;
 	use der::Decode;
 
 	use super::*;
 	use crate::certificates::{Certificate, TbsCertificate};
 	use crate::oids;
-	use crate::testing::{TEST_CERTIFICATE_SETS, TEST_SEED};
+	use crate::testing::TEST_CERTIFICATE_SETS;
 	use crate::utils;
 
 	macro_rules! test_certificate_builder {
@@ -2532,7 +2538,7 @@ mod tests {
 	#[test]
 	fn test_certificate_builder_api() {
 		const TEST_CERTIFICATE_SETS: &[fn() -> AnyPrivateKey] = &[
-			|| AnyPrivateKey::Ed25519(Ed25519Derivation::derive_from_seed(TEST_SEED.as_bytes()).unwrap()),
+			|| AnyPrivateKey::Ed25519(Ed25519PrivateKey::generate_random().unwrap()),
 			|| AnyPrivateKey::Secp256k1(Secp256k1PrivateKey::generate_random().unwrap()),
 			|| AnyPrivateKey::Secp256r1(Secp256r1PrivateKey::generate_random().unwrap()),
 		];
