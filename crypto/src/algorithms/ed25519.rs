@@ -51,7 +51,7 @@ use crate::operations::signature::{
 use crate::algorithms::{Algorithm, CryptoAlgorithm};
 use crate::error::CryptoError;
 use crate::hash;
-use crate::{KeyDerivation, PrivateKey, PublicKey};
+use crate::{IntoSecret, KeyDerivation, PrivateKey, PublicKey};
 
 /// Ed25519 private key wrapper.
 ///
@@ -105,13 +105,13 @@ impl core::fmt::Debug for Ed25519PrivateKey {
 
 impl From<Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Ed25519PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
+		key.inner.to_bytes().to_vec().into_secret()
 	}
 }
 
 impl From<&Ed25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Ed25519PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
+		key.inner.to_bytes().to_vec().into_secret()
 	}
 }
 
@@ -398,19 +398,20 @@ impl TryFrom<&[u8]> for X25519PrivateKey {
 			.try_into()
 			.map_err(|_| CryptoError::InvalidPrivateKey)?;
 
-		Ok(X25519PrivateKey { bytes: SecretBox::new(Box::new(bytes_array)) })
+		let bytes = bytes_array.into_secret();
+		Ok(X25519PrivateKey { bytes })
 	}
 }
 
 impl From<X25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: X25519PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.bytes.expose_secret().to_vec()))
+		key.bytes.expose_secret().to_vec().into_secret()
 	}
 }
 
 impl From<&X25519PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &X25519PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.bytes.expose_secret().to_vec()))
+		key.bytes.expose_secret().to_vec().into_secret()
 	}
 }
 

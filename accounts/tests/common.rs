@@ -3,7 +3,7 @@
 use core::convert::TryFrom;
 
 use accounts::{Account, Accountable, KeyPairType, Keyable};
-use crypto::prelude::SecretBox;
+use crypto::prelude::IntoSecret;
 
 #[allow(dead_code)]
 pub struct PublicAccountTestData {
@@ -142,11 +142,8 @@ where
 	Account<T>: TryFrom<Accountable<T>, Error = accounts::AccountError>,
 {
 	let seed_array = create_test_seed_array();
-	Account::<T>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
-		key_type,
-	))
-	.unwrap()
+	let keyable = Keyable::Seed((seed_array.into_secret(), index));
+	Account::<T>::try_from(Accountable::KeyAndType(keyable, key_type)).unwrap()
 }
 
 /// Helper function to create an account from a hex seed string for different key types
@@ -161,9 +158,6 @@ where
 	let mut seed_array = [0u8; 32];
 	seed_array.copy_from_slice(&seed_bytes[..32]);
 
-	Account::<T>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), index)),
-		key_type,
-	))
-	.unwrap()
+	let keyable = Keyable::Seed((seed_array.into_secret(), index));
+	Account::<T>::try_from(Accountable::KeyAndType(keyable, key_type)).unwrap()
 }

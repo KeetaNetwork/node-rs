@@ -45,7 +45,7 @@ use crate::operations::signature::{
 
 use crate::algorithms::{Algorithm, CryptoAlgorithm};
 use crate::kdf::KdfAlgorithm;
-use crate::{error::CryptoError, KeyDerivation, PrivateKey, PublicKey};
+use crate::{error::CryptoError, IntoSecret, KeyDerivation, PrivateKey, PublicKey};
 
 /// secp256k1 private key wrapper.
 ///
@@ -102,13 +102,13 @@ impl PrivateKey for Secp256k1PrivateKey {
 
 impl From<Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Secp256k1PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
+		key.inner.to_bytes().to_vec().into_secret()
 	}
 }
 
 impl From<&Secp256k1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Secp256k1PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
+		key.inner.to_bytes().to_vec().into_secret()
 	}
 }
 

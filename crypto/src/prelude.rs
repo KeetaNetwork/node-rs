@@ -9,6 +9,10 @@
 
 // Re-export external resources required for usage.
 pub use secrecy::{ExposeSecret, SecretBox, SecretString, SerializableSecret};
+pub use zeroize::{Zeroize, ZeroizeOnDrop};
+
+// Re-export the IntoSecret trait
+pub use crate::IntoSecret;
 
 // Core algorithm types and traits
 pub use crate::algorithms::{Algorithm, KeyDerivation, PrivateKey, PublicKey};

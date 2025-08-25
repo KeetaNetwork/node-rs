@@ -5,7 +5,7 @@ use accounts::{Account, GenericAccount, KeyPairType};
 use accounts::{Accountable, Keyable};
 use accounts::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
 use accounts::{KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};
-use crypto::prelude::SecretBox;
+use crypto::prelude::IntoSecret;
 use hex::{FromHex, ToHex};
 
 mod common;
@@ -132,7 +132,7 @@ fn test_account_from_seed_creation() {
 	// Macro to test account creation from seed and verify public key
 	macro_rules! test_account_creation {
 		($index:expr, $key_type:expr, $account_type:ty, $expected_pubkey:expr, $signature_size:expr, $supports_encryption:expr) => {{
-			let seed = Keyable::Seed((SecretBox::new(Box::new(seed_array)), $index));
+			let seed = Keyable::Seed((seed_array.into_secret(), $index));
 			let accountable = Accountable::KeyAndType(seed, $key_type);
 			let account = Account::<$account_type>::try_from(accountable).unwrap();
 
@@ -181,7 +181,7 @@ fn test_cross_platform_account_compatibility() {
 	macro_rules! test_seed_to_account {
 		($seed_array:expr, $index:expr, $key_type:expr, $account_type:ty, $expected_pubkey:expr) => {{
 			let account = Account::<$account_type>::try_from(Accountable::KeyAndType(
-				Keyable::Seed((SecretBox::new(Box::new($seed_array)), $index)),
+				Keyable::Seed(($seed_array.into_secret(), $index)),
 				$key_type,
 			))
 			.unwrap();

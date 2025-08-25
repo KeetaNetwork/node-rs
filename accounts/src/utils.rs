@@ -1,5 +1,4 @@
 use crypto::prelude::*;
-use secrecy::ExposeSecret;
 
 use crate::error::AccountError;
 use crate::{Index, Seed};
@@ -130,14 +129,12 @@ fn parse_public_key_hex(hex_key: &str) -> Result<(Vec<u8>, Algorithm), AccountEr
 
 	// Decode hex
 	let decoded = hex::decode(hex_data).map_err(|_| AccountError::InvalidPrefix)?;
-
 	if decoded.is_empty() {
 		return Err(AccountError::InvalidPrefix);
 	}
 
 	// First byte is the algorithm type
 	let algorithm = Algorithm::from_id(decoded[0]).map_err(AccountError::from)?;
-
 	// Rest is the public key
 	let public_key_bytes = decoded[1..].to_vec();
 
@@ -156,10 +153,9 @@ fn parse_public_key_hex(hex_key: &str) -> Result<(Vec<u8>, Algorithm), AccountEr
 
 #[cfg(test)]
 mod tests {
-	use secrecy::{ExposeSecret, SecretBox};
+	use crypto::utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
 
 	use super::*;
-	use crypto::utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
 
 	#[test]
 	fn test_format_public_key_string() {
@@ -195,7 +191,7 @@ mod tests {
 	#[test]
 	fn test_combine_seed_and_index() {
 		let seed_data = [1u8; 32];
-		let seed = SecretBox::new(Box::new(seed_data));
+		let seed = seed_data.into_secret();
 		let index = 0x12345678;
 
 		let combined = combine_seed_and_index(&seed, index);
@@ -209,7 +205,7 @@ mod tests {
 	#[test]
 	fn test_create_identifier_key() {
 		let seed_data = [1u8; 32];
-		let seed = SecretBox::new(Box::new(seed_data));
+		let seed = seed_data.into_secret();
 		let index = 42;
 
 		let result = create_identifier_key(&seed, index).unwrap();

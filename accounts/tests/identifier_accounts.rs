@@ -2,7 +2,7 @@
 
 use accounts::{Account, GenericAccount, KeyPair, KeyPairType, KeyTOKEN};
 use accounts::{Accountable, KeyECDSASECP256K1, KeyNETWORK, KeySTORAGE, Keyable};
-use secrecy::SecretBox;
+use crypto::IntoSecret;
 
 mod common;
 use common::*;
@@ -23,7 +23,7 @@ const NETWORK_VERIFICATION_CASES: &[(u64, &str)] = &[
 fn create_test_crypto_account() -> Account<KeyECDSASECP256K1> {
 	let seed_array = create_test_seed_array();
 	Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-		Keyable::Seed((SecretBox::new(Box::new(seed_array)), 0)),
+		Keyable::Seed((seed_array.into_secret(), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))
 	.unwrap()

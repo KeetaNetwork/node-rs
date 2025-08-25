@@ -60,3 +60,51 @@ pub use operations::{
 pub use operations::KeyExchange;
 #[cfg(feature = "encryption")]
 pub use operations::{AsymmetricEncryption, CryptoAead};
+
+/// Trait for converting types into their corresponding SecretBox versions.
+pub trait IntoSecret<T: zeroize::Zeroize> {
+	/// Convert the value into a SecretBox.
+	fn into_secret(self) -> SecretBox<T>;
+}
+
+impl<T: zeroize::Zeroize> IntoSecret<Vec<T>> for Vec<T> {
+	fn into_secret(self) -> SecretBox<Vec<T>> {
+		SecretBox::new(Box::new(self))
+	}
+}
+
+impl IntoSecret<[u8; 32]> for [u8; 32] {
+	fn into_secret(self) -> SecretBox<[u8; 32]> {
+		SecretBox::new(Box::new(self))
+	}
+}
+
+impl IntoSecret<String> for String {
+	fn into_secret(self) -> SecretBox<String> {
+		SecretBox::new(Box::new(self))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use secrecy::ExposeSecret;
+
+	use super::*;
+
+	#[test]
+	fn test_into_secret_implementations() {
+		// Macro to test IntoSecret implementations
+		macro_rules! test_into_secret {
+			($test_name:ident, $input:expr, $secret_type:ty) => {
+				let input = $input;
+				let secret: SecretBox<$secret_type> = input.clone().into_secret();
+				assert_eq!(*secret.expose_secret(), input);
+			};
+		}
+
+		// Test data-driven cases
+		test_into_secret!(seed, [1u8; 32], [u8; 32]);
+		test_into_secret!(hex_seed, "deadbeef".to_string(), String);
+		test_into_secret!(passphrase, vec!["word1".to_string(), "word2".to_string()], Vec<String>);
+	}
+}

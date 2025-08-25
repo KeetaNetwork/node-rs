@@ -11,7 +11,6 @@ use zeroize::Zeroize;
 use crate::constants::NO_PREVIOUS;
 use crate::error::AccountError;
 use crate::utils::*;
-use crate::IntoSecret;
 use crate::{HexSeedAndIndex, Index, PassphraseAndIndex, Seed, SeedAndIndex};
 
 /// Identifier key types (non-cryptographic)
@@ -38,8 +37,8 @@ const IDENTIFIER_KEY_TYPES: &[KeyPairType] =
 /// These key types are used for network addressing and resource identification
 /// but do not support cryptographic operations:
 ///
-/// - [`NETWORK`](KeyPairType::NETWORK) - Network node identification
-/// - [`TOKEN`](KeyPairType::TOKEN) - Token and asset identification  
+/// - [`NETWORK`](KeyPairType::NETWORK) - Network identification
+/// - [`TOKEN`](KeyPairType::TOKEN) - Token and asset identification
 /// - [`STORAGE`](KeyPairType::STORAGE) - Storage resource identification
 /// - [`MULTISIG`](KeyPairType::MULTISIG) - Multi-signature wallet identification
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Display, EnumString, EnumIter)]
@@ -116,14 +115,12 @@ pub trait AccountSigner {
 /// Verifier trait for accounts.
 pub trait AccountVerifier {
 	/// Verify a signature against a message using the public key.
-	///
-	/// Returns true if the signature is valid, false otherwise.
 	fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
 		&self,
 		_message: T,
 		_signature: S,
 		_options: Option<SigningOptions>,
-	) -> Result<bool, AccountError> {
+	) -> Result<(), AccountError> {
 		Err(AccountError::NoIdentifierVerify)
 	}
 }
@@ -132,7 +129,7 @@ pub trait AccountVerifier {
 ///
 /// This trait provides a unified interface for both cryptographic public keys
 /// and identifier keys to return their raw byte representation.
-pub trait PublicKeyStorage: Into<Vec<u8>> + AsRef<[u8]> + AsymmetricEncryption + Send + Sync {}
+pub trait PublicKeyStorage: Into<Vec<u8>> + AsRef<[u8]> + AsymmetricEncryption + Send + Sync + Clone {}
 
 /// Identifier key for non-cryptographic account types.
 ///
@@ -209,28 +206,145 @@ impl FromHex for IdentifierKey {
 
 /// Trait defining the interface for cryptographic key pairs.
 ///
-/// Provides methods for key generation, derivation, and type identification.
+/// The `KeyPair` trait provides a unified interface for all supported
+/// cryptographic algorithms and identifier types in the Keeta Network. It
+/// combines signing, verification, encryption, and key derivation capabilities
+/// with abstractions for different cryptographic primitives.
+///
+/// # Error Handling
+///
+/// All methods return `Result` types with [`AccountError`] for consistent
+/// error handling across different key types and operations.
 pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyable, Error = AccountError> {
 	/// The public key storage type for this key pair.
-	type PublicKey: PublicKeyStorage + Clone;
+	type PublicKey: PublicKeyStorage;
 
 	/// The key pair type for this implementation.
 	const KEY_PAIR_TYPE: KeyPairType;
 
-	/// Deterministically derives a private key from a seed and index.
+	/// Returns the key pair type for this implementation.
 	///
-	/// Uses HKDF with retry logic to ensure the derived key is valid.
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError>;
-
-	/// Converts a private key into a formatted public key string.
-	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError>;
-
-	/// Returns the key pair type.
+	/// This is a convenience method that returns the same value as the
+	/// `KEY_PAIR_TYPE` constant. It's provided for consistency with instance
+	/// methods.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{KeyED25519, KeyPair, KeyPairType};
+	///
+	/// let key_type = KeyED25519::keypair_type();
+	/// assert_eq!(key_type, KeyPairType::ED25519);
+	/// ```
 	fn keypair_type() -> KeyPairType {
 		Self::KEY_PAIR_TYPE
 	}
 
+	/// Deterministically derives a private key from a seed and index.
+	///
+	/// This method uses HKDF (HMAC-based Key Derivation Function) to
+	/// deterministically generate a private key from a seed and index.
+	///
+	/// # Parameters
+	///
+	/// - `seed`: A cryptographically secure random seed (32 bytes)
+	/// - `index`: Derivation index for generating keys from the same seed
+	///
+	/// # Returns
+	///
+	/// A valid private key wrapped in [`AnyPrivateKey`] enum, or an error if
+	/// key derivation fails after maximum retry attempts.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// # use crypto::generate_random_seed;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Generate a cryptographically secure seed
+	/// # let seed = generate_random_seed()?;
+	/// # let seed = generate_random_seed()?;
+	/// // Derive the first private key (index 0)
+	/// let private_key = KeyED25519::seed_to_private_key(&seed, 0)?;
+	/// // Derive additional keys from the same seed
+	/// let second_key = KeyED25519::seed_to_private_key(&seed, 1)?;
+	/// let third_key = KeyED25519::seed_to_private_key(&seed, 2)?;
+	/// # Ok(())
+	/// # }
+	/// ```
+	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError>;
+
+	/// Converts a private key into a formatted public key string.
+	///
+	/// This method generates the Keeta Network address string from a private
+	/// key. The result is a base32-encoded string with a `keeta_` prefix,
+	/// algorithm identifier, public key bytes, and checksum for error detection.
+	///
+	/// # Parameters
+	///
+	/// - `key`: The private key to derive the public key string from
+	///
+	/// # Returns
+	///
+	/// A formatted public key string suitable for use as a Keeta Network
+	/// address, or an error if the key type doesn't match this key pair type.
+	///
+	/// # Format
+	///
+	/// The returned string follows the format: `keeta_{algorithm_prefix}{base32_encoded_data}`
+	/// where the data contains: `[algorithm_byte][public_key_bytes][checksum_bytes]`
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	/// use crypto::prelude::AnyPrivateKey;
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test keys
+	/// # let (private_key, _, _) = doc_utils::create_ed25519_test_keys(None);
+	/// # let any_private_key = AnyPrivateKey::Ed25519(private_key);
+	/// // Generate the public key string
+	/// let public_key_string = KeyED25519::derive_public_key_string(&any_private_key)?;
+	/// assert!(public_key_string.starts_with("keeta_"));
+	/// # Ok(())
+	/// # }
+	/// ```
+	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError>;
+
 	/// Encrypt data using the public key.
+	///
+	/// This method performs public key encryption using the appropriate scheme
+	/// for the key type. The encrypted data can only be decrypted using the
+	/// corresponding private key.
+	///
+	/// # Parameters
+	///
+	/// - `plaintext`: The data to encrypt (any type that can convert to bytes)
+	///
+	/// # Returns
+	///
+	/// The encrypted ciphertext as a byte vector, or an error if encryption
+	/// fails or is not supported by this key type.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account with private key
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Encrypt a message
+	/// let message = b"Secret message for the Keeta Network";
+	/// let ciphertext = account.keypair.encrypt(message)?;
+	/// # Ok(())
+	/// # }
+	/// ```
 	fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
 		let public_key = self.to_public_key();
 		let ciphertext = public_key.encrypt(plaintext.as_ref())?;
@@ -238,24 +352,206 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	}
 
 	/// Decrypt data using the private key.
+	///
+	/// This method performs private key decryption to recover the original
+	/// plaintext from ciphertext that was encrypted using the corresponding
+	/// public key. This operation requires access to the private key.
+	///
+	/// # Parameters
+	///
+	/// - `ciphertext`: The encrypted data to decrypt
+	///
+	/// # Returns
+	///
+	/// The decrypted plaintext as a byte vector, or an error if decryption
+	/// fails, the private key is not available, or the key type does not
+	/// support encryption.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account with private key
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Encrypt and then decrypt a message
+	/// let original_message = b"Secret message for the Keeta Network";
+	/// let ciphertext = account.keypair.encrypt(original_message)?;
+	/// let plaintext = account.keypair.decrypt(&ciphertext)?;
+	/// assert_eq!(original_message, plaintext.as_slice());
+	/// # Ok(())
+	/// # }
+	/// ```
 	fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError>;
 
 	/// Check if this key pair supports encryption operations.
+	///
+	/// Returns `true` if both [`encrypt`](Self::encrypt) and [`decrypt`](Self::decrypt)
+	/// operations are supported by this key type, `false` otherwise.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyNETWORK, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test accounts
+	/// # let (_, _, ed25519_account) = doc_utils::create_ed25519_test_keys(None);
+	/// # let network_account = doc_utils::create_network_test_account(Some(5));
+	/// // Cryptographic keys support encryption
+	/// assert!(ed25519_account.keypair.supports_encryption());
+	/// // Identifier keys do not
+	/// assert!(!network_account.keypair.supports_encryption());
+	/// # Ok(())
+	/// # }
+	/// ```
 	fn supports_encryption(&self) -> bool;
 
 	/// Convert the key pair to a public key.
+	///
+	/// This method extracts the public key component from the key pair.
+	/// The returned public key can be used for verification and encryption
+	/// operations but not for signing or decryption.
+	///
+	/// # Returns
+	///
+	/// A clone of the public key component.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair, PublicKeyStorage};
+	/// use crypto::operations::encryption::AsymmetricEncryption;
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account
+	/// # let (_, public_key_ref, account) = doc_utils::create_ed25519_test_keys(None);
+	///
+	/// // Extract the public key
+	/// let public_key = account.keypair.to_public_key();
+	/// // Verify it matches the expected public key
+	/// assert_eq!(public_key, public_key_ref);
+	///
+	/// // Use the public key for encryption
+	/// let message = b"Hello, World!";
+	/// let ciphertext = public_key.encrypt(message)?;
+	/// assert!(ciphertext.len() > 0);
+	/// # Ok(())
+	/// # }
+	/// ```
 	fn to_public_key(&self) -> Self::PublicKey;
 
 	/// Convert the key pair to a keeta network address string.
+	///
+	/// This method generates a human-readable Keeta Network address string
+	/// that uniquely identifies this key pair. The address includes the
+	/// algorithm type and can be used for receiving transactions or messages.
+	///
+	/// # Returns
+	///
+	/// A formatted address string with `keeta_` prefix.
+	///
+	/// # Format
+	///
+	/// The address format varies by key type:
+	/// - Ed25519: `keeta_ae...` or `keeta_ah...`
+	/// - ECDSA secp256k1: `keeta_aa...` or `keeta_ab...`
+	/// - ECDSA secp256r1: `keeta_ay...` or `keeta_az...`
+	/// - Network: `keeta_ai...` through `keeta_al...`
+	/// - Token: `keeta_am...` through `keeta_ap...`
+	/// - Storage: `keeta_aq...` through `keeta_at...`
+	/// - Multisig: `keeta_a4...` through `keeta_a7...`
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Get the network address
+	/// let address = account.keypair.to_public_key_string();
+	/// assert!(address.starts_with("keeta_ae") || address.starts_with("keeta_ah"));
+	/// # Ok(())
+	/// # }
+	/// ```
 	fn to_public_key_string(&self) -> String {
 		let key_type_value = self.to_keypair_type() as u8;
 		format_public_key_string(self.to_public_key(), key_type_value).expect("Failed to format public key")
 	}
 
 	/// Extract the private key if available.
+	///
+	/// This method consumes the account and returns the private key component
+	/// if it exists. After calling this method, the account is no longer
+	/// usable. This is useful for securely transferring private keys or
+	/// converting between different key representations.
+	///
+	/// # Returns
+	///
+	/// `Some(private_key)` if a private key is available, `None` if this is
+	/// a public-key-only account.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	/// use crypto::prelude::AnyPrivateKey;
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account with private key
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Extract the private key (consumes the account)
+	/// let private_key = account.keypair.take_private_key();
+	/// match private_key {
+	///     Some(AnyPrivateKey::Ed25519(_key)) => {
+	///         // Private key was successfully extracted
+	///         assert!(true);
+	///     }
+	///     _ => {
+	///         panic!("Expected Ed25519 private key");
+	///     }
+	/// }
+	/// # Ok(())
+	/// # }
+	/// ```
 	fn take_private_key(self) -> Option<AnyPrivateKey>;
 
 	/// Returns the key pair type for this instance.
+	///
+	/// This method returns the runtime key pair type identifier, which is
+	/// useful for type checking and serialization. It returns the same value
+	/// as the `KEY_PAIR_TYPE` constant but is available on instances.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair, KeyPairType};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Get the runtime key type
+	/// let key_type = account.keypair.to_keypair_type();
+	/// assert_eq!(key_type, KeyPairType::ED25519);
+	///
+	/// // Useful for pattern matching
+	/// match key_type {
+	///     KeyPairType::ED25519 => assert!(true), // Expected
+	///     KeyPairType::ECDSASECP256K1 => panic!("Unexpected ECDSA key"),
+	///     KeyPairType::NETWORK => panic!("Unexpected Network identifier"),
+	///     _ => panic!("Other unexpected key type"),
+	/// }
+	/// # Ok(())
+	/// # }
+	/// ```
 	fn to_keypair_type(&self) -> KeyPairType {
 		Self::KEY_PAIR_TYPE
 	}
@@ -353,11 +649,6 @@ impl From<(Vec<String>, Index)> for Keyable {
 /// # }
 /// ```
 ///
-/// # Thread Safety
-///
-/// This struct is `Send + Sync` when the private key is not present, but
-/// private keys should be handled carefully in multi-threaded environments.
-///
 /// # References
 ///
 /// - [SEC 2: Recommended Elliptic Curve Domain Parameters](http://www.secg.org/sec2-v2.pdf)
@@ -437,11 +728,6 @@ impl KeyPair for KeyECDSASECP256K1 {
 /// # Ok(())
 /// # }
 /// ```
-///
-/// # Thread Safety
-///
-/// This struct is `Send + Sync` when the private key is not present, but
-/// private keys should be handled carefully in multi-threaded environments.
 ///
 /// # References
 ///
@@ -523,11 +809,6 @@ impl KeyPair for KeyECDSASECP256R1 {
 /// # }
 /// ```
 ///
-/// # Thread Safety
-///
-/// This struct is `Send + Sync` when the private key is not present, but
-/// private keys should be handled carefully in multi-threaded environments.
-///
 /// # References
 ///
 /// - [RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA)](https://tools.ietf.org/html/rfc8032)
@@ -599,17 +880,12 @@ impl KeyPair for KeyED25519 {
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a network identifier from a network ID
 /// let account = Account::<KeyNETWORK>::generate_network_address(12345)?;
-/// // Verify it's an identifier type (not cryptographic)
 /// assert!(account.is_identifier());
+/// // Identifier keys do not support cryptographic operations
 /// assert!(!account.keypair.to_keypair_type().supports_crypto());
 /// # Ok(())
 /// # }
 /// ```
-///
-/// # Thread Safety
-///
-/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
-/// All fields are immutable after creation, making it safe for concurrent access.
 #[derive(Clone)]
 pub struct KeyNETWORK {
 	pub public_key: IdentifierKey,
@@ -631,17 +907,12 @@ pub struct KeyNETWORK {
 /// // Create a token identifier directly from an identifier string
 /// let keyable = Keyable::Identifier("test-token-id".to_string());
 /// let account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(keyable, accounts::KeyPairType::TOKEN))?;
-/// // Verify it's an identifier type (not cryptographic)
 /// assert!(account.is_identifier());
+/// // Identifier keys do not support cryptographic operations
 /// assert!(!account.keypair.to_keypair_type().supports_crypto());
 /// # Ok(())
 /// # }
 /// ```
-///
-/// # Thread Safety
-///
-/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
-/// All fields are immutable after creation, making it safe for concurrent access.
 #[derive(Clone)]
 pub struct KeyTOKEN {
 	pub public_key: IdentifierKey,
@@ -667,11 +938,6 @@ pub struct KeyTOKEN {
 /// # Ok(())
 /// # }
 /// ```
-///
-/// # Thread Safety
-///
-/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
-/// All fields are immutable after creation, making it safe for concurrent access.
 #[derive(Clone)]
 pub struct KeySTORAGE {
 	pub public_key: IdentifierKey,
@@ -697,11 +963,6 @@ pub struct KeySTORAGE {
 /// # Ok(())
 /// # }
 /// ```
-///
-/// # Thread Safety
-///
-/// This struct is `Clone + Send + Sync` and can be safely shared across threads.
-/// All fields are immutable after creation, making it safe for concurrent access.
 #[derive(Clone)]
 pub struct KeyMULTISIG {
 	pub public_key: IdentifierKey,
@@ -944,7 +1205,6 @@ where
 /// let seed = b"abandon abandon abandon abandon abandon abandon";
 /// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
 /// let account = Account::from(private_key);
-///
 /// // Check capabilities
 /// assert!(account.keypair.to_keypair_type().supports_crypto());
 /// assert!(!account.is_identifier());
@@ -960,10 +1220,10 @@ where
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a network identifier account from a network ID
 /// let account = Account::<KeyNETWORK>::generate_network_address(5)?;
-///
 /// // Check capabilities
-/// assert!(!account.keypair.to_keypair_type().supports_crypto());
 /// assert!(account.is_identifier());
+/// // Identifier keys do not support cryptographic operations
+/// assert!(!account.keypair.to_keypair_type().supports_crypto());
 /// # Ok(())
 /// # }
 /// ```
@@ -973,24 +1233,27 @@ where
 /// Accounts support various operations depending on their type:
 ///
 /// ## Cryptographic Operations
-/// ```rust,no_run
-/// # use accounts::{Account, KeyED25519};
-/// # fn example(account: Account<KeyED25519>) -> Result<(), Box<dyn std::error::Error>> {
+/// ```rust
+/// # use accounts::doc_utils;
+/// use accounts::{KeyED25519};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create test account
+/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 /// // Sign data (requires private key)
 /// let data = b"Hello, World!";
 /// let signature = account.sign(data, None)?;
 ///
 /// // Verify signatures (public operation)
-/// let is_valid = account.verify(data, &signature, None)?;
-/// assert!(is_valid);
+/// let result = account.verify(data, &signature, None);
+/// assert!(result.is_ok());
 /// # Ok(())
 /// # }
 /// ```
 ///
 /// # Thread Safety
 ///
-/// Accounts are `Send + Sync` when the underlying key type supports it.
-/// Private keys should be handled carefully in multi-threaded environments.
+/// Account is `Send + Sync` and can be safely used across threads.
 #[derive(Debug)]
 pub struct Account<KEYTYPE>
 where
@@ -1058,20 +1321,165 @@ where
 		self.keypair.to_keypair_type()
 	}
 
-	pub fn compute_seed_from_passphrase(passphrase: Vec<String>) -> Result<Seed, AccountError> {
-		Ok(seed_from_passphrase(passphrase.join(" ").as_str())?)
+	/// Computes a cryptographically secure seed from a passphrase using PBKDF2.
+	///
+	/// This method converts a human-readable passphrase into a cryptographically
+	/// secure 32-byte seed suitable for key derivation. The passphrase can be
+	/// provided as any iterable collection of strings, which will be joined
+	/// with spaces before processing.
+	///
+	/// # Parameters
+	///
+	/// - `passphrase`: An iterable collection of strings representing the passphrase words
+	///
+	/// # Returns
+	///
+	/// A 32-byte cryptographically secure seed wrapped in [`SecretBox`] for secure
+	/// memory handling, or an error if the passphrase is too short or processing fails.
+	///
+	/// # Error Handling
+	///
+	/// Returns an error if the passphrase is invalid or if key derivation fails.
+	///
+	/// # Security
+	///
+	/// - Uses PBKDF2 with SHA-256 and OWASP recommended iterations for key stretching
+	/// - Requires minimum passphrase length for security
+	/// - Normalizes input (lowercase, removes spaces) for consistency
+	/// - Returns seed in secure memory container that zeros on drop
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeyED25519};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // From a word vector (minimum 12 words)
+	/// let words = vec![
+	///     "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
+	///     "abandon", "abandon", "abandon", "abandon", "abandon", "abandon"
+	/// ];
+	/// let seed = Account::<KeyED25519>::compute_seed_from_passphrase(words)?;
+	/// # Ok(())
+	/// # }
+	/// ```
+	pub fn compute_seed_from_passphrase<I, S>(passphrase: I) -> Result<Seed, AccountError>
+	where
+		I: IntoIterator<Item = S>,
+		S: AsRef<str>,
+	{
+		let joined = passphrase
+			.into_iter()
+			.map(|s| s.as_ref().to_string())
+			.collect::<Vec<String>>()
+			.join(" ");
+
+		Ok(seed_from_passphrase(&joined)?)
 	}
 
+	/// Generates a cryptographically secure random 24-word BIP39 passphrase.
+	///
+	/// This method creates a random mnemonic passphrase using the BIP39 English
+	/// word list. The generated passphrase provides approximately 256 bits of
+	/// entropy and can be used for secure key derivation.
+	///
+	/// # Returns
+	///
+	/// - Ok: A vector of 24 randomly selected words from BIP39
+	/// - Err: An error if random number generation fails
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeyED25519};
+	/// use crypto::ExposeSecret;
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Generate a random passphrase
+	/// let passphrase = Account::<KeyED25519>::generate_passphrase()?;
+	/// let words = passphrase.expose_secret();
+	/// assert_eq!(words.len(), 24);
+	///
+	/// // All words should be from the BIP39 English dictionary
+	/// for word in words {
+	///     assert!(word.chars().all(|c| c.is_ascii_lowercase()));
+	/// }
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn generate_passphrase() -> Result<SecretBox<Vec<String>>, AccountError> {
 		Ok(generate_random_passphrase(None)?)
 	}
 
-	/// Generate a random seed (alternative interface)
+	/// Generates a cryptographically secure random 32-byte seed.
+	///
+	/// This method creates a fresh random seed using the operating system's
+	/// cryptographically secure random number generator. The seed can be used
+	/// directly for key derivation or stored for later use.
+	///
+	/// # Returns
+	///
+	/// A 32-byte cryptographically secure random seed wrapped in [`SecretBox`]
+	/// for secure memory handling, or an error if random generation fails.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeyED25519};
+	/// use crypto::ExposeSecret;
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Generate a random seed
+	/// let seed = Account::<KeyED25519>::generate_random_seed()?;
+	/// assert_eq!(seed.expose_secret().len(), 32);
+	///
+	/// // Generate another seed - should be different
+	/// let seed2 = Account::<KeyED25519>::generate_random_seed()?;
+	/// assert_ne!(seed.expose_secret(), seed2.expose_secret());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn generate_random_seed() -> Result<Seed, AccountError> {
 		Ok(crypto::generate_random_seed()?)
 	}
 
-	/// Generate a network address from a network ID
+	/// Generates a deterministic network address from a network ID.
+	///
+	/// This method creates a network identifier account from a numeric network
+	/// ID using a deterministic process. The same network ID will always
+	/// produce the same network address.
+	///
+	/// # Parameters
+	///
+	/// - `network_id`: A 64-bit unsigned integer representing the network ID
+	///
+	/// # Returns
+	///
+	/// A network account ([`Account<KeyNETWORK>`]) that represents the network
+	/// address, or an error if account creation fails.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeyNETWORK, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Generate network addresses for different networks
+	/// let mainnet = Account::<KeyNETWORK>::generate_network_address(1)?;
+	/// let testnet = Account::<KeyNETWORK>::generate_network_address(1337)?;
+	/// let dev_net = Account::<KeyNETWORK>::generate_network_address(12345)?;
+	/// assert!(mainnet.is_identifier());
+	/// assert!(testnet.is_identifier());
+	/// assert!(dev_net.is_identifier());
+	///
+	/// let mainnet2 = Account::<KeyNETWORK>::generate_network_address(1)?;
+	/// // Same network ID produces same address
+	/// assert_eq!(mainnet.to_string(), mainnet2.to_string());
+	/// // Different network IDs produce different addresses
+	/// assert_ne!(mainnet.to_string(), testnet.to_string());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn generate_network_address(network_id: u64) -> Result<Account<KeyNETWORK>, AccountError> {
 		// Convert network ID to bytes
 		let seed_bytes = network_id.to_be_bytes();
@@ -1082,40 +1490,151 @@ where
 		// Create network account from seed
 		let seed_and_index = (seed.into_secret(), 0);
 		let keyable = Keyable::Seed(seed_and_index);
-		let accountable = Accountable::KeyAndType(keyable, KeyPairType::NETWORK);
 
+		let accountable = Accountable::KeyAndType(keyable, KeyPairType::NETWORK);
 		Account::<KeyNETWORK>::try_from(accountable)
 	}
 
-	/// Encrypt data using the account's public key.
+	/// Encrypts data using the account's public key.
 	///
-	/// Returns the encrypted data as a byte vector.
+	/// This method performs public key encryption using the appropriate
+	/// encryption scheme for the account's key type. The encrypted data can
+	/// only be decrypted using the corresponding private key. Not all key
+	/// types support encryption.
+	///
+	/// # Parameters
+	///
+	/// - `plaintext`: The data to encrypt (any type that converts to bytes)
+	///
+	/// # Returns
+	///
+	/// The encrypted ciphertext as a byte vector, or an error if encryption
+	/// fails or is not supported by this key type.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account with private key
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Encrypt a message
+	/// let message = b"Secret message for the Keeta Network";
+	/// let ciphertext = account.encrypt(message)?;
+	/// assert_ne!(ciphertext.as_slice(), message);
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
 		self.keypair.encrypt(plaintext)
 	}
 
-	/// Decrypt data using the account's private key.
+	/// Decrypts data using the account's private key.
 	///
-	/// Returns the decrypted data as a byte vector.
+	/// This method performs private key decryption to recover the original
+	/// plaintext from ciphertext that was encrypted using the corresponding
+	/// public key. This operation requires access to the private key and
+	/// matching encryption scheme.
+	///
+	/// # Parameters
+	///
+	/// - `ciphertext`: The encrypted data to decrypt
+	///
+	/// # Returns
+	///
+	/// The decrypted plaintext as a byte vector, or an error if decryption fails,
+	/// the private key is not available, or the key type does not support encryption.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account with private key
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Encrypt and then decrypt a message
+	/// let original_message = b"Secret message for the Keeta Network";
+	/// let ciphertext = account.encrypt(original_message)?;
+	/// let plaintext = account.decrypt(&ciphertext)?;
+	/// assert_eq!(original_message, plaintext.as_slice());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
 		self.keypair.decrypt(ciphertext)
 	}
 
-	/// Check if this account supports encryption operations.
+	/// Checks if this account supports encryption and decryption operations.
+	///
+	/// Returns `true` if both [`encrypt`](Self::encrypt) and [`decrypt`](Self::decrypt)
+	/// operations are supported by this account's key type, `false` otherwise.
+	///
+	/// # Returns
+	///
+	/// - `true` for cryptographic key types (Ed25519, ECDSA secp256k1/r1)
+	/// - `false` for identifier key types (Network, Token, Storage, Multisig)
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyNETWORK, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test accounts
+	/// # let (_, _, ed25519_account) = doc_utils::create_ed25519_test_keys(None);
+	/// # let network_account = doc_utils::create_network_test_account(Some(5));
+	/// // Cryptographic keys support encryption
+	/// assert!(ed25519_account.supports_encryption());
+	/// // Identifier keys do not
+	/// assert!(!network_account.supports_encryption());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn supports_encryption(&self) -> bool {
 		self.keypair.supports_encryption()
 	}
 
-	/// Get the signature size in bytes for this account's key type.
+	/// Returns the signature size in bytes for this account's key type.
+	///
+	/// Different cryptographic algorithms produce signatures of different
+	/// lengths. This method returns the expected signature size.
+	///
+	/// # Returns
+	///
+	/// The signature size in bytes, which varies by key type:
+	/// - **Ed25519**: 64 bytes
+	/// - **ECDSA secp256k1**: 64 bytes (32-byte r + 32-byte s)
+	/// - **ECDSA secp256r1**: 64 bytes (32-byte r + 32-byte s)
+	/// - **Identifier types**: 0 bytes (do not support signing)
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyECDSASECP256K1, KeyNETWORK, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test accounts
+	/// # let (_, _, ed25519_account) = doc_utils::create_ed25519_test_keys(None);
+	/// # let (_, _, secp256k1_account) = doc_utils::create_secp256k1_test_keys(None);
+	/// # let network_account = doc_utils::create_network_test_account(Some(5));
+	/// // Cryptographic keys have consistent signature sizes
+	/// assert_eq!(ed25519_account.signature_size(), 64);
+	/// assert_eq!(secp256k1_account.signature_size(), 64);
+	/// // Identifier keys cannot sign
+	/// assert_eq!(network_account.signature_size(), 0);
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn signature_size(&self) -> usize {
 		self.keypair.signature_size()
 	}
-}
 
-impl<KEYTYPE> Account<KEYTYPE>
-where
-	KEYTYPE: KeyPair,
-{
 	/// Generate an identifier from this account
 	pub fn generate_identifier(
 		&self,
@@ -1130,7 +1649,7 @@ where
 		}
 
 		// Get the account opening hash (for now, use a placeholder)
-		let account_opening_hash = self.get_account_opening_hash();
+		let account_opening_hash = self.to_opening_hash();
 		// Determine the block hash to use
 		let hash_to_use = match block_hash {
 			Some(NO_PREVIOUS) | None => account_opening_hash,
@@ -1154,7 +1673,6 @@ where
 			let is_generating_token = identifier_type == KeyPairType::TOKEN;
 			let is_first_operation = operation_index == 0;
 			let is_opening = block_hash.is_none() || block_hash == Some(NO_PREVIOUS);
-
 			if !(is_network && is_generating_token && is_first_operation && is_opening) {
 				return Err(AccountError::InvalidIdentifierConstruction);
 			}
@@ -1163,7 +1681,7 @@ where
 		// Create seed from public key + block hash (using hash abstraction)
 		let mut seed_data = Vec::new();
 		seed_data.push(self.to_keypair_type() as u8);
-		seed_data.extend_from_slice(self.get_public_key_bytes()?.as_slice());
+		seed_data.extend_from_slice(self.keypair.to_public_key().as_ref());
 		seed_data.extend_from_slice(&hash_to_use);
 
 		// Hash the combined data to create the seed
@@ -1172,7 +1690,7 @@ where
 		// Helper macro to reduce repetition in account creation
 		macro_rules! create_account {
 			($key_type:ty, $variant:ident) => {{
-				let seed = SecretBox::new(Box::new(seed_hash));
+				let seed = seed_hash.into_secret();
 				let account = Account::<$key_type>::try_from(Accountable::KeyAndType(
 					Keyable::Seed((seed, operation_index)),
 					identifier_type,
@@ -1191,83 +1709,208 @@ where
 		}
 	}
 
-	/// Helper method to get account opening hash
-	fn get_account_opening_hash(&self) -> Vec<u8> {
-		// For now, create a deterministic hash from public key
-		// In a full implementation, this would be the actual account opening hash
-		let mut data = Vec::new();
-
-		data.push(self.to_keypair_type() as u8);
-
-		if let Ok(pubkey_bytes) = self.get_public_key_bytes() {
-			data.extend_from_slice(&pubkey_bytes);
-		}
-
-		// Use crypto hash to generate a deterministic 32-byte hash
-		crypto::hash_default(&data).to_vec()
+	/// Get the account's opening hash
+	/// // TODO Use BlockHash once available
+	fn to_opening_hash(&self) -> Vec<u8> {
+		crypto::hash_default(self.keypair.to_public_key()).to_vec()
 	}
 
-	/// Helper method to get public key bytes
-	fn get_public_key_bytes(&self) -> Result<Vec<u8>, AccountError> {
-		match self.to_keypair_type() {
-			KeyPairType::ECDSASECP256K1 | KeyPairType::ED25519 | KeyPairType::ECDSASECP256R1 => {
-				// For crypto algorithms, parse the formatted public key
-				if let Ok((pubkey_bytes, _)) = parse_public_key(&self.to_string()) {
-					Ok(pubkey_bytes)
-				} else {
-					Err(AccountError::InvalidConstruction)
-				}
-			}
-			KeyPairType::NETWORK | KeyPairType::TOKEN | KeyPairType::STORAGE | KeyPairType::MULTISIG => {
-				// For identifier types, get the identifier as bytes
-				// Parse public key string to get the raw bytes
-				// Safety: We know the concrete type based on keypair_type
-				macro_rules! get_identifier_bytes {
-					($key_type:ident, $key_struct:ident) => {{
-						let concrete_self = unsafe { &*(self as *const Self as *const Account<$key_struct>) };
-						let (bytes, _) = parse_public_key(&concrete_self.keypair.to_public_key_string())
-							.map_err(|_| AccountError::InvalidConstruction)?;
-						Ok(bytes)
-					}};
-				}
-
-				match self.to_keypair_type() {
-					KeyPairType::NETWORK => get_identifier_bytes!(NETWORK, KeyNETWORK),
-					KeyPairType::TOKEN => get_identifier_bytes!(TOKEN, KeyTOKEN),
-					KeyPairType::STORAGE => get_identifier_bytes!(STORAGE, KeySTORAGE),
-					KeyPairType::MULTISIG => get_identifier_bytes!(MULTISIG, KeyMULTISIG),
-					_ => Err(AccountError::InvalidConstruction),
-				}
-			}
-		}
-	}
-
-	/// Determine if this account is an identifier account
+	/// Determines if this account is an identifier account.
+	///
+	/// # Returns
+	///
+	/// - `true` for identifier types
+	/// - `false` for cryptographic types
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{Account, KeyED25519, KeyNETWORK, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test accounts
+	/// # let (_, _, crypto_account) = doc_utils::create_ed25519_test_keys(None);
+	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
+	///
+	/// // Cryptographic accounts are not identifiers
+	/// assert!(!crypto_account.is_identifier());
+	///
+	/// // Network accounts are identifiers
+	/// assert!(network_account.is_identifier());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn is_identifier(&self) -> bool {
 		self.to_keypair_type().is_identifier()
 	}
 
-	/// Determine if this account is a network identifier
+	/// Determines if this account is a network identifier.
+	///
+	/// # Returns
+	///
+	/// - `true` if this account is specifically a network identifier type
+	/// - `false` if not
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeyNETWORK, KeyTOKEN};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
+	/// let token_account = Account::<KeyTOKEN>::try_from(accounts::Accountable::KeyAndType(
+	///     accounts::Keyable::Identifier("test-token".to_string()),
+	///     accounts::KeyPairType::TOKEN,
+	/// ))?;
+	///
+	/// // Only network accounts return true
+	/// assert!(network_account.is_network());
+	/// assert!(!token_account.is_network());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn is_network(&self) -> bool {
 		self.to_keypair_type() == KeyPairType::NETWORK
 	}
 
-	/// Determine if this account is a token identifier
+	/// Determines if this account is a token identifier.
+	///
+	/// # Returns
+	///
+	/// - `true` if this account is specifically a token identifier type
+	/// - `false` if not
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeyNETWORK, KeyTOKEN};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
+	/// let token_account = Account::<KeyTOKEN>::try_from(accounts::Accountable::KeyAndType(
+	///     accounts::Keyable::Identifier("test-token".to_string()),
+	///     accounts::KeyPairType::TOKEN,
+	/// ))?;
+	///
+	/// // Only token accounts return true
+	/// assert!(!network_account.is_token());
+	/// assert!(token_account.is_token());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn is_token(&self) -> bool {
 		self.to_keypair_type() == KeyPairType::TOKEN
 	}
 
-	/// Determine if this account is a storage identifier
+	/// Determines if this account is a storage identifier.
+	///
+	/// # Returns
+	///
+	/// - `true` if this account is specifically a storage identifier type
+	/// - `false` if not
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeySTORAGE, KeyTOKEN};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// let storage_account = Account::<KeySTORAGE>::try_from(accounts::Accountable::KeyAndType(
+	///     accounts::Keyable::Identifier("test-storage".to_string()),
+	///     accounts::KeyPairType::STORAGE,
+	/// ))?;
+	/// let token_account = Account::<KeyTOKEN>::try_from(accounts::Accountable::KeyAndType(
+	///     accounts::Keyable::Identifier("test-token".to_string()),
+	///     accounts::KeyPairType::TOKEN,
+	/// ))?;
+	///
+	/// // Only storage accounts return true
+	/// assert!(storage_account.is_storage());
+	/// assert!(!token_account.is_storage());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn is_storage(&self) -> bool {
 		self.to_keypair_type() == KeyPairType::STORAGE
 	}
 
-	/// Determine if this account is a multisig identifier
+	/// Determines if this account is a multisig identifier.
+	///
+	/// # Returns
+	///
+	/// - `true` if this account is specifically a multisig identifier type
+	/// - `false` if not
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// use accounts::{Account, KeyMULTISIG, KeyTOKEN};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// let multisig_account = Account::<KeyMULTISIG>::try_from(accounts::Accountable::KeyAndType(
+	///     accounts::Keyable::Identifier("test-multisig".to_string()),
+	///     accounts::KeyPairType::MULTISIG,
+	/// ))?;
+	/// let token_account = Account::<KeyTOKEN>::try_from(accounts::Accountable::KeyAndType(
+	///     accounts::Keyable::Identifier("test-token".to_string()),
+	///     accounts::KeyPairType::TOKEN,
+	/// ))?;
+	///
+	/// // Only multisig accounts return true
+	/// assert!(multisig_account.is_multisig());
+	/// assert!(!token_account.is_multisig());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn is_multisig(&self) -> bool {
 		matches!(self.to_keypair_type(), KeyPairType::MULTISIG)
 	}
 
-	/// Determine if this account has a private key
+	/// Determines if this account has an associated private key.
+	///
+	/// This method checks whether the account was created with a private key
+	/// component, which determines whether it can perform signing and
+	/// decryption operations. Accounts created from public keys only or
+	/// identifier accounts will not have private keys available.
+	///
+	/// # Returns
+	///
+	/// - `true` if a private key is available for cryptographic operations
+	/// - `false` if only the public key is available or for identifier accounts
+	///
+	/// # Security Note
+	///
+	/// This method uses unsafe pointer casting to access the private key field
+	/// without moving or borrowing the account. This is necessary due to the
+	/// generic nature of the Account struct but is memory-safe as long as the
+	/// account type matches (which it should always do).
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{Account, KeyED25519, KeyNETWORK, KeyPair, Keyable, Accountable};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Account created with private key
+	/// # let (_, _, private_account) = doc_utils::create_ed25519_test_keys(None);
+	/// assert!(private_account.has_private_key());
+	///
+	/// // Account created from public key string only
+	/// let public_key_string = private_account.to_string();
+	/// let public_only_account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
+	///     Keyable::PublicKeyString(public_key_string),
+	///     accounts::KeyPairType::ED25519,
+	/// ))?;
+	/// assert!(!public_only_account.has_private_key());
+	///
+	/// // Identifier accounts never have private keys
+	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
+	/// assert!(!network_account.has_private_key());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn has_private_key(&self) -> bool {
 		macro_rules! check_private_key {
 			($key_struct:ident) => {{
@@ -1285,12 +1928,83 @@ where
 		}
 	}
 
-	/// Compare this account's public key with another account or public key string
-	pub fn compare_public_key(&self, other: &str) -> bool {
-		self.to_string() == other
+	/// Compares this account's public key with another public key.
+	///
+	/// This method performs a string comparison of the formatted public key
+	/// addresses, which provides a reliable way to determine if two accounts
+	/// represent the same cryptographic identity, regardless of whether they
+	/// have private keys.
+	///
+	/// # Parameters
+	///
+	/// - `other`: Another account, public key string, or any type that converts to string
+	///
+	/// # Returns
+	///
+	/// - `true` if the public key addresses match exactly
+	/// - `false` otherwise.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair, Keyable, Accountable};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test accounts
+	/// # let (_, _, account1) = doc_utils::create_ed25519_test_keys(None);
+	/// # let (_, _, account2) = doc_utils::create_ed25519_test_keys(Some(b"art art art art art art"));
+	/// // Compare with another account
+	/// assert!(!account1.compare_public_key(account2.to_string()));
+	/// // Compare with itself
+	/// assert!(account1.compare_public_key(account1.to_string()));
+	///
+	/// // Compare with public key string
+	/// let public_key_string = account1.to_string();
+	/// assert!(account1.compare_public_key(&public_key_string));
+	/// # Ok(())
+	/// # }
+	/// ```
+	pub fn compare_public_key<T: AsRef<str>>(&self, other: T) -> bool {
+		self.to_string() == other.as_ref()
 	}
 
-	/// Compare this account with another account
+	/// Compares this account with another account for equality.
+	///
+	/// This method compares two accounts by their public key strings,
+	/// providing a reliable way to determine if they represent the same
+	/// cryptographic identity. This works across different account types
+	/// and private key availability.
+	///
+	/// # Parameters
+	///
+	/// - `other`: Another account of any key type to compare against
+	///
+	/// # Returns
+	///
+	/// - `true` if both accounts have the same public key address
+	/// - `false` otherwise
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyECDSASECP256K1, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test accounts
+	/// # let (_, _, ed25519_account1) = doc_utils::create_ed25519_test_keys(None);
+	/// # let (_, _, ed25519_account2) = doc_utils::create_ed25519_test_keys(Some(b"art art art art art art"));
+	/// # let (_, _, secp256k1_account) = doc_utils::create_secp256k1_test_keys(None);
+	/// // Same key type, different seeds
+	/// assert!(!ed25519_account1.compare_account(&ed25519_account2));
+	/// // Different key types
+	/// assert!(!ed25519_account1.compare_account(&secp256k1_account));
+	/// // Same account with itself
+	/// assert!(ed25519_account1.compare_account(&ed25519_account1));
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn compare_account<T>(&self, other: &Account<T>) -> bool
 	where
 		T: KeyPair,
@@ -1298,22 +2012,93 @@ where
 		self.to_string() == other.to_string()
 	}
 
-	/// Sign a message with the account's private key.
+	/// Signs a message with the account's private key.
 	///
-	/// Returns the signature as a byte vector.
+	/// This method creates a cryptographic signature for the given message
+	/// using the account's private key. The signature can later be verified by
+	/// anyone with access to the corresponding public key.
+	///
+	/// # Parameters
+	///
+	/// - `message`: The data to sign (any type that converts to bytes)
+	/// - `options`: Optional signing parameters
+	///
+	/// # Returns
+	///
+	/// - `Ok(_)` with the signature as a byte vector,
+	/// - `Err(_)` if signing fails, the private key is not available, or the key type does not support signing.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test account with private key
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Sign a message
+	/// let message = b"Hello, Keeta Network!";
+	/// let signature = account.sign(message, None)?;
+	/// assert_eq!(signature.len(), 64); // Ed25519 signature size
+	///
+	/// // Verify the signature works
+	/// let result = account.verify(message, &signature, None);
+	/// assert!(result.is_ok());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn sign<T: AsRef<[u8]>>(&self, message: T, options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		self.keypair.sign(message, options)
 	}
 
-	/// Verify a signature against a message using the account's public key.
+	/// Verifies a signature against a message using the account's public key.
 	///
-	/// Returns true if the signature is valid, false otherwise.
+	/// This method checks whether a given signature was created by the private
+	/// key corresponding to this account's public key. Verification is a
+	/// public operation that does not require access to the private key.
+	///
+	/// # Parameters
+	///
+	/// - `message`: The original data that was signed
+	/// - `signature`: The signature to verify (any type that converts to bytes)
+	/// - `options`: Optional verification parameters
+	///
+	/// # Returns
+	///
+	/// - `Ok(())` if the signature is valid for this account and message
+	/// - `Err(_)` if verification fails
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	///
+	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+	/// // Create test accounts
+	/// # let (_, _, account1) = doc_utils::create_ed25519_test_keys(None);
+	/// # let (_, _, account2) = doc_utils::create_ed25519_test_keys(Some(b"art art art art art art"));
+	/// // Sign a message with one account
+	/// let message = b"Hello, Keeta Network!";
+	/// let signature = account1.sign(message, None)?;
+	/// // Verify with the same account (should succeed)
+	/// assert!(account1.verify(message, &signature, None).is_ok());
+	/// // Verify with a different account (should fail)
+	/// assert!(account2.verify(message, &signature, None).is_err());
+	///
+	/// // Verify with wrong message (should fail)
+	/// let wrong_message = b"Different message";
+	/// assert!(account1.verify(wrong_message, &signature, None).is_err());
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
 		&self,
 		message: T,
 		signature: S,
 		options: Option<SigningOptions>,
-	) -> Result<bool, AccountError> {
+	) -> Result<(), AccountError> {
 		self.keypair.verify(message, signature, options)
 	}
 }
@@ -1354,7 +2139,7 @@ where
 		message: T,
 		signature: S,
 		options: Option<SigningOptions>,
-	) -> Result<bool, AccountError> {
+	) -> Result<(), AccountError> {
 		self.keypair.verify(message, signature, options)
 	}
 }
@@ -1504,13 +2289,11 @@ macro_rules! impl_crypto_key_try_from {
 						let seed = seed_from_passphrase(&passphrase.expose_secret().join(" "))?;
 						let (private_key, _) = derive_from_seed(seed, index)?;
 						let public_key = private_key.as_ref().unwrap().as_public_key();
-
 						Ok($key_type { private_key, public_key })
 					}
 					Keyable::Seed((seed, index)) => {
 						let (private_key, _) = derive_from_seed(seed, index)?;
 						let public_key = private_key.as_ref().unwrap().as_public_key();
-
 						Ok($key_type { private_key, public_key })
 					}
 					Keyable::HexSeed((seed, index)) => {
@@ -1519,10 +2302,9 @@ macro_rules! impl_crypto_key_try_from {
 							.try_into()
 							.or(Err(AccountError::InvalidConstruction))?;
 
-						let seed = SecretBox::new(Box::new(bytes));
+						let seed = bytes.into_secret();
 						let (private_key, _) = derive_from_seed(seed, index)?;
 						let public_key = private_key.as_ref().unwrap().as_public_key();
-
 						Ok($key_type { private_key, public_key })
 					}
 					Keyable::PublicKeyString(public_key_string) => {
@@ -1966,15 +2748,11 @@ macro_rules! impl_crypto_traits {
 				message: T,
 				signature: S,
 				options: Option<SigningOptions>,
-			) -> Result<bool, AccountError> {
+			) -> Result<(), AccountError> {
 				// Parse the signature from bytes
 				let sig =
 					<$signature_type>::try_from(signature.as_ref()).map_err(|_| AccountError::InvalidConstruction)?;
-				// Use the crypto verifier - return true/false for verification results
-				match self.verify_with_options(message, &sig, options.unwrap_or_default()) {
-					Ok(()) => Ok(true),
-					Err(_) => Ok(false),
-				}
+				Ok(self.verify_with_options(message, &sig, options.unwrap_or_default())?)
 			}
 		}
 
@@ -2086,9 +2864,8 @@ impl_public_key_storage!(crypto::Secp256r1PublicKey);
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crypto::{Ed25519PrivateKey, Secp256k1PrivateKey, Secp256r1PrivateKey};
-	use secrecy::ExposeSecret;
-	use Algorithm;
+
+	use crypto::{Algorithm, Ed25519PrivateKey, Secp256k1PrivateKey, Secp256r1PrivateKey};
 
 	/// Test data for key type detection methods
 	#[allow(dead_code)]
@@ -2327,26 +3104,31 @@ mod tests {
 			"020F2115FA0C9A10680AEECB64AB2E0564AED1AF821A72BF987AABF87A1AD68251",
 			// cspell:disable-next-line
 			"keeta_aaba6iiv7igjuediblxmwzflfycwjlwrv6bbu4v7tb5kx6d2dllieunedvq3cza",
+			"6e125705c52cc4016df9b955a91672bfb342fee30be4344f8a2347b7f0435219",
 		),
 		ecdsa_secp256r1: (
 			"02A343D16E4557B1F8DE83C399F8926F42CF905AFD39C140BD3E5EB848941C124A",
 			// cspell:disable-next-line
 			"keeta_aybkgq6rnzcvpmpy32b4hgpysjxuft4qll6ttqkaxu7f5ocisqobesxrfuhyofi",
+			"84b1db2dd8a34716a6eecb0d9bfb5188af07d0393b8e7d831bfb2adc67e48609",
 		),
 		ed25519: (
 			"C1DDA7698D58436DAB0D6DE9A482F1C3130498064793F1E26A8D09F88B555850",
 			// cspell:disable-next-line
 			"keeta_aha53j3jrvmeg3nlbvw6tjec6hbrgbeyazdzh4pcnkgqt6elkvmfbuue55hz4",
+			"3eaad2b3691c03f006b3dc09e66eefc4df1f22131a600782362aa7ef6c803da4",
 		),
 		token: (
 			"724E371B944A48E95B91EE059B7CB7110E5866CA707915C287C49CAB9B774AF1",
 			// cspell:disable-next-line
 			"keeta_anze4ny3srfer2k3shxalg34w4iq4wdgzjyhsfocq7cjzk43o5fpc2igkuifg",
+			"aad386692e77d8a178af7f76f2d38f5daef3ab89359a0a64ed54636f58de86c2",
 		),
 		storage: (
 			"DF2D414F6702347EDBBD318DA8E319F1229F83E3B4DC2C8C135CF67C5952B07D",
 			// cspell:disable-next-line
 			"keeta_atps2qkpm4bdi7w3xuyy3khddhysfh4d4o2nylemcnopm7czkkyh2pbfk7svy",
+			"7eb9191b1ca787c368484ae428462fc436430db3d0cd006ed730029c2fadb5e2",
 		),
 	};
 
@@ -2387,11 +3169,11 @@ mod tests {
 	}
 
 	struct ReferencePublicAccountData {
-		pub ecdsa_secp256k1: (&'static str, &'static str),
-		pub ecdsa_secp256r1: (&'static str, &'static str),
-		pub ed25519: (&'static str, &'static str),
-		pub token: (&'static str, &'static str),
-		pub storage: (&'static str, &'static str),
+		pub ecdsa_secp256k1: (&'static str, &'static str, &'static str),
+		pub ecdsa_secp256r1: (&'static str, &'static str, &'static str),
+		pub ed25519: (&'static str, &'static str, &'static str),
+		pub token: (&'static str, &'static str, &'static str),
+		pub storage: (&'static str, &'static str, &'static str),
 	}
 
 	// Test data structure for comprehensive data-driven testing
@@ -2600,6 +3382,24 @@ mod tests {
 
 	#[test]
 	fn test_identifier_key_types() {
+		// Test invalid IdentifierKey construction with wrong sizes first
+		let invalid_sizes = [0, 1, 3, 16, 31, 33, 64];
+		for size in invalid_sizes {
+			let invalid_bytes = vec![0u8; size];
+			let result = IdentifierKey::try_from(invalid_bytes);
+			assert!(result.is_err());
+		}
+
+		// Test IdentifierKey encryption/decryption not supported
+		let valid_bytes = vec![0u8; 32];
+		let identifier_key = IdentifierKey::try_from(valid_bytes).unwrap();
+
+		let encrypt_result = identifier_key.encrypt(b"test data");
+		assert!(encrypt_result.is_err());
+
+		let decrypt_result = identifier_key.decrypt(b"test data");
+		assert!(decrypt_result.is_err());
+
 		// Macro to test identifier key creation for any key type
 		macro_rules! test_identifier_key {
 			($key_type:ty, $test_id:expr, $key_pair_type:expr) => {
@@ -2612,10 +3412,13 @@ mod tests {
 				assert!(public_key_string.starts_with("keeta_"));
 				assert_ne!(public_key_string, $test_id);
 				assert_eq!(key.to_keypair_type(), $key_pair_type);
-				// For identifier keys, algorithm should be None
 				assert!(algorithm.is_none());
+				assert!(!$key_pair_type.supports_crypto());
+				assert_eq!(key.signature_size(), 0);
 
-				// Test From<IdentifierKey> implementations
+				// Test Debug formatting
+				let debug_str = format!("{:?}", key);
+				assert!(!debug_str.is_empty()); // Test From<IdentifierKey> implementations
 				let identifier_key = IdentifierKey::try_from(vec![0u8; 32]).unwrap();
 
 				// Test From<IdentifierKey> for key type
@@ -2626,6 +3429,32 @@ mod tests {
 				let account_from_identifier = Account::<$key_type>::from(identifier_key);
 				assert_eq!(account_from_identifier.to_keypair_type(), $key_pair_type);
 				assert!(account_from_identifier.is_identifier());
+
+				// Test invalid identifier generation for cryptographic types
+				let invalid_types = [KeyPairType::ECDSASECP256K1, KeyPairType::ED25519, KeyPairType::ECDSASECP256R1];
+				for invalid_type in invalid_types {
+					let result = account_from_identifier.generate_identifier(invalid_type, None, 0);
+					assert!(result.is_err());
+				}
+
+				// Test unsupported cryptographic operations
+				let data = b"test data";
+				let sign_result = key.sign(data, None);
+				assert!(sign_result.is_err());
+
+				// Test supports_encryption
+				assert!(!key.supports_encryption());
+				assert!(key.take_private_key().is_none());
+
+				// Test seed_to_private_key
+				let seed_array = [0u8; 32];
+				let seed = seed_array.into_secret();
+				assert!(<$key_type>::seed_to_private_key(&seed, 0).is_err());
+
+				// Test derive_public_key_string
+				let private_key = Ed25519PrivateKey::try_from([1u8; 32].as_slice()).unwrap();
+				let dummy_private_key = AnyPrivateKey::Ed25519(private_key);
+				assert!(<$key_type>::derive_public_key_string(&dummy_private_key).is_err());
 			};
 		}
 
@@ -2724,6 +3553,12 @@ mod tests {
 					// Verify original account has private key, new one does not
 					assert!(account.keypair.private_key.is_some());
 					assert!(account_from_pubkey.keypair.private_key.is_none());
+					// Cryptographic operations should be supported
+					assert!($keypair_type.supports_crypto());
+
+					// Test Debug formatting
+					let debug_str = format!("{:?}", account.keypair);
+					assert!(!debug_str.is_empty());
 				}};
 			}
 
@@ -2820,22 +3655,6 @@ mod tests {
 				ed25519_account.keypair.to_public_key_string()
 			);
 		}
-	}
-
-	#[test]
-	fn test_account_opening_hash() {
-		let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).unwrap();
-		let seed_array: [u8; 32] = seed_bytes.try_into().unwrap();
-		let account = create_test_account::<KeyECDSASECP256K1>(Some(seed_array.into()));
-
-		// Get the account opening hash
-		// Verify basic properties
-		let opening_hash = account.get_account_opening_hash();
-		assert_eq!(opening_hash.len(), 32);
-
-		// Verify it's deterministic
-		let opening_hash2 = account.get_account_opening_hash();
-		assert_eq!(opening_hash, opening_hash2);
 	}
 
 	#[test]
@@ -3525,7 +4344,7 @@ mod tests {
 
 		// Test error cases for crypto keys with invalid passphrases
 		let invalid_passphrase = vec!["too".to_string(), "short".to_string()];
-		let passphrase_secret = SecretBox::new(Box::new(invalid_passphrase));
+		let passphrase_secret = invalid_passphrase.into_secret();
 		let invalid_result = KeyECDSASECP256K1::try_from(Keyable::Passphrase((passphrase_secret, 0)));
 		assert!(invalid_result.is_err());
 
@@ -3540,7 +4359,7 @@ mod tests {
 				let valid_pubkey = hex::decode(public_test_data.public_key).expect("Valid hex");
 
 				// Test passphrase variant
-				let passphrase_secret = SecretBox::new(Box::new(passphrase.clone()));
+				let passphrase_secret = passphrase.clone().into_secret();
 				let key_from_passphrase = <$key_type>::try_from(Keyable::Passphrase((passphrase_secret, 0)));
 				assert!(key_from_passphrase.is_ok());
 
@@ -3570,7 +4389,7 @@ mod tests {
 				assert!(key.is_ok());
 
 				// Test that passphrase doesn't work for identifier types
-				let passphrase_secret = SecretBox::new(Box::new(vec!["test".to_string()]));
+				let passphrase_secret = vec!["test".to_string()].into_secret();
 				let invalid_result = <$key_type>::try_from(Keyable::Passphrase((passphrase_secret, 0)));
 				assert!(invalid_result.is_err());
 
@@ -3741,7 +4560,7 @@ mod tests {
 		// Macro to test account creation from seed and verify properties
 		macro_rules! test_account_from_seed {
 			($seed_array:expr, $index:expr, $key_type:ty, $key_pair_type:expr, $expected_pubkey:expr) => {{
-				let seed = SecretBox::new(Box::new($seed_array));
+				let seed = $seed_array.into_secret();
 				let account = Account::<$key_type>::try_from(Accountable::KeyAndType(
 					Keyable::Seed((seed, $index as u32)),
 					$key_pair_type,
@@ -3808,7 +4627,7 @@ mod tests {
 		test_account_type_detection!(storage_account, false, false, true, false, true);
 
 		let seed_array: [u8; 32] = [0u8; 32];
-		let seed = SecretBox::new(Box::new(seed_array));
+		let seed = seed_array.into_secret();
 		let ecdsa_account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 			Keyable::Seed((seed, 0)),
 			KeyPairType::ECDSASECP256K1,
@@ -3831,20 +4650,20 @@ mod tests {
 
 					// Generate a valid signature and validate it
 					let signature = account.sign(test_data, None).unwrap();
-					let is_valid = account.verify(test_data, &signature, None).unwrap();
-					assert!(is_valid);
+					let is_valid = account.verify(test_data, &signature, None);
+					assert!(is_valid.is_ok());
 
 					// Modify signature and verify it fails
 					let mut invalid_signature = signature.clone();
 					invalid_signature[1] = invalid_signature[1].wrapping_add(1);
-					let is_invalid = account.verify(test_data, &invalid_signature, None).unwrap();
-					assert!(!is_invalid);
+					let is_invalid = account.verify(test_data, &invalid_signature, None);
+					assert!(is_invalid.is_err());
 
 					// Modify data and verify signature fails
 					let mut invalid_data = test_data.to_vec();
 					invalid_data[1] = invalid_data[1].wrapping_add(1);
-					let is_invalid_data = account.verify(&invalid_data, &signature, None).unwrap();
-					assert!(!is_invalid_data);
+					let is_invalid_data = account.verify(&invalid_data, &signature, None);
+					assert!(is_invalid_data.is_err());
 				}
 			};
 		}
@@ -3940,7 +4759,6 @@ mod tests {
 				let signature = account.sign(test_data, None).unwrap();
 				let verification_result = account.verify(test_data, &signature, None);
 				assert!(verification_result.is_ok());
-				assert!(verification_result.unwrap());
 
 				let crypto_signature = account.keypair.try_sign(test_data);
 				assert!(crypto_signature.is_ok());
@@ -3970,8 +4788,7 @@ mod tests {
 				let mut corrupted_signature = signature.clone();
 				corrupted_signature[0] = !corrupted_signature[0];
 				let result = account.verify(test_data, &corrupted_signature, None);
-				assert!(result.is_ok());
-				assert!(!result.unwrap());
+				assert!(result.is_err());
 
 				// Test with invalid signature length - should error for parsing failure
 				let invalid_sig = vec![0u8; 5];
@@ -4248,7 +5065,7 @@ mod tests {
 
 	#[test]
 	fn test_identifier_key_utils() {
-		let seed = SecretBox::new(Box::new([1u8; 32]));
+		let seed = [1u8; 32].into_secret();
 		let dummy_key = AnyPrivateKey::Ed25519(Ed25519PrivateKey::try_from([1u8; 32].as_slice()).unwrap());
 
 		// Macro to test identifier key methods
@@ -4312,7 +5129,6 @@ mod tests {
 
 	#[test]
 	fn test_multisig_account_functionality() {
-		// Test creation from multisig identifier
 		let multisig_account = create_test_account_from_identifier::<KeyMULTISIG>("test-multisig");
 		assert_eq!(multisig_account.to_keypair_type(), KeyPairType::MULTISIG);
 		assert!(multisig_account.is_multisig());
@@ -4356,8 +5172,6 @@ mod tests {
 
 	#[test]
 	fn test_public_key_string_prefixes() {
-		// Test that our prefix detection works by creating real accounts and checking their prefixes
-
 		// Test identifier accounts have correct prefixes
 		let network_account = create_test_account_from_identifier::<KeyNETWORK>("test-network");
 		let token_account = create_test_account_from_identifier::<KeyTOKEN>("test-token");
@@ -4379,27 +5193,6 @@ mod tests {
 		assert!(invalid_key.parse::<Account<KeyTOKEN>>().is_err());
 		assert!(invalid_key.parse::<Account<KeySTORAGE>>().is_err());
 		assert!(invalid_key.parse::<Account<KeyMULTISIG>>().is_err());
-	}
-
-	#[test]
-	fn verify_cross_platform_compatibility() {
-		let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).unwrap();
-		let seed_array: [u8; 32] = seed_bytes.try_into().unwrap();
-
-		macro_rules! test_cross_platform_key {
-			($key_type:ident, $expected_field:ident) => {
-				for (index_number, test_index) in TEST_PRIVATE_ACCOUNT.indexes.iter().enumerate() {
-					let seed = Some(Keyable::Seed((SecretBox::new(Box::new(seed_array)), index_number as u32)));
-					let account = create_test_account::<$key_type>(seed);
-					assert_eq!(account.to_string(), test_index.$expected_field);
-				}
-			};
-		}
-
-		// Test cross-platform compatibility for all crypto algorithms
-		test_cross_platform_key!(KeyECDSASECP256K1, encoded_public_key_ecdsa_secp256k1);
-		test_cross_platform_key!(KeyED25519, encoded_public_key_ed25519);
-		test_cross_platform_key!(KeyECDSASECP256R1, encoded_public_key_ecdsa_secp256r1);
 	}
 
 	#[test]
@@ -4445,7 +5238,7 @@ mod tests {
 		];
 
 		for (invalid_hex, _) in invalid_hex_cases {
-			let hex_seed_secret = SecretBox::new(Box::new(invalid_hex.to_string()));
+			let hex_seed_secret = invalid_hex.to_string().into_secret();
 			let result = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 				Keyable::HexSeed((hex_seed_secret, 0)),
 				KeyPairType::ECDSASECP256K1,
@@ -4465,7 +5258,7 @@ mod tests {
 		}
 
 		// Try to create SECP256K1 account with ED25519 key type
-		test_wrong_key_type!(KeyECDSASECP256K1, ED25519, Keyable::Seed((SecretBox::new(Box::new(test_seed)), 0)));
+		test_wrong_key_type!(KeyECDSASECP256K1, ED25519, Keyable::Seed((test_seed.into_secret(), 0)));
 		// Try to create Network account with SECP256K1 key type
 		test_wrong_key_type!(KeyNETWORK, ECDSASECP256K1, Keyable::Identifier("test".to_string()));
 
@@ -4624,36 +5417,22 @@ mod tests {
 	}
 
 	#[test]
-	fn test_identifier_key_error_cases() {
-		// Test invalid IdentifierKey construction with wrong sizes
-		let invalid_sizes = [0, 1, 3, 16, 31, 33, 64];
-		for size in invalid_sizes {
-			let invalid_bytes = vec![0u8; size];
-			let result = IdentifierKey::try_from(invalid_bytes);
-			assert!(result.is_err());
+	fn test_account_opening_hash() {
+		// Test opening hash against known test data
+		macro_rules! test_opening_hash {
+			($key_type:ty, $test_data:expr) => {
+				let account: Account<$key_type> = $test_data.1.parse().unwrap();
+				let opening_hash = account.to_opening_hash();
+				let expected_hash = hex::decode($test_data.2).unwrap();
+				assert_eq!(opening_hash, expected_hash);
+			};
 		}
 
-		// Test IdentifierKey encryption/decryption not supported
-		let valid_bytes = vec![0u8; 32];
-		let identifier_key = IdentifierKey::try_from(valid_bytes).unwrap();
-
-		let encrypt_result = identifier_key.encrypt(b"test data");
-		assert!(encrypt_result.is_err());
-
-		let decrypt_result = identifier_key.decrypt(b"test data");
-		assert!(decrypt_result.is_err());
-	}
-
-	#[test]
-	fn test_identifier_generation_invalid_cases() {
-		// Test data for invalid identifier generation
-		let identifier_key = IdentifierKey::try_from(vec![0u8; 32]).unwrap();
-		let network_account = Account::<KeyNETWORK>::from(identifier_key);
-
-		let invalid_types = [KeyPairType::ECDSASECP256K1, KeyPairType::ED25519, KeyPairType::ECDSASECP256R1];
-		for invalid_type in invalid_types {
-			let result = network_account.generate_identifier(invalid_type, None, 0);
-			assert!(result.is_err());
-		}
+		// Test all key types with their expected opening hashes
+		test_opening_hash!(KeyECDSASECP256K1, TEST_PUBLIC_ACCOUNT_DATA.ecdsa_secp256k1);
+		test_opening_hash!(KeyECDSASECP256R1, TEST_PUBLIC_ACCOUNT_DATA.ecdsa_secp256r1);
+		test_opening_hash!(KeyED25519, TEST_PUBLIC_ACCOUNT_DATA.ed25519);
+		test_opening_hash!(KeyTOKEN, TEST_PUBLIC_ACCOUNT_DATA.token);
+		test_opening_hash!(KeySTORAGE, TEST_PUBLIC_ACCOUNT_DATA.storage);
 	}
 }

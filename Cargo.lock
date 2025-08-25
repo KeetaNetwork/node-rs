@@ -13,7 +13,6 @@ dependencies = [
  "hex",
  "keetanet-error",
  "rand_core 0.9.3",
- "secrecy",
  "snafu",
  "strum",
  "strum_macros",

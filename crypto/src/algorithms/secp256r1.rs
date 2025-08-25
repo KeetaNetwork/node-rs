@@ -46,7 +46,7 @@ use crate::utils::generate_random_seed;
 use crate::algorithms::{Algorithm, CryptoAlgorithm};
 use crate::error::CryptoError;
 use crate::kdf::KdfAlgorithm;
-use crate::{KeyDerivation, PrivateKey, PublicKey};
+use crate::{IntoSecret, KeyDerivation, PrivateKey, PublicKey};
 
 /// secp256r1 (NIST P-256) private key wrapper.
 ///
@@ -94,13 +94,13 @@ impl PrivateKey for Secp256r1PrivateKey {
 
 impl From<Secp256r1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: Secp256r1PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
+		key.inner.to_bytes().to_vec().into_secret()
 	}
 }
 
 impl From<&Secp256r1PrivateKey> for SecretBox<Vec<u8>> {
 	fn from(key: &Secp256r1PrivateKey) -> Self {
-		SecretBox::new(Box::new(key.inner.to_bytes().to_vec()))
+		key.inner.to_bytes().to_vec().into_secret()
 	}
 }
 

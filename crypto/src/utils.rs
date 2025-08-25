@@ -4,11 +4,12 @@ use bip39_dict::DefaultDictionary;
 use pbkdf2;
 use rand_core::TryRngCore;
 use secrecy::SecretBox;
+use zeroize::Zeroize;
 
 use crate::algorithms::{Ed25519Derivation, KeyDerivation, PrivateKey, Secp256k1Derivation};
 use crate::constants::*;
 use crate::error::CryptoError;
-use crate::{Algorithm, AnyPrivateKey, AnyPublicKey};
+use crate::{Algorithm, AnyPrivateKey, AnyPublicKey, IntoSecret};
 
 /// Macro to implement secure zeroization for wrapper structs.
 ///
@@ -107,23 +108,23 @@ fn create_string_conversion_error() -> CryptoError {
 pub fn seed_from_passphrase(passphrase: &str) -> Result<SecretBox<[u8; 32]>, CryptoError> {
 	// Normalize passphrase (lowercase, remove spaces)
 	let clean_passphrase = passphrase.to_lowercase().replace(" ", "");
-	let clean_passphrase_buffer = clean_passphrase.as_bytes();
-	if clean_passphrase_buffer.len() < MIN_PASSPHRASE_LENGTH {
+	let passphrase_buffer = clean_passphrase.as_bytes();
+	if passphrase_buffer.len() < MIN_PASSPHRASE_LENGTH {
 		return Err(CryptoError::InvalidLength {
 			message: format!(
 				"Invalid passphrase, must be at least {} bytes after internal processing, got {}",
 				MIN_PASSPHRASE_LENGTH,
-				clean_passphrase_buffer.len()
+				passphrase_buffer.len()
 			),
 		});
 	}
 
 	let mut key = [0u8; 32];
 
-	// Use PBKDF2 with SHA-256, 64000 iterations, using passphrase as both input and salt
-	pbkdf2::pbkdf2_hmac::<sha2::Sha256>(clean_passphrase_buffer, clean_passphrase_buffer, PBKDF2_ITERATIONS, &mut key);
-
-	Ok(SecretBox::new(Box::new(key)))
+	// Use PBKDF2 with SHA-256, 64000 iterations,
+	// using passphrase as both input and salt
+	pbkdf2::pbkdf2_hmac::<sha2::Sha256>(passphrase_buffer, passphrase_buffer, PBKDF2_ITERATIONS, &mut key);
+	Ok(key.into_secret())
 }
 
 /// Generates a random 24-word passphrase using a specified dictionary.
@@ -134,18 +135,38 @@ pub fn generate_random_passphrase(
 ) -> Result<SecretBox<Vec<String>>, CryptoError> {
 	let words = dictionary.unwrap_or(bip39_dict::ENGLISH).words;
 	let word_count = words.len() as u32;
-	let passphrase: Result<Vec<String>, CryptoError> = (0..24)
-		.map(|_| {
-			let idx = rand_core::OsRng
-				.try_next_u32()
-				.map_err(|_| create_rng_error())?;
-			let word = words[(idx % word_count) as usize];
 
-			String::from_str(word).map_err(|_| create_string_conversion_error())
+	// Pre-allocate to avoid reallocations that could leave fragments
+	let mut passphrase = Vec::with_capacity(24);
+	let mut random_indices = [0u32; 24];
+
+	rand_core::OsRng
+		.try_fill_bytes(unsafe {
+			core::slice::from_raw_parts_mut(
+				random_indices.as_mut_ptr() as *mut u8,
+				core::mem::size_of_val(&random_indices),
+			)
 		})
-		.collect();
+		.map_err(|_| create_rng_error())?;
 
-	Ok(SecretBox::new(Box::new(passphrase?)))
+	core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+	// Convert random bytes to word indices
+	for &raw_index in &random_indices {
+		let word_index = raw_index % word_count;
+		let word = words[word_index as usize];
+
+		// Convert to owned string
+		let word_string = String::from_str(word).map_err(|_| create_string_conversion_error())?;
+		passphrase.push(word_string);
+	}
+
+	// Clear the random indices array
+	random_indices.zeroize();
+
+	core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
+	Ok(passphrase.into_secret())
 }
 
 /// Generates a random 32-byte seed using the OS RNG.
@@ -153,7 +174,7 @@ pub fn generate_random_passphrase(
 #[inline]
 pub fn generate_random_seed() -> Result<SecretBox<[u8; 32]>, CryptoError> {
 	let random_bytes = generate_random_bytes::<32>()?;
-	Ok(SecretBox::new(Box::new(random_bytes)))
+	Ok(random_bytes.into_secret())
 }
 
 /// Generate random bytes of the specified length using the OS RNG.
