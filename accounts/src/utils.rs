@@ -289,16 +289,12 @@ mod tests {
 	fn test_invalid_hex_format() {
 		// Missing 0x prefix
 		assert!(parse_public_key("00123456").is_err());
-
 		// Invalid hex characters
 		assert!(parse_public_key("0xZZZZ").is_err());
-
 		// Empty after 0x
 		assert!(parse_public_key("0x").is_err());
-
 		// Invalid algorithm ID
 		assert!(parse_public_key("0xFF123456789012345678901234567890123456789012345678901234567890123456").is_err());
-
 		// Wrong length for Ed25519 (should be 32 bytes)
 		assert!(parse_public_key("0x01123456").is_err());
 	}

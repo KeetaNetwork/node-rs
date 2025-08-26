@@ -1,10 +1,9 @@
 //! # Keeta Network Account System
 //!
-//! This module provides a comprehensive cryptographic account system for the
-//! Keeta Network, supporting both traditional cryptographic operations and
-//! network identifier management. The system is designed around type-safe
-//! account management with unified interfaces for different cryptographic
-//! algorithms and identifier types.
+//! This module provides a cryptographic account system for the Keeta Network,
+//! supporting both traditional cryptographic operations and network identifier
+//! management. The system is designed around type-safe account management with
+//! interfaces for different cryptographic algorithms and identifier types.
 //!
 //! ## Cryptographic Operations
 //!
@@ -158,7 +157,7 @@
 //!
 //! ## Error Handling
 //!
-//! The system uses the [`AccountError`] type for comprehensive error reporting:
+//! The system uses the [`AccountError`] type for error reporting:
 //!
 //! ```rust
 //! use accounts::{Account, KeyED25519, AccountError};
@@ -661,6 +660,42 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// ```
 	fn to_public_key(&self) -> Self::PublicKey;
 
+	/// Extract the private key if available.
+	///
+	/// This method consumes the account and returns the private key component
+	/// if it exists. After calling this method, the account is no longer
+	/// usable. This is useful for securely transferring private keys or
+	/// converting between different key representations.
+	///
+	/// # Returns
+	///
+	/// `Some(private_key)` if a private key is available, `None` if this is
+	/// a public-key-only account.
+	///
+	/// # Examples
+	///
+	/// ```rust
+	/// # use accounts::doc_utils;
+	/// use accounts::{KeyED25519, KeyPair};
+	/// use crypto::prelude::AnyPrivateKey;
+	///
+	/// // Create test account with private key
+	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
+	/// // Extract the private key (consumes the account)
+	/// let private_key = account.keypair.take_private_key();
+	/// match private_key {
+	///     Some(AnyPrivateKey::Ed25519(_key)) => {
+	///         // Private key was successfully extracted
+	///         assert!(true);
+	///     }
+	///     _ => {
+	///         panic!("Expected Ed25519 private key");
+	///     }
+	/// }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
+	/// ```
+	fn take_private_key(self) -> Option<AnyPrivateKey>;
+
 	/// Convert the key pair to a keeta network address string.
 	///
 	/// This method generates a human-readable Keeta Network address string
@@ -699,42 +734,6 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 		let key_type_value = self.to_keypair_type() as u8;
 		format_public_key_string(self.to_public_key(), key_type_value).expect("Failed to format public key")
 	}
-
-	/// Extract the private key if available.
-	///
-	/// This method consumes the account and returns the private key component
-	/// if it exists. After calling this method, the account is no longer
-	/// usable. This is useful for securely transferring private keys or
-	/// converting between different key representations.
-	///
-	/// # Returns
-	///
-	/// `Some(private_key)` if a private key is available, `None` if this is
-	/// a public-key-only account.
-	///
-	/// # Examples
-	///
-	/// ```rust
-	/// # use accounts::doc_utils;
-	/// use accounts::{KeyED25519, KeyPair};
-	/// use crypto::prelude::AnyPrivateKey;
-	///
-	/// // Create test account with private key
-	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
-	/// // Extract the private key (consumes the account)
-	/// let private_key = account.keypair.take_private_key();
-	/// match private_key {
-	///     Some(AnyPrivateKey::Ed25519(_key)) => {
-	///         // Private key was successfully extracted
-	///         assert!(true);
-	///     }
-	///     _ => {
-	///         panic!("Expected Ed25519 private key");
-	///     }
-	/// }
-	/// # Ok::<(), Box<dyn std::error::Error>>(())
-	/// ```
-	fn take_private_key(self) -> Option<AnyPrivateKey>;
 
 	/// Returns the key pair type for this instance.
 	///
@@ -3289,7 +3288,6 @@ mod tests {
 		),
 	};
 
-	// Comprehensive key type test data structure
 	struct KeyTypeTestData {
 		key_type: KeyPairType,
 		is_identifier: bool,
@@ -3318,7 +3316,6 @@ mod tests {
 		indexes: &'static [TestPrivateAccountIndex],
 	}
 
-	// Hard-coded signature test data
 	struct SignatureTest {
 		public_key_string: &'static str,
 		test_data: &'static [u8],
@@ -3333,7 +3330,6 @@ mod tests {
 		pub storage: (&'static str, &'static str, &'static str),
 	}
 
-	// Test data structure for comprehensive data-driven testing
 	struct TestCase {
 		hex_seed: &'static str,
 		passphrase: &'static [&'static str],
@@ -3342,13 +3338,11 @@ mod tests {
 		expected_secp256r1_pubkey: &'static str,
 	}
 
-	// Test data for private accounts with deterministic derivation
 	struct PrivateAccountTestData {
 		seed: &'static str,
 		indexes: &'static [PrivateKeyTestCase],
 	}
 
-	// Only keep the fields we actually use in tests
 	struct PrivateKeyTestCase {
 		encoded_public_key_ecdsa_secp256k1: &'static str,
 		encoded_public_key_ecdsa_secp256r1: &'static str,
@@ -3368,8 +3362,8 @@ mod tests {
 	}
 
 	/// Test helper function to create an account with a specific key type and
-	/// optional keyable input. If keyable is None, generates a passphrase and converts
-	/// to seed. If keyable is provided, uses it directly.
+	/// optional keyable input. If keyable is None, generates a passphrase and
+	/// converts to seed. If keyable is provided, uses it directly.
 	fn create_test_account<T>(keyable: Option<Keyable>) -> Account<T>
 	where
 		T: KeyPair,

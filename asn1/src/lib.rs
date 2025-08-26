@@ -45,18 +45,12 @@ pub struct AlgorithmIdentifier {
 impl AlgorithmIdentifier {
 	/// Create a new AlgorithmIdentifier with the given OID and no parameters
 	pub fn new(oid: &str) -> Result<Self, Asn1Error> {
-		Ok(Self {
-			algorithm: ObjectIdentifier::new(oid).map_err(|_| Asn1Error::InvalidOid { reason: oid.to_string() })?,
-			parameters: None,
-		})
+		Ok(Self { algorithm: ObjectIdentifier::new(oid)?, parameters: None })
 	}
 
 	/// Create a new AlgorithmIdentifier with the given OID and parameters
 	pub fn new_with_params(oid: &str, parameters: Any) -> Result<Self, Asn1Error> {
-		Ok(Self {
-			algorithm: ObjectIdentifier::new(oid).map_err(|_| Asn1Error::InvalidOid { reason: oid.to_string() })?,
-			parameters: Some(parameters),
-		})
+		Ok(Self { algorithm: ObjectIdentifier::new(oid)?, parameters: Some(parameters) })
 	}
 }
 

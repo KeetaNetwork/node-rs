@@ -141,6 +141,9 @@ path = "../keetanet-error"
 path = "../asn1"
 optional = true
 
+[dependencies.utils]
+path = "../utils"
+
 [features]
 default = ["signature", "encryption", "der"]
 signature = ["dep:signature"]

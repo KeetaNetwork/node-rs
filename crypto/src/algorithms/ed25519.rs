@@ -614,7 +614,6 @@ mod tests {
 	#[cfg(feature = "signature")]
 	use crate::operations::signature::{CryptoSignerWithOptions, CryptoVerifierWithOptions};
 
-	// Use the individual test macros for shared functionality
 	crate::test_utils::test_key_derivation!(
 		Ed25519Derivation,
 		Ed25519PrivateKey,
@@ -626,7 +625,6 @@ mod tests {
 
 	crate::test_utils::test_crypto_utils!(Ed25519Derivation, Ed25519PrivateKey, 32, "ed25519", "ed25519");
 
-	// Test AsymmetricEncryption trait implementation for Ed25519 keys (via X25519 conversion)
 	#[cfg(feature = "encryption")]
 	crate::test_utils::test_asymmetric_encryption!(Ed25519Derivation, "ed25519");
 

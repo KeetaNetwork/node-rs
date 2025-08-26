@@ -35,6 +35,9 @@ version = "1.0.133"
 optional = true
 
 # Local dependencies
+[dependencies.utils]
+path = "../utils"
+
 [dependencies.keetanet-error]
 path = "../keetanet-error"
 

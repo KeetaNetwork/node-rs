@@ -4,8 +4,9 @@ use snafu::Snafu;
 use strum_macros::AsRefStr;
 
 use crypto::error::CryptoError;
+use utils::impl_variant_error_from;
 
-/// Account error types that match TypeScript AccountErrorCode format
+/// Account error types
 #[derive(Debug, Snafu, AsRefStr, Clone, PartialEq, Eq)]
 #[snafu(visibility(pub))]
 pub enum AccountError {
@@ -71,7 +72,6 @@ pub enum AccountError {
 }
 
 impl AccountError {
-	/// Get the error code in TypeScript-compatible format (ACCOUNT_${variant})
 	pub fn error_code(&self) -> String {
 		format!("ACCOUNT_{}", self.as_ref())
 	}
@@ -83,11 +83,10 @@ impl From<AccountError> for KeetaNetError {
 	}
 }
 
-impl From<FromHexError> for AccountError {
-	fn from(_err: FromHexError) -> Self {
-		AccountError::InvalidConstruction
-	}
-}
+impl_variant_error_from!(AccountError, {
+	FromHexError => InvalidConstruction,
+	crypto::operations::SignatureError => InvalidConstruction,
+});
 
 impl From<CryptoError> for AccountError {
 	fn from(err: CryptoError) -> Self {
@@ -112,12 +111,6 @@ impl From<CryptoError> for AccountError {
 	}
 }
 
-impl From<crypto::operations::SignatureError> for AccountError {
-	fn from(_err: crypto::operations::SignatureError) -> Self {
-		AccountError::InvalidConstruction
-	}
-}
-
 impl From<AccountError> for crypto::operations::SignatureError {
 	fn from(_err: AccountError) -> Self {
 		crypto::operations::SignatureError::new()
@@ -127,13 +120,40 @@ impl From<AccountError> for crypto::operations::SignatureError {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use utils::{test_error_from_conversions, test_error_variants};
+
+	test_error_variants! {
+		test_account_error_variants, [
+			AccountError::InvalidPrefix,
+			AccountError::InvalidKeyType,
+			AccountError::PassphraseWeak,
+			AccountError::InvalidConstruction,
+			AccountError::EncryptionNotSupported,
+		]
+	}
+
+	test_error_from_conversions! {
+		test_all_from_implementations, AccountError, [
+			// FromHexError conversion
+			hex::FromHexError::InvalidHexCharacter { c: 'z', index: 0 },
+			hex::FromHexError::OddLength,
+			hex::FromHexError::InvalidStringLength,
+
+			// SignatureError conversion
+			crypto::operations::SignatureError::new(),
+
+			// Sample CryptoError conversions
+			CryptoError::InvalidKeyMaterial,
+			CryptoError::InvalidPublicKey,
+			CryptoError::InvalidLength { message: "test".to_string() },
+			CryptoError::UnsupportedAlgorithm { algorithm: "test".to_string() },
+			CryptoError::EncryptionNotSupported,
+		]
+	}
 
 	#[test]
-	fn test_account_error_formatting() {
+	fn test_error_code_format() {
 		let error = AccountError::InvalidPrefix;
-		let display_string = format!("{error}");
-		assert_eq!(display_string, "Invalid account prefix");
-
 		// Test error code format (using strum AsRefStr)
 		assert_eq!(error.error_code(), "ACCOUNT_INVALID_PREFIX");
 		// Test strum serialization directly
@@ -142,7 +162,6 @@ mod tests {
 
 	#[test]
 	fn test_from_keeta_net_error() {
-		// Test conversion from AccountError to KeetaNetError
 		let account_error = AccountError::InvalidPrefix;
 		let keeta_error: KeetaNetError = account_error.into();
 		assert!(matches!(keeta_error, KeetaNetError::Code { 
@@ -150,49 +169,11 @@ mod tests {
 			message: _
 		} if code == "ACCOUNT_INVALID_PREFIX"));
 
-		// Test another error type
 		let account_error2 = AccountError::PassphraseWeak;
 		let keeta_error2: KeetaNetError = account_error2.into();
 		assert!(matches!(keeta_error2, KeetaNetError::Code { 
 			code,
 			message: _
 		} if code == "ACCOUNT_PASSPHRASE_WEAK"));
-	}
-
-	#[test]
-	fn test_signature_error_conversion() {
-		let signature_error = crypto::operations::SignatureError::new();
-		let account_error: AccountError = signature_error.into();
-		assert_eq!(account_error, AccountError::InvalidConstruction);
-
-		// Test opposite conversion
-		let account_error = AccountError::InvalidConstruction;
-		let _signature_error: crypto::operations::SignatureError = account_error.into();
-		// SignatureError does not implement PartialEq
-	}
-
-	#[test]
-	fn test_crypto_error_conversion() {
-		let invalid_construction_variants = vec![
-			CryptoError::InvalidKeyMaterial,
-			CryptoError::KeyDerivationFailed,
-			CryptoError::InvalidPrivateKey,
-			CryptoError::SignatureVerificationFailed,
-			CryptoError::SignatureError,
-			CryptoError::EncryptionFailed,
-			CryptoError::DecryptionFailed,
-			CryptoError::InvalidOperation,
-			CryptoError::InternalError { message: "test".to_string() },
-			CryptoError::InvalidIvSize,
-		];
-
-		for crypto_error in invalid_construction_variants {
-			let account_error: AccountError = crypto_error.into();
-			assert_eq!(account_error, AccountError::InvalidConstruction);
-		}
-
-		// Test that InvalidLength maps to PassphraseWeak
-		let passphrase_weak_error: AccountError = CryptoError::InvalidLength { message: "test".to_string() }.into();
-		assert_eq!(passphrase_weak_error, AccountError::PassphraseWeak);
 	}
 }

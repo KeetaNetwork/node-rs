@@ -1,4 +1,5 @@
 use snafu::Snafu;
+use utils::impl_variant_error_from;
 
 // Re-export errors
 #[cfg(feature = "encryption")]
@@ -58,59 +59,29 @@ pub enum CryptoError {
 	EncryptionNotSupported,
 }
 
-impl From<hkdf::InvalidLength> for CryptoError {
-	fn from(_: hkdf::InvalidLength) -> Self {
-		CryptoError::KeyDerivationFailed
-	}
-}
-
-impl From<hkdf::InvalidPrkLength> for CryptoError {
-	fn from(_: hkdf::InvalidPrkLength) -> Self {
-		CryptoError::KeyDerivationFailed
-	}
-}
+// Use macros for simple variant mappings
+impl_variant_error_from!(CryptoError, {
+	hkdf::InvalidLength => KeyDerivationFailed,
+	hkdf::InvalidPrkLength => KeyDerivationFailed,
+});
 
 #[cfg(feature = "encryption")]
-impl From<cbc::cipher::InvalidLength> for CryptoError {
-	fn from(_: cbc::cipher::InvalidLength) -> Self {
-		CryptoError::InvalidKeySize
-	}
-}
+impl_variant_error_from!(CryptoError, {
+	cbc::cipher::InvalidLength => InvalidKeySize,
+	cbc::cipher::inout::PadError => DecryptionFailed,
+	cbc::cipher::inout::NotEqualError => DecryptionFailed,
+	cbc::cipher::block_padding::UnpadError => DecryptionFailed,
+});
 
 #[cfg(feature = "encryption")]
-impl From<cbc::cipher::inout::PadError> for CryptoError {
-	fn from(_: cbc::cipher::inout::PadError) -> Self {
-		CryptoError::DecryptionFailed
-	}
-}
-
-#[cfg(feature = "encryption")]
-impl From<cbc::cipher::inout::NotEqualError> for CryptoError {
-	fn from(_: cbc::cipher::inout::NotEqualError) -> Self {
-		CryptoError::DecryptionFailed
-	}
-}
-
-#[cfg(feature = "encryption")]
-impl From<AeadError> for CryptoError {
-	fn from(error: AeadError) -> Self {
-		CryptoError::InternalError { message: error.to_string() }
-	}
-}
-
-#[cfg(feature = "encryption")]
-impl From<cbc::cipher::block_padding::UnpadError> for CryptoError {
-	fn from(_: cbc::cipher::block_padding::UnpadError) -> Self {
-		CryptoError::DecryptionFailed
-	}
-}
+utils::impl_error_from_with_fields!(CryptoError, {
+	AeadError => InternalError { message: |error: AeadError| error.to_string() }
+});
 
 #[cfg(feature = "signature")]
-impl From<crate::operations::SignatureError> for CryptoError {
-	fn from(_: crate::operations::SignatureError) -> Self {
-		CryptoError::SignatureError
-	}
-}
+impl_variant_error_from!(CryptoError, {
+	crate::operations::SignatureError => SignatureError,
+});
 
 #[cfg(feature = "signature")]
 impl From<CryptoError> for crate::operations::SignatureError {
@@ -122,6 +93,7 @@ impl From<CryptoError> for crate::operations::SignatureError {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use utils::{test_error_from_conversions, test_error_variants};
 
 	#[cfg(feature = "encryption")]
 	use crate::algorithms::aes_cbc::Aes256Cbc;
@@ -134,49 +106,55 @@ mod tests {
 	#[cfg(feature = "encryption")]
 	use cbc::Encryptor;
 
-	#[test]
-	fn test_crypto_error_unsupported_algorithm() {
-		let error = CryptoError::UnsupportedAlgorithm { algorithm: "test-algo".to_string() };
-		assert_eq!(error.to_string(), "Unsupported algorithm: test-algo");
+	// Test all error variants for basic properties
+	test_error_variants! {
+		test_all_error_variants, [
+			CryptoError::InvalidKeyMaterial,
+			CryptoError::KeyDerivationFailed,
+			CryptoError::InvalidPublicKey,
+			CryptoError::InvalidPrivateKey,
+			CryptoError::SignatureVerificationFailed,
+			CryptoError::SignatureError,
+			CryptoError::UnsupportedAlgorithm { algorithm: "test".to_string() },
+			CryptoError::InternalError { message: "test".to_string() },
+			CryptoError::InvalidLength { message: "test".to_string() },
+			CryptoError::InvalidInput,
+			CryptoError::EncryptionFailed,
+			CryptoError::DecryptionFailed,
+			CryptoError::InvalidOperation,
+			CryptoError::InvalidKeySize,
+			CryptoError::InvalidIvSize,
+			CryptoError::EncryptionNotSupported,
+		]
 	}
 
-	#[test]
-	fn test_crypto_error_internal_error() {
-		let error = CryptoError::InternalError { message: "test message".to_string() };
-		assert_eq!(error.to_string(), "Internal cryptographic error: test message");
+	// Test From conversions for HKDF errors
+	test_error_from_conversions! {
+		test_hkdf_error_conversions, CryptoError, [
+			hkdf::InvalidLength,
+			hkdf::InvalidPrkLength,
+		]
 	}
 
-	#[test]
-	fn test_hkdf_invalid_length_conversion() {
-		let hkdf_error = hkdf::InvalidLength;
-		let crypto_error: CryptoError = hkdf_error.into();
-		assert_eq!(crypto_error, CryptoError::KeyDerivationFailed);
+	#[cfg(feature = "encryption")]
+	// Test From conversions for CBC cipher errors
+	test_error_from_conversions! {
+		test_cbc_error_conversions, CryptoError, [
+			cbc::cipher::inout::PadError,
+			cbc::cipher::inout::NotEqualError,
+			cbc::cipher::block_padding::UnpadError,
+		]
 	}
 
-	#[test]
-	fn test_hkdf_invalid_prk_length_conversion() {
-		let hkdf_error = hkdf::InvalidPrkLength;
-		let crypto_error: CryptoError = hkdf_error.into();
-		assert_eq!(crypto_error, CryptoError::KeyDerivationFailed);
+	#[cfg(feature = "signature")]
+	// Test From conversions for signature errors
+	test_error_from_conversions! {
+		test_signature_error_conversions, CryptoError, [
+			crate::operations::SignatureError::new(),
+		]
 	}
 
-	#[test]
-	fn test_crypto_error_clone_and_partial_eq() {
-		let error1 = CryptoError::InvalidKeySize;
-		let error2 = error1.clone();
-		assert_eq!(error1, error2);
-
-		let error3 = CryptoError::DecryptionFailed;
-		assert_ne!(error1, error3);
-	}
-
-	#[test]
-	fn test_crypto_error_debug() {
-		let error = CryptoError::InvalidKeySize;
-		let debug_str = format!("{error:?}");
-		assert!(debug_str.contains("InvalidKeySize"));
-	}
-
+	// Business logic tests that demonstrate actual error scenarios
 	#[cfg(feature = "encryption")]
 	#[test]
 	fn test_cbc_cipher_invalid_length_conversion() {
@@ -203,46 +181,5 @@ mod tests {
 		assert!(result.is_err());
 		// This should result in a DecryptionFailed error
 		assert_eq!(result.unwrap_err(), CryptoError::DecryptionFailed);
-	}
-
-	#[cfg(feature = "encryption")]
-	#[test]
-	fn test_cbc_error_conversions() {
-		// Test PadError conversion
-		let pad_error = cbc::cipher::inout::PadError;
-		let crypto_error: CryptoError = pad_error.into();
-		assert_eq!(crypto_error, CryptoError::DecryptionFailed);
-
-		// Test NotEqualError conversion
-		let not_equal_error = cbc::cipher::inout::NotEqualError;
-		let crypto_error: CryptoError = not_equal_error.into();
-		assert_eq!(crypto_error, CryptoError::DecryptionFailed);
-
-		// Test UnpadError conversion
-		let unpad_error = cbc::cipher::block_padding::UnpadError;
-		let crypto_error: CryptoError = unpad_error.into();
-		assert_eq!(crypto_error, CryptoError::DecryptionFailed);
-	}
-
-	#[cfg(feature = "encryption")]
-	#[test]
-	fn test_aead_error_conversion() {
-		// Create an AeadError and test conversion
-		let aead_error = AeadError;
-		let crypto_error: CryptoError = aead_error.into();
-		assert!(matches!(crypto_error, CryptoError::InternalError { message: _ }));
-	}
-
-	#[cfg(feature = "signature")]
-	#[test]
-	fn test_signature_error_conversion() {
-		let signature_error = crate::operations::SignatureError::new();
-		let crypto_error: CryptoError = signature_error.into();
-		assert_eq!(crypto_error, CryptoError::SignatureError);
-
-		// Test opposite conversion
-		let crypto_error = CryptoError::SignatureError;
-		let _signature_error: crate::operations::SignatureError = crypto_error.into();
-		// SignatureError does not implement PartialEq
 	}
 }

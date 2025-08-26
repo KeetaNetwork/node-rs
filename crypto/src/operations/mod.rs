@@ -12,7 +12,9 @@ pub mod signature;
 #[cfg(feature = "encryption")]
 pub use encryption::{AsymmetricEncryption, CryptoAead, KeyExchange};
 #[cfg(feature = "signature")]
-pub use signature::{CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions};
+pub use signature::{
+	CryptoKeyPair, CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
+};
 
 // Re-export RustCrypto traits for convenience
 #[cfg(feature = "signature")]

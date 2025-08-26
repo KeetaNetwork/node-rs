@@ -118,7 +118,6 @@ impl SymmetricEncryption for Aes256Cbc {
 mod tests {
 	use super::*;
 
-	// Use the comprehensive AES symmetric encryption test macro
 	crate::test_utils::test_aes_symmetric!(Aes256Cbc, 32, "AES-256-CBC");
 
 	#[test]

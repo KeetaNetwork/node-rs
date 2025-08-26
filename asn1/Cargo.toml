@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies.der]
 workspace = true
 
+[dependencies.const-oid]
+workspace = true
+
 [dependencies.hex]
 workspace = true
 
@@ -15,6 +18,9 @@ workspace = true
 [dependencies.serde]
 workspace = true
 optional = true
+
+[dependencies.utils]
+path = "../utils"
 
 [dev-dependencies]
 serde_json = { workspace = true }

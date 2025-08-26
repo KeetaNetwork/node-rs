@@ -511,7 +511,6 @@ mod tests {
 	use super::*;
 	use crate::test_utils::{create_secp256k1_keypair, create_secp256r1_keypair, create_x25519_keypair};
 
-	// Generate tests for all ECIES implementations
 	crate::test_utils::test_ecies!(secp256k1_tests, EciesSecp256k1, create_secp256k1_keypair);
 	crate::test_utils::test_ecies!(secp256r1_tests, EciesSecp256r1, create_secp256r1_keypair);
 	crate::test_utils::test_ecies!(x25519_tests, EciesX25519, create_x25519_keypair);

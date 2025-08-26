@@ -195,10 +195,8 @@ impl SymmetricEncryption for Aes128CtrCipher {
 mod tests {
 	use super::*;
 
-	// Use the comprehensive AES symmetric encryption test macro
 	crate::test_utils::test_aes_symmetric!(Aes128CtrCipher, 16, "AES-128-CTR");
 
-	// CTR-specific tests that are not covered by the macro
 	#[test]
 	fn test_aes_128_ctr_with_iv() {
 		let cipher = Aes128CtrCipher::new();

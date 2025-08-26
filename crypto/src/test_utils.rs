@@ -1,7 +1,7 @@
 //! Test utilities for cryptographic algorithms.
 //!
-//! This module provides macros to generate comprehensive tests for various
-//! cryptographic traits and operations.
+//! This module provides macros to generate tests for various cryptographic
+//! traits and operations.
 
 use crate::algorithms::ed25519::{ed25519_to_x25519_private, Ed25519Derivation, X25519PrivateKey, X25519PublicKey};
 use crate::algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
@@ -443,7 +443,7 @@ macro_rules! test_key_exchange {
 	};
 }
 
-/// Macro to generate comprehensive ECDH key exchange tests.
+/// Macro to generate ECDH key exchange tests.
 #[cfg(feature = "encryption")]
 macro_rules! test_ecdh {
 	(
@@ -613,7 +613,7 @@ macro_rules! test_asymmetric_encryption {
 	};
 }
 
-/// Macro to generate comprehensive tests for ECIES implementations
+/// Macro to generate tests for ECIES implementations
 #[cfg(feature = "encryption")]
 macro_rules! test_ecies {
 	(

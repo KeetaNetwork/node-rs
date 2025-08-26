@@ -1,4 +1,5 @@
 use snafu::Snafu;
+use utils::{impl_error_from_with_fields, impl_variant_error_from};
 
 /// Errors specific to X.509 certificate operations.
 #[derive(Debug, Snafu, Clone, PartialEq)]
@@ -45,120 +46,51 @@ pub enum CertificateError {
 	CertificateCycleFound,
 }
 
-impl From<der::Error> for CertificateError {
-	fn from(error: der::Error) -> Self {
-		CertificateError::Asn1ParseError { message: format!("DER error: {error}") }
-	}
-}
+// Use macros for simple variant mappings
+impl_variant_error_from!(CertificateError, {
+	der::oid::Error => InvalidCertificate,
+	base64::DecodeError => InvalidCertificate,
+	crypto::operations::SignatureError => CertificateSignatureVerificationFailed,
+});
 
-impl From<der::oid::Error> for CertificateError {
-	fn from(_error: der::oid::Error) -> Self {
-		CertificateError::InvalidCertificate
-	}
-}
-
-impl From<base64::DecodeError> for CertificateError {
-	fn from(_error: base64::DecodeError) -> Self {
-		CertificateError::InvalidCertificate
-	}
-}
-
-impl From<crypto::error::CryptoError> for CertificateError {
-	fn from(error: crypto::error::CryptoError) -> Self {
-		CertificateError::Asn1ParseError { message: format!("Crypto error: {error}") }
-	}
-}
-
-impl From<crypto::operations::SignatureError> for CertificateError {
-	fn from(_error: crypto::operations::SignatureError) -> Self {
-		CertificateError::CertificateSignatureVerificationFailed
-	}
-}
-
-impl From<asn1::error::Asn1Error> for CertificateError {
-	fn from(error: asn1::error::Asn1Error) -> Self {
-		CertificateError::Asn1ParseError { message: format!("ASN.1 error: {error}") }
-	}
-}
+// Use macros for field transformations
+impl_error_from_with_fields!(CertificateError, {
+	der::Error => Asn1ParseError { message: |error: der::Error| format!("DER error: {error}") },
+	crypto::error::CryptoError => Asn1ParseError { message: |error: crypto::error::CryptoError| format!("Crypto error: {error}") },
+	asn1::error::Asn1Error => Asn1ParseError { message: |error: asn1::error::Asn1Error| format!("ASN.1 error: {error}") },
+});
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use der::asn1::ObjectIdentifier;
 	use der::Decode;
 
-	#[test]
-	fn test_certificate_error_clone_and_partial_eq() {
-		let error1 = CertificateError::InvalidCertificate;
-		let error2 = error1.clone();
-		assert_eq!(error1, error2);
+	use super::*;
+	use utils::{test_error_from_conversions, test_error_variants};
 
-		let error3 = CertificateError::Expired;
-		assert_ne!(error1, error3);
-
-		// Test with data-carrying variants
-		let error4 = CertificateError::ValidationFailed { reason: "test".to_string() };
-		let error5 = error4.clone();
-		assert_eq!(error4, error5);
-
-		let error6 = CertificateError::ValidationFailed { reason: "different".to_string() };
-		assert_ne!(error4, error6);
+	test_error_variants! {
+		test_all_error_variants, [
+			CertificateError::InvalidCertificate,
+			CertificateError::ValidationFailed { reason: "test".to_string() },
+			CertificateError::Expired,
+			CertificateError::NotYetValid,
+			CertificateError::Asn1ParseError { message: "test".to_string() },
+			CertificateError::MissingField { field: "test".to_string() },
+			CertificateError::InvalidExtension { oid: "test".to_string() },
+			CertificateError::ChainValidationFailed { reason: "test".to_string() },
+			CertificateError::UnsupportedVersion { version: 1 },
+			CertificateError::CertificateSignatureVerificationFailed,
+			CertificateError::CertificateDuplicateIncluded,
+			CertificateError::CertificateOrphanFound,
+			CertificateError::CertificateCycleFound,
+		]
 	}
 
-	#[test]
-	fn test_certificate_error_debug() {
-		let error = CertificateError::InvalidCertificate;
-		let debug_str = format!("{error:?}");
-		assert!(debug_str.contains("InvalidCertificate"));
-
-		let error = CertificateError::MissingField { field: "test".to_string() };
-		let debug_str = format!("{error:?}");
-		assert!(debug_str.contains("MissingField"));
-		assert!(debug_str.contains("test"));
-	}
-
-	#[test]
-	fn test_der_error_conversion() {
-		// Create a DER error by trying to decode and invalid ObjectIdentifier
-		let invalid_der = &[0xFF, 0xFF, 0xFF];
-		let der_error = ObjectIdentifier::from_der(invalid_der).unwrap_err();
-		let cert_error: CertificateError = der_error.into();
-		assert!(matches!(cert_error, CertificateError::Asn1ParseError { .. }));
-	}
-
-	#[test]
-	fn test_oid_error_conversion() {
-		// Create an OID error by trying to create an invalid ObjectIdentifier
-		let oid_error = ObjectIdentifier::new("").unwrap_err();
-		let cert_error: CertificateError = oid_error.into();
-		assert_eq!(cert_error, CertificateError::InvalidCertificate);
-	}
-
-	#[test]
-	fn test_base64_error_conversion() {
-		let base64_error = base64::DecodeError::InvalidByte(0, b'!');
-		let cert_error: CertificateError = base64_error.into();
-		assert_eq!(cert_error, CertificateError::InvalidCertificate);
-	}
-
-	#[test]
-	fn test_crypto_error_conversion() {
-		let crypto_error = crypto::error::CryptoError::InvalidPrivateKey;
-		let cert_error: CertificateError = crypto_error.into();
-		assert!(matches!(cert_error, CertificateError::Asn1ParseError { .. }));
-	}
-
-	#[test]
-	fn test_signature_error_conversion() {
-		let signature_error = crypto::operations::SignatureError::new();
-		let cert_error: CertificateError = signature_error.into();
-		assert_eq!(cert_error, CertificateError::CertificateSignatureVerificationFailed);
-	}
-
-	#[test]
-	fn test_asn1_error_conversion() {
-		let asn1_error = asn1::error::Asn1Error::InvalidOid { reason: "test".to_string() };
-		let cert_error: CertificateError = asn1_error.into();
-		assert!(matches!(cert_error, CertificateError::Asn1ParseError { .. }));
+	test_error_from_conversions! {
+		test_error_conversions_with_real_errors, CertificateError, [
+			crypto::operations::SignatureError::new(),
+			der::asn1::ObjectIdentifier::from_der(&[0xFF, 0xFF, 0xFF]).unwrap_err(),
+			der::asn1::ObjectIdentifier::new("").unwrap_err(),
+			base64::DecodeError::InvalidByte(0, b'!'),
+		]
 	}
 }

@@ -16,6 +16,7 @@ dependencies = [
  "snafu",
  "strum",
  "strum_macros",
+ "utils",
  "zeroize",
 ]
 
@@ -73,11 +74,13 @@ dependencies = [
 name = "asn1"
 version = "0.1.0"
 dependencies = [
+ "const-oid",
  "der",
  "hex",
  "serde",
  "serde_json",
  "snafu",
+ "utils",
 ]
 
 [[package]]
@@ -287,6 +290,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "subtle",
+ "utils",
  "x25519-dalek",
  "zeroize",
 ]
@@ -1128,6 +1132,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "utils"
+version = "0.1.0"
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1302,6 +1310,7 @@ dependencies = [
  "serde",
  "serde_json",
  "snafu",
+ "utils",
 ]
 
 [[package]]

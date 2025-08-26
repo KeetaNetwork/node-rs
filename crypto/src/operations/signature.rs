@@ -6,7 +6,9 @@
 use crate::algorithms::CryptoAlgorithm;
 
 // Re-export key RustCrypto signature traits for easier use
-pub use signature::{DigestSigner, DigestVerifier, Error as SignatureError, RandomizedSigner, Signer, Verifier};
+pub use signature::{
+	DigestSigner, DigestVerifier, Error as SignatureError, Keypair, RandomizedSigner, Signer, Verifier,
+};
 
 /// Core cryptographic signing operations.
 ///
@@ -24,6 +26,23 @@ pub trait CryptoSigner<S>: CryptoAlgorithm + Signer<S> {
 pub trait CryptoVerifier<S>: CryptoAlgorithm + Verifier<S> {
 	/// Get the public key bytes for this verifier
 	fn public_key_bytes(&self) -> Vec<u8>;
+}
+
+/// Extended cryptographic key pair operations.
+pub trait CryptoKeyPair<S>: CryptoAlgorithm + Keypair + Signer<S> + Clone
+where
+	Self::VerifyingKey: CryptoVerifier<S>,
+{
+	type SigningKey: CryptoSigner<S>;
+
+	/// Extract the verifying key (public key) from this key pair.
+	fn to_public_key(&self) -> Self::VerifyingKey {
+		self.verifying_key()
+	}
+
+	/// Take ownership of the private key, consuming this key pair.
+	/// This is useful when you need to move the private key out of the key pair.
+	fn take_private_key(self) -> Self::SigningKey;
 }
 
 /// Signing and verification options for cryptographic operations.

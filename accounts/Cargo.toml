@@ -13,6 +13,7 @@ path = "src/lib.rs"
 # Local crates
 crypto = { path = "../crypto" }
 keetanet-error = { path = "../keetanet-error" }
+utils = { path = "../utils" }
 
 # External dependencies
 base32.workspace = true

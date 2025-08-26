@@ -304,11 +304,11 @@ macro_rules! impl_constant_time_key_derivation {
 				let mut result_key: Option<$secret_key_type> = None;
 				let mut found_valid = false;
 
+				// Pre-derivation fence: Ensure no prior operations leak timing info
+				core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+
 				// Always perform exactly 100 iterations for constant time
 				for attempt in 0u32..100 {
-					// Pre-derivation fence: Ensure no prior operations leak timing info
-					core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
-
 					// For attempts > 0, append the attempt counter
 					if attempt > 0 {
 						// Remove any previous attempt counter and add the new one
@@ -326,10 +326,10 @@ macro_rules! impl_constant_time_key_derivation {
 							found_valid = true;
 						}
 					}
-
-					// Post-attempt fence: Ensure operations complete before next iteration
-					core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 				}
+
+				// Post-attempt fence: Ensure operations complete before next iteration
+				core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
 
 				match result_key {
 					Some(secret_key) => Ok(<$private_key_type>::from_inner(secret_key)),
