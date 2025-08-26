@@ -30,8 +30,6 @@ pub mod aes_gcm;
 pub mod ecies;
 
 /// Trait for cryptographic private keys that can be used for signing.
-///
-/// This extends RustCrypto's Keypair trait with serialization capabilities
 pub trait PrivateKey:
 	Send + Sync + Debug + ZeroizeOnDrop + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<SecretBox<Vec<u8>>>
 {
@@ -39,10 +37,13 @@ pub trait PrivateKey:
 	type Signature: Clone + Send + Sync + Debug;
 
 	/// Get the public key for this private key
+	///
+	/// # Returns
+	/// Returns the public key
 	fn as_public_key(&self) -> Self::PublicKey;
 }
 
-/// Trait for cryptographic public keys that can be used for verification
+/// Trait for cryptographic public keys that can be used for verification.
 pub trait PublicKey:
 	Clone + Send + Sync + Debug + for<'a> TryFrom<&'a [u8], Error = CryptoError> + Into<Vec<u8>> + AsRef<[u8]>
 {
@@ -66,6 +67,34 @@ macro_rules! impl_any_private_key {
 				$variant($key_type),
 			)*
 		}
+
+		impl $any_key_type {
+			pub fn derive_public_key(&self) -> $any_public_key_type {
+				match self {
+					$(
+						$any_key_type::$variant(key) => $any_public_key_type::$variant(key.as_public_key()),
+					)*
+				}
+			}
+
+			pub fn to_bytes(&self) -> SecretBox<Vec<u8>> {
+				match self {
+					$(
+						$any_key_type::$variant(key) => key.into(),
+					)*
+				}
+			}
+		}
+
+		impl CryptoAlgorithm for $any_key_type {
+			fn to_algorithm(&self) -> Algorithm {
+				match self {
+					$(
+						$any_key_type::$variant(key) => key.into(),
+					)*
+				}
+			}
+		}
 	};
 }
 
@@ -76,34 +105,6 @@ impl_any_private_key!(
 	(Ed25519, Ed25519PrivateKey, Algorithm::Ed25519),
 	(Secp256r1, Secp256r1PrivateKey, Algorithm::Secp256r1),
 );
-
-impl AnyPrivateKey {
-	pub fn derive_public_key(&self) -> AnyPublicKey {
-		match self {
-			AnyPrivateKey::Secp256k1(key) => AnyPublicKey::Secp256k1(key.as_public_key()),
-			AnyPrivateKey::Ed25519(key) => AnyPublicKey::Ed25519(key.as_public_key()),
-			AnyPrivateKey::Secp256r1(key) => AnyPublicKey::Secp256r1(key.as_public_key()),
-		}
-	}
-
-	pub fn to_bytes(&self) -> SecretBox<Vec<u8>> {
-		match self {
-			AnyPrivateKey::Secp256k1(key) => key.into(),
-			AnyPrivateKey::Ed25519(key) => key.into(),
-			AnyPrivateKey::Secp256r1(key) => key.into(),
-		}
-	}
-}
-
-impl CryptoAlgorithm for AnyPrivateKey {
-	fn to_algorithm(&self) -> Algorithm {
-		match self {
-			AnyPrivateKey::Secp256k1(key) => key.into(),
-			AnyPrivateKey::Ed25519(key) => key.into(),
-			AnyPrivateKey::Secp256r1(key) => key.into(),
-		}
-	}
-}
 
 macro_rules! impl_any_public_key {
 	(
@@ -117,6 +118,26 @@ macro_rules! impl_any_public_key {
 			$(
 				$variant($key_type),
 			)*
+		}
+
+		impl $any_key_type {
+			pub fn to_bytes(&self) -> Vec<u8> {
+				match self {
+					$(
+						$any_key_type::$variant(key) => key.into(),
+					)*
+				}
+			}
+		}
+
+		impl CryptoAlgorithm for $any_key_type {
+			fn to_algorithm(&self) -> Algorithm {
+				match self {
+					$(
+						$any_key_type::$variant(key) => key.into(),
+					)*
+				}
+			}
 		}
 
 		// From implementations for AnyPublicKey
@@ -154,26 +175,6 @@ impl_any_public_key!(
 	(Secp256r1, Secp256r1PublicKey, Algorithm::Secp256r1),
 );
 
-impl AnyPublicKey {
-	pub fn to_bytes(&self) -> Vec<u8> {
-		match self {
-			AnyPublicKey::Secp256k1(key) => key.into(),
-			AnyPublicKey::Ed25519(key) => key.into(),
-			AnyPublicKey::Secp256r1(key) => key.into(),
-		}
-	}
-}
-
-impl CryptoAlgorithm for AnyPublicKey {
-	fn to_algorithm(&self) -> Algorithm {
-		match self {
-			AnyPublicKey::Secp256k1(key) => key.into(),
-			AnyPublicKey::Ed25519(key) => key.into(),
-			AnyPublicKey::Secp256r1(key) => key.into(),
-		}
-	}
-}
-
 #[cfg(feature = "signature")]
 macro_rules! impl_any_signature {
 	(
@@ -187,6 +188,26 @@ macro_rules! impl_any_signature {
 				$variant($signature_type),
 			)*
 		}
+
+		impl $any_signature_type {
+			pub fn to_bytes(&self) -> Vec<u8> {
+				match self {
+					$(
+						$any_signature_type::$variant(sig) => sig.to_vec(),
+					)*
+				}
+			}
+		}
+
+		impl CryptoAlgorithm for $any_signature_type {
+			fn to_algorithm(&self) -> Algorithm {
+				match self {
+					$(
+						$any_signature_type::$variant(_) => $algorithm,
+					)*
+				}
+			}
+		}
 	};
 }
 
@@ -198,28 +219,6 @@ impl_any_signature!(
 	(Secp256r1, crate::algorithms::secp256r1::Secp256r1Signature, Algorithm::Secp256r1),
 );
 
-#[cfg(feature = "signature")]
-impl AnySignature {
-	pub fn to_bytes(&self) -> Vec<u8> {
-		match self {
-			AnySignature::Secp256k1(sig) => sig.to_vec(),
-			AnySignature::Ed25519(sig) => sig.to_vec(),
-			AnySignature::Secp256r1(sig) => sig.to_vec(),
-		}
-	}
-}
-
-#[cfg(feature = "signature")]
-impl CryptoAlgorithm for AnySignature {
-	fn to_algorithm(&self) -> Algorithm {
-		match self {
-			AnySignature::Secp256k1(_) => Algorithm::Secp256k1,
-			AnySignature::Ed25519(_) => Algorithm::Ed25519,
-			AnySignature::Secp256r1(_) => Algorithm::Secp256r1,
-		}
-	}
-}
-
 #[cfg(feature = "der")]
 macro_rules! impl_subject_public_key_info {
 	($(($variant:ident, $public_key_type:ty, $oid:expr, $params_oid:expr)),* $(,)?) => {
@@ -228,7 +227,6 @@ macro_rules! impl_subject_public_key_info {
 				fn from(public_key: $public_key_type) -> Self {
 					let algorithm = ObjectIdentifier::new($oid).unwrap();
 					let parameters = $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).unwrap()));
-
 					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
 					let public_key_bytes = Vec::from(public_key);
 					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).unwrap()
