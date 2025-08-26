@@ -5,9 +5,10 @@
 //! documentation examples and provide consistent test data.
 
 use accounts::{Account, KeyED25519, KeyPair};
-use crypto::algorithms::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
+use crypto::algorithms::ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
+use crypto::algorithms::KeyDerivation;
 use crypto::bigint::U256;
-use crypto::prelude::{IntoSecret, KeyDerivation, PrivateKey};
+use crypto::prelude::{IntoSecret, PrivateKey};
 
 use crate::builder::CertificateBuilder;
 use crate::certificates::Certificate;

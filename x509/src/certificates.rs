@@ -869,7 +869,7 @@ impl From<&CertificateHashSet> for Vec<String> {
 /// ```rust
 /// # use x509::doc_utils::create_test_certificate;
 /// # use accounts::{Account, KeyED25519};
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+///
 /// # let certificate = create_test_certificate("Test CA", None);
 /// // Convert to DER (binary) format
 /// let der_bytes = certificate.to_der()?;
@@ -877,8 +877,7 @@ impl From<&CertificateHashSet> for Vec<String> {
 /// // Convert to PEM (text) format
 /// let pem_string = certificate.to_pem()?;
 /// assert!(pem_string.starts_with("-----BEGIN CERTIFICATE-----"));
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Thread Safety
@@ -2594,10 +2593,10 @@ mod tests {
 
 				// Test SHA-512 and SHA3-256 verification
 				let hash_sha512 =
-					CertificateHash::new(crypto::HashAlgorithm::Sha2_512.hash(&der_bytes), Some(crate::oids::SHA512));
+					CertificateHash::new(HashAlgorithm::Sha2_512.hash(&der_bytes), Some(crate::oids::SHA512));
 				assert!(hash_sha512.verify_certificate(cert).unwrap());
 				let hash_sha3_256 =
-					CertificateHash::new(crypto::HashAlgorithm::Sha3_256.hash(&der_bytes), Some(crate::oids::SHA3_256));
+					CertificateHash::new(HashAlgorithm::Sha3_256.hash(&der_bytes), Some(crate::oids::SHA3_256));
 				assert!(hash_sha3_256.verify_certificate(cert).unwrap());
 
 				// Test verification fails with different certificate

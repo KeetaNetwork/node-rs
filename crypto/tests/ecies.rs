@@ -4,12 +4,14 @@
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 
-use crypto::algorithms::ed25519::ed25519_to_x25519_private;
 #[cfg(feature = "encryption")]
-use crypto::algorithms::{Ecies, EciesSecp256k1, EciesSecp256r1, EciesX25519};
-use crypto::{
-	Algorithm, Ed25519Derivation, IntoSecret, KeyDerivation, PrivateKey, Secp256k1Derivation, Secp256r1Derivation,
-};
+use crypto::algorithms::ecies::{Ecies, EciesSecp256k1, EciesSecp256r1, EciesX25519};
+use crypto::algorithms::ed25519::ed25519_to_x25519_private;
+use crypto::algorithms::ed25519::Ed25519Derivation;
+use crypto::algorithms::secp256k1::Secp256k1Derivation;
+use crypto::algorithms::secp256r1::Secp256r1Derivation;
+use crypto::algorithms::{Algorithm, KeyDerivation, PrivateKey};
+use crypto::IntoSecret;
 
 struct TypeScriptTestCase {
 	seed_hex: &'static str,

@@ -6,8 +6,8 @@
 use crate::algorithms::ed25519::{ed25519_to_x25519_private, Ed25519Derivation, X25519PrivateKey, X25519PublicKey};
 use crate::algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
 use crate::algorithms::secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey};
-use crate::algorithms::PrivateKey;
-use crate::{IntoSecret, KeyDerivation};
+use crate::algorithms::{KeyDerivation, PrivateKey};
+use crate::IntoSecret;
 
 /// Constant test seed for deterministic and reproducible test results
 pub const TEST_SEED: &[u8] = b"able able able able able able able able able able able able";

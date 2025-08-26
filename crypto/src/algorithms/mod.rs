@@ -9,6 +9,9 @@ use asn1::oids;
 #[cfg(feature = "der")]
 use asn1::{AlgorithmIdentifier, Any, ObjectIdentifier, SubjectPublicKeyInfo};
 
+use crate::algorithms::ed25519::{Ed25519PrivateKey, Ed25519PublicKey};
+use crate::algorithms::secp256k1::{Secp256k1PrivateKey, Secp256k1PublicKey};
+use crate::algorithms::secp256r1::{Secp256r1PrivateKey, Secp256r1PublicKey};
 use crate::error::CryptoError;
 
 // Algorithm implementations
@@ -25,23 +28,6 @@ pub mod aes_ctr;
 pub mod aes_gcm;
 #[cfg(feature = "encryption")]
 pub mod ecies;
-
-// Re-export algorithm implementations
-pub use ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
-pub use secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
-pub use secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey};
-
-// Re-export signature types
-#[cfg(feature = "signature")]
-pub use ed25519::Ed25519Signature;
-#[cfg(feature = "signature")]
-pub use secp256k1::Secp256k1Signature;
-#[cfg(feature = "signature")]
-pub use secp256r1::Secp256r1Signature;
-
-// Re-export ECIES implementations when encryption is enabled
-#[cfg(feature = "encryption")]
-pub use ecies::{Ecies, EciesSecp256k1, EciesSecp256r1, EciesX25519};
 
 /// Trait for cryptographic private keys that can be used for signing.
 ///
@@ -207,9 +193,9 @@ macro_rules! impl_any_signature {
 #[cfg(feature = "signature")]
 impl_any_signature!(
 	AnySignature,
-	(Secp256k1, Secp256k1Signature, Algorithm::Secp256k1),
-	(Ed25519, Ed25519Signature, Algorithm::Ed25519),
-	(Secp256r1, Secp256r1Signature, Algorithm::Secp256r1),
+	(Secp256k1, crate::algorithms::secp256k1::Secp256k1Signature, Algorithm::Secp256k1),
+	(Ed25519, crate::algorithms::ed25519::Ed25519Signature, Algorithm::Ed25519),
+	(Secp256r1, crate::algorithms::secp256r1::Secp256r1Signature, Algorithm::Secp256r1),
 );
 
 #[cfg(feature = "signature")]
@@ -430,6 +416,9 @@ impl<T: CryptoAlgorithm> From<&T> for Algorithm {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::algorithms::ed25519::Ed25519Derivation;
+	use crate::algorithms::secp256k1::Secp256k1Derivation;
+	use crate::algorithms::secp256r1::Secp256r1Derivation;
 	use crate::prelude::{ExposeSecret, IntoSecret};
 
 	#[cfg(feature = "signature")]

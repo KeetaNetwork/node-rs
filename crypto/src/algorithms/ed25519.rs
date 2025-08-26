@@ -50,10 +50,10 @@ use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
 
-use crate::algorithms::{Algorithm, CryptoAlgorithm};
+use crate::algorithms::{Algorithm, CryptoAlgorithm, KeyDerivation, PrivateKey, PublicKey};
 use crate::error::CryptoError;
-use crate::hash;
-use crate::{IntoSecret, KeyDerivation, PrivateKey, PublicKey};
+use crate::hash::{hash_array, HashAlgorithm};
+use crate::IntoSecret;
 
 /// Ed25519 private key wrapper.
 ///
@@ -367,7 +367,8 @@ impl X25519PrivateKey {
 	/// # Example
 	///
 	/// ```rust
-	/// # use crypto::{Ed25519Derivation, KeyDerivation, IntoSecret};
+	/// use crypto::prelude::{KeyDerivation, IntoSecret};
+	/// use crypto::algorithms::ed25519::Ed25519Derivation;
 	///
 	/// // Alice generates her keys
 	/// let alice_seed = b"alice_seed_32_bytes_or_more!!!!!!".into_secret();
@@ -386,7 +387,7 @@ impl X25519PrivateKey {
 	/// let bob_shared = bob_x25519.diffie_hellman(&alice_public);
 	///
 	/// assert_eq!(alice_shared, bob_shared);
-	/// # Ok::<(), crypto::CryptoError>(())
+	/// # Ok::<(), crypto::error::CryptoError>(())
 	/// ```
 	pub fn diffie_hellman(&self, other_public: &X25519PublicKey) -> [u8; 32] {
 		// Create private key from our bytes and perform ECDH
@@ -502,7 +503,7 @@ impl AsymmetricEncryption for X25519PublicKey {
 pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X25519PrivateKey, CryptoError> {
 	// Use our hash abstraction instead of direct sha2 import
 	let key_bytes = SecretBox::<Vec<u8>>::from(ed25519_key);
-	let hash: [u8; 64] = hash::hash_array(key_bytes.expose_secret(), Some(hash::HashAlgorithm::Sha2_512))?;
+	let hash: [u8; 64] = hash_array(key_bytes.expose_secret(), Some(HashAlgorithm::Sha2_512))?;
 
 	let mut x25519_bytes = [0u8; 32];
 	x25519_bytes.copy_from_slice(&hash[..32]);
@@ -574,7 +575,7 @@ impl KeyDerivation for Ed25519Derivation {
 
 		let seed = seed.expose_secret();
 		// Hash the seed+index buffer directly using our hash abstraction
-		let hash_result: [u8; 32] = hash::hash_array(seed, None)?;
+		let hash_result: [u8; 32] = hash_array(seed, None)?;
 
 		// Apply Ed25519 clamping
 		let mut private_key_bytes = hash_result.to_vec();

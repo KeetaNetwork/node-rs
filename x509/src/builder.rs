@@ -9,11 +9,11 @@
 //! ## Creating a Self-Signed Certificate
 //!
 //! ```rust
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use accounts::{Account, KeyPair, KeyED25519};
 //! use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 //! use crypto::bigint::U256;
-//! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+//! use crypto::algorithms::ed25519::Ed25519Derivation;
+//! use crypto::prelude::KeyDerivation;
 //! use crypto::utils::generate_random_seed;
 //! use x509::builder::{CertificateBuilder, ExtensionBuilder};
 //! use x509::{utils, oids};
@@ -58,8 +58,7 @@
 //!
 //! // Validate certificate
 //! assert!(certificate.verify_signature(&public_key_info).is_ok());
-//! # Ok(())
-//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use asn1::Encode;
@@ -1233,7 +1232,6 @@ impl ExtensionBuilder {
 /// use chrono::Utc;
 /// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create distinguished names
 /// let subject_dn = utils::create_dn(&[(oids::CN, "My Root CA")])?;
 /// let public_key_info = SubjectPublicKeyInfo {
@@ -1260,8 +1258,7 @@ impl ExtensionBuilder {
 ///         panic!("Failed to build TBS certificate: {}", e);
 ///     }
 /// }
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// ## Creating a Server Certificate
@@ -1273,7 +1270,6 @@ impl ExtensionBuilder {
 /// use crypto::bigint::U256;
 /// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let subject_dn = utils::create_dn(&[(oids::CN, "www.example.com")])?;
 /// let issuer_dn = utils::create_dn(&[(oids::CN, "Example CA")])?;
 /// let public_key_info = SubjectPublicKeyInfo {
@@ -1302,8 +1298,7 @@ impl ExtensionBuilder {
 ///         panic!("Failed to build TBS certificate: {}", e);
 ///     }
 /// }
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// ## Using Preset Configurations
@@ -1434,7 +1429,6 @@ impl CertificateBuilder {
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::{utils, oids};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create a distinguished name for a web server
 	/// let subject_dn = utils::create_dn(&[
 	///     (oids::CN, "www.example.com"),
@@ -1444,8 +1438,7 @@ impl CertificateBuilder {
 	///
 	/// let builder = CertificateBuilder::new()
 	///     .with_subject_dn(subject_dn);
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn with_subject_dn(mut self, dn: DistinguishedName) -> Self {
 		self.subject_dn = Some(dn);
@@ -1469,7 +1462,6 @@ impl CertificateBuilder {
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::{utils, oids};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create a distinguished name for a certificate authority
 	/// let issuer_dn = utils::create_dn(&[
 	///     (oids::CN, "Example Root CA"),
@@ -1479,8 +1471,7 @@ impl CertificateBuilder {
 	///
 	/// let builder = CertificateBuilder::new()
 	///     .with_issuer_dn(issuer_dn);
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn with_issuer_dn(mut self, dn: DistinguishedName) -> Self {
 		self.issuer_dn = Some(dn);
@@ -1910,13 +1901,11 @@ impl CertificateBuilder {
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::{utils, oids};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// let subject_dn = utils::create_dn(&[(oids::CN, "Root CA")])?;
 	/// let self_signed_builder = CertificateBuilder::new()
 	///     .with_subject_dn(subject_dn)
 	///     .as_self_signed(); // Issuer will be set to same as subject
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn as_self_signed(mut self) -> Self {
 		if let Some(ref subject) = self.subject_dn.clone() {
@@ -1977,7 +1966,6 @@ impl CertificateBuilder {
 	/// use crypto::bigint::U256;
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// let ca_dn = utils::create_dn(&[(oids::CN, "Example Root CA")])?;
 	/// let public_key_info = SubjectPublicKeyInfo {
 	///     algorithm: oids::ED25519.parse()?,
@@ -1989,8 +1977,7 @@ impl CertificateBuilder {
 	///     .with_subject_dn(ca_dn.clone())
 	///     .with_issuer_dn(ca_dn) // Self-signed
 	///     .with_serial_number(U256::from(1u128));
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn for_ca() -> Self {
 		Self::new()
@@ -2095,7 +2082,6 @@ impl CertificateBuilder {
 	/// use chrono::Utc;
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// let subject_dn = utils::create_dn(&[(oids::CN, "Test Certificate")])?;
 	/// let issuer_dn = utils::create_dn(&[(oids::CN, "Test CA")])?;
 	/// let public_key_info = SubjectPublicKeyInfo {
@@ -2119,8 +2105,7 @@ impl CertificateBuilder {
 	///         panic!("Failed to build TBS certificate: {}", e);
 	///     }
 	/// }
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn build_tbs(&self) -> Result<TbsCertificate, CertificateError> {
 		let subject_public_key = self
@@ -2231,12 +2216,12 @@ impl CertificateBuilder {
 	/// use accounts::{KeyPair, Account, KeyED25519};
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 	/// use crypto::bigint::U256;
-	/// use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+	/// use crypto::algorithms::ed25519::Ed25519Derivation;
+	/// use crypto::prelude::KeyDerivation;
 	/// use crypto::utils::generate_random_seed;
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::{utils, oids};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create an account for signing
 	/// let seed = generate_random_seed()?;
 	/// let private_key = Ed25519Derivation::derive_from_seed(seed)?;
@@ -2266,8 +2251,7 @@ impl CertificateBuilder {
 	///         panic!("Failed to build certificate: {}", e);
 	///     }
 	/// }
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	///
 	/// # Errors
@@ -2367,13 +2351,15 @@ impl CertificateBuilder {
 
 #[cfg(test)]
 mod tests {
+	use chrono::Utc;
+	use der::Decode;
+
 	use accounts::{Account, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
 	use asn1::{AlgorithmIdentifier, BitString, ObjectIdentifier, Uint};
-	use chrono::Utc;
-	use crypto::operations::encryption::KeyGeneration;
-	use crypto::prelude::{AnyPrivateKey, Secp256k1PrivateKey, Secp256r1PrivateKey};
-	use crypto::Ed25519PrivateKey;
-	use der::Decode;
+	use crypto::algorithms::ed25519::Ed25519PrivateKey;
+	use crypto::algorithms::secp256k1::Secp256k1PrivateKey;
+	use crypto::algorithms::secp256r1::Secp256r1PrivateKey;
+	use crypto::prelude::{AnyPrivateKey, KeyGeneration};
 
 	use super::*;
 	use crate::certificates::{Certificate, TbsCertificate};

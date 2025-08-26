@@ -28,7 +28,7 @@ pub(crate) fn format_public_key_string(key_data: impl AsRef<[u8]>, key_type: u8)
 				key_data.to_vec()
 			} else {
 				// Hash the input to get exactly 32 bytes
-				let hash_result: [u8; 32] = crypto::hash_array(key_data, None)?;
+				let hash_result: [u8; 32] = crypto::hash::hash_array(key_data, None)?;
 				hash_result.to_vec()
 			}
 		}
@@ -44,7 +44,7 @@ pub(crate) fn format_public_key_string(key_data: impl AsRef<[u8]>, key_type: u8)
 	pub_key_values.extend_from_slice(&normalized_key_data);
 
 	// Calculate checksum
-	let calculated_checksum: [u8; 32] = crypto::hash_array(&pub_key_values, None)?;
+	let calculated_checksum: [u8; 32] = crypto::hash::hash_array(&pub_key_values, None)?;
 	// Add first 5 bytes of checksum
 	pub_key_values.extend_from_slice(&calculated_checksum[..5]);
 
@@ -96,7 +96,7 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<A
 
 	// Verify checksum
 	let checksum_input = decoded[..pubkey_end].to_vec();
-	let calculated_checksum: [u8; 32] = hash_array(&checksum_input, None).map_err(AccountError::from)?;
+	let calculated_checksum: [u8; 32] = crypto::hash::hash_array(&checksum_input, None).map_err(AccountError::from)?;
 
 	let provided_checksum = &decoded[pubkey_end..];
 	if provided_checksum != &calculated_checksum[..5] {
@@ -109,7 +109,7 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<A
 /// Create an identifier key from seed and index
 pub(crate) fn create_identifier_key(seed: &Seed, index: Index) -> Result<(String, String), AccountError> {
 	let seed_buffer = combine_seed_and_index(seed, index);
-	let hash_result: [u8; 32] = crypto::hash_array(seed_buffer, None)?;
+	let hash_result: [u8; 32] = crypto::hash::hash_array(seed_buffer, None)?;
 
 	// Use the full 32-byte hash as the identifier (as hex for internal use)
 	let identifier = hex::encode(hash_result);

@@ -3,7 +3,7 @@ use keetanet_error::KeetaNetError;
 use snafu::Snafu;
 use strum_macros::AsRefStr;
 
-use crypto::CryptoError;
+use crypto::error::CryptoError;
 
 /// Account error types that match TypeScript AccountErrorCode format
 #[derive(Debug, Snafu, AsRefStr, Clone, PartialEq, Eq)]

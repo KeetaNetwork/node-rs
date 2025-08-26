@@ -11,12 +11,11 @@ use crate::algorithms::aes_ctr::Aes128CtrCipher;
 use crate::algorithms::ed25519::{X25519PrivateKey, X25519PublicKey};
 use crate::algorithms::secp256k1::{Secp256k1PrivateKey, Secp256k1PublicKey};
 use crate::algorithms::secp256r1::{Secp256r1PrivateKey, Secp256r1PublicKey};
-use crate::algorithms::PublicKey;
+use crate::algorithms::{PrivateKey, PublicKey};
 use crate::error::CryptoError;
 use crate::hash::HashAlgorithm;
 use crate::operations::encryption::{KeyExchange, KeyGeneration, SymmetricEncryption};
 use crate::utils::generate_random_bytes;
-use crate::PrivateKey;
 
 /// Algorithm identifier for ECIES with secp256k1
 pub const ECIES_SECP256K1_ALGORITHM: &str = "ECIES-secp256k1-AES128CTR";

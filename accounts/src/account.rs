@@ -37,10 +37,10 @@
 //!
 //! ```rust
 //! use accounts::{Account, KeyED25519};
+//! use crypto::algorithms::ed25519::Ed25519Derivation;
+//! use crypto::prelude::KeyDerivation;
 //! use crypto::utils::generate_random_seed;
-//! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Generate a random seed
 //! let seed = generate_random_seed()?;
 //! // Derive the private key
@@ -57,8 +57,7 @@
 //! // Get the public key string (network address)
 //! let address = account.to_string();
 //! println!("Account address: {}", address);
-//! # Ok(())
-//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ### Creating Network Identifiers
@@ -66,7 +65,6 @@
 //! ```rust
 //! use accounts::{Account, KeyNETWORK, KeyTOKEN, KeyPair};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create a network identifier from network ID
 //! let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
 //! println!("Network address: {}", network_account.to_string());
@@ -81,17 +79,16 @@
 //! if let accounts::GenericAccount::Token(token) = token_account {
 //!     println!("Token address: {}", token.to_string());
 //! }
-//! # Ok(())
-//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ### Working with Passphrases
 //!
 //! ```rust
 //! use accounts::{Account, KeyED25519};
-//! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
+//! use crypto::algorithms::ed25519::Ed25519Derivation;
+//! use crypto::prelude::KeyDerivation;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Generate a random BIP39 passphrase
 //! let passphrase = Account::<KeyED25519>::generate_passphrase()?;
 //!
@@ -101,8 +98,7 @@
 //! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
 //! // Create an Ed25519 account using the private key
 //! let account = Account::<KeyED25519>::from(private_key);
-//! # Ok(())
-//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Advanced Features
@@ -111,10 +107,10 @@
 //!
 //! ```rust
 //! use accounts::{Account, KeyED25519};
+//! use crypto::algorithms::ed25519::Ed25519Derivation;
+//! use crypto::prelude::KeyDerivation;
 //! use crypto::utils::generate_random_seed;
-//! use crypto::prelude::{Ed25519Derivation, KeyDerivation};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create account with encryption support
 //! let seed = generate_random_seed()?;
 //! // Derive the private key
@@ -129,8 +125,7 @@
 //! // Decrypt the data
 //! let decrypted = account.decrypt(&ciphertext)?;
 //! assert_eq!(plaintext, decrypted.as_slice());
-//! # Ok(())
-//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ### Multi-Algorithm Support
@@ -138,7 +133,6 @@
 //! ```rust
 //! use accounts::{GenericAccount, KeyPair, KeyPairType};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Parse accounts from address strings (using valid test addresses)
 //! # // cspell:disable-next-line
 //! let ed25519_addr = "keeta_ahcp4hwh26cinhsilat6tiolefkt5tlqk4ebrxjwpodkziuvxre3x3r2wf5l6";
@@ -152,8 +146,7 @@
 //! // Check account types
 //! assert_eq!(account1.to_keypair_type(), KeyPairType::ED25519);
 //! assert_eq!(account2.to_keypair_type(), KeyPairType::ECDSASECP256K1);
-//! # Ok(())
-//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Security Considerations
@@ -171,7 +164,6 @@
 //! use accounts::{Account, KeyED25519, AccountError};
 //! use crypto::prelude::IntoSecret;
 //!
-//! # fn main() {
 //! // Handle various error conditions
 //! match Account::<KeyED25519>::compute_seed_from_passphrase(vec!["short"].into_secret()) {
 //!     Ok(seed) => println!("Seed generated successfully"),
@@ -183,7 +175,6 @@
 //!     }
 //!     Err(other) => println!("Other error: {:?}", other),
 //! }
-//! # }
 //! ```
 //!
 //! ## Thread Safety
@@ -194,10 +185,10 @@
 //! use std::sync::Arc;
 //! use std::thread;
 //! use accounts::{Account, KeyED25519};
+//! use crypto::algorithms::ed25519::Ed25519Derivation;
+//! use crypto::prelude::KeyDerivation;
 //! use crypto::utils::generate_random_seed;
-//! use crypto::prelude::{Ed25519Derivation, ExposeSecret, KeyDerivation};
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let seed = generate_random_seed()?;
 //! // Derive the private key
 //! let private_key = Ed25519Derivation::derive_from_seed(seed)?;
@@ -215,13 +206,16 @@
 //! });
 //!
 //! handle.join().unwrap();
-//! # Ok(())
-//! # }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use core::str::FromStr;
 
+use crypto::algorithms::ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey, Ed25519Signature};
+use crypto::algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey, Secp256k1Signature};
+use crypto::algorithms::secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey, Secp256r1Signature};
 use crypto::algorithms::{Algorithm, CryptoAlgorithm};
+use crypto::error::CryptoError;
 use crypto::operations::SignatureError;
 use crypto::prelude::*;
 use crypto::utils::{generate_random_passphrase, seed_from_passphrase};
@@ -493,10 +487,9 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// # Examples
 	///
 	/// ```rust
-	/// # use crypto::generate_random_seed;
+	/// # use crypto::utils::generate_random_seed;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Generate a cryptographically secure seed
 	/// # let seed = generate_random_seed()?;
 	/// # let seed = generate_random_seed()?;
@@ -505,8 +498,7 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// // Derive additional keys from the same seed
 	/// let second_key = KeyED25519::seed_to_private_key(&seed, 1)?;
 	/// let third_key = KeyED25519::seed_to_private_key(&seed, 2)?;
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError>;
 
@@ -537,15 +529,13 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// use accounts::{KeyED25519, KeyPair};
 	/// use crypto::prelude::AnyPrivateKey;
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test keys
 	/// # let (private_key, _, _) = doc_utils::create_ed25519_test_keys(None);
 	/// # let any_private_key = AnyPrivateKey::Ed25519(private_key);
 	/// // Generate the public key string
 	/// let public_key_string = KeyED25519::derive_public_key_string(&any_private_key)?;
 	/// assert!(public_key_string.starts_with("keeta_"));
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError>;
 
@@ -570,14 +560,12 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account with private key
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Encrypt a message
 	/// let message = b"Secret message for the Keeta Network";
 	/// let ciphertext = account.keypair.encrypt(message)?;
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
 		let public_key = self.to_public_key();
@@ -607,7 +595,6 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account with private key
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Encrypt and then decrypt a message
@@ -615,8 +602,7 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// let ciphertext = account.keypair.encrypt(original_message)?;
 	/// let plaintext = account.keypair.decrypt(&ciphertext)?;
 	/// assert_eq!(original_message, plaintext.as_slice());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError>;
 
@@ -631,7 +617,6 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyNETWORK, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test accounts
 	/// # let (_, _, ed25519_account) = doc_utils::create_ed25519_test_keys(None);
 	/// # let network_account = doc_utils::create_network_test_account(Some(5));
@@ -639,8 +624,7 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// assert!(ed25519_account.keypair.supports_encryption());
 	/// // Identifier keys do not
 	/// assert!(!network_account.keypair.supports_encryption());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn supports_encryption(&self) -> bool;
 
@@ -661,7 +645,6 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// use accounts::{KeyED25519, KeyPair, PublicKeyStorage};
 	/// use crypto::operations::encryption::AsymmetricEncryption;
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account
 	/// # let (_, public_key_ref, account) = doc_utils::create_ed25519_test_keys(None);
 	///
@@ -674,8 +657,7 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// let message = b"Hello, World!";
 	/// let ciphertext = public_key.encrypt(message)?;
 	/// assert!(ciphertext.len() > 0);
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn to_public_key(&self) -> Self::PublicKey;
 
@@ -706,14 +688,12 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Get the network address
 	/// let address = account.keypair.to_public_key_string();
 	/// assert!(address.starts_with("keeta_ae") || address.starts_with("keeta_ah"));
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn to_public_key_string(&self) -> String {
 		let key_type_value = self.to_keypair_type() as u8;
@@ -739,7 +719,6 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// use accounts::{KeyED25519, KeyPair};
 	/// use crypto::prelude::AnyPrivateKey;
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account with private key
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Extract the private key (consumes the account)
@@ -753,8 +732,7 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	///         panic!("Expected Ed25519 private key");
 	///     }
 	/// }
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn take_private_key(self) -> Option<AnyPrivateKey>;
 
@@ -770,7 +748,6 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair, KeyPairType};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Get the runtime key type
 	/// let key_type = account.keypair.to_keypair_type();
@@ -783,8 +760,7 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	///     KeyPairType::NETWORK => panic!("Unexpected Network identifier"),
 	///     _ => panic!("Other unexpected key type"),
 	/// }
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	fn to_keypair_type(&self) -> KeyPairType {
 		Self::KEY_PAIR_TYPE
@@ -871,7 +847,6 @@ impl From<(Vec<String>, Index)> for Keyable {
 /// use crypto::algorithms::secp256k1::Secp256k1Derivation;
 /// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an account from a seed
 /// let seed = b"abandon abandon abandon abandon abandon abandon".into_secret();
 /// let private_key = Secp256k1Derivation::derive_from_seed(seed)?;
@@ -879,8 +854,7 @@ impl From<(Vec<String>, Index)> for Keyable {
 /// let account = Account::<KeyECDSASECP256K1>::from(private_key);
 /// // Verify it's a cryptographic key type
 /// assert!(account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # References
@@ -951,7 +925,6 @@ impl KeyPair for KeyECDSASECP256K1 {
 /// use crypto::algorithms::secp256r1::Secp256r1Derivation;
 /// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an account from a seed
 /// let seed = b"abandon abandon abandon abandon abandon abandon";
 /// let private_key = Secp256r1Derivation::derive_from_seed(seed.into_secret())?;
@@ -959,8 +932,7 @@ impl KeyPair for KeyECDSASECP256K1 {
 /// let account = Account::<KeyECDSASECP256R1>::from(private_key);
 /// // Verify it's a cryptographic key type
 /// assert!(account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # References
@@ -1031,7 +1003,6 @@ impl KeyPair for KeyECDSASECP256R1 {
 /// use crypto::algorithms::ed25519::Ed25519Derivation;
 /// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an account from a seed
 /// let seed = b"abandon abandon abandon abandon abandon abandon";
 /// let private_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
@@ -1039,8 +1010,7 @@ impl KeyPair for KeyECDSASECP256R1 {
 /// let account = Account::<KeyED25519>::from(private_key);
 /// // Verify it's a cryptographic key type
 /// assert!(account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # References
@@ -1111,14 +1081,12 @@ impl KeyPair for KeyED25519 {
 /// ```rust
 /// use accounts::{Account, KeyNETWORK, KeyPair};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a network identifier from a network ID
 /// let account = Account::<KeyNETWORK>::generate_network_address(12345)?;
 /// assert!(account.is_identifier());
 /// // Identifier keys do not support cryptographic operations
 /// assert!(!account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct KeyNETWORK {
@@ -1137,15 +1105,13 @@ pub struct KeyNETWORK {
 /// ```rust
 /// use accounts::{Account, KeyTOKEN, KeyPair, Keyable, Accountable};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a token identifier directly from an identifier string
 /// let keyable = Keyable::Identifier("test-token-id".to_string());
 /// let account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(keyable, accounts::KeyPairType::TOKEN))?;
 /// assert!(account.is_identifier());
 /// // Identifier keys do not support cryptographic operations
 /// assert!(!account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct KeyTOKEN {
@@ -1161,7 +1127,6 @@ pub struct KeyTOKEN {
 /// ```rust
 /// use accounts::{Account, KeySTORAGE, KeyPair, Keyable, Accountable};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a storage identifier directly from an identifier string
 /// let keyable = Keyable::Identifier("test-storage-id".to_string());
 /// let account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(keyable, accounts::KeyPairType::STORAGE))?;
@@ -1169,8 +1134,7 @@ pub struct KeyTOKEN {
 /// // Verify it's an identifier type (not cryptographic)
 /// assert!(account.is_identifier());
 /// assert!(!account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct KeySTORAGE {
@@ -1187,15 +1151,13 @@ pub struct KeySTORAGE {
 /// ```rust
 /// use accounts::{Account, KeyMULTISIG, KeyPair, Keyable, Accountable};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a multisig identifier directly from an identifier string
 /// let keyable = Keyable::Identifier("test-multisig-id".to_string());
 /// let account = Account::<KeyMULTISIG>::try_from(Accountable::KeyAndType(keyable, accounts::KeyPairType::MULTISIG))?;
 /// // Verify it's an identifier type (not cryptographic)
 /// assert!(account.is_identifier());
 /// assert!(!account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct KeyMULTISIG {
@@ -1434,7 +1396,6 @@ where
 /// use crypto::algorithms::ed25519::Ed25519Derivation;
 /// use crypto::prelude::{KeyDerivation, IntoSecret};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an Ed25519 account from a seed
 /// let seed = b"abandon abandon abandon abandon abandon abandon";
 /// let private_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
@@ -1442,8 +1403,7 @@ where
 /// // Check capabilities
 /// assert!(account.keypair.to_keypair_type().supports_crypto());
 /// assert!(!account.is_identifier());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// ## Creating Identifier Accounts
@@ -1451,15 +1411,13 @@ where
 /// ```rust
 /// use accounts::{Account, KeyNETWORK, KeyPair};
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create a network identifier account from a network ID
 /// let account = Account::<KeyNETWORK>::generate_network_address(5)?;
 /// // Check capabilities
 /// assert!(account.is_identifier());
 /// // Identifier keys do not support cryptographic operations
 /// assert!(!account.keypair.to_keypair_type().supports_crypto());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Account Operations
@@ -1471,7 +1429,6 @@ where
 /// # use accounts::doc_utils;
 /// use accounts::{KeyED25519};
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create test account
 /// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 /// // Sign data (requires private key)
@@ -1481,8 +1438,7 @@ where
 /// // Verify signatures (public operation)
 /// let result = account.verify(data, &signature, None);
 /// assert!(result.is_ok());
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Thread Safety
@@ -1588,15 +1544,13 @@ where
 	/// use accounts::{Account, KeyED25519};
 	/// use crypto::prelude::IntoSecret;
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // From a word vector (minimum 12 words)
 	/// let words = vec![
 	///     "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
 	///     "abandon", "abandon", "abandon", "abandon", "abandon", "abandon"
 	/// ].into_secret();
 	/// let seed = Account::<KeyED25519>::compute_seed_from_passphrase(words)?;
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn compute_seed_from_passphrase<P, I>(passphrase: SecretBox<P>) -> Result<Seed, AccountError>
 	where
@@ -1629,9 +1583,8 @@ where
 	///
 	/// ```rust
 	/// use accounts::{Account, KeyED25519};
-	/// use crypto::ExposeSecret;
+	/// use crypto::prelude::ExposeSecret;
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Generate a random passphrase
 	/// let passphrase = Account::<KeyED25519>::generate_passphrase()?;
 	/// let words = passphrase.expose_secret();
@@ -1641,8 +1594,7 @@ where
 	/// for word in words {
 	///     assert!(word.chars().all(|c| c.is_ascii_lowercase()));
 	/// }
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn generate_passphrase() -> Result<SecretBox<Vec<String>>, AccountError> {
 		Ok(generate_random_passphrase(None)?)
@@ -1663,9 +1615,8 @@ where
 	///
 	/// ```rust
 	/// use accounts::{Account, KeyED25519};
-	/// use crypto::ExposeSecret;
+	/// use crypto::prelude::ExposeSecret;
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Generate a random seed
 	/// let seed = Account::<KeyED25519>::generate_random_seed()?;
 	/// assert_eq!(seed.expose_secret().len(), 32);
@@ -1673,11 +1624,10 @@ where
 	/// // Generate another seed - should be different
 	/// let seed2 = Account::<KeyED25519>::generate_random_seed()?;
 	/// assert_ne!(seed.expose_secret(), seed2.expose_secret());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn generate_random_seed() -> Result<Seed, AccountError> {
-		Ok(crypto::generate_random_seed()?)
+		Ok(crypto::utils::generate_random_seed()?)
 	}
 
 	/// Generates a deterministic network address from a network ID.
@@ -1700,7 +1650,6 @@ where
 	/// ```rust
 	/// use accounts::{Account, KeyNETWORK, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Generate network addresses for different networks
 	/// let mainnet = Account::<KeyNETWORK>::generate_network_address(1)?;
 	/// let testnet = Account::<KeyNETWORK>::generate_network_address(1337)?;
@@ -1714,8 +1663,7 @@ where
 	/// assert_eq!(mainnet.to_string(), mainnet2.to_string());
 	/// // Different network IDs produce different addresses
 	/// assert_ne!(mainnet.to_string(), testnet.to_string());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn generate_network_address(network_id: u64) -> Result<Account<KeyNETWORK>, AccountError> {
 		// Convert network ID to bytes
@@ -1754,15 +1702,13 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account with private key
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Encrypt a message
 	/// let message = b"Secret message for the Keeta Network";
 	/// let ciphertext = account.encrypt(message)?;
 	/// assert_ne!(ciphertext.as_slice(), message);
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
 		self.keypair.encrypt(plaintext)
@@ -1790,7 +1736,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account with private key
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Encrypt and then decrypt a message
@@ -1798,8 +1743,7 @@ where
 	/// let ciphertext = account.encrypt(original_message)?;
 	/// let plaintext = account.decrypt(&ciphertext)?;
 	/// assert_eq!(original_message, plaintext.as_slice());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
 		self.keypair.decrypt(ciphertext)
@@ -1821,7 +1765,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyNETWORK, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test accounts
 	/// # let (_, _, ed25519_account) = doc_utils::create_ed25519_test_keys(None);
 	/// # let network_account = doc_utils::create_network_test_account(Some(5));
@@ -1829,8 +1772,7 @@ where
 	/// assert!(ed25519_account.supports_encryption());
 	/// // Identifier keys do not
 	/// assert!(!network_account.supports_encryption());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn supports_encryption(&self) -> bool {
 		self.keypair.supports_encryption()
@@ -1855,7 +1797,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyECDSASECP256K1, KeyNETWORK, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test accounts
 	/// # let (_, _, ed25519_account) = doc_utils::create_ed25519_test_keys(None);
 	/// # let (_, _, secp256k1_account) = doc_utils::create_secp256k1_test_keys(None);
@@ -1865,8 +1806,7 @@ where
 	/// assert_eq!(secp256k1_account.signature_size(), 64);
 	/// // Identifier keys cannot sign
 	/// assert_eq!(network_account.signature_size(), 0);
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn signature_size(&self) -> usize {
 		self.keypair.signature_size()
@@ -1922,7 +1862,7 @@ where
 		seed_data.extend_from_slice(&hash_to_use);
 
 		// Hash the combined data to create the seed
-		let seed_hash: [u8; 32] = crypto::hash_array(&seed_data, None)?;
+		let seed_hash: [u8; 32] = crypto::hash::hash_array(&seed_data, None)?;
 
 		// Helper macro to reduce repetition in account creation
 		macro_rules! create_account {
@@ -1949,7 +1889,7 @@ where
 	/// Get the account's opening hash
 	/// // TODO Use BlockHash once available
 	fn to_opening_hash(&self) -> Vec<u8> {
-		crypto::hash_default(self.keypair.to_public_key()).to_vec()
+		crypto::hash::hash_default(self.keypair.to_public_key()).to_vec()
 	}
 
 	/// Determines if this account is an identifier account.
@@ -1965,7 +1905,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{Account, KeyED25519, KeyNETWORK, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test accounts
 	/// # let (_, _, crypto_account) = doc_utils::create_ed25519_test_keys(None);
 	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
@@ -1975,8 +1914,7 @@ where
 	///
 	/// // Network accounts are identifiers
 	/// assert!(network_account.is_identifier());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn is_identifier(&self) -> bool {
 		self.to_keypair_type().is_identifier()
@@ -1994,7 +1932,6 @@ where
 	/// ```rust
 	/// use accounts::{Account, KeyNETWORK, KeyTOKEN};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
 	/// let token_account = Account::<KeyTOKEN>::try_from(accounts::Accountable::KeyAndType(
 	///     accounts::Keyable::Identifier("test-token".to_string()),
@@ -2004,8 +1941,7 @@ where
 	/// // Only network accounts return true
 	/// assert!(network_account.is_network());
 	/// assert!(!token_account.is_network());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn is_network(&self) -> bool {
 		self.to_keypair_type() == KeyPairType::NETWORK
@@ -2023,7 +1959,6 @@ where
 	/// ```rust
 	/// use accounts::{Account, KeyNETWORK, KeyTOKEN};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
 	/// let token_account = Account::<KeyTOKEN>::try_from(accounts::Accountable::KeyAndType(
 	///     accounts::Keyable::Identifier("test-token".to_string()),
@@ -2033,8 +1968,7 @@ where
 	/// // Only token accounts return true
 	/// assert!(!network_account.is_token());
 	/// assert!(token_account.is_token());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn is_token(&self) -> bool {
 		self.to_keypair_type() == KeyPairType::TOKEN
@@ -2052,7 +1986,6 @@ where
 	/// ```rust
 	/// use accounts::{Account, KeySTORAGE, KeyTOKEN};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// let storage_account = Account::<KeySTORAGE>::try_from(accounts::Accountable::KeyAndType(
 	///     accounts::Keyable::Identifier("test-storage".to_string()),
 	///     accounts::KeyPairType::STORAGE,
@@ -2065,8 +1998,7 @@ where
 	/// // Only storage accounts return true
 	/// assert!(storage_account.is_storage());
 	/// assert!(!token_account.is_storage());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn is_storage(&self) -> bool {
 		self.to_keypair_type() == KeyPairType::STORAGE
@@ -2084,7 +2016,6 @@ where
 	/// ```rust
 	/// use accounts::{Account, KeyMULTISIG, KeyTOKEN};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// let multisig_account = Account::<KeyMULTISIG>::try_from(accounts::Accountable::KeyAndType(
 	///     accounts::Keyable::Identifier("test-multisig".to_string()),
 	///     accounts::KeyPairType::MULTISIG,
@@ -2097,8 +2028,7 @@ where
 	/// // Only multisig accounts return true
 	/// assert!(multisig_account.is_multisig());
 	/// assert!(!token_account.is_multisig());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn is_multisig(&self) -> bool {
 		matches!(self.to_keypair_type(), KeyPairType::MULTISIG)
@@ -2129,7 +2059,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{Account, KeyED25519, KeyNETWORK, KeyPair, Keyable, Accountable};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Account created with private key
 	/// # let (_, _, private_account) = doc_utils::create_ed25519_test_keys(None);
 	/// assert!(private_account.has_private_key());
@@ -2145,8 +2074,7 @@ where
 	/// // Identifier accounts never have private keys
 	/// let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
 	/// assert!(!network_account.has_private_key());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn has_private_key(&self) -> bool {
 		macro_rules! check_private_key {
@@ -2187,7 +2115,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair, Keyable, Accountable};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test accounts
 	/// # let (_, _, account1) = doc_utils::create_ed25519_test_keys(None);
 	/// # let (_, _, account2) = doc_utils::create_ed25519_test_keys(Some(b"art art art art art art"));
@@ -2199,8 +2126,7 @@ where
 	/// // Compare with public key string
 	/// let public_key_string = account1.to_string();
 	/// assert!(account1.compare_public_key(&public_key_string));
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn compare_public_key<T: AsRef<str>>(&self, other: T) -> bool {
 		self.to_string() == other.as_ref()
@@ -2228,7 +2154,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyECDSASECP256K1, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test accounts
 	/// # let (_, _, ed25519_account1) = doc_utils::create_ed25519_test_keys(None);
 	/// # let (_, _, ed25519_account2) = doc_utils::create_ed25519_test_keys(Some(b"art art art art art art"));
@@ -2239,8 +2164,7 @@ where
 	/// assert!(!ed25519_account1.compare_account(&secp256k1_account));
 	/// // Same account with itself
 	/// assert!(ed25519_account1.compare_account(&ed25519_account1));
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn compare_account<T>(&self, other: &Account<T>) -> bool
 	where
@@ -2271,7 +2195,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test account with private key
 	/// # let (_, _, account) = doc_utils::create_ed25519_test_keys(None);
 	/// // Sign a message
@@ -2282,8 +2205,7 @@ where
 	/// // Verify the signature works
 	/// let result = account.verify(message, &signature, None);
 	/// assert!(result.is_ok());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn sign<T: AsRef<[u8]>>(&self, message: T, options: Option<SigningOptions>) -> Result<Vec<u8>, AccountError> {
 		self.keypair.sign(message, options)
@@ -2312,7 +2234,6 @@ where
 	/// # use accounts::doc_utils;
 	/// use accounts::{KeyED25519, KeyPair};
 	///
-	/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 	/// // Create test accounts
 	/// # let (_, _, account1) = doc_utils::create_ed25519_test_keys(None);
 	/// # let (_, _, account2) = doc_utils::create_ed25519_test_keys(Some(b"art art art art art art"));
@@ -2327,8 +2248,7 @@ where
 	/// // Verify with wrong message (should fail)
 	/// let wrong_message = b"Different message";
 	/// assert!(account1.verify(wrong_message, &signature, None).is_err());
-	/// # Ok(())
-	/// # }
+	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
 		&self,
@@ -2626,7 +2546,7 @@ macro_rules! impl_identifier_key_try_from {
 					Keyable::Identifier(id) => {
 						// For identifier strings, hash them directly to get 32-byte identifiers
 						let id_bytes = id.as_bytes();
-						let hash_result: [u8; 32] = crypto::hash_array(id_bytes, None)?;
+						let hash_result: [u8; 32] = crypto::hash::hash_array(id_bytes, None)?;
 						let public_key = IdentifierKey::new(hash_result.to_vec())?;
 						Ok($key_type { public_key })
 					}
@@ -3094,15 +3014,15 @@ macro_rules! impl_public_key_storage {
 
 // Implement PublicKeyStorage for IdentifierKey
 impl_public_key_storage!(IdentifierKey);
-impl_public_key_storage!(crypto::Ed25519PublicKey);
-impl_public_key_storage!(crypto::Secp256k1PublicKey);
-impl_public_key_storage!(crypto::Secp256r1PublicKey);
+impl_public_key_storage!(Ed25519PublicKey);
+impl_public_key_storage!(Secp256k1PublicKey);
+impl_public_key_storage!(Secp256r1PublicKey);
 
 #[cfg(test)]
 mod tests {
 	use super::*;
 
-	use crypto::{Algorithm, Ed25519PrivateKey, Secp256k1PrivateKey, Secp256r1PrivateKey};
+	use crypto::algorithms::Algorithm;
 
 	/// Test data for key type detection methods
 	#[allow(dead_code)]

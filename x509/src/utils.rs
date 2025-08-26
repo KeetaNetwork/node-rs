@@ -1,9 +1,9 @@
 use asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString, SetOfVec};
 use asn1::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
-use crypto::prelude::{
-	CryptoVerifierWithOptions, Ed25519PublicKey, Ed25519Signature, HashAlgorithm, Secp256k1PublicKey,
-	Secp256k1Signature, Secp256r1PublicKey, Secp256r1Signature, SigningOptions,
-};
+use crypto::algorithms::ed25519::{Ed25519PublicKey, Ed25519Signature};
+use crypto::algorithms::secp256k1::{Secp256k1PublicKey, Secp256k1Signature};
+use crypto::algorithms::secp256r1::{Secp256r1PublicKey, Secp256r1Signature};
+use crypto::prelude::{CryptoVerifierWithOptions, HashAlgorithm, SigningOptions};
 use crypto::utils::parse_der_ecdsa_signature;
 
 use crate::error::CertificateError;
@@ -364,7 +364,6 @@ pub fn parse_der_length(data: impl AsRef<[u8]>) -> Option<(usize, usize)> {
 /// use x509::utils::der_to_raw_signature;
 ///
 /// // Example DER-encoded signature with valid r and s values
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let der_sig = [
 ///     0x30, 0x44, // SEQUENCE, length 68
 ///     0x02, 0x20, // INTEGER, length 32 (r)
@@ -380,8 +379,7 @@ pub fn parse_der_length(data: impl AsRef<[u8]>) -> Option<(usize, usize)> {
 /// ];
 /// let raw_sig = der_to_raw_signature(&der_sig)?;
 /// assert_eq!(raw_sig.len(), 64);
-/// # Ok(())
-/// # }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn der_to_raw_signature(signature_bytes: impl AsRef<[u8]>) -> Result<[u8; 64], CertificateError> {
 	if let Ok((r_array, s_array)) = parse_der_ecdsa_signature(signature_bytes.as_ref()) {

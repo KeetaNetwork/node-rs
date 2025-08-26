@@ -1,6 +1,6 @@
 //! Constants for cryptographic operations.
 
-use crate::HashAlgorithm;
+use crate::hash::HashAlgorithm;
 
 /// Minimum length for passphrases.
 /// The BIP39 english word list is 2048 words long, so we can encode 11 bits

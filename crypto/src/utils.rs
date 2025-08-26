@@ -6,10 +6,13 @@ use rand_core::TryRngCore;
 use secrecy::SecretBox;
 use zeroize::Zeroize;
 
-use crate::algorithms::{Ed25519Derivation, KeyDerivation, PrivateKey, Secp256k1Derivation};
+use crate::algorithms::ed25519::Ed25519Derivation;
+use crate::algorithms::secp256k1::Secp256k1Derivation;
+use crate::algorithms::{Algorithm, AnyPrivateKey, AnyPublicKey};
+use crate::algorithms::{KeyDerivation, PrivateKey};
 use crate::constants::*;
 use crate::error::CryptoError;
-use crate::{Algorithm, AnyPrivateKey, AnyPublicKey, IntoSecret};
+use crate::IntoSecret;
 
 /// Macro to implement secure zeroization for wrapper structs.
 ///

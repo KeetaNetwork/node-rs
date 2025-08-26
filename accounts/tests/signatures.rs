@@ -3,7 +3,8 @@
 use accounts::account::{AccountSigner, AccountVerifier, KeyECDSASECP256K1, KeyPair};
 use accounts::{AccountError, GenericAccount, KeyPairType, Keyable};
 use accounts::{KeyECDSASECP256R1, KeyED25519, KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};
-use crypto::prelude::{hash_default, IntoSecret, SigningOptions};
+use crypto::hash::hash_default;
+use crypto::prelude::{IntoSecret, SigningOptions};
 
 mod common;
 use common::*;

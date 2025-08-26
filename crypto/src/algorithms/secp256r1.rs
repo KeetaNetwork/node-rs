@@ -28,7 +28,7 @@ use aead::KeyInit;
 use p256::ecdh::diffie_hellman;
 
 #[cfg(feature = "signature")]
-use crate::hash::hash_default;
+use crate::hash::{hash_default, HashAlgorithm};
 #[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
@@ -41,10 +41,10 @@ use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGenera
 #[cfg(feature = "encryption")]
 use crate::utils::generate_random_seed;
 
-use crate::algorithms::{Algorithm, CryptoAlgorithm};
+use crate::algorithms::{Algorithm, CryptoAlgorithm, KeyDerivation, PrivateKey, PublicKey};
 use crate::error::CryptoError;
 use crate::kdf::KdfAlgorithm;
-use crate::{IntoSecret, KeyDerivation, PrivateKey, PublicKey};
+use crate::IntoSecret;
 
 /// secp256r1 (NIST P-256) private key wrapper.
 ///
@@ -226,7 +226,7 @@ impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 			signing_key.sign_prehash(message)
 		} else if options.for_cert {
 			// For certificate signing, use SHA2-256
-			let data = crate::HashAlgorithm::Sha2_256.hash(message);
+			let data = HashAlgorithm::Sha2_256.hash(message);
 			signing_key.sign_prehash(&data)
 		} else {
 			// For regular signing, use the default hash algorithm (SHA3-256)
@@ -334,7 +334,7 @@ impl CryptoVerifierWithOptions<Signature> for Secp256r1PublicKey {
 			verifying_key.verify_prehash(message, signature)
 		} else if options.for_cert {
 			// For certificate verification, use SHA2-256
-			let data = crate::HashAlgorithm::Sha2_256.hash(message);
+			let data = HashAlgorithm::Sha2_256.hash(message);
 			verifying_key.verify_prehash(&data, signature)
 		} else {
 			// For regular verification, use the default hash algorithm
