@@ -2370,16 +2370,54 @@ where
 }
 
 #[cfg(any(feature = "der", feature = "rasn"))]
+impl<KEYTYPE> TryFrom<&Account<KEYTYPE>> for asn1::AlgorithmIdentifier
+where
+	KEYTYPE: KeyPair,
+{
+	type Error = crate::error::AccountError;
+
+	fn try_from(_: &Account<KEYTYPE>) -> Result<Self, Self::Error> {
+		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
+		let algorithm = asn1::ObjectIdentifier::from(algorithm);
+		Ok(asn1::AlgorithmIdentifier { algorithm, parameters: None })
+	}
+}
+
+#[cfg(any(feature = "der", feature = "rasn"))]
+impl<KEYTYPE> TryFrom<&Account<KEYTYPE>> for asn1::SubjectPublicKeyInfo
+where
+	KEYTYPE: KeyPair,
+{
+	type Error = crate::error::AccountError;
+
+	#[cfg(feature = "der")]
+	fn try_from(account: &Account<KEYTYPE>) -> Result<Self, Self::Error> {
+		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
+		let algorithm = asn1::AlgorithmIdentifier::from(algorithm);
+		let public_key = account.keypair.to_public_key();
+		let public_key_bytes = public_key.as_ref().to_vec();
+		Ok(asn1::SubjectPublicKeyInfo::new(algorithm, &public_key_bytes)?)
+	}
+
+	#[cfg(all(feature = "rasn", not(feature = "der")))]
+	fn try_from(account: &Account<KEYTYPE>) -> Result<Self, Self::Error> {
+		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
+		let algorithm = asn1::AlgorithmIdentifier::from(algorithm);
+		let public_key = account.keypair.to_public_key();
+		let public_key_bytes = public_key.as_ref().to_vec();
+		Ok(asn1::SubjectPublicKeyInfo::new(algorithm, &public_key_bytes)?)
+	}
+}
+
+#[cfg(any(feature = "der", feature = "rasn"))]
 impl<KEYTYPE> TryFrom<Account<KEYTYPE>> for asn1::AlgorithmIdentifier
 where
 	KEYTYPE: KeyPair,
 {
 	type Error = crate::error::AccountError;
 
-	fn try_from(_: Account<KEYTYPE>) -> Result<Self, Self::Error> {
-		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
-		let algorithm = asn1::ObjectIdentifier::from(algorithm);
-		Ok(asn1::AlgorithmIdentifier { algorithm, parameters: None })
+	fn try_from(account: Account<KEYTYPE>) -> Result<Self, Self::Error> {
+		(&account).try_into()
 	}
 }
 
@@ -2390,22 +2428,8 @@ where
 {
 	type Error = crate::error::AccountError;
 
-	#[cfg(feature = "der")]
 	fn try_from(account: Account<KEYTYPE>) -> Result<Self, Self::Error> {
-		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
-		let algorithm = asn1::AlgorithmIdentifier::from(algorithm);
-		let public_key = account.keypair.to_public_key();
-		let public_key_bytes = public_key.as_ref().to_vec();
-		Ok(asn1::SubjectPublicKeyInfo::new(algorithm, &public_key_bytes)?)
-	}
-
-	#[cfg(all(feature = "rasn", not(feature = "der")))]
-	fn try_from(account: Account<KEYTYPE>) -> Result<Self, Self::Error> {
-		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
-		let algorithm = asn1::AlgorithmIdentifier::from(algorithm);
-		let public_key = account.keypair.to_public_key();
-		let public_key_bytes = public_key.as_ref().to_vec();
-		Ok(asn1::SubjectPublicKeyInfo::new(algorithm, &public_key_bytes)?)
+		(&account).try_into()
 	}
 }
 
@@ -5634,10 +5658,14 @@ mod tests {
 			($($key_type:ty),*) => {
 				$(
 					let account = create_test_account::<$key_type>(None);
-					let _: asn1::AlgorithmIdentifier = account.clone().try_into().unwrap();
-					let spki: asn1::SubjectPublicKeyInfo = account.clone().try_into().unwrap();
-					let expected_bytes = Vec::<u8>::from(&account.keypair.to_public_key());
-					assert_eq!(spki.subject_public_key.raw_bytes(), expected_bytes);
+					let algorithm_identifier = asn1::AlgorithmIdentifier::try_from(&account);
+					assert!(algorithm_identifier.is_ok());
+
+					let spki = asn1::SubjectPublicKeyInfo::try_from(&account);
+					assert!(spki.is_ok());
+
+					let expected_bytes = Vec::<u8>::from(account.keypair.to_public_key());
+					assert_eq!(spki.unwrap().subject_public_key.raw_bytes(), expected_bytes);
 				)*
 			};
 		}
@@ -5646,7 +5674,7 @@ mod tests {
 			($($key_type:ty, $id:expr),*) => {
 				$(
 					let account = create_test_account_from_identifier::<$key_type>($id);
-					assert!(asn1::AlgorithmIdentifier::try_from(account).is_err());
+					assert!(asn1::AlgorithmIdentifier::try_from(&account).is_err());
 				)*
 			};
 		}
