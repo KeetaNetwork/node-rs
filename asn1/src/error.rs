@@ -1,13 +1,17 @@
 //! Error types for ASN.1 operations.
 
 use snafu::Snafu;
-use utils::{impl_error_from_with_fields, impl_source_error_from};
 
 /// Error type for ASN.1 operations
 #[derive(Debug, Clone, PartialEq, Eq, Snafu)]
 pub enum Asn1Error {
+	#[cfg(feature = "der")]
 	#[snafu(display("DER encoding error: {source}"))]
 	DerError { source: der::Error },
+
+	#[cfg(feature = "rasn")]
+	#[snafu(display("RASN error: {reason}"))]
+	RasnError { reason: String },
 
 	#[snafu(display("Invalid OID: {reason}"))]
 	InvalidOid { reason: String },
@@ -16,12 +20,21 @@ pub enum Asn1Error {
 	InvalidPublicKey,
 }
 
-impl_source_error_from!(Asn1Error, {
+// Use error macros to implement From conversions
+#[cfg(feature = "der")]
+utils::impl_source_error_from!(Asn1Error, {
 	der::Error => DerError,
 });
 
-impl_error_from_with_fields!(Asn1Error, {
-	const_oid::Error => InvalidOid { reason: |e| format!("{e:?}") },
+#[cfg(feature = "der")]
+utils::impl_error_from_with_fields!(Asn1Error, {
+	const_oid::Error => InvalidOid { reason: |e: const_oid::Error| format!("{e:?}") },
+});
+
+#[cfg(feature = "rasn")]
+utils::impl_error_from_with_fields!(Asn1Error, {
+	rasn::uper::de::DecodeError => RasnError { reason: |e: &rasn::uper::de::DecodeError| format!("decode error: {}", e) },
+	rasn::der::enc::EncodeError => RasnError { reason: |e: &rasn::der::enc::EncodeError| format!("encode error: {}", e) },
 });
 
 #[cfg(test)]
@@ -33,14 +46,33 @@ mod tests {
 		test_asn1_error_variants, [
 			Asn1Error::InvalidOid { reason: "test.oid".to_string() },
 			Asn1Error::InvalidPublicKey,
+			#[cfg(feature = "der")]
 			Asn1Error::DerError { source: der::Error::from(der::ErrorKind::Failed) },
+			#[cfg(feature = "rasn")]
+			Asn1Error::RasnError { reason: "test error".to_string() },
 		]
 	}
 
+	#[cfg(feature = "der")]
 	test_error_from_conversions! {
-		test_from_conversions, Asn1Error, [
+		test_der_from_conversions, Asn1Error, [
 			der::Error::from(der::ErrorKind::Failed),
 			const_oid::Error::Empty,
 		]
+	}
+
+	#[cfg(feature = "rasn")]
+	test_error_from_conversions! {
+		test_rasn_from_conversions, Asn1Error, [
+			rasn::uper::de::DecodeError::type_not_extensible(rasn::Codec::Der),
+			rasn::der::enc::EncodeError::length_exceeds_platform_size(rasn::Codec::Der),
+		]
+	}
+
+	#[cfg(feature = "rasn")]
+	#[test]
+	fn test_rasn_error_display() {
+		let error = Asn1Error::RasnError { reason: "test rasn error".to_string() };
+		assert_eq!(error.to_string(), "RASN error: test rasn error");
 	}
 }

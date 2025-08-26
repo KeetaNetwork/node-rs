@@ -20,6 +20,8 @@ words:
   - github
   - chrono
   - serde
+  - rasn
+  - uper
   - ECDSASECP
   - ECDSASECP256K1
   - ECDSASECP256R1

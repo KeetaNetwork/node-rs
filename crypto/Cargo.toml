@@ -139,6 +139,7 @@ path = "../keetanet-error"
 
 [dependencies.asn1]
 path = "../asn1"
+features = ["der"]
 optional = true
 
 [dependencies.utils]

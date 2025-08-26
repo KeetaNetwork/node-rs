@@ -62,7 +62,10 @@ test-feat:
 	cargo test -p crypto --no-default-features --features encryption
 	cargo test -p crypto --no-default-features --features der
 	cargo test -p x509 --no-default-features --features serde
-	cargo test -p asn1 --no-default-features --features serde
+	cargo test -p asn1 --no-default-features --features der
+	cargo test -p asn1 --no-default-features --features rasn
+	cargo test -p asn1 --no-default-features --features der,serde
+	cargo test -p asn1 --no-default-features --features rasn,serde
 	cargo test -p crypto -p x509 --all-features
 	cargo test -p crypto -p x509 --no-default-features
 
@@ -85,9 +88,9 @@ coverage: coverage-setup
 	# Clean previous coverage data
 	@cargo llvm-cov clean --workspace || true
 	# Generate HTML coverage report
-	cargo llvm-cov --all-features --workspace --html
+	cargo llvm-cov --all-features --workspace --html --ignore-filename-regex 'build\.rs'
 	# Generate LCOV coverage report (reusing the same coverage data)
-	cargo llvm-cov report --lcov --output-path coverage.lcov
+	cargo llvm-cov report --lcov --output-path coverage.lcov --ignore-filename-regex 'build\.rs'
 	# Open HTML report in browser (macOS) if it exists
 	@if [ -f target/llvm-cov/html/index.html ]; then \
 		open target/llvm-cov/html/index.html; \

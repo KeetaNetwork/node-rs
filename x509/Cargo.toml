@@ -46,6 +46,7 @@ path = "../crypto"
 
 [dependencies.asn1]
 path = "../asn1"
+features = ["der"]
 
 [dependencies.accounts]
 path = "../accounts"

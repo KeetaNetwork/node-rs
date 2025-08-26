@@ -151,6 +151,12 @@ mod tests {
 		]
 	}
 
+	test_error_from_conversions! {
+		test_account_error_to_signature_error, crypto::operations::SignatureError, [
+			AccountError::InvalidConstruction,
+		]
+	}
+
 	#[test]
 	fn test_error_code_format() {
 		let error = AccountError::InvalidPrefix;

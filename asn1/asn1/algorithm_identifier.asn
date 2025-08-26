@@ -1,0 +1,8 @@
+AlgorithmIdentifierDefinitions DEFINITIONS ::= BEGIN
+
+    AlgorithmIdentifier ::= SEQUENCE {
+        algorithm               OBJECT IDENTIFIER,
+        parameters              ANY OPTIONAL
+    }
+
+END

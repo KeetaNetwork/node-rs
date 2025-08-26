@@ -88,6 +88,9 @@ mod tests {
 	test_error_from_conversions! {
 		test_error_conversions_with_real_errors, CertificateError, [
 			crypto::operations::SignatureError::new(),
+			crypto::error::CryptoError::InvalidKeyMaterial,
+			crypto::error::CryptoError::SignatureError,
+			asn1::error::Asn1Error::InvalidOid { reason: "test".to_string() },
 			der::asn1::ObjectIdentifier::from_der(&[0xFF, 0xFF, 0xFF]).unwrap_err(),
 			der::asn1::ObjectIdentifier::new("").unwrap_err(),
 			base64::DecodeError::InvalidByte(0, b'!'),

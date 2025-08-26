@@ -58,6 +58,7 @@ macro_rules! test_error_variants {
 		}
 	};
 }
+
 #[cfg(test)]
 mod tests {
 	// Test the macros themselves
@@ -86,7 +87,7 @@ mod tests {
 	}
 
 	// Test From conversions (if we had some)
-	#[derive(Debug)]
+	#[derive(Debug, PartialEq, Eq)]
 	struct SourceError(&'static str);
 
 	impl std::fmt::Display for SourceError {
@@ -101,6 +102,12 @@ mod tests {
 		fn from(err: SourceError) -> Self {
 			TestError::WithData { message: err.0.to_string() }
 		}
+	}
+
+	test_error_variants! {
+		test_error_source, [
+			SourceError("test")
+		]
 	}
 
 	test_error_from_conversions! {

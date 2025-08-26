@@ -146,11 +146,26 @@ mod tests {
 		]
 	}
 
+	#[cfg(feature = "encryption")]
+	// Test From conversions for AEAD errors
+	test_error_from_conversions! {
+		test_aead_error_conversions, CryptoError, [
+			AeadError,
+		]
+	}
+
 	#[cfg(feature = "signature")]
 	// Test From conversions for signature errors
 	test_error_from_conversions! {
 		test_signature_error_conversions, CryptoError, [
 			crate::operations::SignatureError::new(),
+		]
+	}
+
+	#[cfg(feature = "signature")]
+	test_error_from_conversions! {
+		test_crypto_error_to_signature_error, crate::operations::SignatureError, [
+			CryptoError::SignatureError,
 		]
 	}
 

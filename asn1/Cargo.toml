@@ -5,9 +5,15 @@ edition = "2021"
 
 [dependencies.der]
 workspace = true
+optional = true
+
+[dependencies.rasn]
+workspace = true
+optional = true
 
 [dependencies.const-oid]
 workspace = true
+optional = true
 
 [dependencies.hex]
 workspace = true
@@ -22,9 +28,14 @@ optional = true
 [dependencies.utils]
 path = "../utils"
 
+[build-dependencies]
+utils = { path = "../utils", features = ["build"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 
 [features]
-default = ["serde"]
+default = ["serde", "der"]
+der = ["dep:der", "dep:const-oid"]
+rasn = ["dep:rasn"]
 serde = ["dep:serde"]

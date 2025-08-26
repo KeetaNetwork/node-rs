@@ -5,3 +5,6 @@
 
 pub mod errors;
 pub mod testing;
+
+#[cfg(feature = "build")]
+pub mod build;

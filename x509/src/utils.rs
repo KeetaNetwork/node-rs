@@ -1198,27 +1198,23 @@ mod tests {
 		let tbs_der = b"test data";
 		let test_cases = [
 			// DER format detection (starts with 0x30)
-			(vec![0x30, 0x44, 0x02, 0x20], true),
+			vec![0x30, 0x44, 0x02, 0x20],
 			// Raw format (64 bytes, not starting with 0x30)
-			(vec![0x01; 64], true),
+			vec![0x01; 64],
 			// Raw format with different starting byte
-			(vec![0xFF; 64], true),
+			vec![0xFF; 64],
 			// Invalid length (not 64 and not DER)
-			(vec![0x01; 48], true),
-			(vec![0x01; 32], true),
+			vec![0x01; 48],
+			vec![0x01; 32],
 			// Empty signature
-			(vec![], true),
+			vec![],
 			// Single byte
-			(vec![0x30], true),
+			vec![0x30],
 		];
 
-		for (signature_bytes, should_error) in test_cases {
+		for signature_bytes in test_cases {
 			let result = try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, tbs_der);
-			if should_error {
-				assert!(result.is_err());
-			} else {
-				assert!(result.is_ok());
-			}
+			assert!(result.is_err());
 		}
 	}
 }

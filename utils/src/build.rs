@@ -1,0 +1,441 @@
+//! Build utilities for ASN.1 code generation
+//!
+//! This module provides utilities for processing generated ASN.1 code,
+//! particularly for removing module wrappers and cleaning up imports.
+
+use rasn_compiler::RasnCompiler;
+use std::path::Path;
+
+/// Configuration options for ASN.1 compilation
+#[derive(Debug, Clone)]
+pub struct Asn1CompileConfig {
+	/// Directory containing ASN.1 files
+	pub asn_dir: String,
+	/// Output directory for generated Rust files  
+	pub out_dir: String,
+	/// Path for the generated.rs file (optional)
+	pub generated_rs_path: Option<String>,
+	/// Whether to strip pre-built methods from generated types
+	pub strip_prebuilt_methods: bool,
+	/// Methods to strip (if strip_prebuilt_methods is true)
+	pub methods_to_strip: Vec<String>,
+	/// Whether to remove module wrappers
+	pub remove_module_wrappers: bool,
+}
+
+impl Default for Asn1CompileConfig {
+	fn default() -> Self {
+		Self {
+			asn_dir: "asn1".to_string(),
+			out_dir: "generated".to_string(),
+			generated_rs_path: None,
+			strip_prebuilt_methods: false,
+			methods_to_strip: vec!["new".to_string()],
+			remove_module_wrappers: true,
+		}
+	}
+}
+
+impl Asn1CompileConfig {
+	/// Create a new configuration with default settings
+	pub fn new(asn_dir: &str, out_dir: &str) -> Self {
+		Self { asn_dir: asn_dir.to_string(), out_dir: out_dir.to_string(), ..Default::default() }
+	}
+
+	/// Set the generated.rs output path
+	pub fn with_generated_rs_path(mut self, path: &str) -> Self {
+		self.generated_rs_path = Some(path.to_string());
+		self
+	}
+
+	/// Enable stripping of pre-built methods
+	pub fn with_strip_prebuilt_methods(mut self, strip: bool) -> Self {
+		self.strip_prebuilt_methods = strip;
+		self
+	}
+
+	/// Set which methods to strip
+	pub fn with_methods_to_strip(mut self, methods: Vec<&str>) -> Self {
+		self.methods_to_strip = methods.into_iter().map(|s| s.to_string()).collect();
+		self
+	}
+
+	/// Set whether to remove module wrappers
+	pub fn with_remove_module_wrappers(mut self, remove: bool) -> Self {
+		self.remove_module_wrappers = remove;
+		self
+	}
+}
+
+/// Compile all ASN.1 files in a directory to Rust code
+pub fn compile_asn1_directory(asn_dir: &str, out_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+	let config = Asn1CompileConfig::new(asn_dir, out_dir);
+	compile_asn1_directory_with_full_config(&config)
+}
+
+/// Compile all ASN.1 files in a directory to Rust code with configurable generated.rs output
+pub fn compile_asn1_directory_with_config(
+	asn_dir: &str,
+	out_dir: &str,
+	generated_rs_path: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+	let mut config = Asn1CompileConfig::new(asn_dir, out_dir);
+	if let Some(path) = generated_rs_path {
+		config.generated_rs_path = Some(path.to_string());
+	}
+	compile_asn1_directory_with_full_config(&config)
+}
+
+/// Compile all ASN.1 files in a directory to Rust code with full configuration
+pub fn compile_asn1_directory_with_full_config(config: &Asn1CompileConfig) -> Result<(), Box<dyn std::error::Error>> {
+	// Create output dir if missing
+	if !Path::new(&config.out_dir).exists() {
+		std::fs::create_dir_all(&config.out_dir)?;
+	}
+
+	// Find all .asn files in the asn1 directory
+	let asn_files = std::fs::read_dir(&config.asn_dir)?
+		.filter_map(|entry| {
+			let entry = entry.ok()?;
+			let path = entry.path();
+			if path.extension()? == "asn" {
+				Some(path)
+			} else {
+				None
+			}
+		})
+		.collect::<Vec<_>>();
+
+	// Track generated modules for creating generated.rs
+	let mut generated_modules = Vec::new();
+
+	// Compile each ASN.1 file
+	for asn_file in &asn_files {
+		let output_file =
+			Path::new(&config.out_dir).join(asn_file.file_stem().unwrap().to_string_lossy().to_string() + ".rs");
+		let module_name = asn_file.file_stem().unwrap().to_string_lossy().to_string();
+
+		let result = RasnCompiler::new()
+			.add_asn_by_path(asn_file)
+			.compile_to_string();
+
+		match result {
+			Ok(compile_result) => {
+				let generated_code = compile_result.generated;
+
+				// Remove module wrapper by extracting the inner content if enabled
+				let processed_code = if config.remove_module_wrappers {
+					remove_module_wrapper(&generated_code)
+				} else {
+					generated_code
+				};
+
+				// Strip pre-built methods if enabled
+				let processed_code = if config.strip_prebuilt_methods {
+					strip_prebuilt_methods(&processed_code, &config.methods_to_strip)
+				} else {
+					processed_code
+				};
+
+				// Fix common issues in generated code
+				let processed_code = fix_generated_code_issues(&processed_code);
+
+				// Add lint suppressions for generated code
+				let final_code = add_lint_suppressions(&processed_code);
+
+				// Write the processed code to file
+				std::fs::write(&output_file, final_code)?;
+
+				// Track this module for the generated.rs file
+				generated_modules.push((module_name, asn_file.clone()));
+
+				for warning in compile_result.warnings {
+					println!("cargo:warning=ASN.1 compilation warning: {warning:?}");
+				}
+			}
+			Err(error) => {
+				return Err(format!("ASN.1 compilation failed for {asn_file:?}: {error:?}").into());
+			}
+		}
+
+		println!("cargo:rerun-if-changed={}", asn_file.display());
+	}
+
+	// Generate the generated.rs file - use provided path or default to src/generated.rs
+	let default_generated_path = Path::new("src").join("generated.rs");
+	let generated_path = config
+		.generated_rs_path
+		.as_deref()
+		.unwrap_or(default_generated_path.to_str().unwrap());
+	generate_generated_rs(&generated_modules, generated_path, &config.out_dir)?;
+
+	println!("cargo:rerun-if-changed={}", config.asn_dir);
+	Ok(())
+}
+
+/// Remove module wrapper from generated code
+pub fn remove_module_wrapper(code: &str) -> String {
+	// Look for pattern: pub mod module_name {
+	let lines: Vec<&str> = code.lines().collect();
+
+	// Find the start and end of the module
+	let mut start_idx = None;
+	let mut end_idx = None;
+	let mut brace_count = 0;
+
+	for (i, line) in lines.iter().enumerate() {
+		let trimmed = line.trim();
+
+		// Look for pub mod declaration
+		if trimmed.starts_with("pub mod ") && trimmed.ends_with(" {") {
+			start_idx = Some(i);
+			brace_count = 1;
+			continue;
+		}
+
+		// If we're inside a module, track braces
+		if start_idx.is_some() && end_idx.is_none() {
+			brace_count += line.matches('{').count();
+			brace_count -= line.matches('}').count();
+
+			if brace_count == 0 {
+				end_idx = Some(i);
+				break;
+			}
+		}
+	}
+
+	// If we found a module wrapper, extract the content
+	let inner_content = if let (Some(start), Some(end)) = (start_idx, end_idx) {
+		// Extract lines between the module declaration and closing brace
+		let inner_lines = &lines[start + 1..end];
+
+		// Remove one level of indentation (typically one tab)
+		let processed_lines: Vec<String> = inner_lines
+			.iter()
+			.map(|line| {
+				if let Some(stripped) = line.strip_prefix('\t') {
+					stripped
+				} else if let Some(stripped) = line.strip_prefix("    ") {
+					stripped
+				} else {
+					line
+				}
+			})
+			.map(|s| s.to_string())
+			.collect();
+
+		processed_lines.join("\n")
+	} else {
+		// No module wrapper found, return as-is
+		code.to_string()
+	};
+
+	// Clean up unused imports
+	clean_unused_imports(&inner_content)
+}
+
+/// Strip pre-built methods from generated code
+pub fn strip_prebuilt_methods(code: &str, methods_to_strip: &[String]) -> String {
+	if methods_to_strip.is_empty() {
+		return code.to_string();
+	}
+
+	let lines: Vec<&str> = code.lines().collect();
+	let mut result_lines = Vec::new();
+	let mut i = 0;
+
+	while i < lines.len() {
+		let line = lines[i].trim();
+		let mut skip_method = false;
+
+		// Check if this line starts a method we want to strip
+		for method_name in methods_to_strip {
+			if line.contains(&format!("pub fn {method_name}(")) {
+				skip_method = true;
+				break;
+			}
+		}
+
+		if skip_method {
+			// Skip this method by finding its closing brace
+			let mut brace_count = 0;
+			let mut method_started = false;
+
+			// Continue from current line until we balance the braces
+			while i < lines.len() {
+				let current_line = lines[i];
+
+				// Count braces on this line
+				for ch in current_line.chars() {
+					match ch {
+						'{' => {
+							brace_count += 1;
+							method_started = true;
+						}
+						'}' => {
+							brace_count -= 1;
+						}
+						_ => {}
+					}
+				}
+
+				i += 1;
+
+				// If we've closed all braces for this method, we're done
+				if method_started && brace_count == 0 {
+					break;
+				}
+			}
+		} else {
+			// Keep this line
+			result_lines.push(lines[i]);
+			i += 1;
+		}
+	}
+
+	result_lines.join("\n")
+}
+
+/// Clean up unused imports from generated code
+pub fn clean_unused_imports(code: &str) -> String {
+	// Split into lines and filter out common unused imports
+	let lines: Vec<&str> = code.lines().collect();
+	let mut cleaned_lines = Vec::new();
+
+	for line in lines {
+		let trimmed = line.trim();
+
+		// Skip unused imports commonly generated by rasn-compiler
+		if trimmed == "use core::borrow::Borrow;"
+			|| trimmed == "use std::sync::LazyLock;"
+			|| (trimmed == "extern crate alloc;" && code.contains("use rasn::prelude::*;"))
+		{
+			continue;
+		}
+
+		cleaned_lines.push(line);
+	}
+
+	cleaned_lines.join("\n")
+}
+
+/// Add lint suppressions to generated code
+pub fn add_lint_suppressions(code: &str) -> String {
+	// Add comprehensive lint suppressions at the top of the file
+	let suppressions = [
+		"#[allow(unused_imports)]",
+		"#[allow(unused_variables)]",
+		"#[allow(dead_code)]",
+		"#[allow(non_camel_case_types)]",
+		"#[allow(non_snake_case)]",
+		"#[allow(non_upper_case_globals)]",
+		"#[allow(clippy::all)]",
+		"", // Empty line for readability
+	];
+
+	let mut result = suppressions.join("\n");
+	result.push_str(code);
+
+	// Ensure the file ends with a newline
+	if !result.ends_with('\n') {
+		result.push('\n');
+	}
+
+	result
+}
+
+/// Fix common issues in generated code
+pub fn fix_generated_code_issues(code: &str) -> String {
+	let mut result = code.to_string();
+
+	// Fix ANY -> Any (rasn uses lowercase)
+	result = result.replace("Option<ANY>", "Option<Any>");
+	result = result.replace(" ANY>", " Any>");
+	result = result.replace(" ANY ", " Any ");
+
+	// Fix incorrect import paths - replace module-based imports with relative imports
+	result = result.replace(
+		"use super::algorithm_identifier_definitions::AlgorithmIdentifier;",
+		"use super::algorithm_identifier::AlgorithmIdentifier;",
+	);
+	result = result.replace("use super::subject_public_key_info_definitions::", "use super::subject_public_key_info::");
+
+	result
+}
+/// Generate a generated.rs file that re-exports all types from generated modules
+pub fn generate_generated_rs(
+	modules: &[(String, std::path::PathBuf)],
+	output_path: &str,
+	modules_dir: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+	// Create the output directory if it doesn't exist
+	if let Some(parent) = Path::new(output_path).parent() {
+		if !parent.exists() {
+			std::fs::create_dir_all(parent)?;
+		}
+	}
+
+	let mut content = String::new();
+	content.push_str("//! Generated ASN.1 code\n");
+	content.push_str("//!\n");
+	content.push_str("//! This module contains all the generated ASN.1 structures and re-exports them\n");
+	content.push_str("//! for use throughout the library.\n");
+	content.push_str("//!\n");
+	content.push_str("//! This file is automatically generated by build.rs - do not edit manually.\n\n");
+
+	// Add module declarations using path directive to reference generated files
+	for (module_name, _) in modules {
+		content.push_str(&format!("#[path = \"../{modules_dir}/{module_name}.rs\"]\n"));
+		content.push_str(&format!("mod {module_name};\n"));
+	}
+
+	content.push_str("\n// Re-export all types from the generated modules\n");
+
+	// Add re-exports for each module
+	for (module_name, _asn_file) in modules {
+		// Parse the generated file to find exported types - look in the modules directory
+		let generated_file_path = format!("{modules_dir}/{module_name}.rs");
+		if let Ok(generated_content) = std::fs::read_to_string(&generated_file_path) {
+			let exported_types = extract_exported_types(&generated_content);
+			if !exported_types.is_empty() {
+				content.push_str(&format!("pub use {}::{{{}}};\n", module_name, exported_types.join(", ")));
+			}
+		}
+	}
+
+	// Write the generated.rs file
+	std::fs::write(output_path, content)?;
+	println!("cargo:rerun-if-changed={output_path}");
+
+	Ok(())
+}
+
+/// Extract exported type names from generated code
+pub fn extract_exported_types(content: &str) -> Vec<String> {
+	let mut types = Vec::new();
+
+	for line in content.lines() {
+		let trimmed = line.trim();
+
+		// Look for pub struct, pub enum, pub type declarations
+		if trimmed.starts_with("pub struct ") || trimmed.starts_with("pub enum ") || trimmed.starts_with("pub type ") {
+			if let Some(name_part) = trimmed.split_whitespace().nth(2) {
+				// Extract the type name (before any generic parameters or brackets)
+				let type_name = name_part
+					.split('<')
+					.next()
+					.unwrap_or(name_part)
+					.split('(')
+					.next()
+					.unwrap_or(name_part)
+					.split('{')
+					.next()
+					.unwrap_or(name_part);
+				types.push(type_name.to_string());
+			}
+		}
+	}
+
+	types
+}

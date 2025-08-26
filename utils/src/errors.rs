@@ -154,7 +154,7 @@ macro_rules! impl_variant_error_from {
 
 #[cfg(test)]
 mod tests {
-	use crate::test_error_from_conversions;
+	use crate::{test_error_from_conversions, test_error_variants};
 
 	// Minimal test error type
 	#[derive(Debug)]
@@ -199,7 +199,7 @@ mod tests {
 	}
 
 	// Test via pattern with minimal setup
-	#[derive(Debug)]
+	#[derive(Debug, PartialEq, Eq)]
 	struct SimpleIntermediate(String);
 
 	impl std::fmt::Display for SimpleIntermediate {
@@ -214,6 +214,12 @@ mod tests {
 		fn from(_: std::fmt::Error) -> Self {
 			SimpleIntermediate("converted".to_string())
 		}
+	}
+
+	test_error_variants! {
+		test_error_intermediate, [
+			SimpleIntermediate("test".to_string())
+		]
 	}
 
 	#[derive(Debug)]

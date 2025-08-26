@@ -1,0 +1,10 @@
+SubjectPublicKeyInfoDefinitions DEFINITIONS ::= BEGIN
+
+    IMPORTS AlgorithmIdentifier FROM AlgorithmIdentifierDefinitions;
+
+    SubjectPublicKeyInfo ::= SEQUENCE {
+        algorithm              AlgorithmIdentifier,
+        subjectPublicKey       BIT STRING
+    }
+
+END
