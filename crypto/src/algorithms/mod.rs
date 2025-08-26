@@ -222,14 +222,25 @@ impl_any_signature!(
 #[cfg(feature = "der")]
 macro_rules! impl_subject_public_key_info {
 	($(($variant:ident, $public_key_type:ty, $oid:expr, $params_oid:expr)),* $(,)?) => {
+		impl From<Algorithm> for ObjectIdentifier {
+			fn from(algorithm: Algorithm) -> Self {
+				let oid = match algorithm {
+					$(
+						Algorithm::$variant => $oid,
+					)*
+				};
+				ObjectIdentifier::new(oid).expect("Invalid OID")
+			}
+		}
+
 		$(
 			impl From<$public_key_type> for SubjectPublicKeyInfo {
 				fn from(public_key: $public_key_type) -> Self {
-					let algorithm = ObjectIdentifier::new($oid).unwrap();
-					let parameters = $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).unwrap()));
+					let algorithm = ObjectIdentifier::from(Algorithm::$variant);
+					let parameters = $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).expect("Invalid OID")));
 					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
 					let public_key_bytes = Vec::from(public_key);
-					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).unwrap()
+					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).expect("Failed to create SubjectPublicKeyInfo")
 				}
 			}
 		)*
@@ -241,6 +252,18 @@ macro_rules! impl_subject_public_key_info {
 						AnyPublicKey::$variant(public_key) => SubjectPublicKeyInfo::from(public_key),
 					)*
 				}
+			}
+		}
+
+		impl From<Algorithm> for AlgorithmIdentifier {
+			fn from(algorithm: Algorithm) -> Self {
+				let oid = ObjectIdentifier::from(algorithm);
+				let parameters = match algorithm {
+					$(
+						Algorithm::$variant => $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).expect("Invalid OID"))),
+					)*
+				};
+				AlgorithmIdentifier { algorithm: oid, parameters }
 			}
 		}
 	};
@@ -631,6 +654,15 @@ mod tests {
 				.iter()
 				.find(|data| data.algorithm == test_case.algorithm)
 				.unwrap();
+
+			// Test ObjectIdentifier
+			let algorithm_oid = ObjectIdentifier::from(test_case.algorithm);
+			assert_eq!(algorithm_oid.to_string(), test_case.expected_algorithm_oid);
+
+			// Test AlgorithmIdentifier
+			let algorithm_info = AlgorithmIdentifier::from(test_case.algorithm);
+			assert_eq!(algorithm_info.algorithm.to_string(), test_case.expected_algorithm_oid);
+			assert_eq!(algorithm_info.parameters.is_some(), test_case.has_parameters);
 
 			// Test data persistence
 			let any_public_key = test_data.create_any_public_key(TEST_SEED.as_bytes());

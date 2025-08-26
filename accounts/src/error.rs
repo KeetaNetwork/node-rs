@@ -88,6 +88,11 @@ impl_variant_error_from!(AccountError, {
 	crypto::operations::SignatureError => InvalidConstruction,
 });
 
+#[cfg(any(feature = "der", feature = "rasn"))]
+impl_variant_error_from!(AccountError, {
+	asn1::error::Asn1Error => InvalidConstruction,
+});
+
 impl From<CryptoError> for AccountError {
 	fn from(err: CryptoError) -> Self {
 		match err {
@@ -148,6 +153,13 @@ mod tests {
 			CryptoError::InvalidLength { message: "test".to_string() },
 			CryptoError::UnsupportedAlgorithm { algorithm: "test".to_string() },
 			CryptoError::EncryptionNotSupported,
+		]
+	}
+
+	#[cfg(any(feature = "der", feature = "rasn"))]
+	test_error_from_conversions! {
+		test_from_asn1_implementations, AccountError, [
+			asn1::error::Asn1Error::InvalidOid { reason: "test.oid".to_string() },
 		]
 	}
 

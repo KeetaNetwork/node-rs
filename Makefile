@@ -61,6 +61,8 @@ test-feat:
 	cargo test -p crypto --no-default-features --features signature
 	cargo test -p crypto --no-default-features --features encryption
 	cargo test -p crypto --no-default-features --features der
+	cargo test -p accounts --no-default-features --features der
+	cargo test -p accounts --no-default-features --features rasn
 	cargo test -p x509 --no-default-features --features serde
 	cargo test -p asn1 --no-default-features --features der
 	cargo test -p asn1 --no-default-features --features rasn

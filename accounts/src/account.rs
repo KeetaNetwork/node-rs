@@ -2369,6 +2369,46 @@ where
 	}
 }
 
+#[cfg(any(feature = "der", feature = "rasn"))]
+impl<KEYTYPE> TryFrom<Account<KEYTYPE>> for asn1::AlgorithmIdentifier
+where
+	KEYTYPE: KeyPair,
+{
+	type Error = crate::error::AccountError;
+
+	fn try_from(_: Account<KEYTYPE>) -> Result<Self, Self::Error> {
+		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
+		let algorithm = asn1::ObjectIdentifier::from(algorithm);
+		Ok(asn1::AlgorithmIdentifier { algorithm, parameters: None })
+	}
+}
+
+#[cfg(any(feature = "der", feature = "rasn"))]
+impl<KEYTYPE> TryFrom<Account<KEYTYPE>> for asn1::SubjectPublicKeyInfo
+where
+	KEYTYPE: KeyPair,
+{
+	type Error = crate::error::AccountError;
+
+	#[cfg(feature = "der")]
+	fn try_from(account: Account<KEYTYPE>) -> Result<Self, Self::Error> {
+		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
+		let algorithm = asn1::AlgorithmIdentifier::from(algorithm);
+		let public_key = account.keypair.to_public_key();
+		let public_key_bytes = public_key.as_ref().to_vec();
+		Ok(asn1::SubjectPublicKeyInfo::new(algorithm, &public_key_bytes)?)
+	}
+
+	#[cfg(all(feature = "rasn", not(feature = "der")))]
+	fn try_from(account: Account<KEYTYPE>) -> Result<Self, Self::Error> {
+		let algorithm = Algorithm::try_from(KEYTYPE::KEY_PAIR_TYPE)?;
+		let algorithm = asn1::AlgorithmIdentifier::from(algorithm);
+		let public_key = account.keypair.to_public_key();
+		let public_key_bytes = public_key.as_ref().to_vec();
+		Ok(asn1::SubjectPublicKeyInfo::new(algorithm, &public_key_bytes)?)
+	}
+}
+
 // Macro for type casting for public key access
 macro_rules! cast_and_get_public_key_string {
 	($self:expr, $key_type:ty) => {{
@@ -5584,5 +5624,34 @@ mod tests {
 		test_opening_hash!(KeyED25519, TEST_PUBLIC_ACCOUNT_DATA.ed25519);
 		test_opening_hash!(KeyTOKEN, TEST_PUBLIC_ACCOUNT_DATA.token);
 		test_opening_hash!(KeySTORAGE, TEST_PUBLIC_ACCOUNT_DATA.storage);
+	}
+
+	#[cfg(any(feature = "der", feature = "rasn"))]
+	#[test]
+	fn test_asn1_conversions() {
+		// Test cryptographic keys can convert, identifier keys cannot
+		macro_rules! test_crypto_conversion {
+			($($key_type:ty),*) => {
+				$(
+					let account = create_test_account::<$key_type>(None);
+					let _: asn1::AlgorithmIdentifier = account.clone().try_into().unwrap();
+					let spki: asn1::SubjectPublicKeyInfo = account.clone().try_into().unwrap();
+					let expected_bytes = Vec::<u8>::from(&account.keypair.to_public_key());
+					assert_eq!(spki.subject_public_key.raw_bytes(), expected_bytes);
+				)*
+			};
+		}
+
+		macro_rules! test_identifier_failure {
+			($($key_type:ty, $id:expr),*) => {
+				$(
+					let account = create_test_account_from_identifier::<$key_type>($id);
+					assert!(asn1::AlgorithmIdentifier::try_from(account).is_err());
+				)*
+			};
+		}
+
+		test_crypto_conversion!(KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519);
+		test_identifier_failure!(KeyNETWORK, "net", KeyTOKEN, "tok", KeySTORAGE, "stor", KeyMULTISIG, "multi");
 	}
 }

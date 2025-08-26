@@ -6,6 +6,7 @@ version = 4
 name = "accounts"
 version = "0.1.0"
 dependencies = [
+ "asn1",
  "base32",
  "base64",
  "bip39-dict",
