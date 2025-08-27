@@ -110,9 +110,17 @@ pub fn compile_asn1_directory_with_full_config(config: &Asn1CompileConfig) -> Re
 	let mut generated_modules = Vec::new();
 	// Compile each ASN.1 file
 	for asn_file in &asn_files {
-		let output_file =
-			Path::new(&config.out_dir).join(asn_file.file_stem().unwrap().to_string_lossy().to_string() + ".rs");
-		let module_name = asn_file.file_stem().unwrap().to_string_lossy().to_string();
+		// Read the ASN.1 file to get the proper module name
+		let asn_content = std::fs::read_to_string(asn_file)?;
+		let module_name = if let Some(asn1_module_name) = extract_asn1_module_name(&asn_content) {
+			// Convert ASN.1 module name to snake_case for Rust module name
+			asn1_module_name_to_import_name(&asn1_module_name)
+		} else {
+			// Fallback to filename if we can't extract the module name
+			asn_file.file_stem().unwrap().to_string_lossy().to_string()
+		};
+
+		let output_file = Path::new(&config.out_dir).join(format!("{module_name}.rs"));
 
 		let result = RasnCompiler::new()
 			.add_asn_by_path(asn_file)
@@ -314,6 +322,50 @@ pub fn clean_unused_imports(code: &str) -> String {
 	cleaned_lines.join("\n")
 }
 
+/// Fix common issues in generated code
+pub fn fix_generated_code_issues(code: &str) -> String {
+	let mut result = code.to_string();
+
+	// Fix ANY -> Any (rasn uses lowercase)
+	result = result.replace("Option<ANY>", "Option<Any>");
+	result = result.replace(" ANY>", " Any>");
+	result = result.replace(" ANY ", " Any ");
+
+	result
+}
+
+/// Extract the ASN.1 module name from ASN.1 file content
+fn extract_asn1_module_name(asn_content: &str) -> Option<String> {
+	for line in asn_content.lines() {
+		let trimmed = line.trim();
+		// Look for module definition: "ModuleName DEFINITIONS"
+		if trimmed.contains("DEFINITIONS") && !trimmed.starts_with("--") {
+			if let Some(module_name) = trimmed.split_whitespace().next() {
+				return Some(module_name.to_string());
+			}
+		}
+	}
+
+	None
+}
+
+/// Convert ASN.1 module name to the format used in import statements
+/// This typically converts CamelCase to snake_case
+fn asn1_module_name_to_import_name(asn1_name: &str) -> String {
+	// Convert CamelCase to snake_case
+	let mut result = String::new();
+	let chars = asn1_name.chars().peekable();
+	for ch in chars {
+		if ch.is_uppercase() && !result.is_empty() {
+			// Add underscore before uppercase letters (except the first character)
+			result.push('_');
+		}
+		result.push(ch.to_lowercase().next().unwrap_or(ch));
+	}
+
+	result
+}
+
 /// Add lint suppressions to generated code
 pub fn add_lint_suppressions(code: &str) -> String {
 	// Add comprehensive lint suppressions at the top of the file
@@ -335,18 +387,6 @@ pub fn add_lint_suppressions(code: &str) -> String {
 	if !result.ends_with('\n') {
 		result.push('\n');
 	}
-
-	result
-}
-
-/// Fix common issues in generated code
-pub fn fix_generated_code_issues(code: &str) -> String {
-	let mut result = code.to_string();
-
-	// Fix ANY -> Any (rasn uses lowercase)
-	result = result.replace("Option<ANY>", "Option<Any>");
-	result = result.replace(" ANY>", " Any>");
-	result = result.replace(" ANY ", " Any ");
 
 	result
 }
