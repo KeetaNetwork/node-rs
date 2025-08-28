@@ -15,6 +15,10 @@ features = ["std", "pem", "sha1"]
 [dependencies.der]
 workspace = true
 
+[dependencies.rasn]
+workspace = true
+optional = true
+
 # Date/time handling
 [dependencies.chrono]
 workspace = true
@@ -58,8 +62,10 @@ features = ["der"]
 path = "../accounts"
 
 [features]
-default = ["serde"]
+default = ["serde", "der"]
 serde = ["dep:serde", "dep:serde_json"]
+der = ["asn1/der"]
+rasn = ["dep:rasn"]
 
 [dev-dependencies]
 hex-literal.workspace = true

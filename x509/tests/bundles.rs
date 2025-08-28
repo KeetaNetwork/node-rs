@@ -12,7 +12,7 @@ fn test_certificate_bundle_creation() {
 
 	// Test basic bundle properties
 	let bundle = CertificateBundle::try_from(vec![ca_cert.clone(), user_cert.clone()]).unwrap();
-	assert_eq!(bundle.get_chain().count(), 1); // Only returns valid chains
+	assert_eq!(bundle.clone().into_iter().count(), 1); // Only returns valid chains
 
 	// Test that we can access all certificates through stores
 	let all_certificates = {
@@ -41,7 +41,7 @@ fn test_certificate_bundle_with_chain() {
 		root: root_store.clone(),
 		intermediate: HashSet::new(),
 	};
-	assert_eq!(user_bundle.chain_length(), 2);
+	assert_eq!(user_bundle.to_chain_length(), 2);
 
 	// Test trusted bundle
 	let trusted_user_bundle = CertificateBundle {
@@ -64,7 +64,7 @@ fn test_certificate_bundle_operations() {
 
 	// Test reconstruction from DER
 	let reconstructed_bundle = CertificateBundle::try_from(der_buffer.as_slice()).unwrap();
-	assert_eq!(reconstructed_bundle.get_chain().count(), 1);
+	assert_eq!(reconstructed_bundle.into_iter().count(), 1);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn test_certificate_bundle_constructor() {
 	// Test CertificateBundle constructor variants
 	let cert_with_opts = CertificateBundle::new(CA_CERT_PEM, None, None, None).unwrap();
 	assert!(!cert_with_opts.is_trusted());
-	assert_eq!(cert_with_opts.chain_length(), 1);
+	assert_eq!(cert_with_opts.to_chain_length(), 1);
 
 	// Test with trusted root option
 	let trusted_opts = CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) };

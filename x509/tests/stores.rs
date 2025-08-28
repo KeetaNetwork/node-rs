@@ -17,8 +17,8 @@ fn test_certificate_stores_basic() {
 	.unwrap();
 	assert!(ca_cert_trusted.is_trusted());
 	// The CA certificate has chain length 0 when it's a trusted root
-	assert_eq!(ca_cert_trusted.chain_length(), 1);
-	assert!(ca_cert_trusted.get_issuer_certificate().is_some()); // Self-signed cert is its own issuer
+	assert_eq!(ca_cert_trusted.to_chain_length(), 1);
+	assert!(ca_cert_trusted.to_issuer_certificate().is_some()); // Self-signed cert is its own issuer
 }
 
 #[test]
@@ -32,8 +32,8 @@ fn test_certificate_stores_untrusted() {
 	)
 	.unwrap();
 	assert!(!user_cert_without_chain.is_trusted());
-	assert_eq!(user_cert_without_chain.chain_length(), 1);
-	assert!(user_cert_without_chain.get_issuer_certificate().is_none());
+	assert_eq!(user_cert_without_chain.to_chain_length(), 1);
+	assert!(user_cert_without_chain.to_issuer_certificate().is_none());
 }
 
 #[test]
@@ -68,11 +68,11 @@ fn test_certificate_stores_with_chain() {
 	)
 	.unwrap();
 	assert!(user_cert_with_store.is_trusted());
-	assert_eq!(user_cert_with_store.chain_length(), 2);
-	assert!(user_cert_with_store.get_issuer_certificate().is_some());
+	assert_eq!(user_cert_with_store.to_chain_length(), 2);
+	assert!(user_cert_with_store.to_issuer_certificate().is_some());
 	assert_eq!(
 		user_cert_with_store
-			.get_issuer_certificate()
+			.to_issuer_certificate()
 			.unwrap()
 			.to_subject(),
 		ca_cert.to_subject()
@@ -96,7 +96,7 @@ fn test_certificate_root_retrieval() {
 	.unwrap();
 
 	// Test get_root_certificate functionality
-	let root = user_cert_with_store.get_root_certificate();
+	let root = user_cert_with_store.to_root_certificate();
 	assert!(root.is_some());
 	assert_eq!(root.unwrap().to_subject(), ca_cert.to_subject());
 }
@@ -137,8 +137,8 @@ fn test_certificate_chain_operations() {
 		intermediate: HashSet::new(),
 	};
 	assert!(!user_with_no_chain.is_trusted());
-	assert_eq!(user_with_no_chain.chain_length(), 1);
-	assert!(user_with_no_chain.get_issuer_certificate().is_none());
+	assert_eq!(user_with_no_chain.to_chain_length(), 1);
+	assert!(user_with_no_chain.to_issuer_certificate().is_none());
 
 	let user_cert_with_chain = CertificateBundle {
 		certificate: user_cert.clone(),
@@ -147,13 +147,13 @@ fn test_certificate_chain_operations() {
 		intermediate: intermediate_store.clone(),
 	};
 	assert!(user_cert_with_chain.is_trusted());
-	assert_eq!(user_cert_with_chain.chain_length(), 2);
+	assert_eq!(user_cert_with_chain.to_chain_length(), 2);
 
-	let issuer = user_cert_with_chain.get_issuer_certificate();
+	let issuer = user_cert_with_chain.to_issuer_certificate();
 	assert!(issuer.is_some());
 	assert_eq!(issuer.unwrap().to_subject(), ca_cert.to_subject());
 
-	let root = user_cert_with_chain.get_root_certificate();
+	let root = user_cert_with_chain.to_root_certificate();
 	assert!(root.is_some());
 	assert_eq!(root.unwrap().to_subject(), ca_cert.to_subject());
 }

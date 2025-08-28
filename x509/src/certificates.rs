@@ -13,7 +13,6 @@ use asn1::{BitString, ObjectIdentifier, OctetString, Sequence, ValueOrd};
 use asn1::{Decode, Encode};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
-use crypto::bigint::U256;
 use crypto::prelude::HashAlgorithm;
 use x509_cert::certificate::{CertificateInner, Profile, TbsCertificateInner};
 use x509_cert::ext::Extension as X509Extension;
@@ -477,7 +476,7 @@ impl CertificateBundle {
 	}
 
 	/// Get the root certificate from the chain.
-	pub fn get_root_certificate(&self) -> Option<Certificate> {
+	pub fn to_root_certificate(&self) -> Option<Certificate> {
 		let chain: Vec<Certificate> = self
 			.certificate
 			.verify_chain(&self.root, &self.intermediate)
@@ -493,7 +492,7 @@ impl CertificateBundle {
 	}
 
 	/// Get the issuer certificate from the chain.
-	pub fn get_issuer_certificate(&self) -> Option<Certificate> {
+	pub fn to_issuer_certificate(&self) -> Option<Certificate> {
 		let chain: Vec<Certificate> = self
 			.certificate
 			.verify_chain(&self.root, &self.intermediate)
@@ -508,24 +507,18 @@ impl CertificateBundle {
 		}
 	}
 
-	pub fn get_certificate(&self) -> &Certificate {
+	pub fn to_certificate(&self) -> &Certificate {
 		&self.certificate
 	}
 
 	/// Get the issuer's public key from the chain.
-	pub fn get_issuer_public_key(&self) -> Option<SubjectPublicKeyInfo> {
-		self.get_issuer_certificate()
+	pub fn to_issuer_public_key(&self) -> Option<SubjectPublicKeyInfo> {
+		self.to_issuer_certificate()
 			.map(|cert| cert.tbs_certificate.subject_public_key_info)
 	}
 
-	/// Get all certificates (main certificate + chain).
-	pub fn get_chain(&self) -> impl Iterator<Item = Certificate> {
-		self.certificate
-			.verify_chain(&self.root, &self.intermediate)
-	}
-
 	/// Get chain length.
-	pub fn chain_length(&self) -> usize {
+	pub fn to_chain_length(&self) -> usize {
 		self.certificate
 			.verify_chain(&self.root, &self.intermediate)
 			.count()
@@ -566,6 +559,25 @@ impl CertificateBundle {
 		self.try_into()
 	}
 }
+
+macro_rules! impl_into_iterator_for_certificate_bundle {
+	($self_type:ty) => {
+		impl IntoIterator for $self_type {
+			type Item = Certificate;
+			type IntoIter = std::vec::IntoIter<Certificate>;
+
+			fn into_iter(self) -> Self::IntoIter {
+				self.certificate
+					.verify_chain(&self.root, &self.intermediate)
+					.collect::<Vec<_>>()
+					.into_iter()
+			}
+		}
+	};
+}
+
+impl_into_iterator_for_certificate_bundle!(&CertificateBundle);
+impl_into_iterator_for_certificate_bundle!(CertificateBundle);
 
 impl TryFrom<&CertificateBundle> for Vec<u8> {
 	type Error = CertificateError;
@@ -950,37 +962,6 @@ pub struct Certificate {
 }
 
 impl Certificate {
-	/// Convert the certificate to DER format
-	pub fn to_der(&self) -> Result<Vec<u8>, CertificateError> {
-		Vec::<u8>::try_from(self)
-	}
-
-	/// Convert the certificate to PEM format
-	pub fn to_pem(&self) -> Result<String, CertificateError> {
-		Ok(format!("{self}"))
-	}
-
-	/// Get the serial number as U256
-	pub fn serial_number(&self) -> U256 {
-		// Get the raw bytes from the DER-encoded Uint
-		let bytes = self.tbs_certificate.serial_number.as_bytes();
-		// Create a 32-byte buffer for U256 (padded with zeros on the left)
-		let mut padded = [0u8; 32];
-		// Calculate starting position to right-align the serial number bytes
-		let start = 32usize.saturating_sub(bytes.len());
-
-		// Copy the serial number bytes to the right side of the buffer
-		padded[start..].copy_from_slice(bytes);
-
-		// Convert the big-endian byte array to U256
-		U256::from_be_slice(&padded)
-	}
-
-	/// Check if the certificate is valid at a specific time
-	pub fn check_valid(&self, time: DateTime<Utc>) -> bool {
-		self.is_valid_at(time).unwrap_or(false)
-	}
-
 	/// Check if the certificate is valid at a specific time
 	pub fn is_valid_at(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
 		let validity = &self.tbs_certificate.validity;
@@ -996,61 +977,62 @@ impl Certificate {
 		Ok(true)
 	}
 
-	/// Check if the certificate is valid at a specific chrono DateTime (alias)
-	pub fn is_valid_at_datetime(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
-		self.is_valid_at(time)
-	}
-
 	/// Check if the certificate is currently valid
 	pub fn is_currently_valid(&self) -> Result<bool, CertificateError> {
 		self.is_valid_at(Utc::now())
 	}
 
-	/// Check if the certificate is currently valid (simple boolean)
-	pub fn check_currently_valid(&self) -> bool {
-		self.check_valid(Utc::now())
+	/// Check if the certificate will expire within the given duration
+	pub fn is_expiring_within(&self, duration: Duration) -> bool {
+		let now = Utc::now();
+		self.to_not_after() <= now + duration
+	}
+
+	/// Check if the certificate has been valid for at least the given duration
+	pub fn is_valid_for_at_least(&self, duration: Duration) -> bool {
+		self.to_age() >= duration
 	}
 
 	/// Get the validity period as chrono DateTimes
-	pub fn validity_period(&self) -> (DateTime<Utc>, DateTime<Utc>) {
-		let validity = &self.tbs_certificate.validity;
-		(
-			DateTime::<Utc>::from(validity.not_before.to_system_time()),
-			DateTime::<Utc>::from(validity.not_after.to_system_time()),
-		)
+	pub fn to_validity_period(&self) -> Validity {
+		self.tbs_certificate.validity
 	}
 
 	/// Get the not_before time as chrono DateTime
-	pub fn not_before(&self) -> DateTime<Utc> {
+	pub fn to_not_before(&self) -> DateTime<Utc> {
 		DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time())
 	}
 
 	/// Get the not_after time as chrono DateTime
-	pub fn not_after(&self) -> DateTime<Utc> {
+	pub fn to_not_after(&self) -> DateTime<Utc> {
 		DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time())
 	}
 
 	/// Get the certificate's age (how long it has been valid)
-	pub fn age(&self) -> Duration {
+	pub fn to_age(&self) -> Duration {
 		let now = Utc::now();
-		now - self.not_before()
+		now - self.to_not_before()
 	}
 
 	/// Get the remaining validity period of the certificate
-	pub fn remaining_validity(&self) -> Duration {
+	pub fn to_remaining_validity(&self) -> Duration {
 		let now = Utc::now();
-		self.not_after() - now
+		self.to_not_after() - now
 	}
 
-	/// Check if the certificate will expire within the given duration
-	pub fn expires_within(&self, duration: Duration) -> bool {
-		let now = Utc::now();
-		self.not_after() <= now + duration
+	/// Convert the certificate to DER format
+	pub fn to_der(&self) -> Result<Vec<u8>, CertificateError> {
+		Vec::<u8>::try_from(self)
 	}
 
-	/// Check if the certificate has been valid for at least the given duration
-	pub fn valid_for_at_least(&self, duration: Duration) -> bool {
-		self.age() >= duration
+	/// Convert the certificate to PEM format
+	pub fn to_pem(&self) -> Result<String, CertificateError> {
+		Ok(format!("{self}"))
+	}
+
+	/// Get the serial number
+	pub fn to_serial_number(&self) -> SerialNumber {
+		self.tbs_certificate.serial_number.clone()
 	}
 
 	/// Get the subject distinguished name as a string
@@ -1123,7 +1105,7 @@ impl Certificate {
 		}
 
 		// Check validity periods (issuer should be valid when this cert was issued)
-		let this_not_before = self.not_before();
+		let this_not_before = self.to_not_before();
 		if !issuer.is_valid_at(this_not_before)? {
 			return Ok(false);
 		}
@@ -1228,16 +1210,6 @@ impl Certificate {
 		}
 
 		Ok(())
-	}
-
-	/// Validate the certificate at a specific chrono DateTime (alias)
-	pub fn validate_at_datetime(&self, time: DateTime<Utc>) -> Result<(), CertificateError> {
-		self.validate_at(time)
-	}
-
-	/// Validate the certificate at the current time
-	pub fn validate_now(&self) -> Result<(), CertificateError> {
-		self.validate_at(Utc::now())
 	}
 
 	/// Check if two certificates have the same public key
@@ -1783,8 +1755,8 @@ mod tests {
 		// Get the first test certificate and calculate a moment in the
 		// middle of its validity.
 		let cert: Certificate = CERTIFICATE_TEST_SETS[0].chain.root.parse().unwrap();
-		let validity_start = cert.not_before();
-		let validity_end = cert.not_after();
+		let validity_start = cert.to_not_before();
+		let validity_end = cert.to_not_after();
 		let validity_duration = validity_end - validity_start;
 
 		// Use a moment that's 25% through the certificate's validity period
@@ -1892,7 +1864,6 @@ mod tests {
 	fn assert_cert_properties(cert: &Certificate, expected_ca: bool) {
 		assert!(!cert.to_issuer().is_empty());
 		assert!(!cert.to_subject().is_empty());
-		assert!(cert.serial_number() > U256::ZERO);
 
 		if expected_ca {
 			assert!(cert.is_ca());
@@ -1936,15 +1907,21 @@ mod tests {
 			let cert_moment = get_cert_moment();
 
 			for cert in [&bundle.ca_cert, &bundle.intermediate_cert, &bundle.client_cert] {
-				let (not_before, not_after) = cert.validity_period();
+				let not_before = cert.to_not_before();
+				let not_after = cert.to_not_after();
 				assert!(not_before < not_after);
 				assert!(cert.is_valid_at(cert_moment).unwrap());
-				assert!(cert.check_valid(cert_moment));
 
 				let before_valid = not_before - chrono::Duration::seconds(1);
 				let after_valid = not_after + chrono::Duration::seconds(1);
 				assert!(!cert.is_valid_at(before_valid).unwrap());
 				assert!(!cert.is_valid_at(after_valid).unwrap());
+
+				let validity_period = cert.to_validity_period();
+				let validity_not_before = DateTime::<Utc>::from(validity_period.not_before.to_system_time());
+				let validity_not_after = DateTime::<Utc>::from(validity_period.not_after.to_system_time());
+				assert_eq!(validity_not_before, not_before);
+				assert_eq!(validity_not_after, not_after);
 
 				let cert_age_at_moment = cert_moment - not_before;
 				let cert_remaining_at_moment = not_after - cert_moment;
@@ -2009,8 +1986,8 @@ mod tests {
 				intermediate: HashSet::new(),
 			};
 
-			assert!(client_with_no_chain.get_issuer_certificate().is_none());
-			assert!(client_with_no_chain.get_root_certificate().is_none());
+			assert!(client_with_no_chain.to_issuer_certificate().is_none());
+			assert!(client_with_no_chain.to_root_certificate().is_none());
 
 			// Test self-signed certificate (should return itself)
 			let ca_with_no_chain = CertificateBundle {
@@ -2020,8 +1997,8 @@ mod tests {
 				intermediate: intermediate_certs.clone(),
 			};
 
-			assert!(ca_with_no_chain.get_issuer_certificate().is_some());
-			assert!(ca_with_no_chain.get_root_certificate().is_some());
+			assert!(ca_with_no_chain.to_issuer_certificate().is_some());
+			assert!(ca_with_no_chain.to_root_certificate().is_some());
 
 			// Test with complete chain
 			let user_with_chain = CertificateBundle {
@@ -2031,12 +2008,12 @@ mod tests {
 				intermediate: intermediate_certs.clone(),
 			};
 
-			let issuer = user_with_chain.get_issuer_certificate().unwrap();
-			let root = user_with_chain.get_root_certificate().unwrap();
+			let issuer = user_with_chain.to_issuer_certificate().unwrap();
+			let root = user_with_chain.to_root_certificate().unwrap();
 
 			assert_eq!(issuer.to_subject(), intermediate_cert.to_subject());
 			assert_eq!(root.to_subject(), ca_cert.to_subject());
-			assert_eq!(user_with_chain.chain_length(), 3);
+			assert_eq!(user_with_chain.to_chain_length(), 3);
 		});
 	}
 
@@ -2046,7 +2023,7 @@ mod tests {
 			($try_from_expr:expr, $expected_trusted:expr, $expected_chain_length:expr) => {
 				let cert_with_opts = $try_from_expr.unwrap();
 				assert_eq!(cert_with_opts.is_trusted(), $expected_trusted);
-				assert_eq!(cert_with_opts.chain_length(), $expected_chain_length);
+				assert_eq!(cert_with_opts.to_chain_length(), $expected_chain_length);
 			};
 		}
 
@@ -2068,7 +2045,7 @@ mod tests {
 				.with_trusted(true)
 				.with_chain(vec![base_cert]);
 			assert!(cert_with_trust.is_trusted());
-			assert_eq!(cert_with_trust.chain_length(), 1);
+			assert_eq!(cert_with_trust.to_chain_length(), 1);
 		}
 	}
 
@@ -2080,7 +2057,7 @@ mod tests {
 			assert!(!der_bundle.is_empty());
 
 			let restored = CertificateBundle::try_from(der_bundle.as_slice()).unwrap();
-			let actual_count = restored.get_chain().count();
+			let actual_count = restored.into_iter().count();
 			assert_eq!(actual_count, expected_cert_count);
 		}
 
@@ -2090,14 +2067,14 @@ mod tests {
 			let chain = vec![client_cert.clone(), intermediate_cert.clone(), ca_cert.clone()];
 			let bundle = CertificateBundle::try_from(chain).unwrap();
 			assert_eq!(bundle.certificate, *client_cert);
-			assert_eq!(bundle.chain_length(), 3);
-			assert_eq!(bundle.get_chain().count(), 3);
+			assert_eq!(bundle.to_chain_length(), 3);
+			assert_eq!(bundle.clone().into_iter().count(), 3);
 
 			// Test get_certificate method
-			assert_eq!(bundle.get_certificate(), client_cert);
+			assert_eq!(bundle.to_certificate(), client_cert);
 
 			// Test get_issuer_public_key method
-			let issuer_public_key = bundle.get_issuer_public_key();
+			let issuer_public_key = bundle.to_issuer_public_key();
 			assert!(issuer_public_key.is_some());
 
 			// Test bundle roundtrip
@@ -2127,7 +2104,7 @@ mod tests {
 			cert_with_options.add_intermediate(intermediate_cert.clone());
 			assert_eq!(cert_with_options.intermediate.len(), 1);
 
-			let all_certs: Vec<_> = cert_with_options.get_chain().collect();
+			let all_certs: Vec<_> = cert_with_options.into_iter().collect();
 			assert_eq!(all_certs.len(), 3);
 			assert!(all_certs.contains(ca_cert));
 			assert!(all_certs.contains(intermediate_cert));
@@ -2153,7 +2130,7 @@ mod tests {
 			cert_bundle.add_intermediate(intermediate_cert.clone());
 
 			// Verify the chain includes all certificates
-			let all_certs: Vec<_> = cert_bundle.get_chain().collect();
+			let all_certs: Vec<_> = cert_bundle.clone().into_iter().collect();
 			assert_eq!(all_certs.len(), 3); // user_cert + intermediate_cert + ca_cert
 			assert!(all_certs.contains(user_cert));
 			assert!(all_certs.contains(ca_cert));
@@ -2170,57 +2147,55 @@ mod tests {
 		test_all_certificate_sets(|bundle| {
 			let cert = &bundle.ca_cert;
 			let moment = get_cert_moment();
-			assert!(cert.is_valid_at_datetime(moment).unwrap());
-			assert!(cert.check_valid(moment));
-			assert!(cert.is_valid_at_datetime(moment).unwrap());
-			assert!(cert.validate_at_datetime(moment).is_ok());
+			assert!(cert.is_valid_at(moment).unwrap());
 			assert!(cert.assert_valid(moment).is_ok());
 			assert!(cert.validate_at(moment).is_ok());
 
 			// Test validate_now (cert may be expired)
-			let now = cert.validate_now();
+			let now = cert.is_currently_valid();
 			assert!(now.is_ok() || now.is_err());
 
 			// Test current validity methods
 			assert!(cert.is_currently_valid().unwrap());
-			assert!(cert.check_currently_valid());
 
 			let subject = cert.to_subject();
 			let issuer = cert.to_issuer();
-			let serial = cert.serial_number();
+			let serial = cert.to_serial_number();
+			let serial_string = serial.to_string();
+			assert!(!serial_string.is_empty());
+			assert!(serial_string.contains(':'));
 			assert!(!subject.is_empty());
 			assert!(!issuer.is_empty());
-			assert!(serial > U256::ZERO);
 
-			let age = cert.age();
+			let age = cert.to_age();
 			assert!(age > chrono::Duration::zero());
 
 			// Test remaining_validity method
-			let remaining_validity = cert.remaining_validity();
+			let remaining_validity = cert.to_remaining_validity();
 			assert!(remaining_validity > chrono::Duration::zero());
 
 			// Test expires_within method
 			let far_future = chrono::Duration::days(365 * 10); // 10 years
 			let near_future = chrono::Duration::minutes(1); // 1 minute
-			assert!(cert.expires_within(far_future));
-			assert!(!cert.expires_within(near_future));
+			assert!(cert.is_expiring_within(far_future));
+			assert!(!cert.is_expiring_within(near_future));
 
 			// Test valid_for_at_least method
 			let short_duration = chrono::Duration::hours(1);
 			let long_duration = chrono::Duration::days(365 * 10); // 10 years
-			assert!(cert.valid_for_at_least(short_duration));
-			assert!(!cert.valid_for_at_least(long_duration));
+			assert!(cert.is_valid_for_at_least(short_duration));
+			assert!(!cert.is_valid_for_at_least(long_duration));
 
 			// Calculate remaining validity from the test moment
-			let remaining = cert.not_after() - moment;
+			let remaining = cert.to_not_after() - moment;
 			assert!(remaining > chrono::Duration::zero());
 			// Certificate should still be valid (not expired)
-			assert!(cert.not_after() > moment);
+			assert!(cert.to_not_after() > moment);
 			// Certificate should have been issued before the test moment
-			assert!(cert.not_before() < moment);
+			assert!(cert.to_not_before() < moment);
 			// Age should be reasonable (at least 1 hour, less than 50 years)
-			assert!(cert.age() >= chrono::Duration::hours(1));
-			assert!(cert.age() <= chrono::Duration::days(365 * 50));
+			assert!(cert.to_age() >= chrono::Duration::hours(1));
+			assert!(cert.to_age() <= chrono::Duration::days(365 * 50));
 
 			let subject_name = cert.to_subject();
 			let issuer_name = cert.to_issuer();
@@ -2271,10 +2246,10 @@ mod tests {
 				intermediate: intermediate_certs,
 			};
 
-			let issuer = user_with_chain.get_issuer_certificate();
+			let issuer = user_with_chain.to_issuer_certificate();
 			assert!(issuer.is_some());
 
-			let root = user_with_chain.get_root_certificate();
+			let root = user_with_chain.to_root_certificate();
 			assert!(root.is_some());
 
 			// Check validity methods
@@ -2331,7 +2306,7 @@ mod tests {
 			assert!(!der_bytes.is_empty());
 
 			// Test get_certificates
-			let all_certs = cert_with_options.get_chain();
+			let all_certs = cert_with_options.into_iter();
 			assert_eq!(all_certs.count(), 3);
 		});
 	}
@@ -2379,7 +2354,7 @@ mod tests {
 				// Test CertificateWithOptions from single certificate DER
 				let cert_der = cert.to_der().unwrap();
 				let single_cert_bundle = CertificateBundle::try_from(cert_der).unwrap();
-				assert_eq!(single_cert_bundle.get_chain().count(), 1);
+				assert_eq!(single_cert_bundle.into_iter().count(), 1);
 			}
 
 			// Test Certificate from PEM strings (specific to each cert type)
@@ -2549,11 +2524,11 @@ mod tests {
 				intermediate: intermediate_certs.clone(),
 			};
 
-			let user_issuer = user_with_chain.get_issuer_certificate();
+			let user_issuer = user_with_chain.to_issuer_certificate();
 			assert!(user_issuer.is_some());
 			assert_eq!(CertificateHash::try_from(&user_issuer.unwrap()), CertificateHash::try_from(&intermediate_cert));
 
-			let user_root = user_with_chain.get_root_certificate();
+			let user_root = user_with_chain.to_root_certificate();
 			assert!(user_root.is_some());
 			assert_eq!(CertificateHash::try_from(&user_root.unwrap()), CertificateHash::try_from(&ca_cert));
 		}
@@ -3108,10 +3083,8 @@ mod tests {
 			let original_tbs = &bundle.ca_cert.tbs_certificate;
 			let x509_tbs: TbsCertificateInner<x509_cert::certificate::Rfc5280> = original_tbs.clone().into();
 			let round_trip: TbsCertificate = x509_tbs.into();
-
-			// Compare key fields that should be preserved
 			assert_eq!(original_tbs.version, round_trip.version);
-			assert_eq!(original_tbs.serial_number.as_bytes(), round_trip.serial_number.as_bytes());
+			assert_eq!(original_tbs.serial_number, round_trip.serial_number);
 			assert_eq!(original_tbs.issuer, round_trip.issuer);
 			assert_eq!(original_tbs.subject, round_trip.subject);
 			assert_eq!(original_tbs.validity, round_trip.validity);
@@ -3122,13 +3095,8 @@ mod tests {
 			let original_cert = &bundle.ca_cert;
 			let x509_cert: CertificateInner<x509_cert::certificate::Rfc5280> = original_cert.clone().into();
 			let round_trip: Certificate = x509_cert.into();
-
-			// Compare key fields that should be preserved
 			assert_eq!(original_cert.tbs_certificate.version, round_trip.tbs_certificate.version);
-			assert_eq!(
-				original_cert.tbs_certificate.serial_number.as_bytes(),
-				round_trip.tbs_certificate.serial_number.as_bytes()
-			);
+			assert_eq!(original_cert.tbs_certificate.serial_number, round_trip.tbs_certificate.serial_number);
 			assert_eq!(original_cert.tbs_certificate.issuer, round_trip.tbs_certificate.issuer);
 			assert_eq!(original_cert.tbs_certificate.subject, round_trip.tbs_certificate.subject);
 			assert_eq!(original_cert.signature, round_trip.signature);
