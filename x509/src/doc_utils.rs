@@ -7,8 +7,8 @@
 use accounts::{Account, KeyED25519, KeyPair};
 use crypto::algorithms::ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 use crypto::algorithms::KeyDerivation;
-use crypto::bigint::U256;
 use crypto::prelude::{IntoSecret, PrivateKey};
+use x509_cert::serial_number::SerialNumber;
 
 use crate::builder::CertificateBuilder;
 use crate::certificates::Certificate;
@@ -49,7 +49,7 @@ pub fn create_test_certificate(subject_name: &str, signer: Option<Account<KeyED2
 		.with_subject_public_key(public_key_info)
 		.with_subject_dn(subject_dn.clone())
 		.with_issuer_dn(subject_dn) // Self-signed
-		.with_serial_number(U256::from(1u128))
+		.with_serial_number(SerialNumber::from(1u64))
 		.with_validity_days(365)
 		.with_basic_constraints(true, None); // CA certificate
 
@@ -94,7 +94,7 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 			.with_subject_dn(root_dn.clone())
 			.with_issuer_dn(root_dn) // Self-signed
 			.with_validity_days(3650)
-			.with_serial_number(U256::from(1u128))
+			.with_serial_number(SerialNumber::from(1u64))
 			.with_basic_constraints(true, None), // CA certificate
 		&root_account,
 	);
@@ -111,7 +111,7 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 			.with_subject_dn(intermediate_dn)
 			.with_issuer_dn(root_dn)
 			.with_validity_days(1825)
-			.with_serial_number(U256::from(2u128))
+			.with_serial_number(SerialNumber::from(2u64))
 			.with_basic_constraints(true, None), // CA certificate
 		&intermediate_account,
 	);
@@ -128,7 +128,7 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 			.with_subject_dn(client_dn)
 			.with_issuer_dn(intermediate_dn)
 			.with_validity_days(365)
-			.with_serial_number(U256::from(3u128))
+			.with_serial_number(SerialNumber::from(3u64))
 			.with_basic_constraints(false, None), // Not a CA certificate
 		&client_account,
 	);

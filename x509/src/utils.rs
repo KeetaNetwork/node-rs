@@ -1,13 +1,14 @@
-use asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString, SetOfVec};
+use asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString};
 use asn1::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
 use crypto::algorithms::ed25519::{Ed25519PublicKey, Ed25519Signature};
 use crypto::algorithms::secp256k1::{Secp256k1PublicKey, Secp256k1Signature};
 use crypto::algorithms::secp256r1::{Secp256r1PublicKey, Secp256r1Signature};
 use crypto::prelude::{CryptoVerifierWithOptions, HashAlgorithm, SigningOptions};
 use crypto::utils::parse_der_ecdsa_signature;
+use x509_cert::attr::AttributeTypeAndValue;
+use x509_cert::name::{DistinguishedName, RdnSequence, RelativeDistinguishedName};
 
 use crate::error::CertificateError;
-use crate::{AttributeTypeAndValue, DistinguishedName};
 
 #[cfg(feature = "serde")]
 use crate::oids;
@@ -34,20 +35,19 @@ use crate::serde::NameValuePair;
 /// let dn = create_dn(pairs).unwrap();
 /// ```
 pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<DistinguishedName, CertificateError> {
-	let mut dn = Vec::new();
-	for (name, value) in pairs {
-		let attribute_type = ObjectIdentifier::new(name.as_ref())?;
-		// Create IA5String for the attribute value (commonly used in X.509)
-		let ia5_string = Ia5String::new(value.as_ref())?;
-		let attribute_value = Any::encode_from(&ia5_string)?;
+	pairs
+		.iter()
+		.map(|(name, value)| {
+			let oid = ObjectIdentifier::new(name.as_ref())?;
+			let ia5_string = Ia5String::new(value.as_ref())?;
+			let value = Any::encode_from(&ia5_string)?;
+			let attr = AttributeTypeAndValue { oid, value };
 
-		let attr = AttributeTypeAndValue { attribute_type, attribute_value };
-		let rdn = SetOfVec::from_iter(vec![attr])?;
-
-		dn.push(rdn);
-	}
-
-	Ok(dn)
+			// Each attribute goes in its own RDN set for simplicity
+			RelativeDistinguishedName::try_from(vec![attr]).map_err(|_| CertificateError::InvalidCertificate)
+		})
+		.collect::<Result<Vec<_>, _>>()
+		.map(RdnSequence)
 }
 
 /// Generate a key identifier from a public key using SHA-1.
@@ -99,10 +99,10 @@ pub fn generate_key_identifier(public_key: &BitString) -> Result<Vec<u8>, Certif
 /// ```
 #[cfg(feature = "serde")]
 pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
-	dn.iter()
+	dn.0.iter()
 		.flat_map(|rdn_set| {
-			rdn_set.iter().map(|attr| {
-				let name = match attr.attribute_type.to_string().as_str() {
+			rdn_set.0.iter().map(|attr| {
+				let name = match attr.oid.to_string().as_str() {
 					oids::CN => "commonName".to_string(),
 					oids::C => "countryName".to_string(),
 					oids::L => "localityName".to_string(),
@@ -113,13 +113,12 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 					oid => oid.to_string(),
 				};
 				// Try to decode as IA5String first, fall back to raw bytes if that fails
-				let value = if let Ok(ia5_string) = attr.attribute_value.decode_as::<Ia5String>() {
+				let value = if let Ok(ia5_string) = attr.value.decode_as::<Ia5String>() {
 					ia5_string.as_str().to_string()
 				} else {
 					// Fallback to treating as raw bytes
-					String::from_utf8_lossy(attr.attribute_value.value()).to_string()
+					String::from_utf8_lossy(attr.value.value()).to_string()
 				};
-
 				NameValuePair { name, value }
 			})
 		})
@@ -145,34 +144,34 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 /// ];
 ///
 /// let dn = name_value_pairs_to_dn(&pairs).unwrap();
-/// assert_eq!(dn.len(), 2);
+/// assert_eq!(dn.0.len(), 2);
 /// # }
 /// ```
 #[cfg(feature = "serde")]
 pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedName, CertificateError> {
-	let mut dn = Vec::new();
-	for pair in pairs {
-		let attribute_type = match pair.name.as_str() {
-			"commonName" | "CN" => ObjectIdentifier::new(oids::CN)?,
-			"countryName" | "C" => ObjectIdentifier::new(oids::C)?,
-			"localityName" | "L" => ObjectIdentifier::new(oids::L)?,
-			"stateOrProvinceName" | "ST" => ObjectIdentifier::new(oids::ST)?,
-			"organizationName" | "O" => ObjectIdentifier::new(oids::O)?,
-			"organizationalUnitName" | "OU" => ObjectIdentifier::new(oids::OU)?,
-			"emailAddress" => ObjectIdentifier::new(oids::EMAIL_ADDRESS)?,
-			oid_str => ObjectIdentifier::new(oid_str)?,
-		};
+	pairs
+		.iter()
+		.map(|pair| {
+			let oid = match pair.name.as_str() {
+				"commonName" | "CN" => ObjectIdentifier::new(oids::CN)?,
+				"countryName" | "C" => ObjectIdentifier::new(oids::C)?,
+				"localityName" | "L" => ObjectIdentifier::new(oids::L)?,
+				"stateOrProvinceName" | "ST" => ObjectIdentifier::new(oids::ST)?,
+				"organizationName" | "O" => ObjectIdentifier::new(oids::O)?,
+				"organizationalUnitName" | "OU" => ObjectIdentifier::new(oids::OU)?,
+				"emailAddress" => ObjectIdentifier::new(oids::EMAIL_ADDRESS)?,
+				oid_str => ObjectIdentifier::new(oid_str)?,
+			};
 
-		let ia5_string = Ia5String::new(&pair.value)?;
-		let attribute_value = Any::encode_from(&ia5_string)?;
-		let attr = AttributeTypeAndValue { attribute_type, attribute_value };
+			let ia5_string = Ia5String::new(&pair.value)?;
+			let value = Any::encode_from(&ia5_string)?;
+			let attr = AttributeTypeAndValue { oid, value };
 
-		// Each attribute goes in its own RDN set for simplicity
-		let rdn = SetOfVec::from_iter(vec![attr])?;
-		dn.push(rdn);
-	}
-
-	Ok(dn)
+			// Each attribute goes in its own RDN set for simplicity
+			RelativeDistinguishedName::try_from(vec![attr]).map_err(|_| CertificateError::InvalidCertificate)
+		})
+		.collect::<Result<Vec<_>, _>>()
+		.map(RdnSequence)
 }
 
 /// Parse Subject Key Identifier from extension bytes.
@@ -272,17 +271,17 @@ pub fn parse_authority_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>
 /// assert!(dn_string.contains("Example Org"));
 /// ```
 pub fn dn_to_string(dn: &DistinguishedName) -> String {
-	dn.iter()
-		.flat_map(|rdn| rdn.iter())
+	dn.0.iter()
+		.flat_map(|rdn| rdn.0.iter())
 		.map(|attr| {
 			// Try to decode as IA5String first, fall back to raw bytes if that fails
-			let value = if let Ok(ia5_string) = attr.attribute_value.decode_as::<Ia5String>() {
+			let value = if let Ok(ia5_string) = attr.value.decode_as::<Ia5String>() {
 				ia5_string.as_str().to_string()
 			} else {
-				String::from_utf8_lossy(attr.attribute_value.value()).to_string()
+				String::from_utf8_lossy(attr.value.value()).to_string()
 			};
 
-			format!("{}={}", attr.attribute_type, value)
+			format!("{}={}", attr.oid, value)
 		})
 		.collect::<Vec<_>>()
 		.join(", ")
@@ -678,9 +677,6 @@ mod tests {
 
 	use super::*;
 
-	#[cfg(feature = "serde")]
-	use crate::DistinguishedName;
-
 	#[test]
 	fn test_create_dn() {
 		// Test cases: (input_pairs, expected_length, should_succeed)
@@ -708,14 +704,16 @@ mod tests {
 
 			if should_succeed {
 				let dn = result.unwrap();
-				assert_eq!(dn.len(), expected_len, "Failed for pairs: {pairs:?}");
+				assert_eq!(dn.0.len(), expected_len, "Failed for pairs: {pairs:?}");
 
 				// Verify each attribute is correctly stored
 				for (i, (expected_oid, expected_value)) in pairs.iter().enumerate() {
-					assert_eq!(dn[i].len(), 1);
-					assert_eq!(dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
+					let rdn = &dn.0[i];
+					// Access the first attribute using iterator
+					let attr = rdn.0.iter().next().unwrap();
+					assert_eq!(attr.oid.to_string(), *expected_oid);
 
-					let ia5_string: Ia5String = dn[i].get(0).unwrap().attribute_value.decode_as().unwrap();
+					let ia5_string: Ia5String = attr.value.decode_as().unwrap();
 					assert_eq!(ia5_string.as_str(), *expected_value);
 				}
 			} else {
@@ -753,7 +751,7 @@ mod tests {
 
 		for (pairs, should_contain, should_not_contain) in test_cases {
 			let dn = if pairs.is_empty() {
-				Vec::new()
+				RdnSequence(Vec::new())
 			} else {
 				create_dn(pairs).unwrap()
 			};
@@ -911,7 +909,7 @@ mod tests {
 	#[cfg(feature = "serde")]
 	fn test_dn_to_name_value_pairs() {
 		// Test with empty DN
-		let empty_dn: DistinguishedName = Vec::new();
+		let empty_dn: DistinguishedName = RdnSequence(Vec::new());
 		let empty_pairs = dn_to_name_value_pairs(&empty_dn);
 		assert_eq!(empty_pairs.len(), 0);
 
@@ -969,20 +967,17 @@ mod tests {
 		// Test with empty pairs
 		let empty_pairs: Vec<NameValuePair> = vec![];
 		let empty_dn = name_value_pairs_to_dn(&empty_pairs).unwrap();
-		assert_eq!(empty_dn.len(), 0);
+		assert_eq!(empty_dn.0.len(), 0);
 
 		// Test with single pair using common name
 		let single_pairs = vec![NameValuePair { name: "commonName".to_string(), value: "example.com".to_string() }];
 		let single_dn = name_value_pairs_to_dn(&single_pairs).unwrap();
-		assert_eq!(single_dn.len(), 1);
-		assert_eq!(single_dn[0].len(), 1);
-		assert_eq!(single_dn[0].get(0).unwrap().attribute_type.to_string(), oids::CN);
-		let ia5_string: Ia5String = single_dn[0]
-			.get(0)
-			.unwrap()
-			.attribute_value
-			.decode_as()
-			.unwrap();
+		assert_eq!(single_dn.0.len(), 1);
+		let rdn = &single_dn.0[0];
+		// Access the first attribute using iterator
+		let attr = rdn.0.iter().next().unwrap();
+		assert_eq!(attr.oid.to_string(), oids::CN);
+		let ia5_string: Ia5String = attr.value.decode_as().unwrap();
 		assert_eq!(ia5_string.as_str(), "example.com");
 
 		// Test with multiple pairs using both common names and short forms
@@ -997,7 +992,7 @@ mod tests {
 		];
 
 		let multi_dn = name_value_pairs_to_dn(&multi_pairs).unwrap();
-		assert_eq!(multi_dn.len(), 7);
+		assert_eq!(multi_dn.0.len(), 7);
 
 		// Verify each attribute
 		let expected = [
@@ -1010,28 +1005,22 @@ mod tests {
 			(oids::EMAIL_ADDRESS, "admin@example.com"),
 		];
 		for (i, (expected_oid, expected_value)) in expected.iter().enumerate() {
-			assert_eq!(multi_dn[i].len(), 1);
-			assert_eq!(multi_dn[i].get(0).unwrap().attribute_type.to_string(), *expected_oid);
-			let ia5_string: Ia5String = multi_dn[i]
-				.get(0)
-				.unwrap()
-				.attribute_value
-				.decode_as()
-				.unwrap();
+			let rdn = &multi_dn.0[i];
+			// Access the first attribute using iterator
+			let attr = rdn.0.iter().next().unwrap();
+			assert_eq!(attr.oid.to_string(), *expected_oid);
+			let ia5_string: Ia5String = attr.value.decode_as().unwrap();
 			assert_eq!(ia5_string.as_str(), *expected_value);
 		}
 
 		// Test with direct OID
 		let oid_pairs = vec![NameValuePair { name: oids::CN.to_string(), value: "direct_oid.com".to_string() }];
 		let oid_dn = name_value_pairs_to_dn(&oid_pairs).unwrap();
-		assert_eq!(oid_dn.len(), 1);
-		assert_eq!(oid_dn[0].get(0).unwrap().attribute_type.to_string(), oids::CN);
-		let ia5_string: Ia5String = oid_dn[0]
-			.get(0)
-			.unwrap()
-			.attribute_value
-			.decode_as()
-			.unwrap();
+		assert_eq!(oid_dn.0.len(), 1);
+		let rdn = &oid_dn.0[0];
+		let attr = rdn.0.iter().next().unwrap();
+		assert_eq!(attr.oid.to_string(), oids::CN);
+		let ia5_string: Ia5String = attr.value.decode_as().unwrap();
 		assert_eq!(ia5_string.as_str(), "direct_oid.com");
 
 		// Test with invalid OID
@@ -1055,14 +1044,14 @@ mod tests {
 		let original_dn = create_dn(original_pairs).unwrap();
 		let name_value_pairs = dn_to_name_value_pairs(&original_dn);
 		let reconstructed_dn = name_value_pairs_to_dn(&name_value_pairs).unwrap();
-		assert_eq!(original_dn.len(), reconstructed_dn.len());
+		assert_eq!(original_dn.0.len(), reconstructed_dn.0.len());
 
 		// Each attribute should match
-		for (original_rdn, reconstructed_rdn) in original_dn.iter().zip(reconstructed_dn.iter()) {
-			assert_eq!(original_rdn.len(), reconstructed_rdn.len());
-			for (original_attr, reconstructed_attr) in original_rdn.iter().zip(reconstructed_rdn.iter()) {
-				assert_eq!(original_attr.attribute_type, reconstructed_attr.attribute_type);
-				assert_eq!(original_attr.attribute_value.value(), reconstructed_attr.attribute_value.value());
+		for (original_rdn, reconstructed_rdn) in original_dn.0.iter().zip(reconstructed_dn.0.iter()) {
+			assert_eq!(original_rdn.0.len(), reconstructed_rdn.0.len());
+			for (original_attr, reconstructed_attr) in original_rdn.0.iter().zip(reconstructed_rdn.0.iter()) {
+				assert_eq!(original_attr.oid, reconstructed_attr.oid);
+				assert_eq!(original_attr.value.value(), reconstructed_attr.value.value());
 			}
 		}
 	}

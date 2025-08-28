@@ -2,6 +2,8 @@
 //!
 //! This module provides ASN.1 structures using the rasn library.
 
+use crate::error::Asn1Error;
+
 // Re-export generated types
 pub use crate::generated::{AlgorithmIdentifier, SubjectPublicKeyInfo};
 
@@ -10,36 +12,43 @@ pub use rasn::prelude::*;
 
 impl AlgorithmIdentifier {
 	/// Create a new AlgorithmIdentifier with the given OID and no parameters
-	pub fn new(oid: &str) -> Result<Self, crate::error::Asn1Error> {
+	pub fn new(oid: &str) -> Result<Self, Asn1Error> {
 		// Parse OID string manually into numeric components
 		let arcs: Result<Vec<u32>, _> = oid.split('.').map(|s| s.parse::<u32>()).collect();
-		let arcs =
-			arcs.map_err(|_| crate::error::Asn1Error::InvalidOid { reason: format!("Invalid OID format: {}", oid) })?;
+		let arcs = arcs.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {}", oid) })?;
 
 		let oid = ObjectIdentifier::new(arcs)
-			.ok_or_else(|| crate::error::Asn1Error::InvalidOid { reason: format!("Invalid OID: {}", oid) })?;
+			.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Invalid OID: {}", oid) })?;
 
 		// Use the generated type's constructor with the native OID type
 		Ok(AlgorithmIdentifier { algorithm: oid, parameters: None })
 	}
 
 	/// Create a new AlgorithmIdentifier with the given OID and parameters
-	pub fn new_with_params(oid: &str, parameters: Any) -> Result<Self, crate::error::Asn1Error> {
+	pub fn new_with_params(oid: &str, parameters: Any) -> Result<Self, Asn1Error> {
 		// Parse OID string manually into numeric components
 		let arcs: Result<Vec<u32>, _> = oid.split('.').map(|s| s.parse::<u32>()).collect();
-		let arcs =
-			arcs.map_err(|_| crate::error::Asn1Error::InvalidOid { reason: format!("Invalid OID format: {}", oid) })?;
+		let arcs = arcs.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {}", oid) })?;
 
 		let oid = ObjectIdentifier::new(arcs)
-			.ok_or_else(|| crate::error::Asn1Error::InvalidOid { reason: format!("Invalid OID: {}", oid) })?;
+			.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Invalid OID: {}", oid) })?;
 
 		// Use the generated type's constructor with the native OID type
 		Ok(AlgorithmIdentifier { algorithm: oid, parameters: Some(parameters) })
 	}
+
+	pub fn from_der(bytes: &[u8]) -> Result<Self, Asn1Error> {
+		Ok(rasn::der::decode::<Self>(bytes)?)
+	}
+
+	/// Convert the AlgorithmIdentifier to DER format
+	pub fn to_der(&self) -> Result<Vec<u8>, Asn1Error> {
+		Ok(rasn::der::encode(self)?)
+	}
 }
 
 impl std::str::FromStr for AlgorithmIdentifier {
-	type Err = crate::error::Asn1Error;
+	type Err = Asn1Error;
 
 	fn from_str(oid: &str) -> Result<Self, Self::Err> {
 		Self::new(oid)
@@ -48,14 +57,20 @@ impl std::str::FromStr for AlgorithmIdentifier {
 
 impl SubjectPublicKeyInfo {
 	/// Create a new SubjectPublicKeyInfo
-	pub fn new<T: AsRef<[u8]>>(
-		algorithm: AlgorithmIdentifier,
-		public_key_bytes: T,
-	) -> Result<Self, crate::error::Asn1Error> {
+	pub fn new<T: AsRef<[u8]>>(algorithm: AlgorithmIdentifier, public_key_bytes: T) -> Result<Self, Asn1Error> {
 		// Convert bytes to BitString using rasn's constructor
 		let bytes = public_key_bytes.as_ref();
 		let bit_string = BitString::from_vec(bytes.to_vec());
 		Ok(SubjectPublicKeyInfo { algorithm, subject_public_key: bit_string })
+	}
+
+	pub fn from_der(bytes: &[u8]) -> Result<Self, Asn1Error> {
+		Ok(rasn::der::decode::<Self>(bytes)?)
+	}
+
+	/// Convert the SubjectPublicKeyInfo to DER format
+	pub fn to_der(&self) -> Result<Vec<u8>, Asn1Error> {
+		Ok(rasn::der::encode(self)?)
 	}
 }
 
@@ -63,7 +78,7 @@ impl SubjectPublicKeyInfo {
 macro_rules! impl_try_from_rasn_decode {
 	($target_type:ty) => {
 		impl TryFrom<&[u8]> for $target_type {
-			type Error = crate::error::Asn1Error;
+			type Error = Asn1Error;
 
 			fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
 				Ok(rasn::der::decode::<Self>(data)?)
@@ -79,7 +94,7 @@ impl_try_from_rasn_decode!(SubjectPublicKeyInfo);
 macro_rules! impl_try_from_rasn_encode {
 	($source_type:ty) => {
 		impl TryFrom<&$source_type> for Vec<u8> {
-			type Error = crate::error::Asn1Error;
+			type Error = Asn1Error;
 
 			fn try_from(value: &$source_type) -> Result<Self, Self::Error> {
 				Ok(rasn::der::encode(value)?)

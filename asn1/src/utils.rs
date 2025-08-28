@@ -374,6 +374,12 @@ macro_rules! test_der_round_trip {
 				let decoded: $struct_type = der_bytes.as_slice().try_into().unwrap();
 				// Verify round-trip equality
 				assert_eq!(original, decoded);
+
+				let der_bytes = original.to_der().unwrap();
+				assert!(!der_bytes.is_empty());
+
+				let decoded: $struct_type = <$struct_type>::from_der(&der_bytes).unwrap();
+				assert_eq!(original, decoded);
 			)+
 		}
 	};

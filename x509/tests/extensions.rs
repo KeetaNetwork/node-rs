@@ -32,7 +32,7 @@ fn test_extensions_not_empty() {
 
 	if let Some(extensions) = &ca_cert.tbs_certificate.extensions {
 		for ext in extensions {
-			assert!(!ext.value.is_empty());
+			assert!(!ext.extn_value.is_empty());
 		}
 	}
 }

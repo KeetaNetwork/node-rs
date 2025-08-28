@@ -17,6 +17,7 @@
 //! use crypto::utils::generate_random_seed;
 //! use x509::builder::{CertificateBuilder, ExtensionBuilder};
 //! use x509::{utils, oids};
+//! use x509::SerialNumber;
 //!
 //! // Generate a keypair for signing
 //! let seed = generate_random_seed()?;
@@ -48,7 +49,7 @@
 //!     .with_subject_public_key(public_key_info.clone())
 //!     .with_subject_dn(subject_dn.clone())
 //!     .with_issuer_dn(subject_dn) // Self-signed
-//!     .with_serial_number(U256::from(1u128))
+//!     .with_serial_number(SerialNumber::from(1u64))
 //!     .with_validity_days(365)
 //!     .with_basic_constraints(false, None)
 //!     .with_extensions(extensions)
@@ -63,16 +64,19 @@
 
 use asn1::Encode;
 use asn1::{AlgorithmIdentifier, SubjectPublicKeyInfo};
-use asn1::{BitString, ObjectIdentifier, Uint};
+use asn1::{BitString, ObjectIdentifier};
 use chrono::{DateTime, Duration, Utc};
-use crypto::bigint::U256;
 use crypto::prelude::{Algorithm, CryptoSignerWithOptions, SignatureEncoding, SigningOptions};
+use std::time::SystemTime;
+use x509_cert::name::DistinguishedName;
+use x509_cert::serial_number::SerialNumber;
+use x509_cert::time::{Time, Validity};
+use x509_cert::Version;
 
-use crate::certificates::{Certificate, Extension, TbsCertificate, Validity};
+use crate::certificates::{Certificate, Extension, TbsCertificate};
 use crate::error::CertificateError;
 use crate::oids;
 use crate::utils::generate_key_identifier;
-use crate::DistinguishedName;
 
 /// Macro to generate include_* methods for batch operations.
 macro_rules! include_extension {
@@ -162,7 +166,7 @@ macro_rules! include_extension {
 /// let ca_extension = ExtensionBuilder::for_basic_constraints(true, Some(2));
 ///
 /// assert!(ca_extension.critical);
-/// assert_eq!(ca_extension.oid.to_string(), "2.5.29.19"); // Basic Constraints OID
+/// assert_eq!(ca_extension.extn_id.to_string(), "2.5.29.19"); // Basic Constraints OID
 /// ```
 ///
 /// # Error Handling
@@ -1033,10 +1037,10 @@ impl ExtensionBuilder {
 	/// assert_eq!(extensions.len(), 4);
 	///
 	/// // Extensions are returned in the order they were added
-	/// assert_eq!(extensions[0].oid.to_string(), "2.5.29.19");  // Basic Constraints
-	/// assert_eq!(extensions[1].oid.to_string(), "2.5.29.15");  // Key Usage
-	/// assert_eq!(extensions[2].oid.to_string(), "2.5.29.37");  // Extended Key Usage
-	/// assert_eq!(extensions[3].oid.to_string(), "2.5.29.17");  // Subject Alt Name
+	/// assert_eq!(extensions[0].extn_id.to_string(), "2.5.29.19");  // Basic Constraints
+	/// assert_eq!(extensions[1].extn_id.to_string(), "2.5.29.15");  // Key Usage
+	/// assert_eq!(extensions[2].extn_id.to_string(), "2.5.29.37");  // Extended Key Usage
+	/// assert_eq!(extensions[3].extn_id.to_string(), "2.5.29.17");  // Subject Alt Name
 	/// ```
 	///
 	/// # Errors
@@ -1228,6 +1232,7 @@ impl ExtensionBuilder {
 /// use x509::builder::CertificateBuilder;
 /// use x509::utils;
 /// use x509::oids;
+/// use x509::SerialNumber;
 /// use crypto::bigint::U256;
 /// use chrono::Utc;
 /// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
@@ -1243,7 +1248,7 @@ impl ExtensionBuilder {
 ///     .with_subject_public_key(public_key_info)
 ///     .with_subject_dn(subject_dn.clone())
 ///     .with_issuer_dn(subject_dn) // Self-signed
-///     .with_serial_number(U256::from(1u128))
+///     .with_serial_number(SerialNumber::from(1u64))
 ///     .with_validity_days(365 * 10) // 10 years
 ///     .as_ca()
 ///     .as_self_signed();
@@ -1264,9 +1269,8 @@ impl ExtensionBuilder {
 /// ## Creating a Server Certificate
 ///
 /// ```rust
-/// use x509::builder::CertificateBuilder;
-/// use x509::utils;
-/// use x509::oids;
+/// use x509::{builder::CertificateBuilder, utils, oids};
+/// use x509::SerialNumber;
 /// use crypto::bigint::U256;
 /// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 ///
@@ -1281,7 +1285,7 @@ impl ExtensionBuilder {
 ///     .with_subject_public_key(public_key_info)
 ///     .with_subject_dn(subject_dn)
 ///     .with_issuer_dn(issuer_dn)
-///     .with_serial_number(U256::from(12345u128))
+///     .with_serial_number(SerialNumber::from(12345u64))
 ///     .with_validity_days(365) // 1 year
 ///     .with_subject_alt_name(vec![
 ///         "www.example.com",
@@ -1354,7 +1358,7 @@ pub struct CertificateBuilder {
 	pub issuer_dn: Option<DistinguishedName>,
 	pub valid_from: Option<DateTime<Utc>>,
 	pub valid_to: Option<DateTime<Utc>>,
-	pub serial: Option<U256>,
+	pub serial: Option<SerialNumber>,
 	pub is_ca: Option<bool>,
 	pub include_common_exts: bool,
 	pub extensions: Vec<Extension>,
@@ -1521,23 +1525,25 @@ impl CertificateBuilder {
 	///
 	/// ```rust
 	/// use x509::builder::CertificateBuilder;
+	/// use x509::SerialNumber;
 	/// use crypto::bigint::{U256, Encoding};
 	///
 	/// // Simple sequential serial number
 	/// let builder = CertificateBuilder::new()
-	///     .with_serial_number(U256::from(12345u128));
+	///     .with_serial_number(SerialNumber::from(12345u64));
 	///
-	/// // Large random serial number
+	/// // Large random serial number (up to 20 bytes per RFC 5280)
 	/// let large_serial = U256::from_be_bytes([
 	///     0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
 	///     0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10,
-	///     0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-	///     0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
+	///     0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00,
+	///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	/// ]);
+	/// let large_bytes = &large_serial.to_be_bytes()[0..20]; // Only use first 20 bytes
 	/// let builder = CertificateBuilder::new()
-	///     .with_serial_number(large_serial);
+	///     .with_serial_number(SerialNumber::new(large_bytes).unwrap());
 	/// ```
-	pub fn with_serial_number(mut self, serial: U256) -> Self {
+	pub fn with_serial_number(mut self, serial: SerialNumber) -> Self {
 		self.serial = Some(serial);
 		self
 	}
@@ -1963,6 +1969,7 @@ impl CertificateBuilder {
 	/// ```rust
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::{utils, oids};
+	/// use x509::SerialNumber;
 	/// use crypto::bigint::U256;
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 	///
@@ -1976,7 +1983,7 @@ impl CertificateBuilder {
 	///     .with_subject_public_key(public_key_info)
 	///     .with_subject_dn(ca_dn.clone())
 	///     .with_issuer_dn(ca_dn) // Self-signed
-	///     .with_serial_number(U256::from(1u128));
+	///     .with_serial_number(SerialNumber::from(1u64));
 	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn for_ca() -> Self {
@@ -2078,6 +2085,7 @@ impl CertificateBuilder {
 	/// ```rust
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::{utils, oids};
+	/// use x509::SerialNumber;
 	/// use crypto::bigint::U256;
 	/// use chrono::Utc;
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
@@ -2093,7 +2101,7 @@ impl CertificateBuilder {
 	///     .with_subject_public_key(public_key_info)
 	///     .with_subject_dn(subject_dn)
 	///     .with_issuer_dn(issuer_dn)
-	///     .with_serial_number(U256::from(1u128))
+	///     .with_serial_number(SerialNumber::from(1u64))
 	///     .with_validity_days(365);
 	///
 	/// match builder.build_tbs() {
@@ -2145,14 +2153,17 @@ impl CertificateBuilder {
 		};
 
 		Ok(TbsCertificate {
-			version: Some(2), // X.509 v3
-			serial_number: Uint::new(&serial.to_be_bytes())?,
+			version: Version::V3, // X.509 v3
+			serial_number: serial.to_owned(),
 			signature_algorithm: AlgorithmIdentifier {
 				algorithm: ObjectIdentifier::new(oids::SHA256_WITH_RSA)?, // SHA256withRSA
 				parameters: None,
 			},
 			issuer: issuer_dn.clone(),
-			validity: Validity { not_before: valid_from.try_into()?, not_after: valid_to.try_into()? },
+			validity: Validity {
+				not_before: Time::try_from(SystemTime::from(valid_from))?,
+				not_after: Time::try_from(SystemTime::from(valid_to))?,
+			},
 			subject: subject_dn.clone(),
 			subject_public_key_info: subject_public_key.clone(),
 			issuer_unique_id: None,
@@ -2213,14 +2224,15 @@ impl CertificateBuilder {
 	/// ## Using an Account
 	///
 	/// ```rust
+	/// use x509::SerialNumber;
+	/// use x509::builder::CertificateBuilder;
+	/// use x509::{utils, oids};
 	/// use accounts::{KeyPair, Account, KeyED25519};
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 	/// use crypto::bigint::U256;
 	/// use crypto::algorithms::ed25519::Ed25519Derivation;
 	/// use crypto::prelude::KeyDerivation;
 	/// use crypto::utils::generate_random_seed;
-	/// use x509::builder::CertificateBuilder;
-	/// use x509::{utils, oids};
 	///
 	/// // Create an account for signing
 	/// let seed = generate_random_seed()?;
@@ -2239,7 +2251,7 @@ impl CertificateBuilder {
 	///     .with_subject_public_key(public_key_info.clone())
 	///     .with_subject_dn(subject_dn.clone())
 	///     .with_issuer_dn(subject_dn) // Self-signed
-	///     .with_serial_number(U256::from(1u128))
+	///     .with_serial_number(SerialNumber::from(1u64))
 	///     .with_validity_days(365);
 	///
 	/// match builder.build(&account) {
@@ -2355,7 +2367,7 @@ mod tests {
 	use der::Decode;
 
 	use accounts::{Account, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
-	use asn1::{AlgorithmIdentifier, BitString, ObjectIdentifier, Uint};
+	use asn1::{AlgorithmIdentifier, BitString, ObjectIdentifier};
 	use crypto::algorithms::ed25519::Ed25519PrivateKey;
 	use crypto::algorithms::secp256k1::Secp256k1PrivateKey;
 	use crypto::algorithms::secp256r1::Secp256r1PrivateKey;
@@ -2395,7 +2407,7 @@ mod tests {
 				subject_public_key: BitString::from_bytes(public_key_bytes).unwrap(),
 			};
 
-			let serial = 1u128;
+			let serial = SerialNumber::from(1u8);
 			let not_before = Utc::now();
 			let not_after = not_before + chrono::Duration::days(365);
 
@@ -2404,21 +2416,24 @@ mod tests {
 				.with_subject_dn(subject_dn.clone())
 				.with_issuer_dn(issuer_dn.clone())
 				.with_validity(not_before, not_after)
-				.with_serial_number(U256::from(serial))
+				.with_serial_number(serial.clone())
 				.with_is_ca($is_ca);
 
 			let tbs = builder.build_tbs().unwrap();
 
-			let expected_serial = Uint::new(&serial.to_be_bytes()).unwrap();
+			let expected_serial = SerialNumber::from(serial);
 			assert_eq!(tbs.serial_number, expected_serial);
 			assert_eq!(tbs.subject, subject_dn);
 			assert_eq!(tbs.issuer, issuer_dn);
 			assert_eq!(tbs.subject_public_key_info, public_key_info);
-			assert_eq!(tbs.version, Some(2));
+			assert_eq!(tbs.version, Version::V3);
 			assert!(tbs.extensions.is_some());
 
 			if let Some(extensions) = &tbs.extensions {
-				let extension_oids: Vec<String> = extensions.iter().map(|ext| ext.oid.to_string()).collect();
+				let extension_oids: Vec<String> = extensions
+					.iter()
+					.map(|ext| ext.extn_id.to_string())
+					.collect();
 				assert!(extension_oids.contains(&oids::BASIC_CONSTRAINTS.to_string()));
 				assert!(extension_oids.contains(&oids::KEY_USAGE.to_string()));
 				assert!(extension_oids.contains(&oids::SUBJECT_KEY_IDENTIFIER.to_string()));
@@ -2443,7 +2458,6 @@ mod tests {
 			let algorithm_name = test_set.algorithm.to_string();
 			let ca_name = format!("CN={} CA", &algorithm_name);
 			let user_name = format!("CN={} User", &algorithm_name);
-
 			// Test CA certificate
 			test_certificate_builder!(test_set.algorithm, true, &ca_name, &ca_name);
 			// Test end-entity certificate
@@ -2460,7 +2474,7 @@ mod tests {
 		let builder = CertificateBuilder::new()
 			.with_subject_dn(subject_dn.clone())
 			.with_issuer_dn(issuer_dn.clone())
-			.with_serial_number(U256::from(12345u128))
+			.with_serial_number(SerialNumber::from(12345u64))
 			.with_validity_days(365)
 			.with_extension(key_usage_ext)
 			.with_basic_constraints(false, None)
@@ -2512,7 +2526,7 @@ mod tests {
 				.with_subject_public_key(public_key_info)
 				.with_subject_dn(subject_dn)
 				.with_issuer_dn(issuer_dn)
-				.with_serial_number(U256::from(12345u128))
+				.with_serial_number(SerialNumber::from(12345u64))
 				.with_validity_days(365)
 				.with_is_ca(false);
 
@@ -2544,7 +2558,7 @@ mod tests {
 			let builder = CertificateBuilder::new()
 				.with_subject_dn(subject_dn.clone())
 				.with_issuer_dn(issuer_dn.clone())
-				.with_serial_number(U256::from(serial))
+				.with_serial_number(SerialNumber::from(serial))
 				.with_validity(valid_from, valid_to)
 				.with_subject_public_key(public_key.into())
 				.with_is_ca(false);
@@ -2578,7 +2592,7 @@ mod tests {
 			let certificate = result.unwrap();
 			assert_eq!(certificate.tbs_certificate.subject, subject_dn);
 			assert_eq!(certificate.tbs_certificate.issuer, issuer_dn);
-			assert_eq!(certificate.tbs_certificate.serial_number, asn1::Uint::new(&serial.to_be_bytes()).unwrap());
+			assert_eq!(certificate.tbs_certificate.serial_number, SerialNumber::from(serial));
 			assert!(!certificate.signature.raw_bytes().is_empty());
 
 			// Verify the certificate is self-signed and can be verified with its own public key
@@ -2625,7 +2639,7 @@ mod tests {
 				expected_critical: true,
 				validation_fn: Box::new(|ext| {
 					// Check that the value contains the expected SEQUENCE structure for CA=true, pathLen=5
-					let value = ext.value.as_bytes();
+					let value = ext.extn_value.as_bytes();
 					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
 				}),
 			},
@@ -2634,7 +2648,7 @@ mod tests {
 				expected_oid: oids::BASIC_CONSTRAINTS,
 				expected_critical: true,
 				validation_fn: Box::new(|ext| {
-					let value = ext.value.as_bytes();
+					let value = ext.extn_value.as_bytes();
 					value.len() >= 2 && value[0] == 0x30 && value[1] == 0x00 // Empty SEQUENCE
 				}),
 			},
@@ -2644,7 +2658,7 @@ mod tests {
 				expected_oid: oids::KEY_USAGE,
 				expected_critical: true,
 				validation_fn: Box::new(|ext| {
-					let value = ext.value.as_bytes();
+					let value = ext.extn_value.as_bytes();
 					value.len() == 4 && value[0] == 0x03 && value[1] == 0x02 // BIT STRING with length 2
 				}),
 			},
@@ -2655,7 +2669,7 @@ mod tests {
 				expected_oid: oids::EXTENDED_KEY_USAGE,
 				expected_critical: false,
 				validation_fn: Box::new(|ext| {
-					let value = ext.value.as_bytes();
+					let value = ext.extn_value.as_bytes();
 					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
 				}),
 			},
@@ -2672,7 +2686,7 @@ mod tests {
 				expected_oid: oids::SUBJECT_ALT_NAME,
 				expected_critical: false,
 				validation_fn: Box::new(|ext| {
-					let value = ext.value.as_bytes();
+					let value = ext.extn_value.as_bytes();
 					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
 				}),
 			},
@@ -2681,7 +2695,7 @@ mod tests {
 				expected_oid: oids::SUBJECT_KEY_IDENTIFIER,
 				expected_critical: false,
 				validation_fn: Box::new(|ext| {
-					let value = ext.value.as_bytes();
+					let value = ext.extn_value.as_bytes();
 					value == [0x01, 0x02, 0x03, 0x04]
 				}),
 			},
@@ -2690,7 +2704,7 @@ mod tests {
 				expected_oid: oids::AUTHORITY_KEY_IDENTIFIER,
 				expected_critical: false,
 				validation_fn: Box::new(|ext| {
-					let value = ext.value.as_bytes();
+					let value = ext.extn_value.as_bytes();
 					!value.is_empty() && value[0] == 0x30 // SEQUENCE tag
 				}),
 			},
@@ -2702,7 +2716,7 @@ mod tests {
 			let extension = (test_case.builder_fn)();
 
 			// Verify OID
-			assert_eq!(extension.oid.to_string(), test_case.expected_oid);
+			assert_eq!(extension.extn_id.to_string(), test_case.expected_oid);
 			// Verify critical flag
 			assert_eq!(extension.critical, test_case.expected_critical);
 			// Run custom validation
@@ -2716,7 +2730,7 @@ mod tests {
 			.as_non_critical()
 			.build()
 			.unwrap();
-		assert_eq!(custom_basic_constraints.oid.to_string(), oids::BASIC_CONSTRAINTS);
+		assert_eq!(custom_basic_constraints.extn_id.to_string(), oids::BASIC_CONSTRAINTS);
 		assert!(!custom_basic_constraints.critical);
 
 		// Test custom extension with fluent API
@@ -2726,9 +2740,9 @@ mod tests {
 			.as_critical()
 			.build()
 			.unwrap();
-		assert_eq!(custom_extension.oid.to_string(), "1.2.3.4.5.6");
+		assert_eq!(custom_extension.extn_id.to_string(), "1.2.3.4.5.6");
 		assert!(custom_extension.critical);
-		assert_eq!(custom_extension.value.as_bytes(), &[0xDE, 0xAD, 0xBE, 0xEF]);
+		assert_eq!(custom_extension.extn_value.as_bytes(), &[0xDE, 0xAD, 0xBE, 0xEF]);
 
 		// Test error cases
 		let invalid_oid_result = ExtensionBuilder::new()
@@ -2769,32 +2783,32 @@ mod tests {
 
 		// Verify basic constraints extension
 		let basic_constraints = &extensions[0];
-		assert_eq!(basic_constraints.oid.to_string(), oids::BASIC_CONSTRAINTS);
+		assert_eq!(basic_constraints.extn_id.to_string(), oids::BASIC_CONSTRAINTS);
 		assert!(basic_constraints.critical);
 
 		// Verify key usage extension
 		let key_usage = &extensions[1];
-		assert_eq!(key_usage.oid.to_string(), oids::KEY_USAGE);
+		assert_eq!(key_usage.extn_id.to_string(), oids::KEY_USAGE);
 		assert!(key_usage.critical);
 
 		// Verify extended key usage extension
 		let extended_key_usage = &extensions[2];
-		assert_eq!(extended_key_usage.oid.to_string(), oids::EXTENDED_KEY_USAGE);
+		assert_eq!(extended_key_usage.extn_id.to_string(), oids::EXTENDED_KEY_USAGE);
 		assert!(!extended_key_usage.critical);
 
 		// Verify subject alternative name extension
 		let subject_alt_name = &extensions[3];
-		assert_eq!(subject_alt_name.oid.to_string(), oids::SUBJECT_ALT_NAME);
+		assert_eq!(subject_alt_name.extn_id.to_string(), oids::SUBJECT_ALT_NAME);
 		assert!(!subject_alt_name.critical);
 
 		// Verify subject key identifier extension
 		let subject_key_identifier = &extensions[4];
-		assert_eq!(subject_key_identifier.oid.to_string(), oids::SUBJECT_KEY_IDENTIFIER);
+		assert_eq!(subject_key_identifier.extn_id.to_string(), oids::SUBJECT_KEY_IDENTIFIER);
 		assert!(!subject_key_identifier.critical);
 
 		// Verify authority key identifier extension
 		let authority_key_identifier = &extensions[5];
-		assert_eq!(authority_key_identifier.oid.to_string(), oids::AUTHORITY_KEY_IDENTIFIER);
+		assert_eq!(authority_key_identifier.extn_id.to_string(), oids::AUTHORITY_KEY_IDENTIFIER);
 		assert!(!authority_key_identifier.critical);
 	}
 
@@ -2840,20 +2854,20 @@ mod tests {
 		assert_eq!(batch_extensions.len(), 4);
 
 		// Compare each extension
-		assert_eq!(batch_extensions[0].oid, individual_basic.oid);
+		assert_eq!(batch_extensions[0].extn_id, individual_basic.extn_id);
 		assert_eq!(batch_extensions[0].critical, individual_basic.critical);
-		assert_eq!(batch_extensions[0].value, individual_basic.value);
+		assert_eq!(batch_extensions[0].extn_value, individual_basic.extn_value);
 
-		assert_eq!(batch_extensions[1].oid, individual_key_usage.oid);
+		assert_eq!(batch_extensions[1].extn_id, individual_key_usage.extn_id);
 		assert_eq!(batch_extensions[1].critical, individual_key_usage.critical);
-		assert_eq!(batch_extensions[1].value, individual_key_usage.value);
+		assert_eq!(batch_extensions[1].extn_value, individual_key_usage.extn_value);
 
-		assert_eq!(batch_extensions[2].oid, individual_san.oid);
+		assert_eq!(batch_extensions[2].extn_id, individual_san.extn_id);
 		assert_eq!(batch_extensions[2].critical, individual_san.critical);
-		assert_eq!(batch_extensions[2].value, individual_san.value);
+		assert_eq!(batch_extensions[2].extn_value, individual_san.extn_value);
 
-		assert_eq!(batch_extensions[3].oid, individual_aki.oid);
+		assert_eq!(batch_extensions[3].extn_id, individual_aki.extn_id);
 		assert_eq!(batch_extensions[3].critical, individual_aki.critical);
-		assert_eq!(batch_extensions[3].value, individual_aki.value);
+		assert_eq!(batch_extensions[3].extn_value, individual_aki.extn_value);
 	}
 }

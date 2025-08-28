@@ -71,3 +71,4 @@ words:
   - oid
   - ocsp
   - Datelike
+  - peekable

@@ -38,14 +38,14 @@ fn test_json_serialization() {
 fn test_extension_creation() {
 	// Test Extension::new functionality
 	let ext = Extension::new("1.2.3.4", [0x01, 0x02], true).unwrap();
-	assert_eq!(ext.oid.to_string(), "1.2.3.4");
+	assert_eq!(ext.extn_id.to_string(), "1.2.3.4");
 	assert!(ext.critical);
-	assert_eq!(ext.value.as_bytes(), &[0x01, 0x02]);
+	assert_eq!(ext.extn_value.as_bytes(), &[0x01, 0x02]);
 
 	let ext_non_critical = Extension::new("1.2.3.4.5", [0x03, 0x04, 0x05], false).unwrap();
-	assert_eq!(ext_non_critical.oid.to_string(), "1.2.3.4.5");
+	assert_eq!(ext_non_critical.extn_id.to_string(), "1.2.3.4.5");
 	assert!(!ext_non_critical.critical);
-	assert_eq!(ext_non_critical.value.as_bytes(), &[0x03, 0x04, 0x05]);
+	assert_eq!(ext_non_critical.extn_value.as_bytes(), &[0x03, 0x04, 0x05]);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn test_extension_listing() {
 	// Test extension OIDs are accessible - demonstrate typical usage pattern
 	let ca_extension_oids: Vec<String> = ca_cert
 		.get_extensions()
-		.map(|ext| ext.oid.to_string())
+		.map(|ext| ext.extn_id.to_string())
 		.collect();
 	assert!(ca_extension_oids.contains(&oids::BASIC_CONSTRAINTS.to_string()));
 	assert!(ca_extension_oids.contains(&oids::KEY_USAGE.to_string()));
@@ -84,7 +84,7 @@ fn test_extension_listing() {
 	// User cert should have different extension set (not CA)
 	let user_extension_oids: Vec<String> = user_cert
 		.get_extensions()
-		.map(|ext| ext.oid.to_string())
+		.map(|ext| ext.extn_id.to_string())
 		.collect();
 	assert!(user_extension_oids.contains(&oids::KEY_USAGE.to_string()));
 	assert!(user_extension_oids.contains(&oids::SUBJECT_KEY_IDENTIFIER.to_string()));
@@ -98,7 +98,7 @@ fn test_extension_criticality() {
 
 	// Test extension criticality verification
 	for ext in extensions {
-		match ext.oid.to_string().as_str() {
+		match ext.extn_id.to_string().as_str() {
 			x if x == oids::BASIC_CONSTRAINTS => assert!(ext.critical),
 			x if x == oids::KEY_USAGE => assert!(ext.critical),
 			x if x == oids::SUBJECT_KEY_IDENTIFIER => assert!(!ext.critical),

@@ -5,6 +5,12 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+
+# X.509 certificate parsing
+[dependencies.x509-cert]
+version = "0.2.5"
+features = ["std", "pem", "sha1"]
+
 # ASN.1 and DER encoding
 [dependencies.der]
 workspace = true
@@ -23,7 +29,7 @@ workspace = true
 
 # Hex encoding/decoding
 [dependencies.hex]
-version = "0.4"
+workspace = true
 
 # Serialization (optional)
 [dependencies.serde]
@@ -31,7 +37,7 @@ workspace = true
 optional = true
 
 [dependencies.serde_json]
-version = "1.0.133"
+workspace = true
 optional = true
 
 # Local dependencies

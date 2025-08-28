@@ -3,6 +3,10 @@ name = "asn1"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies.spki]
+version = "0.7.3"
+features = ["std"]
+
 [dependencies.der]
 workspace = true
 optional = true

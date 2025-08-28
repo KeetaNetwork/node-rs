@@ -3,9 +3,10 @@
 use asn1::oids;
 use asn1::{BitString, SubjectPublicKeyInfo};
 use chrono::{DateTime, TimeZone, Utc};
-use crypto::{bigint::U256, prelude::Algorithm};
+use crypto::prelude::Algorithm;
 use x509::certificates::{Certificate, CertificateBuilder, TbsCertificate};
 use x509::utils;
+use x509::SerialNumber;
 
 // Test key data
 pub const RAW_ED25519_PUBLIC_KEY: [u8; 32] = [
@@ -197,7 +198,7 @@ pub fn create_certificate_tbs(
 		.with_subject_dn(subject_dn)
 		.with_issuer_dn(issuer_dn)
 		.with_validity(valid_from, valid_to)
-		.with_serial_number(U256::from(serial))
+		.with_serial_number(SerialNumber::from(serial))
 		.with_is_ca(is_ca);
 
 	let tbs = builder.build_tbs()?;

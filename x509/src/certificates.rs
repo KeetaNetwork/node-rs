@@ -9,13 +9,18 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use asn1::{AlgorithmIdentifier, SubjectPublicKeyInfo};
-use asn1::{BitString, ObjectIdentifier, OctetString, Sequence, Uint};
+use asn1::{BitString, ObjectIdentifier, OctetString, Sequence, ValueOrd};
 use asn1::{Decode, Encode};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
 use crypto::bigint::U256;
 use crypto::prelude::HashAlgorithm;
-use hex;
+use x509_cert::certificate::{CertificateInner, Profile, TbsCertificateInner};
+use x509_cert::ext::Extension as X509Extension;
+use x509_cert::name::{DistinguishedName, Name};
+use x509_cert::serial_number::SerialNumber;
+use x509_cert::time::Validity;
+use x509_cert::Version;
 
 #[cfg(feature = "serde")]
 use asn1::utils::*;
@@ -24,10 +29,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CertificateError;
 use crate::oids;
-use crate::time::Time;
 use crate::utils::{self, parse_authority_key_identifier, parse_key_identifier};
 use crate::utils::{dn_to_string, parse_der_length};
-use crate::DistinguishedName;
 
 /// Basic Constraints extension according to RFC 5280 Section 4.2.1.9.
 /// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
@@ -49,6 +52,8 @@ pub struct BasicConstraints {
 }
 
 /// X.509 certificate extension following RFC 5280 standards.
+/// Note: The [`x509_cert::ext::Extension`] cannot be used as it does not support
+/// serde serialization/deserialization.
 ///
 /// Extensions provide additional information and constraints for X.509
 /// certificates beyond the basic certificate fields. Each extension is
@@ -83,12 +88,16 @@ pub struct BasicConstraints {
 /// # References
 ///
 /// - [RFC 5280 Section 4.2 - Certificate Extensions](https://datatracker.ietf.org/doc/html/rfc5280#section-4.2)
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
+/// - [x509_cert crate](https://docs.rs/x509-cert/latest/x509_cert/ext/index.html)
+#[derive(Debug, Clone, PartialEq, Eq, Sequence, ValueOrd)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Extension {
 	/// Extension ID (OID)
-	#[cfg_attr(feature = "serde", serde(serialize_with = "serialize_oid", deserialize_with = "deserialize_oid"))]
-	pub oid: ObjectIdentifier,
+	#[cfg_attr(
+		feature = "serde",
+		serde(rename = "extnID", serialize_with = "serialize_oid", deserialize_with = "deserialize_oid")
+	)]
+	pub extn_id: ObjectIdentifier,
 	/// Indicates if this extension is critical
 	#[asn1(default = "Default::default")]
 	#[cfg_attr(feature = "serde", serde(default))]
@@ -96,10 +105,25 @@ pub struct Extension {
 	/// Extension value as an OctetString
 	#[cfg_attr(
 		feature = "serde",
-		serde(serialize_with = "serialize_octet_string", deserialize_with = "deserialize_octet_string")
+		serde(
+			rename = "extnValue",
+			serialize_with = "serialize_octet_string",
+			deserialize_with = "deserialize_octet_string"
+		)
 	)]
-	pub value: OctetString,
+	pub extn_value: OctetString,
 }
+
+/// Extensions as defined in [RFC 5280 Section 4.1.2.9].
+///
+/// ```text
+/// Extensions  ::=  SEQUENCE SIZE (1..MAX) OF Extension
+/// ```
+///
+/// # References
+///
+/// - [RFC 5280 Section 4.1.2.9](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.9)
+pub type Extensions = Vec<Extension>;
 
 /// Common X.509 certificate extensions following RFC 5280 standards.
 ///
@@ -148,39 +172,28 @@ impl Extension {
 		let oid = ObjectIdentifier::new(oid.as_ref())?;
 		let value = OctetString::new(value.as_ref())?;
 
-		Ok(Self { oid, critical, value })
+		Ok(Self { extn_id: oid, critical, extn_value: value })
 	}
 }
 
-/// Certificate validity period following RFC 5280 standards.
-///
-/// The Validity structure defines the time period during which a certificate
-/// is considered valid. It consists of two timestamps: `not_before` (when the
-/// certificate becomes valid) and `not_after` (when the certificate expires).
-///
-/// # Time Representation
-///
-/// Both timestamps use the ASN.1 Time type, which can represent dates as either:
-/// - **UTCTime** - For dates between 1950-2049
-/// - **GeneralizedTime** - For dates outside the UTC range
-///
-/// Times are always expressed in UTC (Coordinated Universal Time).
-///
-/// # Validation Rules
-///
-/// A certificate is considered valid at a given time `t` if:
-/// ```text
-/// not_before <= t <= not_after
-/// ```
-///
-/// # References
-///
-/// - [RFC 5280 Section 4.1.2.5 - Validity](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5)
-/// - [ASN.1 Time Types](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.5.1)
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
-pub struct Validity {
-	pub not_before: Time,
-	pub not_after: Time,
+impl From<x509_cert::ext::Extension> for Extension {
+	fn from(ext: x509_cert::ext::Extension) -> Self {
+		Self {
+			extn_id: ObjectIdentifier::new(&ext.extn_id.to_string()).unwrap(),
+			critical: ext.critical,
+			extn_value: OctetString::new(ext.extn_value.as_bytes()).unwrap(),
+		}
+	}
+}
+
+impl From<Extension> for x509_cert::ext::Extension {
+	fn from(ext: Extension) -> Self {
+		Self {
+			extn_id: ObjectIdentifier::new(ext.extn_id.to_string().as_str()).unwrap(),
+			critical: ext.critical,
+			extn_value: OctetString::new(ext.extn_value.as_bytes()).unwrap(),
+		}
+	}
 }
 
 /// "To Be Signed" certificate data structure following RFC 5280 standards.
@@ -239,22 +252,60 @@ pub struct Validity {
 ///
 /// - [RFC 5280 Section 4.1.2 - TBSCertificate](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2)
 /// - [X.509 Certificate Versions](https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.1)
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
+#[derive(Debug, Clone, PartialEq, Eq, Sequence, ValueOrd)]
 pub struct TbsCertificate {
-	#[asn1(context_specific = "0", tag_mode = "EXPLICIT", optional = "true")]
-	pub version: Option<u8>, // Default is v1 (0), v3 is 2
-	pub serial_number: Uint,
+	#[asn1(context_specific = "0", default = "Default::default")]
+	pub version: Version,
+	pub serial_number: SerialNumber,
 	pub signature_algorithm: AlgorithmIdentifier,
 	pub issuer: DistinguishedName,
 	pub validity: Validity,
-	pub subject: DistinguishedName,
+	pub subject: Name,
 	pub subject_public_key_info: SubjectPublicKeyInfo,
 	#[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
 	pub issuer_unique_id: Option<BitString>,
 	#[asn1(context_specific = "2", tag_mode = "IMPLICIT", optional = "true")]
 	pub subject_unique_id: Option<BitString>,
 	#[asn1(context_specific = "3", tag_mode = "EXPLICIT", optional = "true")]
-	pub extensions: Option<Vec<Extension>>,
+	pub extensions: Option<Extensions>,
+}
+
+impl<P: Profile> From<TbsCertificateInner<P>> for TbsCertificate {
+	fn from(tbs: TbsCertificateInner<P>) -> Self {
+		Self {
+			version: tbs.version,
+			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
+			signature_algorithm: AlgorithmIdentifier::from(tbs.signature),
+			issuer: tbs.issuer,
+			validity: tbs.validity,
+			subject: tbs.subject,
+			subject_public_key_info: SubjectPublicKeyInfo::from(tbs.subject_public_key_info),
+			issuer_unique_id: tbs.issuer_unique_id,
+			subject_unique_id: tbs.subject_unique_id,
+			extensions: tbs
+				.extensions
+				.map(|ext_vec| ext_vec.into_iter().map(Extension::from).collect()),
+		}
+	}
+}
+
+impl<P: Profile> From<TbsCertificate> for TbsCertificateInner<P> {
+	fn from(tbs: TbsCertificate) -> Self {
+		Self {
+			version: tbs.version,
+			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
+			signature: x509_cert::spki::AlgorithmIdentifierOwned::from(tbs.signature_algorithm),
+			issuer: tbs.issuer,
+			validity: tbs.validity,
+			subject: tbs.subject,
+			subject_public_key_info: x509_cert::spki::SubjectPublicKeyInfoOwned::from(tbs.subject_public_key_info),
+			issuer_unique_id: tbs.issuer_unique_id,
+			subject_unique_id: tbs.subject_unique_id,
+			extensions: tbs
+				.extensions
+				.map(|ext_vec| ext_vec.into_iter().map(X509Extension::from).collect()),
+		}
+	}
 }
 
 /// Configuration options for certificate validation and processing.
@@ -891,7 +942,7 @@ impl From<&CertificateHashSet> for Vec<String> {
 ///
 /// [`CertificateBuilder`]: crate::builder::CertificateBuilder
 /// [`TbsCertificate`]: crate::certificates::TbsCertificate
-#[derive(Debug, Clone, PartialEq, Eq, Sequence)]
+#[derive(Debug, Clone, PartialEq, Eq, Sequence, ValueOrd)]
 pub struct Certificate {
 	pub tbs_certificate: TbsCertificate,
 	pub signature_algorithm: AlgorithmIdentifier,
@@ -934,11 +985,11 @@ impl Certificate {
 	pub fn is_valid_at(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
 		let validity = &self.tbs_certificate.validity;
 
-		if time < (&validity.not_before).into() {
+		if time < DateTime::<Utc>::from(validity.not_before.to_system_time()) {
 			return Ok(false);
 		}
 
-		if time > (&validity.not_after).into() {
+		if time > DateTime::<Utc>::from(validity.not_after.to_system_time()) {
 			return Ok(false);
 		}
 
@@ -963,17 +1014,20 @@ impl Certificate {
 	/// Get the validity period as chrono DateTimes
 	pub fn validity_period(&self) -> (DateTime<Utc>, DateTime<Utc>) {
 		let validity = &self.tbs_certificate.validity;
-		((&validity.not_before).into(), (&validity.not_after).into())
+		(
+			DateTime::<Utc>::from(validity.not_before.to_system_time()),
+			DateTime::<Utc>::from(validity.not_after.to_system_time()),
+		)
 	}
 
 	/// Get the not_before time as chrono DateTime
 	pub fn not_before(&self) -> DateTime<Utc> {
-		(&self.tbs_certificate.validity.not_before).into()
+		DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time())
 	}
 
 	/// Get the not_after time as chrono DateTime
 	pub fn not_after(&self) -> DateTime<Utc> {
-		(&self.tbs_certificate.validity.not_after).into()
+		DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time())
 	}
 
 	/// Get the certificate's age (how long it has been valid)
@@ -1024,7 +1078,7 @@ impl Certificate {
 	pub fn get_extension<S: AsRef<str>>(&self, oid: S) -> Option<&Extension> {
 		if let Some(ref extensions) = self.tbs_certificate.extensions {
 			let target_oid = ObjectIdentifier::new(oid.as_ref()).ok()?;
-			extensions.iter().find(|ext| ext.oid == target_oid)
+			extensions.iter().find(|ext| ext.extn_id == target_oid)
 		} else {
 			None
 		}
@@ -1041,7 +1095,7 @@ impl Certificate {
 	/// Check if this is a CA certificate (has Basic Constraints CA=true)
 	pub fn is_ca(&self) -> bool {
 		if let Some(basic_constraints) = self.get_extension(oids::BASIC_CONSTRAINTS) {
-			match BasicConstraints::from_der(basic_constraints.value.as_bytes()) {
+			match BasicConstraints::from_der(basic_constraints.extn_value.as_bytes()) {
 				Ok(constraints) => constraints.ca,
 				Err(_) => false, // Invalid extension, assume not a CA
 			}
@@ -1129,24 +1183,24 @@ impl Certificate {
 		let mut base_extensions = BaseExtensions::default();
 		if let Some(extensions) = &self.tbs_certificate.extensions {
 			for ext in extensions {
-				match ext.oid.to_string().as_str() {
+				match ext.extn_id.to_string().as_str() {
 					// Basic Constraints
 					oids::BASIC_CONSTRAINTS => {
-						if let Ok(constraints) = BasicConstraints::from_der(ext.value.as_bytes()) {
+						if let Ok(constraints) = BasicConstraints::from_der(ext.extn_value.as_bytes()) {
 							base_extensions.basic_constraints = Some(constraints);
 						}
 					}
 					// Subject Key Identifier
 					oids::SUBJECT_KEY_IDENTIFIER => {
 						// Subject Key Identifier is an OCTET STRING containing the key identifier
-						if let Some(key_id) = parse_key_identifier(ext.value.as_bytes()) {
+						if let Some(key_id) = parse_key_identifier(ext.extn_value.as_bytes()) {
 							base_extensions.subject_key_identifier = Some(hex::encode(key_id));
 						}
 					}
 					// Authority Key Identifier
 					oids::AUTHORITY_KEY_IDENTIFIER => {
 						// Authority Key Identifier is a SEQUENCE with optional KeyIdentifier [0]
-						if let Some(key_id) = parse_authority_key_identifier(ext.value.as_bytes()) {
+						if let Some(key_id) = parse_authority_key_identifier(ext.extn_value.as_bytes()) {
 							base_extensions.authority_key_identifier = Some(hex::encode(key_id));
 						}
 					}
@@ -1165,11 +1219,11 @@ impl Certificate {
 
 	/// Validate the certificate at a specific time
 	pub fn validate_at(&self, time: DateTime<Utc>) -> Result<(), CertificateError> {
-		if time < (&self.tbs_certificate.validity.not_before).into() {
+		if time < DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time()) {
 			return Err(CertificateError::NotYetValid);
 		}
 
-		if time > (&self.tbs_certificate.validity.not_after).into() {
+		if time > DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time()) {
 			return Err(CertificateError::Expired);
 		}
 
@@ -1232,13 +1286,11 @@ impl Certificate {
 
 	/// Validate RFC 5280 compliance for this certificate
 	pub fn validate_rfc5280_compliance(&self) -> Result<(), CertificateError> {
-		// Check version
-		if let Some(version) = self.tbs_certificate.version {
-			if version != 2 {
-				return Err(CertificateError::ValidationFailed {
-					reason: "Only X.509 v3 certificates are supported per RFC 5280".to_string(),
-				});
-			}
+		// Check version - X.509 v3 certificates are recommended per RFC 5280
+		if self.tbs_certificate.version != Version::V3 {
+			return Err(CertificateError::ValidationFailed {
+				reason: "Only X.509 v3 certificates are supported per RFC 5280".to_string(),
+			});
 		}
 
 		// Validate extensions compliance
@@ -1263,7 +1315,7 @@ impl Certificate {
 
 			for extension in extensions {
 				if extension.critical {
-					let oid_str = extension.oid.to_string();
+					let oid_str = extension.extn_id.to_string();
 
 					// Check if this is a known critical extension
 					if !known_critical_extensions.contains(&oid_str.as_str()) {
@@ -1303,7 +1355,7 @@ impl Certificate {
 			// Check for duplicate extensions (RFC 5280 section 4.2)
 			let mut seen_oids = HashSet::new();
 			for extension in extensions {
-				let oid_str = extension.oid.to_string();
+				let oid_str = extension.extn_id.to_string();
 				if seen_oids.contains(&oid_str) {
 					return Err(CertificateError::ValidationFailed {
 						reason: format!("Duplicate extension OID: {oid_str}"),
@@ -1314,7 +1366,7 @@ impl Certificate {
 
 			// Validate Basic Constraints consistency
 			if let Some(basic_constraints_ext) = self.get_extension(oids::BASIC_CONSTRAINTS) {
-				if let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.value.as_bytes()) {
+				if let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.extn_value.as_bytes()) {
 					// CA certificates MUST have Basic Constraints marked as critical
 					if basic_constraints.ca && !basic_constraints_ext.critical {
 						return Err(CertificateError::ValidationFailed {
@@ -1371,8 +1423,8 @@ impl Certificate {
 			if let Some(issuer_subject_key_ext) = issuer.get_extension(oids::SUBJECT_KEY_IDENTIFIER) {
 				// Parse both key identifiers and compare
 				if let (Some(auth_key_id), Some(subject_key_id)) = (
-					utils::parse_authority_key_identifier(auth_key_ext.value.as_bytes()),
-					utils::parse_key_identifier(issuer_subject_key_ext.value.as_bytes()),
+					utils::parse_authority_key_identifier(auth_key_ext.extn_value.as_bytes()),
+					utils::parse_key_identifier(issuer_subject_key_ext.extn_value.as_bytes()),
 				) {
 					return auth_key_id == subject_key_id;
 				}
@@ -1577,6 +1629,26 @@ impl Certificate {
 	}
 }
 
+impl<P: Profile> From<CertificateInner<P>> for Certificate {
+	fn from(cert: CertificateInner<P>) -> Self {
+		Self {
+			tbs_certificate: TbsCertificate::from(cert.tbs_certificate),
+			signature_algorithm: AlgorithmIdentifier::from(cert.signature_algorithm),
+			signature: cert.signature.clone(),
+		}
+	}
+}
+
+impl<P: Profile> From<Certificate> for CertificateInner<P> {
+	fn from(cert: Certificate) -> Self {
+		Self {
+			tbs_certificate: TbsCertificateInner::from(cert.tbs_certificate),
+			signature_algorithm: x509_cert::spki::AlgorithmIdentifierOwned::from(cert.signature_algorithm),
+			signature: cert.signature.clone(),
+		}
+	}
+}
+
 impl core::hash::Hash for Certificate {
 	fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
 		// Hash based on the DER bytes of the certificate
@@ -1699,6 +1771,8 @@ impl_try_from_der_encode_trait!(TbsCertificate);
 mod tests {
 	use asn1::oids;
 	use chrono::Utc;
+	use x509_cert::name::RdnSequence;
+	use x509_cert::serial_number::SerialNumber;
 
 	use super::*;
 	use crate::testing::{CertificateChain, CERTIFICATE_TEST_SETS};
@@ -1799,7 +1873,7 @@ mod tests {
 			.with_subject_dn(subject_dn)
 			.with_issuer_dn(issuer_dn)
 			.with_validity(valid_from, valid_to)
-			.with_serial_number(crypto::bigint::U256::from(serial))
+			.with_serial_number(SerialNumber::from(serial))
 			.with_is_ca(is_ca)
 	}
 
@@ -1883,7 +1957,10 @@ mod tests {
 	/// Helper to check certificate has expected extensions
 	fn assert_cert_extensions(cert: &Certificate, expected_oids: &[&str]) {
 		let extensions = cert.tbs_certificate.extensions.as_ref().unwrap();
-		let found_oids: Vec<String> = extensions.iter().map(|ext| ext.oid.to_string()).collect();
+		let found_oids: Vec<String> = extensions
+			.iter()
+			.map(|ext| ext.extn_id.to_string())
+			.collect();
 
 		for expected_oid in expected_oids {
 			assert!(found_oids.contains(&expected_oid.to_string()));
@@ -2781,7 +2858,7 @@ mod tests {
 		];
 
 		for test in tests {
-			assert_eq!(test.extension.oid.to_string(), test.expected_oid, "OID mismatch for {}", test.name);
+			assert_eq!(test.extension.extn_id.to_string(), test.expected_oid, "OID mismatch for {}", test.name);
 			assert_eq!(test.extension.critical, test.expected_critical, "Critical flag mismatch for {}", test.name);
 		}
 	}
@@ -2802,9 +2879,9 @@ mod tests {
 
 		// Test DN validation error cases
 		let dn_test_cases = [
-			(Vec::new(), utils::create_dn(&[(oids::CN, "Test Issuer")]).unwrap(), Some(false)),
-			(Vec::new(), utils::create_dn(&[(oids::CN, "Test Issuer")]).unwrap(), None),
-			(utils::create_dn(&[(oids::CN, "Test Subject")]).unwrap(), Vec::new(), None),
+			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")]).unwrap(), Some(false)),
+			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")]).unwrap(), None),
+			(utils::create_dn(&[(oids::CN, "Test Subject")]).unwrap(), RdnSequence(Vec::new()), None),
 		];
 
 		for (subject, issuer, san_critical) in dn_test_cases {
@@ -2815,7 +2892,7 @@ mod tests {
 			let signature_algorithm = oids::ED25519.parse().unwrap();
 			let signature = BitString::from_bytes(&[0u8; 64]).unwrap();
 			let mut builder = CertificateBuilder::new()
-				.with_serial_number(U256::from_u8(1))
+				.with_serial_number(SerialNumber::from(1u8))
 				.with_validity_days(365)
 				.with_subject_dn(subject)
 				.with_issuer_dn(issuer)
@@ -3007,6 +3084,54 @@ mod tests {
 			assert_eq!(tbs.serial_number, tbs_roundtrip.serial_number);
 			assert_eq!(tbs.subject, tbs_roundtrip.subject);
 			assert_eq!(tbs.issuer, tbs_roundtrip.issuer);
+		});
+	}
+
+	#[test]
+	fn test_x509_cert_converters_round_trip() {
+		// Test Extension converters
+		let test_extensions = vec![
+			(oids::BASIC_CONSTRAINTS, b"\x30\x03\x01\x01\xff".to_vec(), true),
+			(oids::KEY_USAGE, b"\x03\x02\x01\x06".to_vec(), false),
+			(oids::SUBJECT_KEY_IDENTIFIER, b"\x04\x14\x01\x02\x03\x04".to_vec(), false),
+		];
+
+		for (oid, value, critical) in test_extensions {
+			let original = Extension::new(oid, &value, critical).unwrap();
+			let x509_ext: X509Extension = original.clone().into();
+			let round_trip: Extension = x509_ext.into();
+			assert_eq!(original, round_trip);
+		}
+
+		// Test TbsCertificate converter with real test certificate
+		test_all_certificate_sets(|bundle| {
+			let original_tbs = &bundle.ca_cert.tbs_certificate;
+			let x509_tbs: TbsCertificateInner<x509_cert::certificate::Rfc5280> = original_tbs.clone().into();
+			let round_trip: TbsCertificate = x509_tbs.into();
+
+			// Compare key fields that should be preserved
+			assert_eq!(original_tbs.version, round_trip.version);
+			assert_eq!(original_tbs.serial_number.as_bytes(), round_trip.serial_number.as_bytes());
+			assert_eq!(original_tbs.issuer, round_trip.issuer);
+			assert_eq!(original_tbs.subject, round_trip.subject);
+			assert_eq!(original_tbs.validity, round_trip.validity);
+		});
+
+		// Test Certificate converter with real test certificate
+		test_all_certificate_sets(|bundle| {
+			let original_cert = &bundle.ca_cert;
+			let x509_cert: CertificateInner<x509_cert::certificate::Rfc5280> = original_cert.clone().into();
+			let round_trip: Certificate = x509_cert.into();
+
+			// Compare key fields that should be preserved
+			assert_eq!(original_cert.tbs_certificate.version, round_trip.tbs_certificate.version);
+			assert_eq!(
+				original_cert.tbs_certificate.serial_number.as_bytes(),
+				round_trip.tbs_certificate.serial_number.as_bytes()
+			);
+			assert_eq!(original_cert.tbs_certificate.issuer, round_trip.tbs_certificate.issuer);
+			assert_eq!(original_cert.tbs_certificate.subject, round_trip.tbs_certificate.subject);
+			assert_eq!(original_cert.signature, round_trip.signature);
 		});
 	}
 }

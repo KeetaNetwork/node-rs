@@ -1,13 +1,14 @@
 mod common;
 
-use asn1::{BitString, SubjectPublicKeyInfo, Uint};
+use asn1::{BitString, SubjectPublicKeyInfo};
 use chrono::{TimeZone, Utc};
-use crypto::bigint::U256;
 use crypto::prelude::Algorithm;
 use der::{Decode, Encode};
 use x509::certificates::*;
 use x509::oids;
 use x509::utils;
+use x509::SerialNumber;
+use x509::Version;
 
 use common::*;
 
@@ -88,7 +89,10 @@ fn test_certificate_builder_ca() {
 
 	// Verify CA extensions are properly set
 	if let Some(extensions) = &root_tbs.extensions {
-		let extension_oids: Vec<String> = extensions.iter().map(|ext| ext.oid.to_string()).collect();
+		let extension_oids: Vec<String> = extensions
+			.iter()
+			.map(|ext| ext.extn_id.to_string())
+			.collect();
 		assert!(extension_oids.contains(&oids::BASIC_CONSTRAINTS.to_string()));
 		assert!(extension_oids.contains(&oids::KEY_USAGE.to_string()));
 		assert!(extension_oids.contains(&oids::SUBJECT_KEY_IDENTIFIER.to_string()));
@@ -112,7 +116,7 @@ fn test_certificate_compatibility() {
 		let subject_public_key = BitString::from_bytes(public_key).unwrap();
 		let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
 
-		let serial = 1u128;
+		let serial = 1u64;
 		let not_before = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
 		let not_after = not_before + chrono::Duration::days(365);
 
@@ -121,18 +125,18 @@ fn test_certificate_compatibility() {
 			.with_subject_dn(subject_dn.clone())
 			.with_issuer_dn(issuer_dn.clone())
 			.with_validity(not_before, not_after)
-			.with_serial_number(U256::from(serial))
+			.with_serial_number(SerialNumber::from(serial))
 			.with_is_ca(is_ca);
 
 		let tbs = builder.build_tbs().unwrap();
 
 		// Verify TBS certificate properties
-		let expected_serial = Uint::new(&serial.to_be_bytes()).unwrap();
+		let expected_serial = SerialNumber::from(serial);
 		assert_eq!(tbs.serial_number, expected_serial);
 		assert_eq!(tbs.subject, subject_dn);
 		assert_eq!(tbs.issuer, issuer_dn);
 		assert_eq!(tbs.subject_public_key_info, public_key_info);
-		assert_eq!(tbs.version, Some(2));
+		assert_eq!(tbs.version, Version::V3);
 		assert!(tbs.extensions.is_some());
 
 		// Verify round trip
@@ -164,11 +168,11 @@ fn test_algorithm_chains() {
 
 		// Verify certificate chain
 		let certificates = [&root_tbs, &intermediate_tbs, &leaf_tbs];
-		let expected_serials = [1u128, 2u128, 3u128];
+		let expected_serials = [1u64, 2u64, 3u64];
 
 		for (tbs, &expected_serial) in certificates.iter().zip(expected_serials.iter()) {
-			let expected_serial_uint = Uint::new(&expected_serial.to_be_bytes()).unwrap();
-			assert_eq!(tbs.serial_number, expected_serial_uint);
+			let expected_serial_num = SerialNumber::from(expected_serial);
+			assert_eq!(tbs.serial_number, expected_serial_num);
 
 			// Verify round trip
 			let tbs_der = tbs.to_der().unwrap();

@@ -36,7 +36,11 @@ impl Serialize for Certificate {
 			.as_ref()
 			.map(|exts| {
 				exts.iter()
-					.map(|ext| Extension { oid: ext.oid, critical: ext.critical, value: ext.value.clone() })
+					.map(|ext| Extension {
+						extn_id: ext.extn_id,
+						critical: ext.critical,
+						extn_value: ext.extn_value.clone(),
+					})
 					.collect()
 			})
 			.unwrap_or_default();
@@ -46,8 +50,10 @@ impl Serialize for Certificate {
 		let serial_hex = hex::encode(serial_bytes);
 
 		// Convert Time to DateTime<Utc> for RFC3339 formatting
-		let not_before_dt: DateTime<Utc> = (&self.tbs_certificate.validity.not_before).into();
-		let not_after_dt: DateTime<Utc> = (&self.tbs_certificate.validity.not_after).into();
+		let not_before_dt: DateTime<Utc> =
+			DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time());
+		let not_after_dt: DateTime<Utc> =
+			DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time());
 
 		let mut state = serializer.serialize_struct("Certificate", 14)?;
 		state.serialize_field("serial", &serial_hex)?;
