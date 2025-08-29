@@ -5,10 +5,11 @@ use chrono::{TimeZone, Utc};
 use crypto::prelude::Algorithm;
 use der::{Decode, Encode};
 use x509::certificates::*;
-use x509::oids;
-use x509::utils;
-use x509::SerialNumber;
-use x509::Version;
+use x509::{oids, utils};
+use x509::{SerialNumber, SubjectPublicKeyInfoOwned, Version};
+
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+use asn1::BitStringExt;
 
 use common::*;
 
@@ -44,6 +45,17 @@ fn test_certificate_builder_basic() {
 		assert_eq!(decoded_tbs.serial_number, tbs.serial_number);
 
 		// Verify the public key info matches
+		#[cfg(feature = "der")]
+		assert_eq!(
+			decoded_tbs
+				.subject_public_key_info
+				.subject_public_key
+				.as_bytes()
+				.unwrap()
+				.to_vec(),
+			public_key
+		);
+		#[cfg(all(feature = "rasn", not(feature = "der")))]
 		assert_eq!(
 			decoded_tbs
 				.subject_public_key_info
@@ -61,7 +73,7 @@ fn test_certificate_builder_basic() {
 			decoded_tbs
 				.subject_public_key_info
 				.algorithm
-				.algorithm
+				.oid
 				.to_string(),
 			expected_oid
 		);
@@ -135,7 +147,9 @@ fn test_certificate_compatibility() {
 		assert_eq!(tbs.serial_number, expected_serial);
 		assert_eq!(tbs.subject, subject_dn);
 		assert_eq!(tbs.issuer, issuer_dn);
-		assert_eq!(tbs.subject_public_key_info, public_key_info);
+
+		let spki_public_key_info = SubjectPublicKeyInfoOwned::from(public_key_info);
+		assert_eq!(tbs.subject_public_key_info, spki_public_key_info);
 		assert_eq!(tbs.version, Version::V3);
 		assert!(tbs.extensions.is_some());
 

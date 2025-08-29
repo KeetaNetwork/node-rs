@@ -506,7 +506,7 @@ macro_rules! test_ecdh {
 }
 
 /// Macro to generate tests for DER/ASN.1 operations.
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 macro_rules! test_der {
 	(
 		$derivation_type:ty,
@@ -932,7 +932,7 @@ pub(crate) use test_aes_symmetric;
 pub(crate) use test_asymmetric_encryption;
 #[cfg(test)]
 pub(crate) use test_crypto_utils;
-#[cfg(all(test, feature = "der"))]
+#[cfg(all(test, any(feature = "der", feature = "rasn")))]
 pub(crate) use test_der;
 #[cfg(all(test, feature = "encryption"))]
 pub(crate) use test_ecdh;

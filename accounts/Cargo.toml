@@ -30,6 +30,6 @@ rand_core = { version = "0.9.3", features = ["std", "os_rng"] }
 base64.workspace = true
 
 [features]
-default = ["der"]
-der = ["asn1/der"]
-rasn = ["asn1/rasn"]
+default = ["rasn"]
+der = ["asn1/der", "crypto/der"]
+rasn = ["asn1/rasn", "crypto/rasn"]

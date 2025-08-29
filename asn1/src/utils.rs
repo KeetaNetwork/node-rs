@@ -16,7 +16,7 @@ use crate::rasn::ObjectIdentifier;
 use crate::der::{BitString, OctetString};
 
 #[cfg(all(feature = "rasn", not(feature = "der"), feature = "serde"))]
-use crate::rasn::{BitString, BitStringExt, OctetString};
+use crate::{BitString, BitStringExt, OctetString};
 
 #[cfg(feature = "serde")]
 use serde::Deserialize;

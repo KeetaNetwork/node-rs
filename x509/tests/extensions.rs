@@ -29,7 +29,6 @@ fn test_extension_count() {
 #[test]
 fn test_extensions_not_empty() {
 	let ca_cert = ca_certificate();
-
 	if let Some(extensions) = &ca_cert.tbs_certificate.extensions {
 		for ext in extensions {
 			assert!(!ext.extn_value.is_empty());

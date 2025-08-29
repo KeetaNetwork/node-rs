@@ -8,21 +8,22 @@ pub use crate::builder::{CertificateBuilder, ExtensionBuilder};
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use asn1::{AlgorithmIdentifier, SubjectPublicKeyInfo};
-use asn1::{BitString, ObjectIdentifier, OctetString, Sequence, ValueOrd};
-use asn1::{Decode, Encode};
+use asn1::SubjectPublicKeyInfo;
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
 use crypto::prelude::HashAlgorithm;
+use der::asn1::{ObjectIdentifier, OctetString};
+use der::{Decode, Encode, Sequence, ValueOrd};
 use x509_cert::certificate::{CertificateInner, Profile, TbsCertificateInner};
 use x509_cert::ext::Extension as X509Extension;
 use x509_cert::name::{DistinguishedName, Name};
 use x509_cert::serial_number::SerialNumber;
+use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned};
 use x509_cert::time::Validity;
 use x509_cert::Version;
 
 #[cfg(feature = "serde")]
-use asn1::utils::*;
+use crate::serde::{deserialize_octet_string, deserialize_oid, serialize_octet_string, serialize_oid};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -256,15 +257,15 @@ pub struct TbsCertificate {
 	#[asn1(context_specific = "0", default = "Default::default")]
 	pub version: Version,
 	pub serial_number: SerialNumber,
-	pub signature_algorithm: AlgorithmIdentifier,
+	pub signature_algorithm: AlgorithmIdentifierOwned,
 	pub issuer: DistinguishedName,
 	pub validity: Validity,
 	pub subject: Name,
-	pub subject_public_key_info: SubjectPublicKeyInfo,
+	pub subject_public_key_info: SubjectPublicKeyInfoOwned,
 	#[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
-	pub issuer_unique_id: Option<BitString>,
+	pub issuer_unique_id: Option<der::asn1::BitString>,
 	#[asn1(context_specific = "2", tag_mode = "IMPLICIT", optional = "true")]
-	pub subject_unique_id: Option<BitString>,
+	pub subject_unique_id: Option<der::asn1::BitString>,
 	#[asn1(context_specific = "3", tag_mode = "EXPLICIT", optional = "true")]
 	pub extensions: Option<Extensions>,
 }
@@ -274,11 +275,11 @@ impl<P: Profile> From<TbsCertificateInner<P>> for TbsCertificate {
 		Self {
 			version: tbs.version,
 			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
-			signature_algorithm: AlgorithmIdentifier::from(tbs.signature),
+			signature_algorithm: tbs.signature,
 			issuer: tbs.issuer,
 			validity: tbs.validity,
 			subject: tbs.subject,
-			subject_public_key_info: SubjectPublicKeyInfo::from(tbs.subject_public_key_info),
+			subject_public_key_info: tbs.subject_public_key_info,
 			issuer_unique_id: tbs.issuer_unique_id,
 			subject_unique_id: tbs.subject_unique_id,
 			extensions: tbs
@@ -293,11 +294,11 @@ impl<P: Profile> From<TbsCertificate> for TbsCertificateInner<P> {
 		Self {
 			version: tbs.version,
 			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
-			signature: x509_cert::spki::AlgorithmIdentifierOwned::from(tbs.signature_algorithm),
+			signature: tbs.signature_algorithm,
 			issuer: tbs.issuer,
 			validity: tbs.validity,
 			subject: tbs.subject,
-			subject_public_key_info: x509_cert::spki::SubjectPublicKeyInfoOwned::from(tbs.subject_public_key_info),
+			subject_public_key_info: tbs.subject_public_key_info,
 			issuer_unique_id: tbs.issuer_unique_id,
 			subject_unique_id: tbs.subject_unique_id,
 			extensions: tbs
@@ -514,7 +515,7 @@ impl CertificateBundle {
 	/// Get the issuer's public key from the chain.
 	pub fn to_issuer_public_key(&self) -> Option<SubjectPublicKeyInfo> {
 		self.to_issuer_certificate()
-			.map(|cert| cert.tbs_certificate.subject_public_key_info)
+			.map(|cert| cert.to_subject_public_key())
 	}
 
 	/// Get chain length.
@@ -957,8 +958,8 @@ impl From<&CertificateHashSet> for Vec<String> {
 #[derive(Debug, Clone, PartialEq, Eq, Sequence, ValueOrd)]
 pub struct Certificate {
 	pub tbs_certificate: TbsCertificate,
-	pub signature_algorithm: AlgorithmIdentifier,
-	pub signature: BitString,
+	pub signature_algorithm: AlgorithmIdentifierOwned,
+	pub signature: der::asn1::BitString,
 }
 
 impl Certificate {
@@ -1046,8 +1047,8 @@ impl Certificate {
 	}
 
 	/// Get the subject public key
-	pub fn to_subject_public_key(&self) -> &SubjectPublicKeyInfo {
-		&self.tbs_certificate.subject_public_key_info
+	pub fn to_subject_public_key(&self) -> SubjectPublicKeyInfo {
+		SubjectPublicKeyInfo::from(self.tbs_certificate.subject_public_key_info.clone())
 	}
 
 	/// Check if this is a self-signed certificate
@@ -1100,7 +1101,8 @@ impl Certificate {
 		}
 
 		// Check signature
-		if !self.verify_signature(&issuer.tbs_certificate.subject_public_key_info)? {
+		let issuer_public_key = SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
+		if !self.verify_signature(&issuer_public_key)? {
 			return Ok(false);
 		}
 
@@ -1118,7 +1120,7 @@ impl Certificate {
 	/// This method verifies that the certificate was signed by the provided
 	/// public key according to RFC 5280 certificate validation requirements.
 	pub fn verify_signature(&self, issuer_public_key: &SubjectPublicKeyInfo) -> Result<bool, CertificateError> {
-		let cert_sig_oid = &self.signature_algorithm.algorithm;
+		let cert_sig_oid = &self.signature_algorithm.oid;
 		let key_alg_oid = &issuer_public_key.algorithm.algorithm;
 
 		// Check algorithm compatibility
@@ -1138,7 +1140,10 @@ impl Certificate {
 			.map_err(CertificateError::from)?;
 
 		let signature_bytes = self.signature.raw_bytes();
-		let public_key_bytes = issuer_public_key.subject_public_key.raw_bytes();
+
+		// Convert asn1 SubjectPublicKeyInfo back to spki for raw bytes access
+		let spki_public_key = SubjectPublicKeyInfoOwned::from(issuer_public_key.clone());
+		let public_key_bytes = spki_public_key.subject_public_key.raw_bytes();
 
 		// Dispatch to appropriate verification function based on signature algorithm
 		match cert_sig_oid.to_string().as_str() {
@@ -1249,11 +1254,10 @@ impl Certificate {
 
 	/// Check if this certificate was issued by the given issuer
 	pub fn check_issued(&self, issuer: &Certificate) -> bool {
+		let issuer_public_key = SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
 		self.validate_issuer_subject_dn_match(issuer)
 			&& self.validate_authority_key_identifier(issuer)
-			&& self
-				.verify_signature(&issuer.tbs_certificate.subject_public_key_info)
-				.unwrap_or(false)
+			&& self.verify_signature(&issuer_public_key).unwrap_or(false)
 	}
 
 	/// Validate RFC 5280 compliance for this certificate
@@ -1605,7 +1609,7 @@ impl<P: Profile> From<CertificateInner<P>> for Certificate {
 	fn from(cert: CertificateInner<P>) -> Self {
 		Self {
 			tbs_certificate: TbsCertificate::from(cert.tbs_certificate),
-			signature_algorithm: AlgorithmIdentifier::from(cert.signature_algorithm),
+			signature_algorithm: cert.signature_algorithm,
 			signature: cert.signature.clone(),
 		}
 	}
@@ -1615,7 +1619,7 @@ impl<P: Profile> From<Certificate> for CertificateInner<P> {
 	fn from(cert: Certificate) -> Self {
 		Self {
 			tbs_certificate: TbsCertificateInner::from(cert.tbs_certificate),
-			signature_algorithm: x509_cert::spki::AlgorithmIdentifierOwned::from(cert.signature_algorithm),
+			signature_algorithm: cert.signature_algorithm,
 			signature: cert.signature.clone(),
 		}
 	}
@@ -1742,9 +1746,14 @@ impl_try_from_der_encode_trait!(TbsCertificate);
 #[cfg(test)]
 mod tests {
 	use asn1::oids;
+	use asn1::AlgorithmIdentifier;
+	use asn1::BitString;
 	use chrono::Utc;
 	use x509_cert::name::RdnSequence;
 	use x509_cert::serial_number::SerialNumber;
+
+	#[cfg(all(feature = "rasn", not(feature = "der")))]
+	use asn1::BitStringExt;
 
 	use super::*;
 	use crate::testing::{CertificateChain, CERTIFICATE_TEST_SETS};
@@ -1827,21 +1836,15 @@ mod tests {
 		let moment = get_cert_moment();
 		let valid_from = moment - chrono::Duration::hours(12);
 		let valid_to = moment + chrono::Duration::hours(12);
-
-		let dummy_public_key_bytes = vec![0u8; 32];
-		let dummy_algorithm = asn1::AlgorithmIdentifier {
-			algorithm: asn1::ObjectIdentifier::new(oids::ED25519).unwrap(),
-			parameters: None,
-		};
-		let dummy_public_key_bitstring = asn1::BitString::from_bytes(&dummy_public_key_bytes).unwrap();
-		let dummy_public_key_info =
-			asn1::SubjectPublicKeyInfo { algorithm: dummy_algorithm, subject_public_key: dummy_public_key_bitstring };
-
+		let public_key_bytes = vec![0u8; 32];
+		let algorithm = AlgorithmIdentifier::from_str(oids::ED25519).unwrap();
+		let subject_public_key = BitString::from_bytes(&public_key_bytes).unwrap();
+		let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
 		let subject_dn = utils::create_dn(&[(oids::CN, subject_cn)]).unwrap();
 		let issuer_dn = utils::create_dn(&[(oids::CN, issuer_cn)]).unwrap();
 
 		CertificateBuilder::new()
-			.with_subject_public_key(dummy_public_key_info)
+			.with_subject_public_key(public_key_info)
 			.with_subject_dn(subject_dn)
 			.with_issuer_dn(issuer_dn)
 			.with_validity(valid_from, valid_to)
@@ -2212,7 +2215,6 @@ mod tests {
 	fn test_certificate_trust_and_verification() {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
-
 			let moment = get_cert_moment();
 
 			let empty_root = HashSet::new();
@@ -2385,8 +2387,8 @@ mod tests {
 				extract_certificates(&test_set.chain);
 
 			// Get the correct signing keys for each certificate
-			let ca_key = &ca_cert.tbs_certificate.subject_public_key_info;
-			let intermediate_key = &intermediate_cert.tbs_certificate.subject_public_key_info;
+			let ca_key = &ca_cert.to_subject_public_key();
+			let intermediate_key = &intermediate_cert.to_subject_public_key();
 			// let client_key = &client_cert.tbs_certificate.subject_public_key_info;
 
 			// Test positive cases
@@ -2448,7 +2450,9 @@ mod tests {
 				(&ca_cert, &user_cert, false),
 			];
 			for (cert, issuer, expected) in verification_cases {
-				let result = cert.verify_signature(&issuer.tbs_certificate.subject_public_key_info);
+				let issuer_public_key =
+					SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
+				let result = cert.verify_signature(&issuer_public_key);
 				assert_eq!(result.unwrap_or(false), expected);
 			}
 		}
@@ -2464,14 +2468,14 @@ mod tests {
 			let ca_sig_alg = &ca_cert.signature_algorithm;
 			let intermediate_sig_alg = &intermediate_cert.signature_algorithm;
 			let user_sig_alg = &user_cert.signature_algorithm;
-			assert!(!ca_sig_alg.algorithm.to_string().is_empty());
-			assert!(!intermediate_sig_alg.algorithm.to_string().is_empty());
-			assert!(!user_sig_alg.algorithm.to_string().is_empty());
+			assert!(!ca_sig_alg.oid.to_string().is_empty());
+			assert!(!intermediate_sig_alg.oid.to_string().is_empty());
+			assert!(!user_sig_alg.oid.to_string().is_empty());
 
 			// Verify signatures
-			let ca_public_key = &ca_cert.tbs_certificate.subject_public_key_info;
-			let intermediate_public_key = &intermediate_cert.tbs_certificate.subject_public_key_info;
-			let user_public_key = &user_cert.tbs_certificate.subject_public_key_info;
+			let ca_public_key = &ca_cert.to_subject_public_key();
+			let intermediate_public_key = &intermediate_cert.to_subject_public_key();
+			let user_public_key = &user_cert.to_subject_public_key();
 			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
 			assert!(intermediate_cert.verify_signature(ca_public_key).unwrap());
 			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
@@ -2864,8 +2868,9 @@ mod tests {
 			let algorithm = oids::ED25519.parse().unwrap();
 			let subject_public_key = BitString::from_bytes(&[0u8; 32]).unwrap();
 			let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
-			let signature_algorithm = oids::ED25519.parse().unwrap();
-			let signature = BitString::from_bytes(&[0u8; 64]).unwrap();
+			let oid = ObjectIdentifier::new(oids::ED25519).unwrap();
+			let signature_algorithm = AlgorithmIdentifierOwned { oid, parameters: None };
+			let signature = der::asn1::BitString::from_bytes(&[0u8; 64]).unwrap();
 			let mut builder = CertificateBuilder::new()
 				.with_serial_number(SerialNumber::from(1u8))
 				.with_validity_days(365)
@@ -2887,7 +2892,8 @@ mod tests {
 					ExtensionBuilder::for_subject_alt_name(vec!["example.com"])
 				};
 				builder = builder.with_extension(san_ext);
-			} // Build the full certificate for validation
+			}
+
 			let tbs_certificate = builder.build_tbs().unwrap();
 			let cert = Certificate { tbs_certificate, signature_algorithm, signature };
 			let result = cert.validate_distinguished_names();

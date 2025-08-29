@@ -3087,6 +3087,9 @@ mod tests {
 
 	use crypto::algorithms::Algorithm;
 
+	#[cfg(all(feature = "rasn", not(feature = "der")))]
+	use asn1::BitStringExt;
+
 	/// Test data for key type detection methods
 	#[allow(dead_code)]
 	const CRYPTO_ACCOUNT_TYPES: &[KeyPairType] =

@@ -44,7 +44,12 @@ fn test_certificate_public_key_extraction() {
 	let user_public_key = &user_cert.tbs_certificate.subject_public_key_info;
 	assert!(!ca_public_key.subject_public_key.is_empty());
 	assert!(!user_public_key.subject_public_key.is_empty());
+
+	// Use backend-appropriate method for getting bytes
+	#[cfg(feature = "der")]
 	assert_ne!(ca_public_key.subject_public_key.as_bytes(), user_public_key.subject_public_key.as_bytes());
+	#[cfg(all(feature = "rasn", not(feature = "der")))]
+	assert_ne!(ca_public_key.subject_public_key.raw_bytes(), user_public_key.subject_public_key.raw_bytes());
 }
 
 #[test]
@@ -69,10 +74,10 @@ fn test_certificate_algorithm_identifiers() {
 	let ca_algorithm = &ca_cert.signature_algorithm;
 	let user_algorithm = &user_cert.signature_algorithm;
 	// Both should have valid algorithm identifiers
-	assert!(!ca_algorithm.algorithm.to_string().is_empty());
-	assert!(!user_algorithm.algorithm.to_string().is_empty());
+	assert!(!ca_algorithm.oid.to_string().is_empty());
+	assert!(!user_algorithm.oid.to_string().is_empty());
 	// They should use the same signature algorithm
-	assert_eq!(ca_algorithm.algorithm, user_algorithm.algorithm);
+	assert_eq!(ca_algorithm.oid, user_algorithm.oid);
 }
 
 #[test]

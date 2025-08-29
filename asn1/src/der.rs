@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 pub use der::asn1::*;
 pub use der::{Decode, Encode, Header, Reader, Sequence, SliceReader, Tag, TagNumber, Tagged, ValueOrd};
 
+use crate::error::Asn1Error;
+
 #[cfg(feature = "serde")]
 pub use crate::utils::{
 	deserialize_bit_string, deserialize_octet_string, deserialize_oid, serialize_bit_string, serialize_octet_string,
@@ -38,12 +40,12 @@ pub struct AlgorithmIdentifier {
 
 impl AlgorithmIdentifier {
 	/// Create a new AlgorithmIdentifier with the given OID and no parameters
-	pub fn new(oid: &str) -> Result<Self, crate::error::Asn1Error> {
+	pub fn new(oid: &str) -> Result<Self, Asn1Error> {
 		Ok(Self { algorithm: ObjectIdentifier::new(oid)?, parameters: None })
 	}
 
 	/// Create a new AlgorithmIdentifier with the given OID and parameters
-	pub fn new_with_params(oid: &str, parameters: Any) -> Result<Self, crate::error::Asn1Error> {
+	pub fn new_with_params(oid: &str, parameters: Any) -> Result<Self, Asn1Error> {
 		Ok(Self { algorithm: ObjectIdentifier::new(oid)?, parameters: Some(parameters) })
 	}
 }
@@ -61,7 +63,7 @@ impl From<AlgorithmIdentifier> for spki::AlgorithmIdentifierOwned {
 }
 
 impl FromStr for AlgorithmIdentifier {
-	type Err = crate::error::Asn1Error;
+	type Err = Asn1Error;
 
 	fn from_str(oid: &str) -> Result<Self, Self::Err> {
 		Self::new(oid)
@@ -88,10 +90,7 @@ pub struct SubjectPublicKeyInfo {
 
 impl SubjectPublicKeyInfo {
 	/// Create a new SubjectPublicKeyInfo
-	pub fn new<T: AsRef<[u8]>>(
-		algorithm: AlgorithmIdentifier,
-		public_key_bytes: T,
-	) -> Result<Self, crate::error::Asn1Error> {
+	pub fn new<T: AsRef<[u8]>>(algorithm: AlgorithmIdentifier, public_key_bytes: T) -> Result<Self, Asn1Error> {
 		let public_key = BitString::from_bytes(public_key_bytes.as_ref())?;
 		Ok(Self { algorithm, subject_public_key: public_key })
 	}
@@ -119,7 +118,7 @@ impl From<SubjectPublicKeyInfo> for spki::SubjectPublicKeyInfoOwned {
 macro_rules! impl_try_from_der_decode {
 	($target_type:ty) => {
 		impl TryFrom<&[u8]> for $target_type {
-			type Error = crate::error::Asn1Error;
+			type Error = Asn1Error;
 
 			fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
 				Ok(<Self as Decode>::from_der(data)?)
@@ -135,7 +134,7 @@ impl_try_from_der_decode!(AlgorithmIdentifier);
 macro_rules! impl_try_from_der_encode_trait {
 	($source_type:ty) => {
 		impl TryFrom<&$source_type> for Vec<u8> {
-			type Error = crate::error::Asn1Error;
+			type Error = Asn1Error;
 
 			fn try_from(value: &$source_type) -> Result<Self, Self::Error> {
 				Ok(<$source_type as Encode>::to_der(value)?)

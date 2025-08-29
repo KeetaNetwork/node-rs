@@ -3,6 +3,7 @@
 //! This module provides functionality for creating, parsing, signing, and
 //! validating X.509 certificates.
 
+pub mod asn1;
 pub mod builder;
 pub mod certificates;
 pub mod error;
@@ -14,6 +15,7 @@ pub use x509_cert::attr::{Attribute, AttributeType, AttributeValue};
 pub use x509_cert::certificate::Version;
 pub use x509_cert::name::{DistinguishedName, Name, RdnSequence, RelativeDistinguishedName};
 pub use x509_cert::serial_number::SerialNumber;
+pub use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned};
 pub use x509_cert::time::{Time, Validity};
 
 #[doc(hidden)]

@@ -63,13 +63,16 @@ test-feat:
 	cargo test -p crypto --no-default-features --features der
 	cargo test -p accounts --no-default-features --features der
 	cargo test -p accounts --no-default-features --features rasn
-	cargo test -p x509 --no-default-features --features serde
+	cargo test -p x509 --no-default-features --features der
+	cargo test -p x509 --no-default-features --features rasn
+	cargo test -p x509 --no-default-features --features der, serde
+	cargo test -p x509 --no-default-features --features rasn, serde
 	cargo test -p asn1 --no-default-features --features der
 	cargo test -p asn1 --no-default-features --features rasn
 	cargo test -p asn1 --no-default-features --features der,serde
 	cargo test -p asn1 --no-default-features --features rasn,serde
 	cargo test -p crypto -p x509 --all-features
-	cargo test -p crypto -p x509 --no-default-features
+	cargo test -p crypto --no-default-features
 
 # Run tests with host system's default target
 test:

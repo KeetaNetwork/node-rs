@@ -90,7 +90,6 @@ fn test_certificate_bundle_stores() {
 
 	// Test trusted certificate creation
 	let options_trusted = CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) };
-
 	let ca_pem = ca_cert.to_pem().unwrap();
 	let trusted_cert = CertificateBundle::new(&ca_pem, Some(options_trusted), None, None).unwrap();
 	assert!(trusted_cert.is_trusted());

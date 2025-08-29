@@ -9,7 +9,6 @@ features = ["std"]
 
 [dependencies.der]
 workspace = true
-optional = true
 
 [dependencies.rasn]
 workspace = true
@@ -39,7 +38,7 @@ utils = { path = "../utils", features = ["build"] }
 serde_json = { workspace = true }
 
 [features]
-default = ["serde", "der"]
-der = ["dep:der", "dep:const-oid"]
+default = ["serde", "rasn"]
+der = ["dep:const-oid"]
 rasn = ["dep:rasn"]
 serde = ["dep:serde"]

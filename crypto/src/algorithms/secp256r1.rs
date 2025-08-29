@@ -17,6 +17,8 @@ use secrecy::SecretBox;
 
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+use asn1::ObjectIdentifierExt;
 #[cfg(feature = "signature")]
 use p256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
 #[cfg(feature = "signature")]
@@ -122,11 +124,18 @@ impl core::fmt::Debug for Secp256r1PrivateKey {
 	}
 }
 
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 impl From<Secp256r1PrivateKey> for asn1::ObjectIdentifier {
 	fn from(_private_key: Secp256r1PrivateKey) -> Self {
 		// This should never fail as we are using a constant known OID
-		asn1::ObjectIdentifier::new(asn1::oids::SECP256R1).expect("Failed to create OID for secp256r1")
+		#[cfg(feature = "der")]
+		{
+			asn1::ObjectIdentifier::new(asn1::oids::SECP256R1).expect("Failed to create OID for secp256r1")
+		}
+		#[cfg(all(feature = "rasn", not(feature = "der")))]
+		{
+			asn1::ObjectIdentifier::from_str(asn1::oids::SECP256R1).expect("Failed to create OID for secp256r1")
+		}
 	}
 }
 
@@ -291,11 +300,18 @@ impl AsRef<[u8]> for Secp256r1PublicKey {
 	}
 }
 
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 impl From<Secp256r1PublicKey> for asn1::ObjectIdentifier {
 	fn from(_public_key: Secp256r1PublicKey) -> Self {
 		// This should never fail as we are using a constant known OID
-		asn1::ObjectIdentifier::new(asn1::oids::SECP256R1).expect("Failed to create OID for secp256r1")
+		#[cfg(feature = "der")]
+		{
+			asn1::ObjectIdentifier::new(asn1::oids::SECP256R1).expect("Failed to create OID for secp256r1")
+		}
+		#[cfg(all(feature = "rasn", not(feature = "der")))]
+		{
+			asn1::ObjectIdentifier::from_str(asn1::oids::SECP256R1).expect("Failed to create OID for secp256r1")
+		}
 	}
 }
 
@@ -393,6 +409,6 @@ mod tests {
 	#[cfg(feature = "encryption")]
 	crate::test_utils::test_asymmetric_encryption!(Secp256r1Derivation, "secp256r1");
 
-	#[cfg(feature = "der")]
+	#[cfg(any(feature = "der", feature = "rasn"))]
 	crate::test_utils::test_der!(Secp256r1Derivation, asn1::oids::SECP256R1, "secp256r1");
 }

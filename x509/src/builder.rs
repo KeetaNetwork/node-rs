@@ -62,14 +62,16 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use asn1::Encode;
-use asn1::{AlgorithmIdentifier, SubjectPublicKeyInfo};
-use asn1::{BitString, ObjectIdentifier};
+use std::time::SystemTime;
+
+use asn1::SubjectPublicKeyInfo;
 use chrono::{DateTime, Duration, Utc};
 use crypto::prelude::{Algorithm, CryptoSignerWithOptions, SignatureEncoding, SigningOptions};
-use std::time::SystemTime;
+use der::asn1::ObjectIdentifier;
+use der::Encode;
 use x509_cert::name::DistinguishedName;
 use x509_cert::serial_number::SerialNumber;
+use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned};
 use x509_cert::time::{Time, Validity};
 use x509_cert::Version;
 
@@ -1236,6 +1238,8 @@ impl ExtensionBuilder {
 /// use crypto::bigint::U256;
 /// use chrono::Utc;
 /// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
+/// # #[cfg(all(feature = "rasn", not(feature = "der")))]
+/// # use asn1::BitStringExt;
 ///
 /// // Create distinguished names
 /// let subject_dn = utils::create_dn(&[(oids::CN, "My Root CA")])?;
@@ -1273,6 +1277,8 @@ impl ExtensionBuilder {
 /// use x509::SerialNumber;
 /// use crypto::bigint::U256;
 /// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
+/// # #[cfg(all(feature = "rasn", not(feature = "der")))]
+/// # use asn1::BitStringExt;
 ///
 /// let subject_dn = utils::create_dn(&[(oids::CN, "www.example.com")])?;
 /// let issuer_dn = utils::create_dn(&[(oids::CN, "Example CA")])?;
@@ -1353,7 +1359,7 @@ impl ExtensionBuilder {
 /// - [RFC 3279 - Algorithms and Identifiers for the Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile](https://datatracker.ietf.org/doc/html/rfc3279)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateBuilder {
-	pub subject_public_key: Option<SubjectPublicKeyInfo>,
+	pub subject_public_key: Option<SubjectPublicKeyInfoOwned>,
 	pub subject_dn: Option<DistinguishedName>,
 	pub issuer_dn: Option<DistinguishedName>,
 	pub valid_from: Option<DateTime<Utc>>,
@@ -1402,6 +1408,8 @@ impl CertificateBuilder {
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
 	/// use x509::builder::CertificateBuilder;
 	/// use x509::oids;
+	/// # #[cfg(all(feature = "rasn", not(feature = "der")))]
+	/// # use asn1::BitStringExt;
 	///
 	/// let public_key_info = SubjectPublicKeyInfo {
 	///     algorithm: oids::ED25519.parse().unwrap(),
@@ -1412,7 +1420,9 @@ impl CertificateBuilder {
 	///     .with_subject_public_key(public_key_info);
 	/// ```
 	pub fn with_subject_public_key(mut self, public_key: SubjectPublicKeyInfo) -> Self {
-		self.subject_public_key = Some(public_key);
+		let spki_key = SubjectPublicKeyInfoOwned::from(public_key);
+
+		self.subject_public_key = Some(spki_key);
 		self
 	}
 
@@ -1972,6 +1982,8 @@ impl CertificateBuilder {
 	/// use x509::SerialNumber;
 	/// use crypto::bigint::U256;
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
+	/// # #[cfg(all(feature = "rasn", not(feature = "der")))]
+	/// # use asn1::BitStringExt;
 	///
 	/// let ca_dn = utils::create_dn(&[(oids::CN, "Example Root CA")])?;
 	/// let public_key_info = SubjectPublicKeyInfo {
@@ -2089,6 +2101,8 @@ impl CertificateBuilder {
 	/// use crypto::bigint::U256;
 	/// use chrono::Utc;
 	/// use asn1::{SubjectPublicKeyInfo, AlgorithmIdentifier, BitString};
+	/// # #[cfg(all(feature = "rasn", not(feature = "der")))]
+	/// # use asn1::BitStringExt;
 	///
 	/// let subject_dn = utils::create_dn(&[(oids::CN, "Test Certificate")])?;
 	/// let issuer_dn = utils::create_dn(&[(oids::CN, "Test CA")])?;
@@ -2155,8 +2169,8 @@ impl CertificateBuilder {
 		Ok(TbsCertificate {
 			version: Version::V3, // X.509 v3
 			serial_number: serial.to_owned(),
-			signature_algorithm: AlgorithmIdentifier {
-				algorithm: ObjectIdentifier::new(oids::SHA256_WITH_RSA)?, // SHA256withRSA
+			signature_algorithm: AlgorithmIdentifierOwned {
+				oid: ObjectIdentifier::new(oids::SHA256_WITH_RSA)?,
 				parameters: None,
 			},
 			issuer: issuer_dn.clone(),
@@ -2185,8 +2199,11 @@ impl CertificateBuilder {
 
 		Ok(Certificate {
 			tbs_certificate: tbs,
-			signature_algorithm: oids::SHA256_WITH_RSA.parse()?,
-			signature: BitString::from_bytes(&signature_bytes)?,
+			signature_algorithm: AlgorithmIdentifierOwned {
+				oid: ObjectIdentifier::new(oids::SHA256_WITH_RSA)?,
+				parameters: None,
+			},
+			signature: der::asn1::BitString::from_bytes(&signature_bytes)?,
 		})
 	}
 
@@ -2288,11 +2305,12 @@ impl CertificateBuilder {
 
 		// Build the TBS certificate with the correct signature algorithm
 		let mut tbs_certificate = self.build_tbs()?;
-		tbs_certificate.signature_algorithm =
-			AlgorithmIdentifier { algorithm: ObjectIdentifier::new(signature_algorithm_oid)?, parameters: None };
+		let oid = ObjectIdentifier::new(signature_algorithm_oid)?;
+
+		tbs_certificate.signature_algorithm = AlgorithmIdentifierOwned { oid, parameters: None };
 
 		// Serialize the TBS certificate for signing
-		let tbs_der = tbs_certificate.to_der()?;
+		let tbs_der = Vec::<u8>::try_from(&tbs_certificate)?;
 
 		// Determine signing options based on algorithm
 		let signing_options = match algorithm {
@@ -2307,12 +2325,12 @@ impl CertificateBuilder {
 
 		// Convert signature to bytes
 		let signature_bytes = signature.to_bytes();
-		let signature_bit_string = BitString::from_bytes(signature_bytes.as_ref())?;
+		let signature_bit_string = der::asn1::BitString::from_bytes(signature_bytes.as_ref())?;
 
 		// Create the final certificate
 		let cert = Certificate {
 			tbs_certificate,
-			signature_algorithm: signature_algorithm_oid.parse()?,
+			signature_algorithm: AlgorithmIdentifierOwned { oid, parameters: None },
 			signature: signature_bit_string,
 		};
 
@@ -2363,15 +2381,21 @@ impl CertificateBuilder {
 
 #[cfg(test)]
 mod tests {
+	#[cfg(feature = "der")]
+	use std::str::FromStr;
+
 	use chrono::Utc;
 	use der::Decode;
 
 	use accounts::{Account, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
-	use asn1::{AlgorithmIdentifier, BitString, ObjectIdentifier};
+	use asn1::{AlgorithmIdentifier, BitString};
 	use crypto::algorithms::ed25519::Ed25519PrivateKey;
 	use crypto::algorithms::secp256k1::Secp256k1PrivateKey;
 	use crypto::algorithms::secp256r1::Secp256r1PrivateKey;
 	use crypto::prelude::{AnyPrivateKey, KeyGeneration};
+
+	#[cfg(all(feature = "rasn", not(feature = "der")))]
+	use asn1::{BitStringExt, ObjectIdentifierExt};
 
 	use super::*;
 	use crate::certificates::{Certificate, TbsCertificate};
@@ -2401,7 +2425,7 @@ mod tests {
 
 			let public_key_info = SubjectPublicKeyInfo {
 				algorithm: AlgorithmIdentifier {
-					algorithm: ObjectIdentifier::new(algorithm_oid).unwrap(),
+					algorithm: asn1::ObjectIdentifier::from_str(algorithm_oid).unwrap(),
 					parameters: None,
 				},
 				subject_public_key: BitString::from_bytes(public_key_bytes).unwrap(),
@@ -2425,7 +2449,7 @@ mod tests {
 			assert_eq!(tbs.serial_number, expected_serial);
 			assert_eq!(tbs.subject, subject_dn);
 			assert_eq!(tbs.issuer, issuer_dn);
-			assert_eq!(tbs.subject_public_key_info, public_key_info);
+			assert_eq!(tbs.subject_public_key_info, SubjectPublicKeyInfoOwned::from(public_key_info));
 			assert_eq!(tbs.version, Version::V3);
 			assert!(tbs.extensions.is_some());
 
@@ -2443,7 +2467,7 @@ mod tests {
 				}
 			}
 
-			let tbs_der = tbs.to_der().unwrap();
+			let tbs_der = Vec::<u8>::try_from(&tbs).unwrap();
 			assert!(!tbs_der.is_empty());
 
 			let tbs_re_parsed = TbsCertificate::from_der(&tbs_der).unwrap();
@@ -2517,8 +2541,10 @@ mod tests {
 				.as_ref()
 				.expect("Key data not found for algorithm")
 				.public_key;
-			let algorithm =
-				AlgorithmIdentifier { algorithm: ObjectIdentifier::new(algorithm_oid).unwrap(), parameters: None };
+			let algorithm = AlgorithmIdentifier {
+				algorithm: asn1::ObjectIdentifier::from_str(algorithm_oid).unwrap(),
+				parameters: None,
+			};
 			let subject_public_key = BitString::from_bytes(public_key_bytes).unwrap();
 			let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
 
@@ -2596,7 +2622,7 @@ mod tests {
 			assert!(!certificate.signature.raw_bytes().is_empty());
 
 			// Verify the certificate is self-signed and can be verified with its own public key
-			let subject_public_key = &certificate.tbs_certificate.subject_public_key_info;
+			let subject_public_key = &certificate.to_subject_public_key();
 			let signature_verification = certificate.verify_signature(subject_public_key);
 			assert!(signature_verification.is_ok());
 			assert!(signature_verification.unwrap());
@@ -2611,7 +2637,7 @@ mod tests {
 			let pem_output = certificate.to_pem();
 			assert!(pem_output.is_ok());
 
-			let der_output = certificate.to_der();
+			let der_output = Vec::<u8>::try_from(&certificate);
 			assert!(der_output.is_ok());
 
 			// Verify we can parse the certificate back from PEM
@@ -2619,7 +2645,7 @@ mod tests {
 			assert!(re_parsed_cert.is_ok());
 
 			let re_parsed_cert = re_parsed_cert.unwrap();
-			assert_eq!(certificate.to_der().unwrap(), re_parsed_cert.to_der().unwrap());
+			assert_eq!(Vec::<u8>::try_from(certificate).unwrap(), Vec::<u8>::try_from(re_parsed_cert).unwrap());
 		}
 	}
 

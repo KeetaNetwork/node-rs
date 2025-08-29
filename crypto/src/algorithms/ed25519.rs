@@ -35,6 +35,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+use asn1::ObjectIdentifierExt;
 
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::{Ecies, EciesX25519};
@@ -130,11 +132,18 @@ impl TryFrom<&[u8]> for Ed25519PrivateKey {
 	}
 }
 
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 impl From<Ed25519PrivateKey> for asn1::ObjectIdentifier {
 	fn from(_private_key: Ed25519PrivateKey) -> Self {
-		// This should never fail as we are using a constant known OID
-		asn1::ObjectIdentifier::new(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
+		#[cfg(feature = "der")]
+		{
+			asn1::ObjectIdentifier::new(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
+		}
+
+		#[cfg(all(feature = "rasn", not(feature = "der")))]
+		{
+			asn1::ObjectIdentifier::from_str(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
+		}
 	}
 }
 
@@ -268,11 +277,18 @@ impl AsRef<[u8]> for Ed25519PublicKey {
 	}
 }
 
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 impl From<Ed25519PublicKey> for asn1::ObjectIdentifier {
 	fn from(_public_key: Ed25519PublicKey) -> Self {
 		// This should never fail as we are using a constant known OID
-		asn1::ObjectIdentifier::new(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
+		#[cfg(feature = "der")]
+		{
+			asn1::ObjectIdentifier::new(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
+		}
+		#[cfg(all(feature = "rasn", not(feature = "der")))]
+		{
+			asn1::ObjectIdentifier::from_str(asn1::oids::ED25519).expect("Failed to create OID for Ed25519")
+		}
 	}
 }
 
@@ -631,7 +647,7 @@ mod tests {
 	#[cfg(feature = "signature")]
 	crate::test_utils::test_signatures!(Ed25519Derivation, "ed25519");
 
-	#[cfg(feature = "der")]
+	#[cfg(any(feature = "der", feature = "rasn"))]
 	crate::test_utils::test_der!(Ed25519Derivation, asn1::oids::ED25519, "ed25519");
 
 	#[test]

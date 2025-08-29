@@ -56,16 +56,18 @@ path = "../crypto"
 
 [dependencies.asn1]
 path = "../asn1"
-features = ["der"]
 
 [dependencies.accounts]
 path = "../accounts"
 
 [features]
-default = ["serde", "der"]
+default = ["serde", "rasn"]
 serde = ["dep:serde", "dep:serde_json"]
-der = ["asn1/der"]
-rasn = ["dep:rasn"]
+der = ["asn1/der", "crypto/der", "accounts/der"]
+rasn = ["dep:rasn", "asn1/rasn", "crypto/rasn", "accounts/rasn"]
 
 [dev-dependencies]
 hex-literal.workspace = true
+
+[build-dependencies]
+utils = { path = "../utils", features = ["build"] }

@@ -8,6 +8,9 @@ use x509::certificates::{Certificate, CertificateBuilder, TbsCertificate};
 use x509::utils;
 use x509::SerialNumber;
 
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+use asn1::BitStringExt;
+
 // Test key data
 pub const RAW_ED25519_PUBLIC_KEY: [u8; 32] = [
 	0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33,
@@ -177,7 +180,6 @@ pub fn create_certificate_tbs(
 	// Create subject and issuer DNs based on the public keys
 	let subject_key_id = hex::encode(&subject_public_key[..8]);
 	let issuer_key_id = hex::encode(&issuer_public_key[..8]);
-
 	let subject_dn = utils::create_dn(&[(oids::CN, &format!("keeta_{subject_key_id}"))])?;
 	let issuer_dn = utils::create_dn(&[(oids::CN, &format!("keeta_{issuer_key_id}"))])?;
 
@@ -188,10 +190,9 @@ pub fn create_certificate_tbs(
 		Algorithm::Secp256k1 => oids::ECDSA_WITH_SHA256,
 	};
 
-	let algorithm_id = algorithm_oid.parse()?;
-	let subject_public_key_bitstring = BitString::from_bytes(subject_public_key)?;
-	let public_key_info =
-		SubjectPublicKeyInfo { algorithm: algorithm_id, subject_public_key: subject_public_key_bitstring };
+	let algorithm = algorithm_oid.parse()?;
+	let subject_public_key = BitString::from_bytes(subject_public_key)?;
+	let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
 
 	let builder = CertificateBuilder::new()
 		.with_subject_public_key(public_key_info)

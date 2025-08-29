@@ -139,14 +139,13 @@ path = "../keetanet-error"
 
 [dependencies.asn1]
 path = "../asn1"
-features = ["der"]
 optional = true
 
 [dependencies.utils]
 path = "../utils"
 
 [features]
-default = ["signature", "encryption", "der"]
+default = ["signature", "encryption", "rasn"]
 signature = ["dep:signature"]
 encryption = [
 	"dep:aead",
@@ -157,7 +156,8 @@ encryption = [
 	"dep:rand",
 	"dep:subtle",
 ]
-der = ["dep:asn1"]
+der = ["asn1/der"]
+rasn = ["asn1/rasn"]
 
 [dev-dependencies]
 hex-literal.workspace = true

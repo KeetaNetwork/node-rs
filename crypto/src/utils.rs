@@ -228,7 +228,7 @@ pub fn create_keypair_from_seed(
 /// # Example
 ///
 /// ```rust
-/// # #[cfg(feature = "der")]
+/// # #[cfg(any(feature = "der", feature = "rasn"))]
 /// # {
 /// use crypto::utils::parse_der_ecdsa_signature;
 ///
@@ -252,7 +252,7 @@ pub fn create_keypair_from_seed(
 /// assert_eq!(s.len(), 32);
 /// # }
 /// ```
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]), CryptoError> {
 	if der_bytes.len() < 8 || der_bytes[0] != 0x30 {
 		return Err(CryptoError::InvalidInput);
@@ -444,7 +444,7 @@ mod tests {
 	}
 
 	#[test]
-	#[cfg(feature = "der")]
+	#[cfg(any(feature = "der", feature = "rasn"))]
 	fn test_parse_der_ecdsa_signature() {
 		// Valid DER-encoded ECDSA signature
 		let valid_der = [
@@ -472,7 +472,7 @@ mod tests {
 	}
 
 	#[test]
-	#[cfg(feature = "der")]
+	#[cfg(any(feature = "der", feature = "rasn"))]
 	fn test_parse_der_ecdsa_signature_error_cases() {
 		let test_cases = [
 			// Basic invalid cases

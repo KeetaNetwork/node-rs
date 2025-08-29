@@ -65,10 +65,13 @@ pub use crate::rasn::{
 	AlgorithmIdentifier,
 	Any,
 	BitString,
+	BitStringExt,
 	Decode,
 	Encode,
+	Ia5String,
 	Integer,
 	ObjectIdentifier,
+	ObjectIdentifierExt,
 	OctetString,
 	SubjectPublicKeyInfo,
 };

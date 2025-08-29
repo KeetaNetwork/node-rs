@@ -33,9 +33,17 @@ utils::impl_error_from_with_fields!(Asn1Error, {
 
 #[cfg(feature = "rasn")]
 utils::impl_error_from_with_fields!(Asn1Error, {
-	rasn::uper::de::DecodeError => RasnError { reason: |e: &rasn::uper::de::DecodeError| format!("decode error: {}", e) },
-	rasn::der::enc::EncodeError => RasnError { reason: |e: &rasn::der::enc::EncodeError| format!("encode error: {}", e) },
+	rasn::uper::de::DecodeError => RasnError { reason: |e: &rasn::uper::de::DecodeError| format!("decode error: {e}") },
+	rasn::der::enc::EncodeError => RasnError { reason: |e: &rasn::der::enc::EncodeError| format!("encode error: {e}") },
 });
+
+// Add der::Error conversion when using rasn feature for interop
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+impl From<der::Error> for Asn1Error {
+	fn from(e: der::Error) -> Self {
+		Asn1Error::RasnError { reason: format!("der error: {e}") }
+	}
+}
 
 #[cfg(test)]
 mod tests {

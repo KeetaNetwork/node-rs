@@ -1,12 +1,13 @@
-use asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString};
-use asn1::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
+use der::asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString};
+use der::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
+use x509_cert::attr::AttributeTypeAndValue;
+use x509_cert::name::{DistinguishedName, RdnSequence, RelativeDistinguishedName};
+
 use crypto::algorithms::ed25519::{Ed25519PublicKey, Ed25519Signature};
 use crypto::algorithms::secp256k1::{Secp256k1PublicKey, Secp256k1Signature};
 use crypto::algorithms::secp256r1::{Secp256r1PublicKey, Secp256r1Signature};
 use crypto::prelude::{CryptoVerifierWithOptions, HashAlgorithm, SigningOptions};
 use crypto::utils::parse_der_ecdsa_signature;
-use x509_cert::attr::AttributeTypeAndValue;
-use x509_cert::name::{DistinguishedName, RdnSequence, RelativeDistinguishedName};
 
 use crate::error::CertificateError;
 
@@ -38,12 +39,11 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 	pairs
 		.iter()
 		.map(|(name, value)| {
+			// Always use der types for x509_cert compatibility
 			let oid = ObjectIdentifier::new(name.as_ref())?;
 			let ia5_string = Ia5String::new(value.as_ref())?;
 			let value = Any::encode_from(&ia5_string)?;
 			let attr = AttributeTypeAndValue { oid, value };
-
-			// Each attribute goes in its own RDN set for simplicity
 			RelativeDistinguishedName::try_from(vec![attr]).map_err(|_| CertificateError::InvalidCertificate)
 		})
 		.collect::<Result<Vec<_>, _>>()
@@ -60,10 +60,10 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 ///
 /// ```rust
 /// use x509::utils::generate_key_identifier;
-/// use asn1::BitString;
+/// use x509::asn1::BitString;
 ///
 /// let public_key_bytes = &[0x04, 0x01, 0x02, 0x03]; // Example public key
-/// let bit_string = BitString::new(0, public_key_bytes).unwrap();
+/// let bit_string = BitString::from_bytes(public_key_bytes).unwrap();
 ///
 /// let key_id = generate_key_identifier(&bit_string).unwrap();
 /// assert_eq!(key_id.len(), 20); // SHA-1 produces 20 bytes
@@ -71,7 +71,6 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 pub fn generate_key_identifier(public_key: &BitString) -> Result<Vec<u8>, CertificateError> {
 	let key_bytes = public_key.raw_bytes();
 	let hash = HashAlgorithm::Sha1.hash(key_bytes);
-
 	Ok(hash)
 }
 
@@ -119,6 +118,7 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 					// Fallback to treating as raw bytes
 					String::from_utf8_lossy(attr.value.value()).to_string()
 				};
+
 				NameValuePair { name, value }
 			})
 		})
@@ -152,22 +152,22 @@ pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedNa
 	pairs
 		.iter()
 		.map(|pair| {
-			let oid = match pair.name.as_str() {
-				"commonName" | "CN" => ObjectIdentifier::new(oids::CN)?,
-				"countryName" | "C" => ObjectIdentifier::new(oids::C)?,
-				"localityName" | "L" => ObjectIdentifier::new(oids::L)?,
-				"stateOrProvinceName" | "ST" => ObjectIdentifier::new(oids::ST)?,
-				"organizationName" | "O" => ObjectIdentifier::new(oids::O)?,
-				"organizationalUnitName" | "OU" => ObjectIdentifier::new(oids::OU)?,
-				"emailAddress" => ObjectIdentifier::new(oids::EMAIL_ADDRESS)?,
-				oid_str => ObjectIdentifier::new(oid_str)?,
+			// Map common names to OID strings
+			let oid_str = match pair.name.as_str() {
+				"commonName" | "CN" => oids::CN,
+				"countryName" | "C" => oids::C,
+				"localityName" | "L" => oids::L,
+				"stateOrProvinceName" | "ST" => oids::ST,
+				"organizationName" | "O" => oids::O,
+				"organizationalUnitName" | "OU" => oids::OU,
+				"emailAddress" => oids::EMAIL_ADDRESS,
+				oid_str => oid_str,
 			};
 
+			let oid = ObjectIdentifier::new(oid_str)?;
 			let ia5_string = Ia5String::new(&pair.value)?;
 			let value = Any::encode_from(&ia5_string)?;
 			let attr = AttributeTypeAndValue { oid, value };
-
-			// Each attribute goes in its own RDN set for simplicity
 			RelativeDistinguishedName::try_from(vec![attr]).map_err(|_| CertificateError::InvalidCertificate)
 		})
 		.collect::<Result<Vec<_>, _>>()
@@ -196,7 +196,6 @@ pub fn parse_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>> {
 	// Subject Key Identifier is an OCTET STRING
 	let mut reader = SliceReader::new(bytes.as_ref()).ok()?;
 	let octet_string = OctetString::decode(&mut reader).ok()?;
-
 	Some(octet_string.as_bytes().to_vec())
 }
 
@@ -672,10 +671,8 @@ pub fn verify_ecdsa_signature(
 
 #[cfg(test)]
 mod tests {
-	use asn1::oids;
-	use asn1::BitString;
-
 	use super::*;
+	use asn1::oids;
 
 	#[test]
 	fn test_create_dn() {
@@ -780,7 +777,7 @@ mod tests {
 
 		let mut previous_hashes = Vec::new();
 		for (key_bytes, description) in test_cases {
-			let bit_string = BitString::new(0, key_bytes).unwrap();
+			let bit_string = BitString::from_bytes(key_bytes).unwrap();
 			let key_id = generate_key_identifier(&bit_string).unwrap();
 
 			// SHA-1 always produces 20 bytes
@@ -973,10 +970,12 @@ mod tests {
 		let single_pairs = vec![NameValuePair { name: "commonName".to_string(), value: "example.com".to_string() }];
 		let single_dn = name_value_pairs_to_dn(&single_pairs).unwrap();
 		assert_eq!(single_dn.0.len(), 1);
+
 		let rdn = &single_dn.0[0];
 		// Access the first attribute using iterator
 		let attr = rdn.0.iter().next().unwrap();
 		assert_eq!(attr.oid.to_string(), oids::CN);
+
 		let ia5_string: Ia5String = attr.value.decode_as().unwrap();
 		assert_eq!(ia5_string.as_str(), "example.com");
 
@@ -1009,6 +1008,7 @@ mod tests {
 			// Access the first attribute using iterator
 			let attr = rdn.0.iter().next().unwrap();
 			assert_eq!(attr.oid.to_string(), *expected_oid);
+
 			let ia5_string: Ia5String = attr.value.decode_as().unwrap();
 			assert_eq!(ia5_string.as_str(), *expected_value);
 		}
@@ -1017,9 +1017,11 @@ mod tests {
 		let oid_pairs = vec![NameValuePair { name: oids::CN.to_string(), value: "direct_oid.com".to_string() }];
 		let oid_dn = name_value_pairs_to_dn(&oid_pairs).unwrap();
 		assert_eq!(oid_dn.0.len(), 1);
+
 		let rdn = &oid_dn.0[0];
 		let attr = rdn.0.iter().next().unwrap();
 		assert_eq!(attr.oid.to_string(), oids::CN);
+
 		let ia5_string: Ia5String = attr.value.decode_as().unwrap();
 		assert_eq!(ia5_string.as_str(), "direct_oid.com");
 

@@ -6,7 +6,7 @@ pub(crate) use serde_json::Value;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
-use hex;
+use der::asn1::{ObjectIdentifier, OctetString};
 use serde::ser::SerializeStruct;
 
 use crate::certificates::{Certificate, CertificateBundle, CertificateHash, CertificateOptions, Extension};
@@ -174,6 +174,41 @@ impl<'de> Deserialize<'de> for CertificateBundle {
 
 		Ok(CertificateBundle { certificate, options, root, intermediate })
 	}
+}
+
+/// Serialize an ObjectIdentifier
+pub fn serialize_oid<S>(oid: &ObjectIdentifier, serializer: S) -> Result<S::Ok, S::Error>
+where
+	S: serde::Serializer,
+{
+	serializer.serialize_str(&oid.to_string())
+}
+
+/// Deserialize an ObjectIdentifier
+pub fn deserialize_oid<'de, D>(deserializer: D) -> Result<ObjectIdentifier, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	let name = String::deserialize(deserializer)?;
+	ObjectIdentifier::new(&name).map_err(serde::de::Error::custom)
+}
+
+/// Serialize an OctetString
+pub fn serialize_octet_string<S>(octet_string: &OctetString, serializer: S) -> Result<S::Ok, S::Error>
+where
+	S: serde::Serializer,
+{
+	serializer.serialize_str(&hex::encode(octet_string.as_bytes()))
+}
+
+/// Deserialize an OctetString
+pub fn deserialize_octet_string<'de, D>(deserializer: D) -> Result<OctetString, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	let s = String::deserialize(deserializer)?;
+	let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+	OctetString::new(&*bytes).map_err(serde::de::Error::custom)
 }
 
 #[cfg(test)]

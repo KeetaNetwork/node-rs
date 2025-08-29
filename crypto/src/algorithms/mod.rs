@@ -4,9 +4,11 @@ use secrecy::SecretBox;
 use strum_macros::{Display, EnumIter, EnumString};
 use zeroize::ZeroizeOnDrop;
 
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 use asn1::oids;
-#[cfg(feature = "der")]
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+use asn1::ObjectIdentifierExt;
+#[cfg(any(feature = "der", feature = "rasn"))]
 use asn1::{AlgorithmIdentifier, Any, ObjectIdentifier, SubjectPublicKeyInfo};
 
 use crate::algorithms::ed25519::{Ed25519PrivateKey, Ed25519PublicKey};
@@ -219,9 +221,35 @@ impl_any_signature!(
 	(Secp256r1, crate::algorithms::secp256r1::Secp256r1Signature, Algorithm::Secp256r1),
 );
 
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 macro_rules! impl_subject_public_key_info {
 	($(($variant:ident, $public_key_type:ty, $oid:expr, $params_oid:expr)),* $(,)?) => {
+		/// Helper function to create ObjectIdentifier from string with proper backend support
+		fn create_object_identifier(oid: &str) -> ObjectIdentifier {
+			#[cfg(feature = "der")]
+			{
+				ObjectIdentifier::new(oid).expect("Invalid OID")
+			}
+			#[cfg(all(feature = "rasn", not(feature = "der")))]
+			{
+				ObjectIdentifier::from_str(oid).expect("Invalid OID")
+			}
+		}
+
+		/// Helper function to create ObjectIdentifier wrapped in Any for parameters
+		fn create_parameter_any(param_oid: &str) -> Any {
+			#[cfg(feature = "der")]
+			{
+				Any::from(ObjectIdentifier::new(param_oid).expect("Invalid OID"))
+			}
+			#[cfg(all(feature = "rasn", not(feature = "der")))]
+			{
+				let oid = ObjectIdentifier::from_str(param_oid).expect("Invalid OID");
+				let encoded_bytes = oid.to_der().expect("Failed to encode OID");
+				Any::from(encoded_bytes)
+			}
+		}
+
 		impl From<Algorithm> for ObjectIdentifier {
 			fn from(algorithm: Algorithm) -> Self {
 				let oid = match algorithm {
@@ -229,7 +257,8 @@ macro_rules! impl_subject_public_key_info {
 						Algorithm::$variant => $oid,
 					)*
 				};
-				ObjectIdentifier::new(oid).expect("Invalid OID")
+
+				create_object_identifier(oid)
 			}
 		}
 
@@ -237,7 +266,7 @@ macro_rules! impl_subject_public_key_info {
 			impl From<$public_key_type> for SubjectPublicKeyInfo {
 				fn from(public_key: $public_key_type) -> Self {
 					let algorithm = ObjectIdentifier::from(Algorithm::$variant);
-					let parameters = $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).expect("Invalid OID")));
+					let parameters = $params_oid.map(|param_oid| create_parameter_any(param_oid));
 					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
 					let public_key_bytes = Vec::from(public_key);
 					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).expect("Failed to create SubjectPublicKeyInfo")
@@ -260,19 +289,20 @@ macro_rules! impl_subject_public_key_info {
 				let oid = ObjectIdentifier::from(algorithm);
 				let parameters = match algorithm {
 					$(
-						Algorithm::$variant => $params_oid.map(|param_oid| Any::from(ObjectIdentifier::new(param_oid).expect("Invalid OID"))),
+						Algorithm::$variant => $params_oid.map(|param_oid| create_parameter_any(param_oid)),
 					)*
 				};
+
 				AlgorithmIdentifier { algorithm: oid, parameters }
 			}
 		}
 	};
 }
 
-#[cfg(feature = "der")]
+#[cfg(any(feature = "der", feature = "rasn"))]
 impl_subject_public_key_info!(
 	(Secp256k1, Secp256k1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256K1)),
-	(Ed25519, Ed25519PublicKey, oids::ED25519, None),
+	(Ed25519, Ed25519PublicKey, oids::ED25519, None::<&str>),
 	(Secp256r1, Secp256r1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256R1)),
 );
 
@@ -444,6 +474,9 @@ mod tests {
 
 	#[cfg(feature = "signature")]
 	use crate::prelude::{CryptoSignerWithOptions, SigningOptions};
+
+	#[cfg(all(feature = "rasn", not(feature = "der")))]
+	use asn1::BitStringExt;
 
 	const TEST_SEED: &str =
 		"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon";
@@ -622,7 +655,7 @@ mod tests {
 		assert!(Algorithm::try_from(99u8).is_err());
 	}
 
-	#[cfg(feature = "der")]
+	#[cfg(any(feature = "der", feature = "rasn"))]
 	#[test]
 	fn test_any_public_key_to_subject_public_key_info() {
 		struct SubjectPublicKeyInfoTestCase {
@@ -681,11 +714,9 @@ mod tests {
 	#[test]
 	fn test_any_signature_operations() {
 		const TEST_MESSAGE: &[u8] = b"test message for signing";
-
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let any_signature = test_case.create_any_signature(TEST_SEED.as_bytes(), TEST_MESSAGE);
-
 			// Test algorithm detection
+			let any_signature = test_case.create_any_signature(TEST_SEED.as_bytes(), TEST_MESSAGE);
 			assert_eq!(any_signature.to_algorithm(), test_case.algorithm);
 			assert_eq!(Algorithm::from(&any_signature), test_case.algorithm);
 
