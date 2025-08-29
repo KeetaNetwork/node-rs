@@ -13,5 +13,4 @@ pub struct SubjectPublicKeyInfo {
 	#[rasn(identifier = "subjectPublicKey")]
 	pub subject_public_key: BitString,
 }
-impl SubjectPublicKeyInfo {
-}
+impl SubjectPublicKeyInfo {}

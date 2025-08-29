@@ -11,5 +11,4 @@ pub struct AlgorithmIdentifier {
 	pub algorithm: ObjectIdentifier,
 	pub parameters: Option<Any>,
 }
-impl AlgorithmIdentifier {
-}
+impl AlgorithmIdentifier {}
