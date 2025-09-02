@@ -2392,7 +2392,7 @@ mod tests {
 	use keetanetwork_crypto::algorithms::ed25519::Ed25519PrivateKey;
 	use keetanetwork_crypto::algorithms::secp256k1::Secp256k1PrivateKey;
 	use keetanetwork_crypto::algorithms::secp256r1::Secp256r1PrivateKey;
-	use keetanetwork_crypto::prelude::{AnyPrivateKey, KeyGeneration};
+	use keetanetwork_crypto::prelude::AnyPrivateKey;
 
 	#[cfg(all(feature = "rasn", not(feature = "der")))]
 	use keetanetwork_asn1::{BitStringExt, ObjectIdentifierExt};
@@ -2564,9 +2564,9 @@ mod tests {
 	#[test]
 	fn test_certificate_builder_api() {
 		const TEST_CERTIFICATE_SETS: &[fn() -> AnyPrivateKey] = &[
-			|| AnyPrivateKey::Ed25519(Ed25519PrivateKey::generate_random().unwrap()),
-			|| AnyPrivateKey::Secp256k1(Secp256k1PrivateKey::generate_random().unwrap()),
-			|| AnyPrivateKey::Secp256r1(Secp256r1PrivateKey::generate_random().unwrap()),
+			|| AnyPrivateKey::Ed25519(Ed25519PrivateKey::try_from([0u8; 32].as_slice()).unwrap()),
+			|| AnyPrivateKey::Secp256k1(Secp256k1PrivateKey::try_from([1u8; 32].as_slice()).unwrap()),
+			|| AnyPrivateKey::Secp256r1(Secp256r1PrivateKey::try_from([1u8; 32].as_slice()).unwrap()),
 		];
 
 		for generate_key in TEST_CERTIFICATE_SETS {
