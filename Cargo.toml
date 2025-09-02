@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["accounts", "keetanet-error", "crypto", "x509", "asn1", "utils"]
+members = [
+	"keetanetwork-account",
+	"keetanetwork-error",
+	"keetanetwork-crypto",
+	"keetanetwork-x509",
+	"keetanetwork-asn1",
+	"keetanetwork-utils",
+]
 
 [workspace.package]
 version = "0.1.0"

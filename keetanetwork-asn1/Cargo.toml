@@ -1,0 +1,48 @@
+[package]
+name = "keetanetwork-asn1"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies.spki]
+version = "0.7.3"
+features = ["std"]
+
+[dependencies.der]
+workspace = true
+
+[dependencies.rasn]
+workspace = true
+optional = true
+
+[dependencies.const-oid]
+workspace = true
+optional = true
+
+[dependencies.hex]
+workspace = true
+
+[dependencies.snafu]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+optional = true
+
+[dependencies]
+keetanetwork-utils = { path = "../keetanetwork-utils" }
+
+[build-dependencies]
+keetanetwork-utils = { path = "../keetanetwork-utils", features = ["build"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[features]
+default = ["serde", "rasn"]
+der = ["dep:const-oid"]
+rasn = ["dep:rasn"]
+serde = ["dep:serde"]

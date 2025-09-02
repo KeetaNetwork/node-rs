@@ -1,0 +1,34 @@
+[package]
+name = "keetanetwork-account"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Local crates
+keetanetwork-crypto = { path = "../keetanetwork-crypto" }
+keetanetwork-error = { path = "../keetanetwork-error" }
+keetanetwork-utils = { path = "../keetanetwork-utils" }
+keetanetwork-asn1 = { path = "../keetanetwork-asn1", optional = true }
+
+# External dependencies
+base32.workspace = true
+bip39-dict.workspace = true
+hex.workspace = true
+snafu.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+zeroize = { version = "1.8.1", features = ["derive"] }
+rand_core = { version = "0.9.3", features = ["std", "os_rng"] }
+
+[dev-dependencies]
+base64.workspace = true
+
+[features]
+default = ["rasn"]
+der = ["keetanetwork-asn1/der", "keetanetwork-crypto/der"]
+rasn = ["keetanetwork-asn1/rasn", "keetanetwork-crypto/rasn"]

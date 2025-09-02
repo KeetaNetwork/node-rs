@@ -1,0 +1,12 @@
+[package]
+name = "keetanetwork-error"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+snafu.workspace = true

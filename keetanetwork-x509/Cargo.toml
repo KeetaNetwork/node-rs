@@ -1,0 +1,76 @@
+[package]
+name = "keetanetwork-x509"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+path = "src/lib.rs"
+
+# X.509 certificate parsing
+[dependencies.x509-cert]
+version = "0.2.5"
+features = ["std", "pem", "sha1"]
+
+# ASN.1 and DER encoding
+[dependencies.der]
+workspace = true
+
+[dependencies.rasn]
+workspace = true
+optional = true
+
+# Date/time handling
+[dependencies.chrono]
+workspace = true
+
+# Error handling
+[dependencies.snafu]
+workspace = true
+
+# Encoding utilities
+[dependencies.base64]
+workspace = true
+
+# Hex encoding/decoding
+[dependencies.hex]
+workspace = true
+
+# Serialization (optional)
+[dependencies.serde]
+workspace = true
+optional = true
+
+[dependencies.serde_json]
+workspace = true
+optional = true
+
+# Local dependencies
+[dependencies]
+keetanetwork-utils = { path = "../keetanetwork-utils" }
+keetanetwork-error = { path = "../keetanetwork-error" }
+keetanetwork-crypto = { path = "../keetanetwork-crypto" }
+keetanetwork-asn1 = { path = "../keetanetwork-asn1" }
+keetanetwork-account = { path = "../keetanetwork-account" }
+
+[features]
+default = ["serde", "rasn"]
+serde = ["dep:serde", "dep:serde_json"]
+der = [
+	"keetanetwork-asn1/der",
+	"keetanetwork-crypto/der",
+	"keetanetwork-account/der",
+]
+rasn = [
+	"dep:rasn",
+	"keetanetwork-asn1/rasn",
+	"keetanetwork-crypto/rasn",
+	"keetanetwork-account/rasn",
+]
+
+[dev-dependencies]
+hex-literal.workspace = true
+
+[build-dependencies]
+keetanetwork-utils = { path = "../keetanetwork-utils", features = ["build"] }

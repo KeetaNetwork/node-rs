@@ -3,25 +3,6 @@
 version = 4
 
 [[package]]
-name = "accounts"
-version = "0.1.0"
-dependencies = [
- "asn1",
- "base32",
- "base64",
- "bip39-dict",
- "crypto",
- "hex",
- "keetanet-error",
- "rand_core 0.9.3",
- "snafu",
- "strum",
- "strum_macros",
- "utils",
- "zeroize",
-]
-
-[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,21 +50,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "asn1"
-version = "0.1.0"
-dependencies = [
- "const-oid",
- "der",
- "hex",
- "rasn",
- "serde",
- "serde_json",
- "snafu",
- "spki",
- "utils",
 ]
 
 [[package]]
@@ -278,47 +244,6 @@ name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
-
-[[package]]
-name = "crypto"
-version = "0.1.0"
-dependencies = [
- "aead",
- "aes",
- "aes-gcm",
- "asn1",
- "base32",
- "base64",
- "bip39-dict",
- "cbc",
- "chrono",
- "crypto-bigint 0.6.1",
- "ctr",
- "curve25519-dalek",
- "ed25519-dalek",
- "hex",
- "hex-literal",
- "hkdf",
- "hmac",
- "k256",
- "keetanet-error",
- "p256",
- "pbkdf2",
- "rand",
- "rand_core 0.9.3",
- "secrecy",
- "sha1",
- "sha2",
- "sha3",
- "signature",
- "snafu",
- "strum",
- "strum_macros",
- "subtle",
- "utils",
- "x25519-dalek",
- "zeroize",
-]
 
 [[package]]
 name = "crypto-bigint"
@@ -707,10 +632,113 @@ dependencies = [
 ]
 
 [[package]]
-name = "keetanet-error"
+name = "keetanetwork-account"
+version = "0.1.0"
+dependencies = [
+ "base32",
+ "base64",
+ "bip39-dict",
+ "hex",
+ "keetanetwork-asn1",
+ "keetanetwork-crypto",
+ "keetanetwork-error",
+ "keetanetwork-utils",
+ "rand_core 0.9.3",
+ "snafu",
+ "strum",
+ "strum_macros",
+ "zeroize",
+]
+
+[[package]]
+name = "keetanetwork-asn1"
+version = "0.1.0"
+dependencies = [
+ "const-oid",
+ "der",
+ "hex",
+ "keetanetwork-utils",
+ "rasn",
+ "serde",
+ "serde_json",
+ "snafu",
+ "spki",
+]
+
+[[package]]
+name = "keetanetwork-crypto"
+version = "0.1.0"
+dependencies = [
+ "aead",
+ "aes",
+ "aes-gcm",
+ "base32",
+ "base64",
+ "bip39-dict",
+ "cbc",
+ "chrono",
+ "crypto-bigint 0.6.1",
+ "ctr",
+ "curve25519-dalek",
+ "ed25519-dalek",
+ "hex",
+ "hex-literal",
+ "hkdf",
+ "hmac",
+ "k256",
+ "keetanetwork-asn1",
+ "keetanetwork-error",
+ "keetanetwork-utils",
+ "p256",
+ "pbkdf2",
+ "rand",
+ "rand_core 0.9.3",
+ "secrecy",
+ "sha1",
+ "sha2",
+ "sha3",
+ "signature",
+ "snafu",
+ "strum",
+ "strum_macros",
+ "subtle",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "keetanetwork-error"
 version = "0.1.0"
 dependencies = [
  "snafu",
+]
+
+[[package]]
+name = "keetanetwork-utils"
+version = "0.1.0"
+dependencies = [
+ "rasn-compiler",
+]
+
+[[package]]
+name = "keetanetwork-x509"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "der",
+ "hex",
+ "hex-literal",
+ "keetanetwork-account",
+ "keetanetwork-asn1",
+ "keetanetwork-crypto",
+ "keetanetwork-error",
+ "keetanetwork-utils",
+ "rasn",
+ "serde",
+ "serde_json",
+ "snafu",
+ "x509-cert",
 ]
 
 [[package]]
@@ -1387,13 +1415,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "rasn-compiler",
-]
-
-[[package]]
 name = "uuid"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1568,27 +1589,6 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "zeroize",
-]
-
-[[package]]
-name = "x509"
-version = "0.1.0"
-dependencies = [
- "accounts",
- "asn1",
- "base64",
- "chrono",
- "crypto",
- "der",
- "hex",
- "hex-literal",
- "keetanet-error",
- "rasn",
- "serde",
- "serde_json",
- "snafu",
- "utils",
- "x509-cert",
 ]
 
 [[package]]
