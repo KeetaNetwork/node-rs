@@ -1392,7 +1392,7 @@ impl Certificate {
 	/// Validate Authority Key Identifier extension per RFC 5280 section 4.2.1.1
 	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
 	///
-	/// TODO Make this more readable
+	/// TODO Make this more readable and verify
 	pub fn validate_authority_key_identifier(&self, issuer: &Certificate) -> bool {
 		// If Authority Key Identifier is present, validate it matches the issuer's Subject Key Identifier
 		if let Some(auth_key_ext) = self.get_extension(oids::AUTHORITY_KEY_IDENTIFIER) {

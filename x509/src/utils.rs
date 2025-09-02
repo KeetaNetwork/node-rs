@@ -50,11 +50,11 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 		.map(RdnSequence)
 }
 
-/// Generate a key identifier from a public key using SHA-1.
+/// Generate a key identifier from a public key using SHA-3-256.
 ///
 /// This function creates a key identifier suitable for Subject Key Identifier
 /// and Authority Key Identifier extensions by hashing the public key using
-/// SHA-1 as specified in RFC 5280.
+/// SHA-3-256 as specified in RFC 5280.
 ///
 /// # Example
 ///
@@ -66,11 +66,11 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 /// let bit_string = BitString::from_bytes(public_key_bytes).unwrap();
 ///
 /// let key_id = generate_key_identifier(&bit_string).unwrap();
-/// assert_eq!(key_id.len(), 20); // SHA-1 produces 20 bytes
+/// assert_eq!(key_id.len(), 32); // SHA-3-256 produces 32 bytes
 /// ```
 pub fn generate_key_identifier(public_key: &BitString) -> Result<Vec<u8>, CertificateError> {
 	let key_bytes = public_key.raw_bytes();
-	let hash = HashAlgorithm::Sha1.hash(key_bytes);
+	let hash = HashAlgorithm::Sha3_256.hash(key_bytes);
 	Ok(hash)
 }
 
@@ -769,28 +769,24 @@ mod tests {
 	fn test_generate_key_identifier() {
 		// Test cases: (input_bytes, description)
 		let test_cases = [
-			(&[0x04, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08][..], "basic public key"),
-			(&[0x04, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18][..], "different public key"),
-			(&[][..], "empty public key"),
-			(&[0x30, 0x59, 0x30, 0x13][..], "realistic key prefix"),
+			&[0x04, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08][..],
+			&[0x04, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18][..],
+			&[][..],
+			&[0x30, 0x59, 0x30, 0x13][..],
 		];
 
 		let mut previous_hashes = Vec::new();
-		for (key_bytes, description) in test_cases {
+		for key_bytes in test_cases {
 			let bit_string = BitString::from_bytes(key_bytes).unwrap();
-			let key_id = generate_key_identifier(&bit_string).unwrap();
 
-			// SHA-1 always produces 20 bytes
-			assert_eq!(key_id.len(), 20, "Hash length should be 20 for {description}");
+			// SHA-3-256 always produces 32 bytes
+			let key_id = generate_key_identifier(&bit_string).unwrap();
+			assert_eq!(key_id.len(), 32);
 
 			// Different inputs should produce different outputs (except for identical inputs)
 			for (i, prev_hash) in previous_hashes.iter().enumerate() {
-				if key_bytes != test_cases[i].0 {
-					assert_ne!(
-						&key_id, prev_hash,
-						"Different inputs should produce different hashes: {} vs {}",
-						description, test_cases[i].1
-					);
+				if key_bytes != test_cases[i] {
+					assert_ne!(&key_id, prev_hash);
 				}
 			}
 

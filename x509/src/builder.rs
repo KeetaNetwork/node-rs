@@ -490,7 +490,7 @@ impl ExtensionBuilder {
 	///
 	/// // Generate key identifier from public key
 	/// let public_key_bytes = b"example_public_key_data";
-	/// let key_id = HashAlgorithm::Sha1.hash(public_key_bytes);
+	/// let key_id = HashAlgorithm::Sha3_256.hash(public_key_bytes);
 	///
 	/// let ski_extension = ExtensionBuilder::for_subject_key_identifier(&key_id);
 	///
