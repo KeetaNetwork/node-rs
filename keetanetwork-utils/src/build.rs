@@ -21,6 +21,10 @@ pub struct Asn1CompileConfig {
 	pub methods_to_strip: Vec<String>,
 	/// Whether to remove module wrappers
 	pub remove_module_wrappers: bool,
+	/// Whether to generate public module declarations (pub mod vs mod)
+	/// When true, generates `pub mod module_name;`
+	/// When false, generates `mod module_name;`
+	pub public_modules: bool,
 }
 
 impl Default for Asn1CompileConfig {
@@ -32,6 +36,7 @@ impl Default for Asn1CompileConfig {
 			strip_prebuilt_methods: false,
 			methods_to_strip: vec!["new".to_string()],
 			remove_module_wrappers: true,
+			public_modules: false,
 		}
 	}
 }
@@ -63,6 +68,12 @@ impl Asn1CompileConfig {
 	/// Set whether to remove module wrappers
 	pub fn with_remove_module_wrappers(mut self, remove: bool) -> Self {
 		self.remove_module_wrappers = remove;
+		self
+	}
+
+	/// Set whether to generate public module declarations
+	pub fn with_public_modules(mut self, public: bool) -> Self {
+		self.public_modules = public;
 		self
 	}
 }
@@ -173,7 +184,7 @@ pub fn compile_asn1_directory_with_full_config(config: &Asn1CompileConfig) -> Re
 		.generated_rs_path
 		.as_deref()
 		.unwrap_or(default_generated_path.to_str().unwrap());
-	generate_generated_rs(&generated_modules, generated_path, &config.out_dir)?;
+	generate_generated_rs(&generated_modules, generated_path, &config.out_dir, config)?;
 
 	println!("cargo:rerun-if-changed={}", config.asn_dir);
 	Ok(())
@@ -434,6 +445,7 @@ pub fn generate_generated_rs(
 	modules: &[(String, std::path::PathBuf)],
 	output_path: &str,
 	modules_dir: &str,
+	config: &Asn1CompileConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
 	// Create the output directory if it doesn't exist
 	if let Some(parent) = Path::new(output_path).parent() {
@@ -461,7 +473,12 @@ pub fn generate_generated_rs(
 	// Add module declarations using path directive to reference generated files
 	for (module_name, _) in modules {
 		content.push_str(&format!("#[path = \"{relative_path}/{module_name}.rs\"]\n"));
-		content.push_str(&format!("mod {module_name};\n"));
+		let mod_visibility = if config.public_modules {
+			"pub "
+		} else {
+			""
+		};
+		content.push_str(&format!("{mod_visibility}mod {module_name};\n"));
 	}
 
 	content.push_str("\n// Re-export all types from the generated modules\n");
