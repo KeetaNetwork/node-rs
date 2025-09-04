@@ -125,6 +125,7 @@ pub fn create_test_public_key(index: u32, algorithm: Algorithm) -> Result<Vec<u8
 			for (i, &byte) in extended_seed.iter().take(32).enumerate() {
 				public_key[i] = byte;
 			}
+
 			Ok(public_key.to_vec())
 		}
 		Algorithm::Secp256r1 | Algorithm::Secp256k1 => {
@@ -133,6 +134,7 @@ pub fn create_test_public_key(index: u32, algorithm: Algorithm) -> Result<Vec<u8
 			for (i, &byte) in extended_seed.iter().take(64).enumerate() {
 				public_key[i + 1] = byte;
 			}
+
 			Ok(public_key.to_vec())
 		}
 	}

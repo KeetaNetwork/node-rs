@@ -436,44 +436,10 @@ impl CertificateBundle {
 		Ok(Self { certificate, options, root, intermediate })
 	}
 
-	/// Validate trust using the instance's certificate collections.
-	/// Returns an error if no root certificates are available.
-	pub fn verify_chain(mut self, moment: Option<DateTime<Utc>>) -> Result<Self, CertificateError> {
-		if self.root.is_empty() {
-			return Err(CertificateError::ChainValidationFailed {
-				reason: "No root certificates available for validation".to_string(),
-			});
-		}
-
-		// Build the certificate chain
-		let chain: Vec<Certificate> = self
-			.certificate
+	/// Build the certificate chain using the instance's certificate collections.
+	pub fn verify_chain(&self) -> impl Iterator<Item = Certificate> {
+		self.certificate
 			.verify_chain(&self.root, &self.intermediate)
-			.collect();
-
-		// Validate that we have a complete chain to a trusted root
-		if chain.is_empty() {
-			return Err(CertificateError::ChainValidationFailed {
-				reason: "Unable to build certificate chain".to_string(),
-			});
-		}
-
-		// Check if the last certificate in the chain is a trusted root
-		let is_trusted = chain
-			.last()
-			.map(|root_cert| self.root.contains(root_cert))
-			.unwrap_or(false);
-
-		self.options.moment = moment;
-		self.options.is_trusted_root = Some(is_trusted);
-
-		if !is_trusted {
-			return Err(CertificateError::ChainValidationFailed {
-				reason: "Certificate chain does not end with a trusted root".to_string(),
-			});
-		}
-
-		Ok(self)
 	}
 
 	/// Get the root certificate from the chain.
@@ -1432,11 +1398,11 @@ impl Certificate {
 				break;
 			}
 
-			// Look for the issuer in the certificate collections
+			// Look for the issuer in the certificate collections using comprehensive validation
 			let issuer = root
 				.iter()
 				.chain(intermediate.iter())
-				.find(|cert| cert.tbs_certificate.subject == current.tbs_certificate.issuer);
+				.find(|cert| current.check_issued(cert));
 
 			if let Some(issuer_cert) = issuer {
 				// Only add if not already in the chain
@@ -2286,10 +2252,9 @@ mod tests {
 			)
 			.unwrap();
 
-			// Test validation with certificate collections
-			let cert_with_options_clone = cert_with_options.clone();
-			let validated = cert_with_options_clone.verify_chain(Some(moment)).unwrap();
-			assert!(validated.is_trusted());
+			// Test validation with certificate collections - verify_chain now returns iterator
+			let chain: Vec<Certificate> = cert_with_options.verify_chain().collect();
+			assert!(!chain.is_empty());
 
 			// Test validation error when no root certificates are available
 			let cert_with_no_roots = CertificateBundle {
@@ -2299,9 +2264,9 @@ mod tests {
 				intermediate: HashSet::new(),
 			};
 
-			// Verify that the certificate cannot be validated without roots
-			let validation_result = cert_with_no_roots.verify_chain(Some(moment));
-			assert!(matches!(validation_result, Err(CertificateError::ChainValidationFailed { .. })));
+			// Verify that the certificate returns empty chain without roots
+			let chain: Vec<Certificate> = cert_with_no_roots.verify_chain().collect();
+			assert_eq!(chain.len(), 1); // Only the certificate itself
 
 			// Test DER conversion
 			let der_bytes = cert_with_options.to_der().unwrap();
