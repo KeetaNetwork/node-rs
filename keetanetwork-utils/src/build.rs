@@ -21,10 +21,11 @@ pub struct Asn1CompileConfig {
 	pub methods_to_strip: Vec<String>,
 	/// Whether to remove module wrappers
 	pub remove_module_wrappers: bool,
-	/// Whether to generate public module declarations (pub mod vs mod)
-	/// When true, generates `pub mod module_name;`
-	/// When false, generates `mod module_name;`
-	pub public_modules: bool,
+	/// Optional list of module names that should be declared as public
+	/// - `None`: All modules are private (`mod module_name;`)
+	/// - `Some(vec!["*"])`: All modules are public (`pub mod module_name;`)
+	/// - `Some(vec!["mod1", "mod2"])`: Only specified modules are public
+	pub public_modules: Option<Vec<String>>,
 }
 
 impl Default for Asn1CompileConfig {
@@ -36,7 +37,7 @@ impl Default for Asn1CompileConfig {
 			strip_prebuilt_methods: false,
 			methods_to_strip: vec!["new".to_string()],
 			remove_module_wrappers: true,
-			public_modules: false,
+			public_modules: None,
 		}
 	}
 }
@@ -71,9 +72,22 @@ impl Asn1CompileConfig {
 		self
 	}
 
-	/// Set whether to generate public module declarations
-	pub fn with_public_modules(mut self, public: bool) -> Self {
-		self.public_modules = public;
+	/// Set which modules should be declared as public
+	/// Pass a vector of module names that should be public
+	pub fn with_public_modules(mut self, modules: Vec<&str>) -> Self {
+		self.public_modules = Some(modules.into_iter().map(|s| s.to_string()).collect());
+		self
+	}
+
+	/// Make all modules public
+	pub fn with_all_modules_public(mut self) -> Self {
+		self.public_modules = Some(vec!["*".to_string()]);
+		self
+	}
+
+	/// Make all modules private (default)
+	pub fn with_all_modules_private(mut self) -> Self {
+		self.public_modules = None;
 		self
 	}
 }
@@ -473,8 +487,12 @@ pub fn generate_generated_rs(
 	// Add module declarations using path directive to reference generated files
 	for (module_name, _) in modules {
 		content.push_str(&format!("#[path = \"{relative_path}/{module_name}.rs\"]\n"));
-		let mod_visibility = if config.public_modules {
-			"pub "
+		let mod_visibility = if let Some(ref public_modules) = config.public_modules {
+			if public_modules.contains(&"*".to_string()) || public_modules.contains(module_name) {
+				"pub "
+			} else {
+				""
+			}
 		} else {
 			""
 		};
