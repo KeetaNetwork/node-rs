@@ -70,6 +70,9 @@ version = "0.27.2"
 [workspace.dependencies.strum_macros]
 version = "0.27.2"
 
+[workspace.dependencies.lazy_static]
+version = "1.5.0"
+
 [profile.dev]
 opt-level = 0
 debug = true

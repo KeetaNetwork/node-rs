@@ -40,3 +40,7 @@ pub const C: &str = "2.5.4.6";
 pub const ST: &str = "2.5.4.8";
 pub const L: &str = "2.5.4.7";
 pub const EMAIL_ADDRESS: &str = "1.2.840.113549.1.9.1";
+
+// Include the generated OIDs from build.rs
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+include!("../generated/oids.rs");

@@ -17,10 +17,13 @@ pub struct Asn1CompileConfig {
 	pub generated_rs_path: Option<String>,
 	/// Whether to strip pre-built methods from generated types
 	pub strip_prebuilt_methods: bool,
-	/// Methods to strip (if strip_prebuilt_methods is true)
-	pub methods_to_strip: Vec<String>,
+	/// Methods to strip per module (if strip_prebuilt_methods is true)
+	/// Key is module name, value is list of method names to strip
+	pub methods_to_strip: std::collections::HashMap<String, Vec<String>>,
 	/// Whether to remove module wrappers
 	pub remove_module_wrappers: bool,
+	/// Whether to run cargo clippy after compilation and apply fixes
+	pub run_clippy_fixes: bool,
 	/// Optional list of module names that should be declared as public
 	/// - `None`: All modules are private (`mod module_name;`)
 	/// - `Some(vec!["*"])`: All modules are public (`pub mod module_name;`)
@@ -35,8 +38,9 @@ impl Default for Asn1CompileConfig {
 			out_dir: "generated".to_string(),
 			generated_rs_path: None,
 			strip_prebuilt_methods: false,
-			methods_to_strip: vec!["new".to_string()],
+			methods_to_strip: std::collections::HashMap::new(),
 			remove_module_wrappers: true,
+			run_clippy_fixes: true,
 			public_modules: None,
 		}
 	}
@@ -60,15 +64,23 @@ impl Asn1CompileConfig {
 		self
 	}
 
-	/// Set which methods to strip
-	pub fn with_methods_to_strip(mut self, methods: Vec<&str>) -> Self {
-		self.methods_to_strip = methods.into_iter().map(|s| s.to_string()).collect();
+	/// Set which methods to strip for a specific module
+	pub fn with_methods_to_strip(mut self, module: &str, methods: Vec<&str>) -> Self {
+		let method_strings = methods.into_iter().map(|s| s.to_string()).collect();
+		self.methods_to_strip
+			.insert(module.to_string(), method_strings);
 		self
 	}
 
 	/// Set whether to remove module wrappers
 	pub fn with_remove_module_wrappers(mut self, remove: bool) -> Self {
 		self.remove_module_wrappers = remove;
+		self
+	}
+
+	/// Enable automatic clippy fixes after compilation
+	pub fn with_clippy_fixes(mut self, enable: bool) -> Self {
+		self.run_clippy_fixes = enable;
 		self
 	}
 
@@ -164,7 +176,11 @@ pub fn compile_asn1_directory_with_full_config(config: &Asn1CompileConfig) -> Re
 
 				// Strip pre-built methods if enabled
 				let processed_code = if config.strip_prebuilt_methods {
-					strip_prebuilt_methods(&processed_code, &config.methods_to_strip)
+					if let Some(methods) = config.methods_to_strip.get(&module_name) {
+						strip_prebuilt_methods(&processed_code, methods)
+					} else {
+						processed_code
+					}
 				} else {
 					processed_code
 				};
@@ -199,6 +215,11 @@ pub fn compile_asn1_directory_with_full_config(config: &Asn1CompileConfig) -> Re
 		.as_deref()
 		.unwrap_or(default_generated_path.to_str().unwrap());
 	generate_generated_rs(&generated_modules, generated_path, &config.out_dir, config)?;
+
+	// Run clippy fixes if enabled
+	if config.run_clippy_fixes {
+		run_clippy_fixes()?;
+	}
 
 	println!("cargo:rerun-if-changed={}", config.asn_dir);
 	Ok(())
@@ -503,6 +524,13 @@ pub fn generate_generated_rs(
 
 	// Add re-exports for each module
 	for (module_name, _asn_file) in modules {
+		// Skip modules already defined in `public_modules`
+		if let Some(ref public_modules) = config.public_modules {
+			if public_modules.contains(&"*".to_string()) || public_modules.contains(module_name) {
+				continue;
+			}
+		}
+
 		// Parse the generated file to find exported types - look in the modules directory
 		let generated_file_path = format!("{modules_dir}/{module_name}.rs");
 		if let Ok(generated_content) = std::fs::read_to_string(&generated_file_path) {
@@ -547,4 +575,70 @@ pub fn extract_exported_types(content: &str) -> Vec<String> {
 	}
 
 	types
+}
+
+/// Run rustfmt directly on generated files to avoid cargo recursion
+pub fn run_clippy_fixes() -> Result<(), Box<dyn std::error::Error>> {
+	println!("cargo:warning=Formatting generated code...");
+
+	// Only run rustfmt directly on the files to avoid cargo recursion issues
+	format_generated_files()?;
+
+	Ok(())
+}
+
+/// Format specific generated files using rustfmt directly
+pub fn format_generated_files() -> Result<(), Box<dyn std::error::Error>> {
+	// Find all .rs files in the generated directory
+	let generated_dir = std::path::Path::new("generated");
+	if !generated_dir.exists() {
+		return Ok(()); // Nothing to format
+	}
+
+	let rs_files: Vec<_> = std::fs::read_dir(generated_dir)?
+		.filter_map(|entry| {
+			let entry = entry.ok()?;
+			let path = entry.path();
+			if path.extension()? == "rs" {
+				Some(path)
+			} else {
+				None
+			}
+		})
+		.collect();
+
+	// Also include src/generated.rs if it exists
+	let src_generated = std::path::Path::new("src/generated.rs");
+	let mut all_files = rs_files;
+	if src_generated.exists() {
+		all_files.push(src_generated.to_path_buf());
+	}
+
+	if all_files.is_empty() {
+		return Ok(());
+	}
+
+	// Run rustfmt directly on the specific files
+	let mut rustfmt_cmd = std::process::Command::new("rustfmt");
+	rustfmt_cmd.args(["--edition", "2021"]);
+
+	for file in &all_files {
+		rustfmt_cmd.arg(file);
+	}
+
+	match rustfmt_cmd.output() {
+		Ok(result) => {
+			if !result.status.success() {
+				let stderr = String::from_utf8_lossy(&result.stderr);
+				println!("cargo:warning=Rustfmt completed with warnings: {stderr}");
+			} else {
+				println!("cargo:warning=Generated code formatting applied successfully");
+			}
+		}
+		Err(e) => {
+			println!("cargo:warning=Failed to run rustfmt: {e}");
+		}
+	}
+
+	Ok(())
 }

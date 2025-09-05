@@ -1,0 +1,18 @@
+SensitiveAttributes DEFINITIONS ::= BEGIN
+
+    SensitiveAttribute ::= SEQUENCE {
+        version        INTEGER { v1(0) },
+        cipher         SEQUENCE {
+            algorithm    OBJECT IDENTIFIER,
+            ivOrNonce    OCTET STRING,
+            key          OCTET STRING
+        },
+        hashedValue    SEQUENCE {
+            encryptedSalt  OCTET STRING,
+            algorithm      OBJECT IDENTIFIER,
+            value          OCTET STRING
+        },
+        encryptedValue OCTET STRING
+    }
+
+END
