@@ -385,6 +385,12 @@ macro_rules! test_der_round_trip {
 	};
 }
 
+/// Get the OID JSON string from the oids.json file
+#[cfg(feature = "serde")]
+pub fn get_oid_json() -> String {
+	include_str!("../oids.json").to_string()
+}
+
 #[cfg(all(test, feature = "serde"))]
 mod tests {
 	use super::*;
@@ -649,5 +655,15 @@ mod tests {
 		// Test invalid component
 		let result = validate_oid_format("1.invalid.3");
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+	}
+
+	#[test]
+	fn test_get_oid_json() {
+		let json_content = get_oid_json();
+		assert!(!json_content.is_empty());
+
+		// Verify it's valid JSON
+		let parsed: serde_json::Value = serde_json::from_str(&json_content).unwrap();
+		assert!(parsed.is_object());
 	}
 }
