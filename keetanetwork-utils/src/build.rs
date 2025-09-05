@@ -541,6 +541,9 @@ pub fn generate_generated_rs(
 		}
 	}
 
+	// Add EOF line break
+	content.push('\n');
+
 	// Write the generated.rs file
 	std::fs::write(output_path, content)?;
 	println!("cargo:rerun-if-changed={output_path}");
@@ -607,9 +610,10 @@ pub fn format_generated_files() -> Result<(), Box<dyn std::error::Error>> {
 		})
 		.collect();
 
+	let mut all_files = rs_files;
+
 	// Also include src/generated.rs if it exists
 	let src_generated = std::path::Path::new("src/generated.rs");
-	let mut all_files = rs_files;
 	if src_generated.exists() {
 		all_files.push(src_generated.to_path_buf());
 	}

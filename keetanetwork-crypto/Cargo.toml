@@ -139,13 +139,16 @@ optional = true
 
 # Local dependencies
 [dependencies.keetanetwork-error]
+version = "0.1.0"
 path = "../keetanetwork-error"
 
 [dependencies.keetanetwork-asn1]
+version = "0.1.0"
 path = "../keetanetwork-asn1"
 optional = true
 
 [dependencies.keetanetwork-utils]
+version = "0.1.0"
 path = "../keetanetwork-utils"
 
 [features]

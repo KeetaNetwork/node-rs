@@ -40,12 +40,14 @@ optional = true
 workspace = true
 
 [dependencies]
-keetanetwork-utils = { path = "../keetanetwork-utils" }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
 
 [build-dependencies]
 serde_json = "1.0"
 rasn-compiler = "0.14.2"
-keetanetwork-utils = { path = "../keetanetwork-utils", features = ["build"] }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = [
+	"build",
+] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

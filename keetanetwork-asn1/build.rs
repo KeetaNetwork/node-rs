@@ -64,6 +64,7 @@ fn generate_schema() {
 		fs::create_dir_all(parent).expect("Failed to create asn1 directory");
 	}
 
+	ensure_single_newline_ending(&mut schema_content);
 	fs::write(&dest_path, schema_content).expect("Failed to write iso20022.asn");
 }
 
@@ -431,6 +432,7 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push_str("}\n");
 	}
 
+	ensure_single_newline_ending(&mut generated_code);
 	fs::write(&dest_path, generated_code).unwrap();
 }
 
@@ -467,7 +469,11 @@ fn update_generated_rs_with_from_imp(filename: &str) {
 	}
 
 	// Write the updated content back
-	let updated_content = updated_lines.join("\n");
+	let mut updated_content = updated_lines.join("\n");
+
+	// Ensure proper file ending
+	ensure_single_newline_ending(&mut updated_content);
+
 	fs::write(generated_rs_path, updated_content).expect("Failed to update generated.rs");
 }
 
@@ -560,14 +566,12 @@ fn generate_default_impl(oids: &Value, generated_code: &mut String) {
 						generated_code.push_str(&format!(
 							r#"impl Default for {token} {{
 	fn default() -> Self {{
-		Self::new(
-			{}
-		)
+		Self::new({})
 	}}
 }}
 
 "#,
-							field_defaults.join(",\n\t\t\t")
+							field_defaults.join(", ")
 						));
 					}
 				}
@@ -606,14 +610,12 @@ fn generate_default_impl(oids: &Value, generated_code: &mut String) {
 					generated_code.push_str(&format!(
 						r#"impl Default for {name} {{
 	fn default() -> Self {{
-		Self::new(
-			{}
-		)
+		Self::new({})
 	}}
 }}
 
 "#,
-						field_defaults.join(",\n\t\t\t")
+						field_defaults.join(", ")
 					));
 				}
 			}
@@ -682,7 +684,7 @@ use super::iso20022::*;
 		TypeMapping {
 			asn1_type: "UTF8String",
 			implementations: vec![
-				FromImpl { from_type: "String", conversion: "value.into()", feature_gate: None },
+				FromImpl { from_type: "String", conversion: "value", feature_gate: None },
 				FromImpl { from_type: "&str", conversion: "value.into()", feature_gate: None },
 			],
 		},
@@ -726,6 +728,7 @@ use super::iso20022::*;
 		fs::create_dir_all(parent).expect("Failed to create src/generated directory");
 	}
 
+	ensure_single_newline_ending(&mut generated_code);
 	fs::write(&dest_path, generated_code).unwrap_or_else(|_| panic!("Failed to write {filename}"));
 
 	// Update generated.rs to include this module
@@ -771,4 +774,12 @@ fn camel_to_pascal_case(s: &str) -> String {
 	}
 
 	result
+}
+
+/// Ensures the file ends with exactly one newline
+fn ensure_single_newline_ending(content: &mut String) {
+	// Remove all trailing whitespace including newlines
+	*content = content.trim_end().to_string();
+	// Add exactly one newline
+	content.push('\n');
 }

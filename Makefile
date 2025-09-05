@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer publish
 
 # Project name
 PROJ_NAME := node-rs
@@ -149,13 +149,13 @@ developer:
 		echo "✅ Rust is already installed (version: $$(rustc --version))"; \
 	else \
 		echo "📦 Installing Rust via rustup (automated)..."; \
-		if [ -f rustup-init.sh ]; then \
-			chmod +x rustup-init.sh; \
-			./rustup-init.sh -y --default-toolchain stable; \
+		if [ -f scripts/rustup-init.sh ]; then \
+			chmod +x scripts/rustup-init.sh; \
+			./scripts/rustup-init.sh -y --default-toolchain stable; \
 			echo "🔄 Rust installed! Sourcing environment..."; \
 			. "$$HOME/.cargo/env" 2>/dev/null || true; \
 		else \
-			echo "❌ rustup-init.sh not found in project root."; \
+			echo "❌ scripts/rustup-init.sh not found in project root."; \
 			echo "   Please download it from: https://sh.rustup.rs/"; \
 			exit 1; \
 		fi; \
@@ -179,6 +179,15 @@ developer:
 		echo "   make developer"; \
 	fi
 	$(MAKE) help
+
+# Publish packages and create release
+publish:
+	@echo "Running release script..."
+	@./scripts/release.sh $(filter-out $@,$(MAKECMDGOALS))
+
+# Allow flags to be passed as fake targets
+--%:
+	@:
 
 # Help information
 help:
@@ -207,3 +216,6 @@ help:
 	@echo "  make do-lint-ci     - Lint code for CI (check only, no fixes)"
 	@echo "  make do-docs-ci     - Generate documentation without opening it"
 	@echo "  make coverage-ci    - Generate LCOV coverage report for CI/SonarCloud"
+	@echo ""
+	@echo "Release Commands:"
+	@echo "  make publish        - Publish all packages to crates.io and create signed release tag"

@@ -73,3 +73,4 @@ words:
   - ocsp
   - Datelike
   - peekable
+  - oneline

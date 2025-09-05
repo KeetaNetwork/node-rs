@@ -48,11 +48,11 @@ optional = true
 
 # Local dependencies
 [dependencies]
-keetanetwork-utils = { path = "../keetanetwork-utils" }
-keetanetwork-error = { path = "../keetanetwork-error" }
-keetanetwork-crypto = { path = "../keetanetwork-crypto" }
-keetanetwork-asn1 = { path = "../keetanetwork-asn1" }
-keetanetwork-account = { path = "../keetanetwork-account" }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
+keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1" }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
 
 [features]
 default = ["serde", "rasn"]
@@ -73,4 +73,6 @@ rasn = [
 hex-literal.workspace = true
 
 [build-dependencies]
-keetanetwork-utils = { path = "../keetanetwork-utils", features = ["build"] }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = [
+	"build",
+] }

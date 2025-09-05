@@ -10,10 +10,10 @@ path = "src/lib.rs"
 
 [dependencies]
 # Local crates
-keetanetwork-crypto = { path = "../keetanetwork-crypto" }
-keetanetwork-error = { path = "../keetanetwork-error" }
-keetanetwork-utils = { path = "../keetanetwork-utils" }
-keetanetwork-asn1 = { path = "../keetanetwork-asn1", optional = true }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
+keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", optional = true }
 
 # External dependencies
 base32.workspace = true
