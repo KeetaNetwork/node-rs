@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer publish
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer release
 
 # Project name
 PROJ_NAME := node-rs
@@ -202,7 +202,7 @@ developer:
 	$(MAKE) help
 
 # Publish packages and create release
-publish:
+release:
 	@echo "Running release script..."
 	@./scripts/release.sh $(filter-out $@,$(MAKECMDGOALS))
 
@@ -239,4 +239,4 @@ help:
 	@echo "  make coverage-ci    - Generate LCOV coverage report for CI/SonarCloud"
 	@echo ""
 	@echo "Release Commands:"
-	@echo "  make publish        - Publish all packages to crates.io and create signed release tag"
+	@echo "  make release        - Publish all packages to crates.io and create signed release tag"
