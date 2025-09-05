@@ -8,7 +8,6 @@ use common::*;
 fn test_certificate_chain_validation() {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
-
 	let ca_subject = &ca_cert.tbs_certificate.subject;
 	let user_issuer = &user_cert.tbs_certificate.issuer;
 	assert_eq!(ca_subject, user_issuer);
@@ -17,7 +16,6 @@ fn test_certificate_chain_validation() {
 #[test]
 fn test_certificate_self_signed_validation() {
 	let ca_cert = ca_certificate();
-
 	let ca_subject = &ca_cert.tbs_certificate.subject;
 	let ca_issuer = &ca_cert.tbs_certificate.issuer;
 	assert_eq!(ca_subject, ca_issuer);

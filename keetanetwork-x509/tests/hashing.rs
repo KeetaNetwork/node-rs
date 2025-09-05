@@ -1,12 +1,9 @@
 mod common;
 
-#[cfg(feature = "serde")]
-use std::collections::HashSet;
-
 use keetanetwork_x509::certificates::{Certificate, CertificateHash};
 
 #[cfg(feature = "serde")]
-use keetanetwork_x509::certificates::{CertificateBundle, CertificateOptions};
+use keetanetwork_x509::certificates::CertificateBundle;
 
 use common::*;
 
@@ -14,7 +11,6 @@ use common::*;
 fn test_hash_uniqueness() {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
-
 	let ca_hash = CertificateHash::try_from(&ca_cert).unwrap();
 	let user_hash = CertificateHash::try_from(&user_cert).unwrap();
 	assert_ne!(ca_hash, user_hash);
@@ -26,7 +22,6 @@ fn test_hash_uniqueness() {
 fn test_hash_consistency() {
 	let ca_cert = ca_certificate();
 	let ca_cert_2 = ca_certificate();
-
 	let ca_hash = CertificateHash::try_from(&ca_cert).unwrap();
 	let ca_hash_2 = CertificateHash::try_from(&ca_cert_2).unwrap();
 	assert_eq!(ca_hash, ca_hash_2);
@@ -69,18 +64,8 @@ fn test_hash_json_serialization() {
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
 
-	let ca_bundle = CertificateBundle {
-		certificate: ca_cert.clone(),
-		options: CertificateOptions::default(),
-		root: HashSet::new(),
-		intermediate: HashSet::new(),
-	};
-	let user_bundle = CertificateBundle {
-		certificate: user_cert.clone(),
-		options: CertificateOptions::default(),
-		root: HashSet::new(),
-		intermediate: HashSet::new(),
-	};
+	let ca_bundle = CertificateBundle::try_from(vec![ca_cert.clone()]).unwrap();
+	let user_bundle = CertificateBundle::try_from(vec![user_cert.clone()]).unwrap();
 
 	// Serialize to JSON and verify hash consistency
 	let ca_json = serde_json::to_value(&ca_bundle).unwrap();

@@ -438,16 +438,14 @@ impl CertificateBundle {
 
 	/// Build the certificate chain using the instance's certificate collections.
 	pub fn verify_chain(&self) -> impl Iterator<Item = Certificate> {
-		self.certificate
-			.verify_chain(&self.root, &self.intermediate)
+		let all_certs: Vec<Certificate> = self.into();
+		self.certificate.verify_chain(all_certs)
 	}
 
 	/// Get the root certificate from the chain.
 	pub fn to_root_certificate(&self) -> Option<Certificate> {
-		let chain: Vec<Certificate> = self
-			.certificate
-			.verify_chain(&self.root, &self.intermediate)
-			.collect();
+		let all_certs: Vec<Certificate> = self.into();
+		let chain: Vec<Certificate> = self.certificate.verify_chain(all_certs).collect();
 		if chain.len() > 1 {
 			// Chain contains intermediate certificates, root is the last one
 			chain.last().cloned()
@@ -460,10 +458,8 @@ impl CertificateBundle {
 
 	/// Get the issuer certificate from the chain.
 	pub fn to_issuer_certificate(&self) -> Option<Certificate> {
-		let chain: Vec<Certificate> = self
-			.certificate
-			.verify_chain(&self.root, &self.intermediate)
-			.collect();
+		let all_certs: Vec<Certificate> = self.into();
+		let chain: Vec<Certificate> = self.certificate.verify_chain(all_certs).collect();
 		if chain.len() > 1 {
 			// Chain contains more than just the main certificate, issuer is the second one
 			chain.get(1).cloned()
@@ -486,9 +482,8 @@ impl CertificateBundle {
 
 	/// Get chain length.
 	pub fn to_chain_length(&self) -> usize {
-		self.certificate
-			.verify_chain(&self.root, &self.intermediate)
-			.count()
+		let all_certs: Vec<Certificate> = self.into();
+		self.certificate.verify_chain(all_certs).count()
 	}
 
 	/// Check if the certificate is trusted.
@@ -497,8 +492,14 @@ impl CertificateBundle {
 	}
 
 	/// Set the trusted status.
-	pub fn with_trusted(mut self, trusted: bool) -> Self {
-		self.options.is_trusted_root = Some(trusted);
+	pub fn as_trusted(mut self) -> Self {
+		self.options.is_trusted_root = Some(true);
+		self
+	}
+
+	/// Set the untrusted status.
+	pub fn as_untrusted(mut self) -> Self {
+		self.options.is_trusted_root = Some(false);
 		self
 	}
 
@@ -534,8 +535,9 @@ macro_rules! impl_into_iterator_for_certificate_bundle {
 			type IntoIter = std::vec::IntoIter<Certificate>;
 
 			fn into_iter(self) -> Self::IntoIter {
+				let all_certs: Vec<Certificate> = self.clone().into();
 				self.certificate
-					.verify_chain(&self.root, &self.intermediate)
+					.verify_chain(all_certs)
 					.collect::<Vec<_>>()
 					.into_iter()
 			}
@@ -557,9 +559,10 @@ impl TryFrom<&CertificateBundle> for Vec<u8> {
 		result.extend_from_slice(&cert_with_options.certificate.to_der()?);
 
 		// Add chain certificates
+		let all_certs: Vec<Certificate> = cert_with_options.into();
 		let chain: Vec<Certificate> = cert_with_options
 			.certificate
-			.verify_chain(&cert_with_options.root, &cert_with_options.intermediate)
+			.verify_chain(all_certs)
 			.collect();
 		for cert in &chain[1..] {
 			// Skip the first one since it's the main certificate we already added
@@ -601,14 +604,21 @@ impl TryFrom<Vec<Certificate>> for CertificateBundle {
 		let mut iter = certificates.into_iter();
 		if let Some(certificate) = iter.next() {
 			let options = CertificateOptions::default();
+			let mut root = HashSet::new();
 			let mut intermediate = HashSet::new();
-			for intermediate_cert in iter {
-				// Add remaining certificates as intermediates in the store
-				intermediate.insert(intermediate_cert);
+
+			for cert in iter {
+				// Put self-signed certificates (CAs) in root store,
+				// others in intermediate store
+				if cert.is_self_signed() {
+					root.insert(cert);
+				} else {
+					intermediate.insert(cert);
+				}
 			}
 
 			// Determine trust: default to false, require explicit trust
-			Ok(Self { certificate, options, root: HashSet::new(), intermediate })
+			Ok(Self { certificate, options, root, intermediate })
 		} else {
 			Err(CertificateError::ValidationFailed {
 				reason: "Cannot create options from empty certificate vector".to_string(),
@@ -658,6 +668,21 @@ impl TryFrom<Vec<u8>> for CertificateBundle {
 
 	fn try_from(data: Vec<u8>) -> Result<Self, Self::Error> {
 		data.as_slice().try_into()
+	}
+}
+
+impl From<&CertificateBundle> for Vec<Certificate> {
+	fn from(bundle: &CertificateBundle) -> Self {
+		std::iter::once(bundle.certificate.clone())
+			.chain(bundle.root.iter().cloned())
+			.chain(bundle.intermediate.iter().cloned())
+			.collect()
+	}
+}
+
+impl From<CertificateBundle> for Vec<Certificate> {
+	fn from(bundle: CertificateBundle) -> Self {
+		(&bundle).into()
 	}
 }
 
@@ -1379,12 +1404,12 @@ impl Certificate {
 		true
 	}
 
-	/// Verify certificate chain using the provided certificate collections
-	pub fn verify_chain(
-		&self,
-		root: &HashSet<Certificate>,
-		intermediate: &HashSet<Certificate>,
-	) -> impl Iterator<Item = Certificate> {
+	/// Verify certificate chain using the provided certificate collection
+	pub fn verify_chain<I>(&self, certificates: I) -> impl Iterator<Item = Certificate>
+	where
+		I: IntoIterator<Item = Certificate>,
+	{
+		let certificates: Vec<Certificate> = certificates.into_iter().collect();
 		let mut current = self;
 		let mut ordered_chain = vec![self.clone()];
 
@@ -1398,11 +1423,11 @@ impl Certificate {
 				break;
 			}
 
-			// Look for the issuer in the certificate collections using comprehensive validation
-			let issuer = root
+			// Look for the issuer in the certificate collection
+			// Skips certificates that are identical to self
+			let issuer = certificates
 				.iter()
-				.chain(intermediate.iter())
-				.find(|cert| current.check_issued(cert));
+				.find(|cert| **cert != *self && current.check_issued(cert));
 
 			if let Some(issuer_cert) = issuer {
 				// Only add if not already in the chain
@@ -1422,30 +1447,30 @@ impl Certificate {
 	}
 
 	/// Check if this certificate is trusted given certificate collections.
-	pub fn is_trusted(
-		&self,
-		root: &HashSet<Certificate>,
-		intermediate: &HashSet<Certificate>,
-		moment: Option<DateTime<Utc>>,
-	) -> bool {
+	pub fn is_trusted<I>(&self, certificates: I, moment: Option<DateTime<Utc>>) -> bool
+	where
+		I: IntoIterator<Item = Certificate>,
+	{
 		// Check validity at the given moment (or now)
 		let check_time = moment.unwrap_or_else(Utc::now);
 		if !self.is_valid_at(check_time).unwrap_or(false) {
 			return false;
 		}
 
-		// If this is directly in the trusted roots, it's trusted
-		if root.contains(self) {
+		// Convert certificates to Vec for use in both checks
+		let certificates: Vec<Certificate> = certificates.into_iter().collect();
+		let cert_set: HashSet<Certificate> = certificates.iter().cloned().collect();
+		if cert_set.contains(self) {
+			// If this is directly in the trusted certificates, it's trusted
 			return true;
 		}
 
-		// Try to build a chain to a trusted root
-		let chain: Vec<Certificate> = self.verify_chain(root, intermediate).collect();
-
-		// Check if the chain ends with a trusted root
+		// Try to build a chain to a trusted certificate
+		let chain: Vec<Certificate> = self.verify_chain(certificates).collect();
 		chain
 			.last()
-			.map(|root_cert| root.contains(root_cert))
+			// Check if the chain ends with a trusted certificate
+			.map(|root_cert| cert_set.contains(root_cert))
 			.unwrap_or(false)
 	}
 
@@ -1460,8 +1485,9 @@ impl Certificate {
 		&self,
 		certificates: &HashSet<Certificate>,
 	) -> Result<(), CertificateError> {
-		// Check for duplicates - this is automatically handled by HashSet, but we need to ensure
-		// no certificates with same content but different objects
+		// Check for duplicates - this is automatically handled by HashSet,
+		// but we need to ensure no certificates contain same content but are
+		// different objects.
 		let mut seen_hashes = HashSet::new();
 		for cert in certificates {
 			let cert_hash = CertificateHash::try_from(cert)?;
@@ -2011,10 +2037,15 @@ mod tests {
 			// Test chain functionality
 			let cert_with_opts = pem_data.parse::<CertificateBundle>().unwrap();
 			let cert_with_trust = cert_with_opts
-				.with_trusted(true)
+				.clone()
+				.as_trusted()
 				.with_chain(vec![base_cert]);
 			assert!(cert_with_trust.is_trusted());
 			assert_eq!(cert_with_trust.to_chain_length(), 1);
+
+			// Test untrusted certificate with chain
+			let cert_with_trust = cert_with_opts.as_untrusted();
+			assert!(!cert_with_trust.is_trusted());
 		}
 	}
 
@@ -2183,22 +2214,15 @@ mod tests {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
 			let moment = get_cert_moment();
 
-			let empty_root = HashSet::new();
-			let empty_intermediate = HashSet::new();
-			assert!(!ca_cert.is_trusted(&empty_root, &empty_intermediate, Some(moment)));
-			assert!(!user_cert.is_trusted(&empty_root, &empty_intermediate, Some(moment)));
+			let empty_certificates: Vec<Certificate> = vec![];
+			assert!(!ca_cert.is_trusted(empty_certificates.clone(), Some(moment)));
+			assert!(!user_cert.is_trusted(empty_certificates, Some(moment)));
 
-			let mut store_root = HashSet::new();
-			store_root.insert(ca_cert.clone());
-			let mut store_intermediate = HashSet::new();
-			store_intermediate.insert(intermediate_cert.clone());
+			let store_certificates = vec![ca_cert.clone(), intermediate_cert.clone()];
+			assert!(ca_cert.is_trusted(store_certificates.clone(), Some(moment)));
+			assert!(user_cert.is_trusted(store_certificates.clone(), Some(moment)));
 
-			assert!(ca_cert.is_trusted(&store_root, &store_intermediate, Some(moment)));
-			assert!(user_cert.is_trusted(&store_root, &store_intermediate, Some(moment)));
-
-			let chain: Vec<Certificate> = user_cert
-				.verify_chain(&store_root, &store_intermediate)
-				.collect();
+			let chain: Vec<Certificate> = user_cert.verify_chain(store_certificates).collect();
 			assert!(!chain.is_empty());
 
 			// Test with CertificateWithOptions for getting issuer and root
@@ -2474,15 +2498,19 @@ mod tests {
 				intermediate_certs,
 			} = extract_certificates(&test_set.chain);
 
-			let chain_verification: Vec<Certificate> = user_cert
-				.verify_chain(&root_certs, &intermediate_certs)
+			let all_certificates: Vec<Certificate> = root_certs
+				.iter()
+				.chain(intermediate_certs.iter())
+				.cloned()
 				.collect();
+
+			let chain_verification: Vec<Certificate> = user_cert.verify_chain(all_certificates.clone()).collect();
 			assert!(!chain_verification.is_empty());
 
-			let ca_trusted = ca_cert.is_trusted(&root_certs, &intermediate_certs, Some(moment));
+			let ca_trusted = ca_cert.is_trusted(all_certificates.clone(), Some(moment));
 			assert!(ca_trusted);
 
-			let user_trusted = user_cert.is_trusted(&root_certs, &intermediate_certs, Some(moment));
+			let user_trusted = user_cert.is_trusted(all_certificates, Some(moment));
 			assert!(user_trusted);
 
 			// Test with CertificateWithOptions for getting issuer and root
