@@ -579,7 +579,7 @@ pub fn extract_exported_types(content: &str) -> Vec<String> {
 
 /// Run rustfmt directly on generated files to avoid cargo recursion
 pub fn run_clippy_fixes() -> Result<(), Box<dyn std::error::Error>> {
-	println!("cargo:warning=Formatting generated code...");
+	println!("cargo:info=Formatting generated code...");
 
 	// Only run rustfmt directly on the files to avoid cargo recursion issues
 	format_generated_files()?;
@@ -632,7 +632,7 @@ pub fn format_generated_files() -> Result<(), Box<dyn std::error::Error>> {
 				let stderr = String::from_utf8_lossy(&result.stderr);
 				println!("cargo:warning=Rustfmt completed with warnings: {stderr}");
 			} else {
-				println!("cargo:warning=Generated code formatting applied successfully");
+				println!("cargo:info=Generated code formatting applied successfully");
 			}
 		}
 		Err(e) => {

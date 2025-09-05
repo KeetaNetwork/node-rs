@@ -65,7 +65,6 @@ fn generate_schema() {
 	}
 
 	fs::write(&dest_path, schema_content).expect("Failed to write iso20022.asn");
-	println!("Generated {}", dest_path.display());
 }
 
 fn generate_primitive_types(oids: &Value, schema_content: &mut String) {
@@ -470,8 +469,6 @@ fn update_generated_rs_with_from_imp(filename: &str) {
 	// Write the updated content back
 	let updated_content = updated_lines.join("\n");
 	fs::write(generated_rs_path, updated_content).expect("Failed to update generated.rs");
-
-	println!("Updated generated.rs with from_imp module");
 }
 
 #[derive(Debug)]
@@ -730,7 +727,6 @@ use super::iso20022::*;
 	}
 
 	fs::write(&dest_path, generated_code).unwrap_or_else(|_| panic!("Failed to write {filename}"));
-	println!("Generated {}", dest_path.display());
 
 	// Update generated.rs to include this module
 	update_generated_rs_with_from_imp(filename);
