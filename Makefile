@@ -167,6 +167,27 @@ developer:
 		echo "🧪 Installing development tools..."; \
 		$(MAKE) coverage-setup; \
 		cargo install cargo-audit --quiet || echo "⚠️  cargo-audit installation failed or already installed"; \
+		echo "🔧 Installing script dependencies..."; \
+		if ! command -v jq > /dev/null 2>&1; then \
+			echo "📦 Installing jq..."; \
+			if command -v brew > /dev/null 2>&1; then \
+				brew install jq; \
+			else \
+				echo "⚠️  Please install jq manually: https://stedolan.github.io/jq/download/"; \
+			fi; \
+		else \
+			echo "✅ jq is already installed"; \
+		fi; \
+		if ! command -v curl > /dev/null 2>&1; then \
+			echo "📦 Installing curl..."; \
+			if command -v brew > /dev/null 2>&1; then \
+				brew install curl; \
+			else \
+				echo "⚠️  Please install curl manually"; \
+			fi; \
+		else \
+			echo "✅ curl is already installed"; \
+		fi; \
 		echo "🏗️  Running initial build and test..."; \
 		$(MAKE) check; \
 		$(MAKE) test; \
