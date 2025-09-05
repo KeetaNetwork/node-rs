@@ -9,10 +9,6 @@
 mod algorithm_identifier_definitions;
 #[path = "../generated/iso20022.rs"]
 pub mod iso20022;
-#[path = "../generated/k_y_c_attributes.rs"]
-mod k_y_c_attributes;
-#[path = "../generated/sensitive_attributes.rs"]
-mod sensitive_attributes;
 #[path = "../generated/subject_public_key_info_definitions.rs"]
 mod subject_public_key_info_definitions;
 
@@ -21,6 +17,4 @@ mod iso20022_from_implementations;
 
 // Re-export all types from the generated modules
 pub use algorithm_identifier_definitions::AlgorithmIdentifier;
-pub use k_y_c_attributes::{Attribute, AttributeValue, KYCAttributes};
-pub use sensitive_attributes::{SensitiveAttribute, SensitiveAttributeCipher, SensitiveAttributeHashedValue};
 pub use subject_public_key_info_definitions::SubjectPublicKeyInfo;

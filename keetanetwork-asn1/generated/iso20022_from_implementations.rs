@@ -5,7 +5,6 @@
 //! making them more ergonomic to use.
 
 use super::iso20022::*;
-use super::*;
 
 impl From<String> for BuildingNumber {
 	fn from(value: String) -> Self {
@@ -223,56 +222,6 @@ impl From<chrono::DateTime<chrono::Utc>> for BirthDate {
 impl From<chrono::NaiveDate> for BirthDate {
 	fn from(value: chrono::NaiveDate) -> Self {
 		Self(value.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset())
-	}
-}
-
-// TryFrom implementations for Attribute from structured types
-
-use crate::error::Asn1Error;
-use crate::oids;
-use rasn::types::OctetString;
-
-impl TryFrom<Address> for Attribute {
-	type Error = Asn1Error;
-
-	fn try_from(value: Address) -> Result<Self, Self::Error> {
-		let name = oids::keeta::ADDRESS;
-		let encoded = rasn::der::encode(&value)?;
-		let value = AttributeValue::sensitiveValue(OctetString::from_slice(&encoded));
-		Ok(Attribute { name, value })
-	}
-}
-
-impl TryFrom<ContactDetails> for Attribute {
-	type Error = Asn1Error;
-
-	fn try_from(value: ContactDetails) -> Result<Self, Self::Error> {
-		let name = oids::keeta::CONTACT_DETAILS;
-		let encoded = rasn::der::encode(&value)?;
-		let value = AttributeValue::sensitiveValue(OctetString::from_slice(&encoded));
-		Ok(Attribute { name, value })
-	}
-}
-
-impl TryFrom<DateAndPlaceOfBirth> for Attribute {
-	type Error = Asn1Error;
-
-	fn try_from(value: DateAndPlaceOfBirth) -> Result<Self, Self::Error> {
-		let name = oids::keeta::DATE_AND_PLACE_OF_BIRTH;
-		let encoded = rasn::der::encode(&value)?;
-		let value = AttributeValue::sensitiveValue(OctetString::from_slice(&encoded));
-		Ok(Attribute { name, value })
-	}
-}
-
-impl TryFrom<EntityType> for Attribute {
-	type Error = Asn1Error;
-
-	fn try_from(value: EntityType) -> Result<Self, Self::Error> {
-		let name = oids::keeta::ENTITY_TYPE;
-		let encoded = rasn::der::encode(&value)?;
-		let value = AttributeValue::sensitiveValue(OctetString::from_slice(&encoded));
-		Ok(Attribute { name, value })
 	}
 }
 

@@ -624,55 +624,6 @@ fn generate_default_impl(oids: &Value, generated_code: &mut String) {
 	}
 }
 
-fn generate_attribute_from_impl(generated_code: &mut String, oids: &Value) {
-	generated_code.push_str("// TryFrom implementations for Attribute from structured types\n\n");
-
-	// Add necessary imports for Attribute creation
-	generated_code.push_str("use crate::oids;\n");
-	generated_code.push_str("use crate::error::Asn1Error;\n");
-	generated_code.push_str("use rasn::types::OctetString;\n\n");
-
-	// Generate TryFrom implementations for structured types in sensitive attributes
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		for (name, info) in sensitive_attrs {
-			if let (Some(token), Some(_oid_array), Some(attr_type)) =
-				(info["token"].as_str(), info["oid"].as_array(), info["type"].as_str())
-			{
-				let const_name = format!("oids::keeta::{}", camel_to_snake_upper(name));
-
-				match attr_type {
-					"SEQUENCE" | "CHOICE" => {
-						let type_name = if let Some(stripped) = token.strip_suffix("Attribute") {
-							stripped.to_string()
-						} else {
-							token.to_string()
-						};
-
-						generated_code.push_str(&format!(
-							r#"impl TryFrom<{type_name}> for Attribute {{
-	type Error = Asn1Error;
-
-	fn try_from(value: {type_name}) -> Result<Self, Self::Error> {{
-		let name = {const_name};
-		let encoded = rasn::der::encode(&value)?;
-		let value = AttributeValue::sensitiveValue(OctetString::from_slice(&encoded));
-		Ok(Attribute {{ name, value }})
-	}}
-}}
-
-"#
-						));
-					}
-					_ => {} // Skip primitive types as they're handled by builder extensions
-				}
-			}
-		}
-	}
-
-	// Generate Default implementations for types with all optional fields
-	generate_default_impl(oids, generated_code);
-}
-
 fn collect_wrapper_types(oids: &Value) -> std::collections::HashMap<String, Vec<String>> {
 	let mut wrapper_types: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
@@ -724,7 +675,6 @@ fn generate_from_implementations(path: &str) {
 //! that delegate to primitive types like Utf8String and GeneralizedTime,
 //! making them more ergonomic to use.
 
-use super::*;
 use super::iso20022::*;
 
 "#,
@@ -772,10 +722,9 @@ use super::iso20022::*;
 		}
 	}
 
-	// Generate From implementations for Attribute from structured types
-	generate_attribute_from_impl(&mut generated_code, &oids);
+	// Generate Default implementations for types
+	generate_default_impl(&oids, &mut generated_code);
 
-	// Ensure the src/generated directory exists
 	if let Some(parent) = dest_path.parent() {
 		fs::create_dir_all(parent).expect("Failed to create src/generated directory");
 	}
