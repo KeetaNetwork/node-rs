@@ -141,9 +141,7 @@ impl Ecies for EciesSecp256k1 {
 		let iv = Aes128CtrCipher::generate_iv();
 		// Encrypt with AES-128-CTR
 		let cipher = Aes128CtrCipher::new();
-		let ciphertext_only = cipher
-			.encrypt_with_iv(encryption_key, iv, plaintext.as_ref())
-			.map_err(|_| CryptoError::EncryptionFailed)?;
+		let ciphertext_only = cipher.encrypt_with_iv(encryption_key, iv, plaintext.as_ref())?;
 
 		// Create ciphertext with IV prepended (matches ecies-geth aes128CtrEncrypt)
 		let mut cipher_with_iv = Vec::with_capacity(16 + ciphertext_only.len());
@@ -215,9 +213,7 @@ impl Ecies for EciesSecp256k1 {
 		let encrypted_data = &cipher_with_iv[16..];
 		// Decrypt with AES-128-CTR
 		let cipher = Aes128CtrCipher::new();
-		let plaintext = cipher
-			.decrypt_with_iv(encryption_key, iv, encrypted_data)
-			.map_err(|_| CryptoError::DecryptionFailed)?;
+		let plaintext = cipher.decrypt_with_iv(encryption_key, iv, encrypted_data)?;
 
 		Ok(plaintext)
 	}
@@ -375,8 +371,7 @@ impl Ecies for EciesSecp256r1 {
 
 		// Encrypt with AES-256-CBC
 		let cipher = Aes256Cbc;
-		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, encryption_key, Some(&iv), plaintext.as_ref())
-			.map_err(|_| CryptoError::EncryptionFailed)?;
+		let iv_and_ciphertext = SymmetricEncryption::encrypt(&cipher, encryption_key, Some(&iv), plaintext.as_ref())?;
 		// Extract just the ciphertext part (skip the IV that was prepended)
 		let ciphertext_only = &iv_and_ciphertext[16..];
 

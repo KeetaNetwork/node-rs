@@ -800,12 +800,7 @@ impl TryFrom<&Certificate> for CertificateHash {
 	type Error = CertificateError;
 
 	fn try_from(certificate: &Certificate) -> Result<Self, Self::Error> {
-		let der_bytes = certificate
-			.to_der()
-			.map_err(|e| CertificateError::ValidationFailed {
-				reason: format!("Failed to serialize certificate to DER: {e}"),
-			})?;
-
+		let der_bytes = certificate.to_der()?;
 		Ok(Self::from_certificate_der(&der_bytes))
 	}
 }
@@ -1674,7 +1669,7 @@ impl TryFrom<&[u8]> for Certificate {
 	type Error = CertificateError;
 
 	fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-		let cert = <Self as Decode>::from_der(data).map_err(CertificateError::from)?;
+		let cert = <Self as Decode>::from_der(data)?;
 
 		// Validate RFC 5280 compliance
 		cert.validate_rfc5280_compliance()?;
@@ -1727,7 +1722,7 @@ macro_rules! impl_try_from_der_encode_trait {
 			type Error = CertificateError;
 
 			fn try_from(value: &$source_type) -> Result<Self, Self::Error> {
-				<$source_type as Encode>::to_der(value).map_err(CertificateError::from)
+				Ok(<$source_type as Encode>::to_der(value)?)
 			}
 		}
 	};

@@ -403,7 +403,7 @@ impl TryFrom<Vec<u8>> for IdentifierKey {
 	type Error = AccountError;
 
 	fn try_from(raw_bytes: Vec<u8>) -> Result<Self, Self::Error> {
-		raw_bytes.as_slice().try_into().map_err(AccountError::from)
+		Ok(raw_bytes.as_slice().try_into()?)
 	}
 }
 
@@ -2976,8 +2976,7 @@ macro_rules! impl_crypto_traits {
 				options: Option<SigningOptions>,
 			) -> Result<(), AccountError> {
 				// Parse the signature from bytes
-				let sig =
-					<$signature_type>::try_from(signature.as_ref()).map_err(|_| AccountError::InvalidConstruction)?;
+				let sig = <$signature_type>::try_from(signature.as_ref())?;
 				Ok(self.verify_with_options(message, &sig, options.unwrap_or_default())?)
 			}
 		}

@@ -188,7 +188,7 @@ pub fn generate_random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
 
 	rand_core::OsRng
 		.try_fill_bytes(&mut bytes)
-		.map_err(|_| CryptoError::InternalError { message: "Failed to generate random bytes".to_string() })?;
+		.map_err(|_| create_rng_error())?;
 
 	Ok(bytes)
 }

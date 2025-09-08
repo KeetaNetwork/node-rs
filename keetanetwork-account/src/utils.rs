@@ -96,8 +96,7 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<A
 
 	// Verify checksum
 	let checksum_input = decoded[..pubkey_end].to_vec();
-	let calculated_checksum: [u8; 32] =
-		keetanetwork_crypto::hash::hash_array(&checksum_input, None).map_err(AccountError::from)?;
+	let calculated_checksum: [u8; 32] = keetanetwork_crypto::hash::hash_array(&checksum_input, None)?;
 
 	let provided_checksum = &decoded[pubkey_end..];
 	if provided_checksum != &calculated_checksum[..5] {
@@ -135,7 +134,7 @@ fn parse_public_key_hex(hex_key: &str) -> Result<(Vec<u8>, Algorithm), AccountEr
 	}
 
 	// First byte is the algorithm type
-	let algorithm = Algorithm::from_id(decoded[0]).map_err(AccountError::from)?;
+	let algorithm = Algorithm::from_id(decoded[0])?;
 	// Rest is the public key
 	let public_key_bytes = decoded[1..].to_vec();
 
