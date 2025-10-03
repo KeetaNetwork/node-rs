@@ -53,6 +53,7 @@ do-lint: do-docs-ci
 
 # Lint code for CI (check only, no fixes)
 do-lint-ci:
+	cargo check --all-targets --all-features
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --all-features -- -D warnings
 
