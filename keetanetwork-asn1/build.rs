@@ -1,35 +1,32 @@
-#![cfg_attr(feature = "der", allow(dead_code))]
-
 use std::fs;
 use std::path::Path;
 
 use serde_json::Value;
 
-#[cfg(all(feature = "rasn", not(feature = "der")))]
 use keetanetwork_utils::build::{compile_asn1_directory_with_full_config, Asn1CompileConfig};
 
 fn main() {
-	#[cfg(all(feature = "rasn", not(feature = "der")))]
-	{
-		// Generate OID schema tokens
-		generate_schema();
-		// Generate OIDs from JSON
-		generate_oids_from_json("generated");
+	// Ensure the generated directory exists
+	fs::create_dir_all("generated").expect("Failed to create generated directory");
 
-		let config = Asn1CompileConfig::new("asn1", "generated")
-			.with_generated_rs_path("src/generated.rs")
-			.with_strip_prebuilt_methods(true)
-			.with_methods_to_strip("algorithm_identifier_definitions", vec!["new"])
-			.with_methods_to_strip("subject_public_key_info_definitions", vec!["new"])
-			.with_public_modules(vec!["iso20022"]);
+	// Generate OID schema tokens
+	generate_schema();
+	// Generate OIDs from JSON
+	generate_oids_from_json("generated");
 
-		if let Err(e) = compile_asn1_directory_with_full_config(&config) {
-			panic!("Failed to compile ASN.1 files: {e}");
-		}
+	let config = Asn1CompileConfig::new("asn1", "generated")
+		.with_generated_rs_path("src/generated.rs")
+		.with_strip_prebuilt_methods(true)
+		.with_methods_to_strip("algorithm_identifier_definitions", vec!["new"])
+		.with_methods_to_strip("subject_public_key_info_definitions", vec!["new"])
+		.with_public_modules(vec!["iso20022"]);
 
-		// Generate From implementations for wrapper types
-		generate_from_implementations("generated");
+	if let Err(e) = compile_asn1_directory_with_full_config(&config) {
+		panic!("Failed to compile ASN.1 files: {e}");
 	}
+
+	// Generate From implementations for wrapper types
+	generate_from_implementations("generated");
 }
 
 fn generate_schema() {
@@ -277,6 +274,11 @@ fn generate_oids_from_json(path: &str) {
 	let oids = load_oids_json();
 
 	let dest_path = Path::new(path).join("oids.rs");
+
+	// Ensure the directory exists
+	if let Some(parent) = dest_path.parent() {
+		fs::create_dir_all(parent).expect("Failed to create generated directory");
+	}
 
 	let mut generated_code = String::new();
 
