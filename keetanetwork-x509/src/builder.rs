@@ -2330,9 +2330,15 @@ impl CertificateBuilder {
 				// Ed25519 signatures are already in the correct format
 				signature_bytes.as_ref().to_vec()
 			}
+			#[cfg(any(feature = "der", feature = "rasn"))]
 			Algorithm::Secp256k1 | Algorithm::Secp256r1 => {
 				// ECDSA signatures need to be DER-encoded for X.509 certificates
 				crate::utils::raw_to_der_signature(signature_bytes.as_ref())?
+			}
+			#[cfg(not(any(feature = "der", feature = "rasn")))]
+			Algorithm::Secp256k1 | Algorithm::Secp256r1 => {
+				// Without DER/RASN features, cannot properly encode ECDSA signatures for X.509
+				return Err(CertificateError::UnsupportedAlgorithm);
 			}
 		};
 

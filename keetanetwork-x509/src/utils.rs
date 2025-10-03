@@ -407,6 +407,8 @@ pub fn der_to_raw_signature(signature_bytes: impl AsRef<[u8]>) -> Result<[u8; 64
 /// # Example
 ///
 /// ```rust
+/// # #[cfg(any(feature = "der", feature = "rasn"))]
+/// # {
 /// use keetanetwork_x509::utils::raw_to_der_signature;
 ///
 /// // Example raw signature (64 bytes: 32-byte r + 32-byte s)
@@ -417,8 +419,10 @@ pub fn der_to_raw_signature(signature_bytes: impl AsRef<[u8]>) -> Result<[u8; 64
 /// let der_sig = raw_to_der_signature(&raw_sig)?;
 /// assert!(der_sig.len() > 64); // DER encoding adds overhead
 /// assert_eq!(der_sig[0], 0x30); // SEQUENCE tag
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[cfg(any(feature = "der", feature = "rasn"))]
 pub fn raw_to_der_signature(signature_bytes: &[u8]) -> Result<Vec<u8>, CertificateError> {
 	if signature_bytes.len() != 64 {
 		return Err(CertificateError::InvalidCertificate);
@@ -1136,6 +1140,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(any(feature = "der", feature = "rasn"))]
 	fn test_raw_to_der_signature() {
 		// Test with valid 64-byte raw signature
 		let mut raw_sig = [0u8; 64];
