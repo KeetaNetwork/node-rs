@@ -1,2 +1,10 @@
 /target
 *.lcov
+
+# Generated ASN.1 files
+keetanetwork-asn1/generated/
+
+# Environment files
+.env
+.env.local
+.env.*.local
