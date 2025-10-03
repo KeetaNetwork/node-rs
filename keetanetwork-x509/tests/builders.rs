@@ -2,8 +2,13 @@ mod common;
 
 use chrono::{TimeZone, Utc};
 use der::{Decode, Encode};
+use keetanetwork_account::{Account, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyPair};
 use keetanetwork_asn1::{BitString, SubjectPublicKeyInfo};
+use keetanetwork_crypto::algorithms::secp256k1::Secp256k1Derivation;
+use keetanetwork_crypto::algorithms::secp256r1::Secp256r1Derivation;
 use keetanetwork_crypto::prelude::Algorithm;
+use keetanetwork_crypto::prelude::{ExposeSecret, IntoSecret, KeyDerivation};
+use keetanetwork_crypto::utils::generate_random_seed;
 use keetanetwork_x509::certificates::*;
 use keetanetwork_x509::{oids, utils};
 use keetanetwork_x509::{SerialNumber, SubjectPublicKeyInfoOwned, Version};
@@ -195,4 +200,79 @@ fn test_algorithm_chains() {
 			assert_eq!(**tbs, tbs_re_parsed);
 		}
 	}
+}
+
+#[test]
+fn test_ecdsa_signature_der_encoding() {
+	// Macro to eliminate code duplication for testing different ECDSA curves
+	macro_rules! test_ecdsa_curve {
+		($curve_name:expr, $key_type:ty, $derivation:ty) => {{
+			let seed = generate_random_seed().unwrap();
+			let private_key = <$derivation>::derive_from_seed(seed.expose_secret().clone().into_secret()).unwrap();
+			let account = Account::<$key_type>::from(private_key);
+			let public_key = account.keypair.to_public_key();
+			let public_key_info = SubjectPublicKeyInfo::from(public_key);
+
+			// Create the distinguished name
+			let cn = format!("Test Certificate {}", $curve_name);
+			let o = "Test Organization".to_string();
+			let c = "US".to_string();
+			let subject_dn = utils::create_dn(&[(oids::CN, &cn), (oids::O, &o), (oids::C, &c)]).unwrap();
+
+			// Build a certificate
+			let certificate = keetanetwork_x509::builder::CertificateBuilder::new()
+				.with_subject_public_key(public_key_info.clone())
+				.with_subject_dn(subject_dn.clone())
+				.with_issuer_dn(subject_dn)
+				.with_serial_number(SerialNumber::from(1u64))
+				.with_validity_days(365)
+				.build(&account)
+				.unwrap();
+
+			// Verify the certificate has a valid signature
+			assert!(
+				certificate.verify_signature(&public_key_info).is_ok(),
+				"{} certificate signature verification failed",
+				$curve_name
+			);
+
+			// Get the raw signature bytes
+			let signature_bytes = certificate.signature.raw_bytes();
+
+			// For ECDSA signatures, verify they start with DER SEQUENCE tag (0x30)
+			// This confirms they are DER-encoded, not raw format
+			assert_eq!(
+				signature_bytes[0], 0x30,
+				"{} signature should be DER-encoded (start with SEQUENCE tag 0x30)",
+				$curve_name
+			);
+
+			// Verify we can parse the signature as DER
+			assert!(
+				keetanetwork_crypto::utils::parse_der_ecdsa_signature(signature_bytes).is_ok(),
+				"Should be able to parse DER-encoded {} signature",
+				$curve_name
+			);
+
+			// Verify the certificate can be converted to DER and PEM formats
+			let der_bytes = certificate.to_der().unwrap();
+			assert!(!der_bytes.is_empty(), "{} certificate DER should not be empty", $curve_name);
+
+			let pem_string = certificate.to_pem().unwrap();
+			assert!(
+				pem_string.starts_with("-----BEGIN CERTIFICATE-----"),
+				"{} certificate PEM should start with BEGIN CERTIFICATE",
+				$curve_name
+			);
+			assert!(
+				pem_string.ends_with("-----END CERTIFICATE-----\n"),
+				"{} certificate PEM should end with END CERTIFICATE",
+				$curve_name
+			);
+		}};
+	}
+
+	// Test both ECDSA curves
+	test_ecdsa_curve!("secp256k1", KeyECDSASECP256K1, Secp256k1Derivation);
+	test_ecdsa_curve!("secp256r1", KeyECDSASECP256R1, Secp256r1Derivation);
 }

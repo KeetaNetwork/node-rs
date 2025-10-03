@@ -335,7 +335,6 @@ impl Ecies for EciesX25519 {
 
 /// ECIES encryption using secp256r1 (NIST P-256) and AES-256-CBC.
 ///
-/// This implementation follows the crypto-ecies-cpp format used in TypeScript.
 /// Uses KDF2_18033_SHA512, AES256_CBC, and HMAC_SHA512 as per defaults.
 pub struct EciesSecp256r1;
 
@@ -364,7 +363,7 @@ impl Ecies for EciesSecp256r1 {
 		// Extract shared secret X coordinate (the full 32 bytes)
 		let shared_secret_x = &shared_secret;
 
-		// Derive keys using TypeScript-compatible KDF
+		// Derive keys
 		let (encryption_key, mac_key) = Self::derive_keys(&ephemeral_public_uncompressed, shared_secret_x)?;
 		// Generate IV for AES-256-CBC (16 bytes)
 		let iv = generate_random_bytes::<16>()?;
@@ -375,7 +374,7 @@ impl Ecies for EciesSecp256r1 {
 		// Extract just the ciphertext part (skip the IV that was prepended)
 		let ciphertext_only = &iv_and_ciphertext[16..];
 
-		// Calculate HMAC-SHA512 over the ciphertext only (matching TypeScript implementation)
+		// Calculate HMAC-SHA512 over the ciphertext only
 		let mut mac =
 			<Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::EncryptionFailed)?;
 		mac.update(ciphertext_only);
@@ -383,7 +382,7 @@ impl Ecies for EciesSecp256r1 {
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
 		let hmac_result = mac.finalize().into_bytes();
 
-		// Construct final message: ephemeral_public_key + ciphertext + hmac + iv (TypeScript format)
+		// Construct final message: ephemeral_public_key + ciphertext + hmac + iv
 		let mut result = Vec::with_capacity(65 + ciphertext_only.len() + 64 + 16);
 		result.extend_from_slice(&ephemeral_public_uncompressed);
 		result.extend_from_slice(ciphertext_only);
@@ -406,7 +405,7 @@ impl Ecies for EciesSecp256r1 {
 			return Err(CryptoError::DecryptionFailed);
 		}
 
-		// Parse components using TypeScript format: ephemeral_pk + ciphertext + hmac + iv
+		// Parse components using format: ephemeral_pk + ciphertext + hmac + iv
 		let ephemeral_public_bytes = &ciphertext.as_ref()[0..65];
 		let iv_start = ciphertext.as_ref().len() - 16;
 		let hmac_start = ciphertext.as_ref().len() - 80; // 64 + 16 = 80
@@ -420,7 +419,7 @@ impl Ecies for EciesSecp256r1 {
 		let shared_secret = recipient_private_key.ecdh(&ephemeral_public)?;
 		// Extract shared secret X coordinate (the full 32 bytes)
 		let shared_secret_x = &shared_secret;
-		// Derive keys using TypeScript-compatible KDF
+		// Derive keys using KDF
 		let (encryption_key, mac_key) = Self::derive_keys(ephemeral_public_bytes, shared_secret_x)?;
 
 		// Verify HMAC before decryption (HMAC is over ciphertext + fixed IV length value)
@@ -455,7 +454,7 @@ impl Ecies for EciesSecp256r1 {
 }
 
 impl EciesSecp256r1 {
-	/// KDF implementation matching the TypeScript crypto-ecies-js package
+	/// KDF implementation matching the TypeScript crypto-ecies-js package.
 	///
 	/// This generates derivation keys using iterative SHA512 over a seed constructed from
 	/// ephemeral public key (65 bytes) + shared secret X coordinate (32 bytes)
@@ -470,7 +469,6 @@ impl EciesSecp256r1 {
 		seed.extend_from_slice(ephemeral_public_key.as_ref());
 		seed.extend_from_slice(shared_secret_x.as_ref());
 
-		// Key sizes matching TypeScript implementation
 		let symmetric_key_bytes = 256 / 8; // 32 bytes for AES-256
 		let mac_key_bytes = 1024 / 8; // 128 bytes for HMAC key
 		let digest_bytes = 512 / 8; // 64 bytes per SHA512 digest

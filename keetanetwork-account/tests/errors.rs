@@ -21,7 +21,6 @@ const ERROR_CODE_TEST_CASES: &[(AccountError, &str)] = &[
 
 #[test]
 fn test_error_codes_compatibility() {
-	// Test that all error codes match TypeScript AccountErrorCode format
 	for (error, expected_code) in ERROR_CODE_TEST_CASES {
 		assert_eq!(error.error_code(), *expected_code);
 	}

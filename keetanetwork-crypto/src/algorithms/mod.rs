@@ -369,7 +369,7 @@ macro_rules! impl_constant_time_key_derivation {
 						attempt_seed.extend_from_slice(&attempt.to_be_bytes());
 					}
 
-					// Use our KDF's expand-only method for TypeScript compatibility
+					// Use our KDF's expand-only method
 					let key_bytes = KdfAlgorithm::HkdfSha3_256.expand_only_array::<32>(&attempt_seed, &[])?;
 					// Constant-time: always attempt to create the secret key
 					if let Ok(secret_key) = <$secret_key_type>::from_slice(&key_bytes) {

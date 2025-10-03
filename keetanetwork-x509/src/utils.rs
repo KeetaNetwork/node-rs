@@ -7,7 +7,7 @@ use keetanetwork_crypto::algorithms::ed25519::{Ed25519PublicKey, Ed25519Signatur
 use keetanetwork_crypto::algorithms::secp256k1::{Secp256k1PublicKey, Secp256k1Signature};
 use keetanetwork_crypto::algorithms::secp256r1::{Secp256r1PublicKey, Secp256r1Signature};
 use keetanetwork_crypto::prelude::{CryptoVerifierWithOptions, HashAlgorithm, SigningOptions};
-use keetanetwork_crypto::utils::parse_der_ecdsa_signature;
+use keetanetwork_crypto::utils::{encode_ecdsa_signature_to_der, parse_der_ecdsa_signature};
 
 use crate::error::CertificateError;
 
@@ -388,6 +388,51 @@ pub fn der_to_raw_signature(signature_bytes: impl AsRef<[u8]>) -> Result<[u8; 64
 	} else {
 		Err(CertificateError::InvalidCertificate)
 	}
+}
+
+/// Convert raw ECDSA signature to DER format.
+///
+/// This function converts a raw ECDSA signature (64 bytes: r || s) to
+/// DER-encoded format as required by X.509 certificates. The DER format
+/// encodes the signature as a SEQUENCE containing two INTEGERs (r and s).
+///
+/// # Arguments
+///
+/// * `signature_bytes` - The raw signature bytes (64 bytes: r || s)
+///
+/// # Returns
+///
+/// Returns a vec containing the DER-encoded signature for X.509 certificates.
+///
+/// # Example
+///
+/// ```rust
+/// use keetanetwork_x509::utils::raw_to_der_signature;
+///
+/// // Example raw signature (64 bytes: 32-byte r + 32-byte s)
+/// let mut raw_sig = [0u8; 64];
+/// raw_sig[0] = 0x01; // r starts with 0x01
+/// raw_sig[32] = 0x21; // s starts with 0x21
+///
+/// let der_sig = raw_to_der_signature(&raw_sig)?;
+/// assert!(der_sig.len() > 64); // DER encoding adds overhead
+/// assert_eq!(der_sig[0], 0x30); // SEQUENCE tag
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn raw_to_der_signature(signature_bytes: &[u8]) -> Result<Vec<u8>, CertificateError> {
+	if signature_bytes.len() != 64 {
+		return Err(CertificateError::InvalidCertificate);
+	}
+
+	// Split into r and s components (32 bytes each)
+	let mut r = [0u8; 32];
+	let mut s = [0u8; 32];
+	r.copy_from_slice(&signature_bytes[0..32]);
+	s.copy_from_slice(&signature_bytes[32..64]);
+
+	// Use the crypto utility to encode to DER
+	let der_encoded = encode_ecdsa_signature_to_der(&r, &s);
+	Ok(der_encoded)
 }
 
 /// Generic ECDSA signature verification with multiple signature format support.
@@ -1088,6 +1133,45 @@ mod tests {
 		assert!(der_to_raw_signature([]).is_err()); // Empty
 		assert!(der_to_raw_signature([0x31, 0x44]).is_err()); // Wrong tag
 		assert!(der_to_raw_signature([0x30, 0x02]).is_err()); // Too short
+	}
+
+	#[test]
+	fn test_raw_to_der_signature() {
+		// Test with valid 64-byte raw signature
+		let mut raw_sig = [0u8; 64];
+		// Set up r and s components with known values
+		raw_sig[0] = 0x01; // r starts with 0x01...
+		raw_sig[31] = 0x20; // r ends with 0x20
+		raw_sig[32] = 0x21; // s starts with 0x21...
+		raw_sig[63] = 0x40; // s ends with 0x40
+
+		// DER signature should start with SEQUENCE tag
+		let der_result = raw_to_der_signature(&raw_sig).unwrap();
+		assert_eq!(der_result[0], 0x30);
+		assert!(der_result.len() > 64);
+
+		// Verify we can convert it back to the original raw signature
+		let round_trip = der_to_raw_signature(&der_result).unwrap();
+		assert_eq!(round_trip, raw_sig);
+
+		// Test with signature that needs MSB padding (high bit set)
+		let mut high_bit_sig = [0u8; 64];
+		high_bit_sig[0] = 0x80; // r starts with high bit set
+		high_bit_sig[32] = 0xFF; // s starts with high bit set
+
+		let der_result = raw_to_der_signature(&high_bit_sig).unwrap();
+		assert_eq!(der_result[0], 0x30); // SEQUENCE tag
+
+		// Should handle MSB padding correctly
+		let round_trip = der_to_raw_signature(&der_result).unwrap();
+		assert_eq!(round_trip, high_bit_sig);
+
+		// Test error cases
+		assert!(raw_to_der_signature(&[]).is_err()); // Empty input
+		assert!(raw_to_der_signature(&[0u8; 32]).is_err()); // Too short (32 bytes)
+		assert!(raw_to_der_signature(&[0u8; 96]).is_err()); // Too long (96 bytes)
+		assert!(raw_to_der_signature(&[0u8; 63]).is_err()); // Almost correct length
+		assert!(raw_to_der_signature(&[0u8; 65]).is_err()); // Almost correct length
 	}
 
 	#[test]

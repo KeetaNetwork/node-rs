@@ -296,9 +296,9 @@ fn test_ios_signature(
 fn test_account_verify_ios_ecdsa_signature() {
 	// cspell:disable-next-line
 	let public_key_string = "keeta_aabm7moneqqjpaaee5vxjqoe5f2ay3dchgr2hysdfh4wg3ycylohabivswjyfci";
-	let test_data = b"Some random test data"; // Exact match with TypeScript Buffer.from('Some random test data')
+	let test_data = b"Some random test data";
 
-	// Generated from iOS-core SDK - exact match with TypeScript test
+	// Generated from iOS-core SDK
 	let ios_ecdsa_signature = [
 		0xC0, 0x87, 0x9B, 0xE6, 0x52, 0xD4, 0x29, 0x2D, 0xDD, 0xC6, 0xA1, 0x83, 0x71, 0x1F, 0x99, 0xED, 0x1E, 0x02,
 		0x93, 0xC8, 0x24, 0x65, 0x1F, 0x83, 0x74, 0x36, 0x53, 0x75, 0x99, 0x0A, 0x2E, 0x7B, 0x35, 0xE0, 0xF2, 0x1D,
@@ -314,9 +314,9 @@ fn test_account_verify_ios_ecdsa_signature() {
 fn test_account_verify_ios_ed25519_signature() {
 	// cspell:disable-next-line
 	let public_key_string = "keeta_aeqtota6vv3k26ykv7u3nu6xqtxqll4je6uy6ike7gbrqy6di5ww5mfyf2niu";
-	let test_data = b"Some random test data"; // Exact match with TypeScript Buffer.from('Some random test data')
+	let test_data = b"Some random test data";
 
-	// Generated from iOS-core SDK - exact match with TypeScript test
+	// Generated from iOS-core SDK
 	let ios_ed25519_signature = [
 		0xD6, 0xD7, 0x4F, 0xDF, 0xA3, 0x73, 0xC7, 0x18, 0xD6, 0x08, 0xA4, 0xD2, 0x75, 0x68, 0xCD, 0xB5, 0x72, 0x46,
 		0x54, 0x49, 0x50, 0xFC, 0x5A, 0x2F, 0xD6, 0xFD, 0x80, 0xF5, 0x99, 0x47, 0xDE, 0xC6, 0xA6, 0x50, 0x57, 0xD0,

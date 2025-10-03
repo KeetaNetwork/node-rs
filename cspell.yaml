@@ -1,76 +1,80 @@
 version: "0.2"
 ignorePaths:
-  - "target"
-  - "build"
-  - "node_modules"
+  - target
+  - build
+  - node_modules
   - .github/**
   - "**/*.lock"
   - "**/*.toml"
+  - "**/*.json"
 words:
-  - KeetaNet
-  - keeta
-  - keetapay
-  - keetanetwork
-  - repr
-  - rustc
-  - MSRV
-  - tlsv
-  - clippy
-  - rustup
-  - tyblocks
-  - github
+  - Accountable
+  - ascii
+  - base32
+  - BASEPOINT
+  - bip39
   - chrono
-  - serde
-  - rasn
-  - uper
+  - ciphertext
+  - ciphertexts
+  - clippy
+  - dalek
+  - Datelike
+  - decryptor
+  - diffie
+  - DOCT
+  - ECDH
+  - ecdsa
   - ECDSASECP
   - ECDSASECP256K1
   - ECDSASECP256R1
+  - ecies
   - ED25519
-  - BASEPOINT
-  - ECDH
+  - encryptor
+  - extn
+  - FAXX
   - FIPS
-  - diffie
-  - Keyable
-  - bip39
-  - pbkdf2
+  - github
+  - hexdigit
+  - hexseed
   - hkdf
   - hmac
-  - dalek
-  - ascii
-  - secp
-  - ecdsa
-  - ecies
-  - pkcs
-  - spki
-  - extn
-  - decryptor
-  - encryptor
-  - secp256k1
-  - ciphertext
-  - ciphertexts
-  - zeroization
-  - zeroized
-  - keystream
-  - passphrase
-  - hexseed
-  - unpad
-  - pubkey
-  - keypair
-  - rng
-  - sha3
-  - Sha3_256
-  - Sha256
-  - base32
-  - hexdigit
-  - prehash
-  - Accountable
+  - keeta
+  - KeetaNet
+  - keetanetwork
+  - keetapay
+  - Keyable
   - KeyECDSASECP256K1
   - KeyECDSASECP256R1
+  - keypair
+  - keystream
   - KEYTYPE
-  - oids
-  - oid
+  - MIKS
+  - MSRV
   - ocsp
-  - Datelike
-  - peekable
+  - oid
+  - oids
   - oneline
+  - passphrase
+  - pbkdf2
+  - peekable
+  - pkcs
+  - prehash
+  - pubkey
+  - rasn
+  - repr
+  - rng
+  - rustc
+  - rustup
+  - secp
+  - secp256k1
+  - serde
+  - Sha256
+  - sha3
+  - Sha3_256
+  - spki
+  - tlsv
+  - tyblocks
+  - unpad
+  - uper
+  - zeroization
+  - zeroized

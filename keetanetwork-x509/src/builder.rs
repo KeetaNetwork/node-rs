@@ -2323,11 +2323,20 @@ impl CertificateBuilder {
 			.sign_with_options(&tbs_der, signing_options)
 			.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)?;
 
-		// Convert signature to bytes
+		// Convert signature to bytes and encode properly for X.509
 		let signature_bytes = signature.to_bytes();
-		let signature_bit_string = der::asn1::BitString::from_bytes(signature_bytes.as_ref())?;
+		let signature_bytes_for_cert = match algorithm {
+			Algorithm::Ed25519 => {
+				// Ed25519 signatures are already in the correct format
+				signature_bytes.as_ref().to_vec()
+			}
+			Algorithm::Secp256k1 | Algorithm::Secp256r1 => {
+				// ECDSA signatures need to be DER-encoded for X.509 certificates
+				crate::utils::raw_to_der_signature(signature_bytes.as_ref())?
+			}
+		};
 
-		// Create the final certificate
+		let signature_bit_string = der::asn1::BitString::from_bytes(&signature_bytes_for_cert)?;
 		let cert = Certificate {
 			tbs_certificate,
 			signature_algorithm: AlgorithmIdentifierOwned { oid, parameters: None },

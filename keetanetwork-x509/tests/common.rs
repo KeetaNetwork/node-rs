@@ -94,7 +94,7 @@ FmnXzDU=
 // Test moment timestamp from TypeScript tests
 pub const CERT_MOMENT_TIMESTAMP: i64 = 1730520283;
 
-// Test seed from TypeScript tests
+// Test seed
 pub const TEST_SEED: &str = "D6986115BE7334E50DA8D73B1A4670A510E8BF47E8C5C9960B8F5248EC7D6E3D";
 
 // Common test algorithms

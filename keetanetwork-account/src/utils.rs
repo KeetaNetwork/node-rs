@@ -211,7 +211,7 @@ mod tests {
 		let result = create_identifier_key(&seed, index).unwrap();
 		let (identifier, public_key) = result;
 		assert_eq!(identifier.len(), 64); // 32 bytes as hex = 64 chars
-		assert_eq!(public_key, identifier); // No prefix, raw identifier like TypeScript
+		assert_eq!(public_key, identifier); // No prefix, raw identifier
 	}
 
 	#[test]

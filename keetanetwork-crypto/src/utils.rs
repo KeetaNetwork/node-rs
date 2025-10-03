@@ -220,8 +220,6 @@ pub fn create_keypair_from_seed(
 /// Parse DER-encoded ECDSA signature to extract r,s components.
 ///
 /// DER format: SEQUENCE { r INTEGER, s INTEGER }
-/// This matches the TypeScript signatureFromDERRaw implementation
-/// and converts to exactly 32-byte arrays for secp256r1/secp256k1 compatibility.
 ///
 /// This function is only available when the "der" feature is enabled.
 ///
@@ -328,6 +326,76 @@ pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]
 	}
 
 	Ok((r_array, s_array))
+}
+
+/// Encode ECDSA signature components (r, s) to DER format.
+///
+/// DER format: SEQUENCE { r INTEGER, s INTEGER }
+///
+/// This function takes the raw r and s components of an ECDSA signature
+/// and encodes them into DER format as required by X.509 certificates.
+///
+/// # Arguments
+///
+/// * `r` - The r component of the ECDSA signature (32 bytes)
+/// * `s` - The s component of the ECDSA signature (32 bytes)
+///
+/// # Returns
+///
+/// Returns a vec containing the DER-encoded signature.
+///
+/// # Example
+///
+/// ```rust
+/// # #[cfg(any(feature = "der", feature = "rasn"))]
+/// # {
+/// use keetanetwork_crypto::utils::encode_ecdsa_signature_to_der;
+///
+/// let r = [0x01u8; 32];
+/// let s = [0x02u8; 32];
+///
+/// let der_sig = encode_ecdsa_signature_to_der(&r, &s);
+/// assert!(der_sig.len() > 64); // DER encoding adds overhead
+/// assert_eq!(der_sig[0], 0x30); // SEQUENCE tag
+/// # }
+/// ```
+#[cfg(any(feature = "der", feature = "rasn"))]
+pub fn encode_ecdsa_signature_to_der(r: &[u8; 32], s: &[u8; 32]) -> Vec<u8> {
+	// Helper function to encode a single integer, removing leading zeros
+	// but adding a zero byte if the most significant bit is set (to ensure positive)
+	fn encode_integer(value: &[u8]) -> Vec<u8> {
+		// Remove leading zeros
+		let start = value
+			.iter()
+			.position(|&b| b != 0)
+			.unwrap_or(value.len().saturating_sub(1));
+		let trimmed = &value[start..];
+
+		// If the most significant bit is set, prepend a zero byte to ensure positive
+		if trimmed.is_empty() {
+			vec![0x02, 0x01, 0x00] // INTEGER, length 1, value 0
+		} else if trimmed[0] & 0x80 != 0 {
+			let mut result = vec![0x02, (trimmed.len() + 1) as u8, 0x00];
+			result.extend_from_slice(trimmed);
+			result
+		} else {
+			let mut result = vec![0x02, trimmed.len() as u8];
+			result.extend_from_slice(trimmed);
+			result
+		}
+	}
+
+	let r_encoded = encode_integer(r);
+	let s_encoded = encode_integer(s);
+
+	let total_length = r_encoded.len() + s_encoded.len();
+
+	// Build the SEQUENCE
+	let mut result = vec![0x30, total_length as u8];
+	result.extend_from_slice(&r_encoded);
+	result.extend_from_slice(&s_encoded);
+
+	result
 }
 
 #[cfg(test)]
@@ -469,6 +537,47 @@ mod tests {
 		assert_eq!(r[31], 0x20);
 		assert_eq!(s[0], 0x21);
 		assert_eq!(s[31], 0x40);
+	}
+
+	#[test]
+	#[cfg(any(feature = "der", feature = "rasn"))]
+	fn test_encode_ecdsa_signature_to_der() {
+		// Test with simple values
+		let r = [0x01u8; 32];
+		let s = [0x02u8; 32];
+
+		// Should start with SEQUENCE tag
+		let der_encoded = encode_ecdsa_signature_to_der(&r, &s);
+		assert_eq!(der_encoded[0], 0x30);
+
+		// Parse it back to verify round-trip
+		let (parsed_r, parsed_s) = parse_der_ecdsa_signature(&der_encoded).unwrap();
+		assert_eq!(parsed_r, r);
+		assert_eq!(parsed_s, s);
+
+		// Test with values that have leading zeros
+		let r_with_zeros = [
+			0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+			28, 29,
+		];
+		let s_with_zeros = [
+			0, 0, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+			57, 58, 59, 60, 61,
+		];
+
+		let der_encoded2 = encode_ecdsa_signature_to_der(&r_with_zeros, &s_with_zeros);
+		let (parsed_r2, parsed_s2) = parse_der_ecdsa_signature(&der_encoded2).unwrap();
+		assert_eq!(parsed_r2, r_with_zeros);
+		assert_eq!(parsed_s2, s_with_zeros);
+
+		// Test with values that need padding (MSB set)
+		let r_msb_set = [0x80u8; 32];
+		let s_msb_set = [0xFFu8; 32];
+
+		let der_encoded3 = encode_ecdsa_signature_to_der(&r_msb_set, &s_msb_set);
+		let (parsed_r3, parsed_s3) = parse_der_ecdsa_signature(&der_encoded3).unwrap();
+		assert_eq!(parsed_r3, r_msb_set);
+		assert_eq!(parsed_s3, s_msb_set);
 	}
 
 	#[test]
