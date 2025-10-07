@@ -52,9 +52,9 @@ fn generate_sequence_fields_with_context_tags(
             ) {
                 let optional_str = if optional { " OPTIONAL" } else { "" };
                 
-                // Use IMPLICIT context tagging for each field
+                // Use EXPLICIT context tagging for each field
                 schema_content.push_str(&format!(
-                    "        {field_name:<17} [{index}] IMPLICIT {field_type}{optional_str},\n"
+                    "        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"
                 ));
             }
         }
@@ -303,7 +303,7 @@ fn generate_choice_fields(schema_content: &mut String, choices_obj: &serde_json:
 				","
 			};
 
-			schema_content.push_str(&format!("        {choice_name:<17} [{i}] IMPLICIT {choice_type}{comma}\n"));
+			schema_content.push_str(&format!("        {choice_name:<17} [{i}] EXPLICIT {choice_type}{comma}\n"));
 		}
 	}
 }
