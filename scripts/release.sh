@@ -578,7 +578,7 @@ finalize_release() {
                     log_info "- Publish packages: ${published_packages[*]}"
                 fi
                 log_info "- Create release tag: releases/v${workspace_version}"
-                log_info "- To run for real: ./scripts/release.sh"
+                log_info "- To run for real: make release [--initial]"
             else
                 log_success "Release process completed successfully!"
                 
