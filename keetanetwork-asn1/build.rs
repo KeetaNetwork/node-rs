@@ -30,35 +30,37 @@ fn main() {
 }
 
 fn generate_sequence_fields_with_context_tags(
-    schema_content: &mut String, 
-    fields: &serde_json::Map<String, Value>,
-    field_order_value: Option<&Value>
+	schema_content: &mut String,
+	fields: &serde_json::Map<String, Value>,
+	field_order_value: Option<&Value>,
 ) {
-    // Get field order
-    let field_order: Vec<String> = if let Some(order_array) = field_order_value.and_then(|v| v.as_array()) {
-        order_array.iter()
-            .filter_map(|v| v.as_str())
-            .map(|s| s.to_string())
-            .collect()
-    } else {
-        fields.keys().cloned().collect()
-    };
+	// Get field order
+	let field_order: Vec<String> = if let Some(order_array) = field_order_value.and_then(|v| v.as_array()) {
+		order_array
+			.iter()
+			.filter_map(|v| v.as_str())
+			.map(|s| s.to_string())
+			.collect()
+	} else {
+		fields.keys().cloned().collect()
+	};
 
-    for (index, field_name) in field_order.iter().enumerate() {
-        if let Some(field_info) = fields.get(field_name) {
-            if let (Some(field_type), Some(optional)) = (
-                field_info["type"].as_str(), 
-                field_info["optional"].as_bool()
-            ) {
-                let optional_str = if optional { " OPTIONAL" } else { "" };
-                
-                // Use EXPLICIT context tagging for each field
-                schema_content.push_str(&format!(
-                    "        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"
-                ));
-            }
-        }
-    }
+	for (index, field_name) in field_order.iter().enumerate() {
+		if let Some(field_info) = fields.get(field_name) {
+			if let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool())
+			{
+				let optional_str = if optional {
+					" OPTIONAL"
+				} else {
+					""
+				};
+
+				// Use EXPLICIT context tagging for each field
+				schema_content
+					.push_str(&format!("        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"));
+			}
+		}
+	}
 }
 
 fn generate_schema() {
@@ -151,45 +153,45 @@ fn generate_choice_types(oids: &Value, schema_content: &mut String) {
 }
 
 fn generate_sensitive_sequence_types(oids: &Value, schema_content: &mut String) {
-    if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-        let mut sequence_attrs: Vec<_> = sensitive_attrs
-            .iter()
-            .filter(|(_, info)| info["type"].as_str() == Some("SEQUENCE"))
-            .collect();
+	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
+		let mut sequence_attrs: Vec<_> = sensitive_attrs
+			.iter()
+			.filter(|(_, info)| info["type"].as_str() == Some("SEQUENCE"))
+			.collect();
 
-        sort_by_oid(&mut sequence_attrs, |(_, info)| *info);
+		sort_by_oid(&mut sequence_attrs, |(_, info)| *info);
 
-        for (_, info) in sequence_attrs {
-            if let (Some(oid_array), Some(token), Some(fields)) =
-                (info["oid"].as_array(), info["token"].as_str(), info["fields"].as_object())
-            {
-                let oid_comment = format_oid_comment(oid_array);
-                schema_content.push_str(&format!("    {token} ::= SEQUENCE {{ --{oid_comment}\n"));
+		for (_, info) in sequence_attrs {
+			if let (Some(oid_array), Some(token), Some(fields)) =
+				(info["oid"].as_array(), info["token"].as_str(), info["fields"].as_object())
+			{
+				let oid_comment = format_oid_comment(oid_array);
+				schema_content.push_str(&format!("    {token} ::= SEQUENCE {{ --{oid_comment}\n"));
 
-                // Pass field_order if available
-                generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
-                close_asn1_structure(schema_content);
-            }
-        }
-    }
+				// Pass field_order if available
+				generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
+				close_asn1_structure(schema_content);
+			}
+		}
+	}
 }
 
 fn generate_iso20022_sequence_types(oids: &Value, schema_content: &mut String) {
-    if let Some(sequences) = oids["iso20022_types"]["sequences"].as_object() {
-        let mut sequence_items: Vec<_> = sequences.iter().collect();
-        sort_by_oid(&mut sequence_items, |(_, info)| *info);
+	if let Some(sequences) = oids["iso20022_types"]["sequences"].as_object() {
+		let mut sequence_items: Vec<_> = sequences.iter().collect();
+		sort_by_oid(&mut sequence_items, |(_, info)| *info);
 
-        for (name, info) in sequence_items {
-            if let (Some(oid_array), Some(fields)) = (info["oid"].as_array(), info["fields"].as_object()) {
-                let oid_comment = format_oid_comment(oid_array);
-                schema_content.push_str(&format!("    {name} ::= SEQUENCE {{ --{oid_comment}\n"));
+		for (name, info) in sequence_items {
+			if let (Some(oid_array), Some(fields)) = (info["oid"].as_array(), info["fields"].as_object()) {
+				let oid_comment = format_oid_comment(oid_array);
+				schema_content.push_str(&format!("    {name} ::= SEQUENCE {{ --{oid_comment}\n"));
 
-                // Use context tags with field_order
-                generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
-                close_asn1_structure(schema_content);
-            }
-        }
-    }
+				// Use context tags with field_order
+				generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
+				close_asn1_structure(schema_content);
+			}
+		}
+	}
 }
 
 fn generate_sensitive_choice_types(oids: &Value, schema_content: &mut String) {
@@ -268,28 +270,33 @@ fn close_asn1_structure(schema_content: &mut String) {
 
 /// Helper function to generate SEQUENCE field definitions from JSON fields
 fn _generate_sequence_fields(schema_content: &mut String, fields: &serde_json::Map<String, Value>) {
-    // Get field order if available
-    let field_order: Vec<String> = if let Some(order_array) = fields.get("field_order").and_then(|v| v.as_array()) {
-        order_array.iter()
-            .filter_map(|v| v.as_str())
-            .map(|s| s.to_string())
-            .collect()
-    } else {
-        fields.keys().cloned().collect()
-    };
+	// Get field order if available
+	let field_order: Vec<String> = if let Some(order_array) = fields.get("field_order").and_then(|v| v.as_array()) {
+		order_array
+			.iter()
+			.filter_map(|v| v.as_str())
+			.map(|s| s.to_string())
+			.collect()
+	} else {
+		fields.keys().cloned().collect()
+	};
 
-    for (index, field_name) in field_order.iter().enumerate() {
-        if let Some(field_info) = fields.get(field_name) {
-            if let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool()) {
-                let optional_str = if optional { " OPTIONAL" } else { "" };
-                
-                // Add context tag with explicit tagging
-                schema_content.push_str(&format!(
-                    "        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"
-                ));
-            }
-        }
-    }
+	for (index, field_name) in field_order.iter().enumerate() {
+		if let Some(field_info) = fields.get(field_name) {
+			if let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool())
+			{
+				let optional_str = if optional {
+					" OPTIONAL"
+				} else {
+					""
+				};
+
+				// Add context tag with explicit tagging
+				schema_content
+					.push_str(&format!("        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"));
+			}
+		}
+	}
 }
 
 /// Helper function to generate CHOICE field definitions from JSON choices
