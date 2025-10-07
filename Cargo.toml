@@ -16,6 +16,10 @@ members = [
 version = "0.1.0"
 edition = "2021"
 authors = ["Tanveer Wahid <twahid@keeta.com>"]
+license = "MIT"
+repository = "https://github.com/KeetaNetwork/node-rs"
+homepage = "https://github.com/KeetaNetwork/node-rs"
+description = "Keetanetwork blockchain implementation in Rust"
 
 [workspace.dependencies]
 # Common dependencies that can be shared across workspace members

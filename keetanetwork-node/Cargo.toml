@@ -3,9 +3,15 @@ name = "keetanetwork-node"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Node functionality for Keetanetwork blockchain"
 
 [dependencies]
-keetanetwork-error = { path = "../keetanetwork-error" }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block" }
+keetanetwork-ledger = { version = "0.1.0", path = "../keetanetwork-ledger" }
 snafu = { workspace = true }
 
 [dev-dependencies]

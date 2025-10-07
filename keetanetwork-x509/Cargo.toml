@@ -3,6 +3,10 @@ name = "keetanetwork-x509"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "X.509 certificate handling for Keetanetwork"
 
 [lib]
 crate-type = ["staticlib", "rlib"]

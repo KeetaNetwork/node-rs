@@ -728,6 +728,7 @@ dependencies = [
 name = "keetanetwork-ledger"
 version = "0.1.0"
 dependencies = [
+ "keetanetwork-block",
  "keetanetwork-error",
  "snafu",
 ]
@@ -736,7 +737,9 @@ dependencies = [
 name = "keetanetwork-node"
 version = "0.1.0"
 dependencies = [
+ "keetanetwork-block",
  "keetanetwork-error",
+ "keetanetwork-ledger",
  "snafu",
 ]
 
