@@ -669,6 +669,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "keetanetwork-block"
+version = "0.1.0"
+dependencies = [
+ "keetanetwork-error",
+ "snafu",
+]
+
+[[package]]
 name = "keetanetwork-crypto"
 version = "0.1.0"
 dependencies = [
@@ -713,6 +721,22 @@ dependencies = [
 name = "keetanetwork-error"
 version = "0.1.0"
 dependencies = [
+ "snafu",
+]
+
+[[package]]
+name = "keetanetwork-ledger"
+version = "0.1.0"
+dependencies = [
+ "keetanetwork-error",
+ "snafu",
+]
+
+[[package]]
+name = "keetanetwork-node"
+version = "0.1.0"
+dependencies = [
+ "keetanetwork-error",
  "snafu",
 ]
 

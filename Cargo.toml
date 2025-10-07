@@ -7,6 +7,9 @@ members = [
 	"keetanetwork-x509",
 	"keetanetwork-asn1",
 	"keetanetwork-utils",
+	"keetanetwork-block",
+	"keetanetwork-ledger",
+	"keetanetwork-node",
 ]
 
 [workspace.package]

@@ -1,0 +1,15 @@
+[package]
+name = "keetanetwork-ledger"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+keetanetwork-error = { path = "../keetanetwork-error" }
+snafu = { workspace = true }
+
+[dev-dependencies]
+
+[lib]
+name = "keetanetwork_ledger"
+path = "src/lib.rs"
