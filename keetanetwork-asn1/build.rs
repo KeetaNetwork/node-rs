@@ -833,9 +833,12 @@ use crate::generated::iso20022::*;
 	fs::write(&dest_path, generated_code).unwrap_or_else(|_| panic!("Failed to write {filename}"));
 
 	// Format the generated file
-	let _ = std::process::Command::new("rustfmt")
+	if let Err(e) = std::process::Command::new("rustfmt")
 		.arg(&dest_path)
-		.status();
+		.status()
+	{
+		eprintln!("Warning: rustfmt failed: {}", e);
+	}
 
 	// Update generated.rs to include this module
 	update_generated_rs_with_from_imp(filename);
