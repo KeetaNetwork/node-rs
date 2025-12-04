@@ -769,8 +769,7 @@ fn generate_from_implementations(path: &str) {
 
 	// Add header comment
 	generated_code.push_str(
-		r#"#![rustfmt::skip]
-//! Generated From implementations for wrapper types
+		r#"//! Generated From implementations for wrapper types
 //!
 //! This module provides convenient From implementations for all wrapper types
 //! that delegate to primitive types like Utf8String and GeneralizedTime,
@@ -832,6 +831,11 @@ use crate::generated::iso20022::*;
 
 	ensure_single_newline_ending(&mut generated_code);
 	fs::write(&dest_path, generated_code).unwrap_or_else(|_| panic!("Failed to write {filename}"));
+
+	// Format the generated file
+	let _ = std::process::Command::new("rustfmt")
+		.arg(&dest_path)
+		.status();
 
 	// Update generated.rs to include this module
 	update_generated_rs_with_from_imp(filename);
