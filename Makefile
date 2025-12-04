@@ -114,7 +114,7 @@ coverage-check: coverage-setup
 	@COVERAGE=$$(grep "TOTAL" coverage_summary.txt | grep -oE '[0-9]+\.[0-9]+%' | tail -1 | sed 's/%//'); \
 	THRESHOLD=90.0; \
 	if [ -z "$$COVERAGE" ]; then \
-		echo "❌ Could not extract total coverage percentage"; \
+		echo "ERROR: Could not extract total coverage percentage"; \
 		cat coverage_summary.txt; \
 		rm -f coverage_summary.txt; \
 		exit 1; \
@@ -122,11 +122,11 @@ coverage-check: coverage-setup
 	echo "Current coverage: $${COVERAGE}%"; \
 	echo "Minimum threshold: $${THRESHOLD}%"; \
 	if [ $$(echo "$${COVERAGE} < $${THRESHOLD}" | bc -l) -eq 1 ]; then \
-		echo "❌ Coverage $${COVERAGE}% is below threshold $${THRESHOLD}%"; \
+		echo "FAIL: Coverage $${COVERAGE}% is below threshold $${THRESHOLD}%"; \
 		rm -f coverage_summary.txt; \
 		exit 1; \
 	else \
-		echo "✅ Coverage $${COVERAGE}% meets threshold $${THRESHOLD}%"; \
+		echo "PASS: Coverage $${COVERAGE}% meets threshold $${THRESHOLD}%"; \
 		rm -f coverage_summary.txt; \
 	fi
 
@@ -145,60 +145,60 @@ docs:
 
 # Developer setup - install Rust and set up development environment
 developer:
-	@echo "🚀 Setting up development environment..."
+	@echo "Setting up development environment..."
 	@if command -v rustc > /dev/null 2>&1; then \
-		echo "✅ Rust is already installed (version: $$(rustc --version))"; \
+		echo "Rust is already installed (version: $$(rustc --version))"; \
 	else \
-		echo "📦 Installing Rust via rustup (automated)..."; \
+		echo "Installing Rust via rustup (automated)..."; \
 		if [ -f scripts/rustup-init.sh ]; then \
 			chmod +x scripts/rustup-init.sh; \
 			./scripts/rustup-init.sh -y --default-toolchain stable; \
-			echo "🔄 Rust installed! Sourcing environment..."; \
+			echo "Rust installed! Sourcing environment..."; \
 			. "$$HOME/.cargo/env" 2>/dev/null || true; \
 		else \
-			echo "❌ scripts/rustup-init.sh not found in project root."; \
-			echo "   Please download it from: https://sh.rustup.rs/"; \
+			echo "ERROR: scripts/rustup-init.sh not found in project root."; \
+			echo "       Please download it from: https://sh.rustup.rs/"; \
 			exit 1; \
 		fi; \
 	fi
-	@echo "🔧 Setting up development tools..."
+	@echo "Setting up development tools..."
 	@if command -v rustc > /dev/null 2>&1; then \
-		echo "📋 Rust version: $$(rustc --version)"; \
-		echo "📋 Cargo version: $$(cargo --version)"; \
-		echo "🧪 Installing development tools..."; \
+		echo "Rust version: $$(rustc --version)"; \
+		echo "Cargo version: $$(cargo --version)"; \
+		echo "Installing development tools..."; \
 		$(MAKE) coverage-setup; \
-		cargo install cargo-audit --quiet || echo "⚠️  cargo-audit installation failed or already installed"; \
-		echo "🔧 Installing script dependencies..."; \
+		cargo install cargo-audit --quiet || echo "WARNING: cargo-audit installation failed or already installed"; \
+		echo "Installing script dependencies..."; \
 		if ! command -v jq > /dev/null 2>&1; then \
-			echo "📦 Installing jq..."; \
+			echo "Installing jq..."; \
 			if command -v brew > /dev/null 2>&1; then \
 				brew install jq; \
 			else \
-				echo "⚠️  Please install jq manually: https://stedolan.github.io/jq/download/"; \
+				echo "WARNING: Please install jq manually: https://stedolan.github.io/jq/download/"; \
 			fi; \
 		else \
-			echo "✅ jq is already installed"; \
+			echo "jq is already installed"; \
 		fi; \
 		if ! command -v curl > /dev/null 2>&1; then \
-			echo "📦 Installing curl..."; \
+			echo "Installing curl..."; \
 			if command -v brew > /dev/null 2>&1; then \
 				brew install curl; \
 			else \
-				echo "⚠️  Please install curl manually"; \
+				echo "WARNING: Please install curl manually"; \
 			fi; \
 		else \
-			echo "✅ curl is already installed"; \
+			echo "curl is already installed"; \
 		fi; \
-		echo "🏗️  Running initial build and test..."; \
+		echo "Running initial build and test..."; \
 		$(MAKE) check; \
 		$(MAKE) test; \
 		echo ""; \
-		echo "✅ Development environment setup complete!"; \
+		echo "Development environment setup complete!"; \
 	else \
-		echo "⚠️  Rust installation completed but not available in current shell."; \
-		echo "🔄 Please restart your shell or run:"; \
-		echo "   source $$HOME/.cargo/env"; \
-		echo "   make developer"; \
+		echo "WARNING: Rust installation completed but not available in current shell."; \
+		echo "Please restart your shell or run:"; \
+		echo "  source $$HOME/.cargo/env"; \
+		echo "  make developer"; \
 	fi
 	$(MAKE) help
 

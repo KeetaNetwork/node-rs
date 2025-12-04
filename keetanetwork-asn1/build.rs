@@ -769,7 +769,8 @@ fn generate_from_implementations(path: &str) {
 
 	// Add header comment
 	generated_code.push_str(
-		r#"//! Generated From implementations for wrapper types
+		r#"#![rustfmt::skip]
+//! Generated From implementations for wrapper types
 //!
 //! This module provides convenient From implementations for all wrapper types
 //! that delegate to primitive types like Utf8String and GeneralizedTime,
