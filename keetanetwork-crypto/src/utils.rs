@@ -398,12 +398,416 @@ pub fn encode_ecdsa_signature_to_der(r: &[u8; 32], s: &[u8; 32]) -> Vec<u8> {
 	result
 }
 
+// ============================================================================
+// Low-S Signature Normalization (BIP-62)
+// ============================================================================
+
+/// Secp256k1 curve order n
+const SECP256K1_N: [u8; 32] = [
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE, 0xBA, 0xAE, 0xDC,
+	0xE6, 0xAF, 0x48, 0xA0, 0x3B, 0xBF, 0xD2, 0x5E, 0x8C, 0xD0, 0x36, 0x41, 0x41,
+];
+
+/// Secp256k1 n/2 (half the curve order) - threshold for low-S
+const SECP256K1_HALF_N: [u8; 32] = [
+	0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x5D, 0x57, 0x6E,
+	0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0,
+];
+
+/// Secp256r1 (P-256) curve order n
+const SECP256R1_N: [u8; 32] = [
+	0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBC, 0xE6, 0xFA,
+	0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
+];
+
+/// Secp256r1 n/2 (half the curve order) - threshold for low-S
+const SECP256R1_HALF_N: [u8; 32] = [
+	0x7F, 0xFF, 0xFF, 0xFF, 0x80, 0x00, 0x00, 0x00, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xDE, 0x73, 0x7D,
+	0x56, 0xD3, 0x8B, 0xCF, 0x42, 0x79, 0xDC, 0xE5, 0x61, 0x7E, 0x31, 0x92, 0xA8,
+];
+
+/// Normalize an ECDSA signature to low-S form (BIP-62).
+///
+/// ECDSA signatures have malleability: both `(r, s)` and `(r, n - s)` are valid
+/// signatures for the same message. BIP-62 requires "low-S" where `s <= n/2`.
+///
+/// This function modifies the signature in-place if `s > n/2` by computing `s' = n - s`.
+///
+/// # Arguments
+///
+/// * `signature` - A 64-byte signature in raw format (r || s, 32 bytes each)
+/// * `algorithm` - The signing algorithm (determines which curve order to use)
+///
+/// # Returns
+///
+/// Returns `true` if normalization was performed, `false` if the signature was already low-S.
+///
+/// # Note
+///
+/// Ed25519 signatures do not have this malleability issue and are returned unchanged.
+///
+/// # Example
+///
+/// ```rust
+/// use keetanetwork_crypto::utils::normalize_low_s;
+/// use keetanetwork_crypto::algorithms::Algorithm;
+///
+/// let mut signature = [0u8; 64];
+/// // ... fill with actual signature bytes ...
+/// signature[32] = 0x80; // High-S value (MSB set)
+///
+/// let was_normalized = normalize_low_s(&mut signature, Algorithm::Secp256k1);
+/// assert!(was_normalized);
+/// ```
+pub fn normalize_low_s(signature: &mut [u8; 64], algorithm: Algorithm) -> bool {
+	let (n, half_n) = match algorithm {
+		Algorithm::Secp256k1 => (&SECP256K1_N, &SECP256K1_HALF_N),
+		Algorithm::Secp256r1 => (&SECP256R1_N, &SECP256R1_HALF_N),
+		Algorithm::Ed25519 => return false, // Ed25519 doesn't need low-S normalization
+	};
+
+	let s = &signature[32..64];
+
+	// Check if s > n/2
+	if compare_be_32(s, half_n) > 0 {
+		// s = n - s
+		let mut new_s = [0u8; 32];
+		subtract_be_32(n, s, &mut new_s);
+		signature[32..64].copy_from_slice(&new_s);
+		true
+	} else {
+		false
+	}
+}
+
+/// Check if an ECDSA signature has low-S form (BIP-62 compliant).
+///
+/// A signature is low-S if `s <= n/2` where `n` is the curve order.
+///
+/// # Arguments
+///
+/// * `signature` - A 64-byte signature in raw format (r || s, 32 bytes each)
+/// * `algorithm` - The signing algorithm (determines which curve order to use)
+///
+/// # Returns
+///
+/// Returns `true` if the signature is in low-S form, `false` otherwise.
+///
+/// # Note
+///
+/// Ed25519 signatures always return `true` as they don't have this malleability issue.
+///
+/// # Example
+///
+/// ```rust
+/// use keetanetwork_crypto::utils::is_low_s;
+/// use keetanetwork_crypto::algorithms::Algorithm;
+///
+/// let signature = [0u8; 64]; // All zeros is definitely low-S
+/// assert!(is_low_s(&signature, Algorithm::Secp256k1));
+/// ```
+pub fn is_low_s(signature: &[u8; 64], algorithm: Algorithm) -> bool {
+	let half_n = match algorithm {
+		Algorithm::Secp256k1 => &SECP256K1_HALF_N,
+		Algorithm::Secp256r1 => &SECP256R1_HALF_N,
+		Algorithm::Ed25519 => return true, // Ed25519 signatures are always valid
+	};
+
+	compare_be_32(&signature[32..64], half_n) <= 0
+}
+
+/// Compare two big-endian 32-byte integers.
+///
+/// Returns: 1 if a > b, -1 if a < b, 0 if equal
+#[inline]
+fn compare_be_32(a: &[u8], b: &[u8]) -> i32 {
+	for i in 0..32 {
+		if a[i] > b[i] {
+			return 1;
+		}
+		if a[i] < b[i] {
+			return -1;
+		}
+	}
+	0
+}
+
+/// Subtract b from a (big-endian): result = a - b
+///
+/// Assumes a >= b (no underflow check needed for low-S normalization)
+#[inline]
+fn subtract_be_32(a: &[u8; 32], b: &[u8], result: &mut [u8; 32]) {
+	let mut borrow = 0i16;
+	for i in (0..32).rev() {
+		let diff = (a[i] as i16) - (b[i] as i16) - borrow;
+		if diff < 0 {
+			result[i] = (diff + 256) as u8;
+			borrow = 1;
+		} else {
+			result[i] = diff as u8;
+			borrow = 0;
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use zeroize::Zeroize;
 
 	use super::*;
 	use crate::prelude::{Algorithm, ExposeSecret, IntoSecret};
+
+	// ============================================================================
+	// Low-S Normalization Tests
+	// ============================================================================
+
+	mod low_s_tests {
+		use super::*;
+
+		#[test]
+		fn test_already_low_s_minimal() {
+			// s = 1 (smallest possible, already low)
+			let mut sig = [0u8; 64];
+			sig[63] = 1;
+
+			let original = sig;
+			let normalized = normalize_low_s(&mut sig, Algorithm::Secp256k1);
+
+			assert!(!normalized, "s=1 should not be normalized");
+			assert_eq!(sig, original, "s=1 should remain unchanged");
+		}
+
+		#[test]
+		fn test_already_low_s_half_n_secp256k1() {
+			// s = n/2 exactly (boundary case, should NOT be normalized)
+			let mut sig = [0u8; 64];
+			sig[32..64].copy_from_slice(&SECP256K1_HALF_N);
+
+			let original = sig;
+			let normalized = normalize_low_s(&mut sig, Algorithm::Secp256k1);
+
+			assert!(!normalized, "s=n/2 should not be normalized");
+			assert_eq!(sig, original, "s=n/2 should remain unchanged");
+		}
+
+		#[test]
+		fn test_high_s_just_above_half_secp256k1() {
+			// s = n/2 + 1 (should be normalized)
+			let mut sig = [0u8; 64];
+			sig[32..64].copy_from_slice(&SECP256K1_HALF_N);
+			// Add 1
+			let mut carry = 1u16;
+			for i in (32..64).rev() {
+				let sum = sig[i] as u16 + carry;
+				sig[i] = sum as u8;
+				carry = sum >> 8;
+				if carry == 0 {
+					break;
+				}
+			}
+
+			let original_s = sig[32..64].to_vec();
+			let normalized = normalize_low_s(&mut sig, Algorithm::Secp256k1);
+
+			assert!(normalized, "s > n/2 should be normalized");
+			assert_ne!(&sig[32..64], original_s.as_slice(), "s should have changed");
+			assert!(is_low_s(&sig, Algorithm::Secp256k1), "result should be low-S");
+		}
+
+		#[test]
+		fn test_high_s_maximum_secp256k1() {
+			// s = n - 1 (maximum valid, definitely high)
+			let mut sig = [0u8; 64];
+			sig[32..64].copy_from_slice(&SECP256K1_N);
+			sig[63] -= 1; // n - 1
+
+			let normalized = normalize_low_s(&mut sig, Algorithm::Secp256k1);
+
+			assert!(normalized, "s = n-1 should be normalized");
+			// After normalization: new_s = n - (n-1) = 1
+			assert_eq!(sig[63], 1, "n - (n-1) should equal 1");
+			for i in 32..63 {
+				assert_eq!(sig[i], 0, "all other bytes should be 0");
+			}
+		}
+
+		#[test]
+		fn test_r_value_preserved() {
+			// Ensure r value is never modified
+			let mut sig = [0u8; 64];
+			for i in 0..32 {
+				sig[i] = (i + 1) as u8;
+			}
+			// Set high s that needs normalization
+			sig[32..64].copy_from_slice(&SECP256K1_N);
+			sig[63] -= 1; // n - 1
+
+			let original_r: [u8; 32] = sig[0..32].try_into().unwrap();
+			normalize_low_s(&mut sig, Algorithm::Secp256k1);
+
+			assert_eq!(&sig[0..32], &original_r, "r value should never be modified");
+		}
+
+		#[test]
+		fn test_high_s_with_msb_set() {
+			// s = 0x80...00 (high bit set, definitely > n/2)
+			let mut sig = [0u8; 64];
+			sig[32] = 0x80;
+
+			let normalized = normalize_low_s(&mut sig, Algorithm::Secp256k1);
+
+			assert!(normalized, "s with MSB set should be normalized");
+			assert!(is_low_s(&sig, Algorithm::Secp256k1), "result should be low-S");
+		}
+
+		#[test]
+		fn test_secp256r1_normalization() {
+			// Test secp256r1 with high-S value
+			let mut sig = [0u8; 64];
+			sig[32] = 0x80; // High bit set
+
+			let normalized = normalize_low_s(&mut sig, Algorithm::Secp256r1);
+
+			assert!(normalized, "secp256r1 high-S should be normalized");
+			assert!(is_low_s(&sig, Algorithm::Secp256r1), "result should be low-S");
+		}
+
+		#[test]
+		fn test_secp256r1_half_n_boundary() {
+			// s = n/2 exactly for secp256r1
+			let mut sig = [0u8; 64];
+			sig[32..64].copy_from_slice(&SECP256R1_HALF_N);
+
+			let normalized = normalize_low_s(&mut sig, Algorithm::Secp256r1);
+
+			assert!(!normalized, "secp256r1 s=n/2 should not be normalized");
+			assert!(is_low_s(&sig, Algorithm::Secp256r1), "s=n/2 is low-S");
+		}
+
+		#[test]
+		fn test_ed25519_no_normalization() {
+			// Ed25519 should never normalize
+			let mut sig = [0u8; 64];
+			sig[32] = 0xFF; // Would be high-S for ECDSA
+
+			let original = sig;
+			let normalized = normalize_low_s(&mut sig, Algorithm::Ed25519);
+
+			assert!(!normalized, "Ed25519 should not normalize");
+			assert_eq!(sig, original, "Ed25519 signature should be unchanged");
+		}
+
+		#[test]
+		fn test_ed25519_always_low_s() {
+			// Ed25519 is_low_s should always return true
+			let mut sig = [0u8; 64];
+			sig[32] = 0xFF;
+			sig[33] = 0xFF;
+
+			assert!(is_low_s(&sig, Algorithm::Ed25519), "Ed25519 is always low-S");
+		}
+
+		#[test]
+		fn test_is_low_s_zero() {
+			// s = 0 is definitely low-S
+			let sig = [0u8; 64];
+			assert!(is_low_s(&sig, Algorithm::Secp256k1));
+			assert!(is_low_s(&sig, Algorithm::Secp256r1));
+		}
+
+		#[test]
+		fn test_is_low_s_high_value() {
+			// s with MSB set is not low-S
+			let mut sig = [0u8; 64];
+			sig[32] = 0x80;
+
+			assert!(!is_low_s(&sig, Algorithm::Secp256k1));
+			assert!(!is_low_s(&sig, Algorithm::Secp256r1));
+		}
+	}
+
+	// ============================================================================
+	// Big-Endian Arithmetic Tests
+	// ============================================================================
+
+	mod bigint_tests {
+		use super::*;
+
+		#[test]
+		fn test_compare_equal() {
+			let a = [0x42u8; 32];
+			let b = [0x42u8; 32];
+			assert_eq!(compare_be_32(&a, &b), 0);
+		}
+
+		#[test]
+		fn test_compare_greater_first_byte() {
+			let mut a = [0u8; 32];
+			let mut b = [0u8; 32];
+			a[0] = 0x02;
+			b[0] = 0x01;
+			assert_eq!(compare_be_32(&a, &b), 1);
+		}
+
+		#[test]
+		fn test_compare_less_first_byte() {
+			let mut a = [0u8; 32];
+			let mut b = [0u8; 32];
+			a[0] = 0x01;
+			b[0] = 0x02;
+			assert_eq!(compare_be_32(&a, &b), -1);
+		}
+
+		#[test]
+		fn test_compare_greater_last_byte() {
+			let mut a = [0u8; 32];
+			let mut b = [0u8; 32];
+			a[31] = 0x02;
+			b[31] = 0x01;
+			assert_eq!(compare_be_32(&a, &b), 1);
+		}
+
+		#[test]
+		fn test_subtract_no_borrow() {
+			let a: [u8; 32] = {
+				let mut arr = [0u8; 32];
+				arr[31] = 0x10;
+				arr
+			};
+			let b: [u8; 32] = {
+				let mut arr = [0u8; 32];
+				arr[31] = 0x05;
+				arr
+			};
+			let mut result = [0u8; 32];
+
+			subtract_be_32(&a, &b, &mut result);
+
+			assert_eq!(result[31], 0x0B); // 16 - 5 = 11
+		}
+
+		#[test]
+		fn test_subtract_with_borrow() {
+			let a: [u8; 32] = {
+				let mut arr = [0u8; 32];
+				arr[30] = 0x01;
+				arr[31] = 0x00;
+				arr
+			};
+			let b: [u8; 32] = {
+				let mut arr = [0u8; 32];
+				arr[31] = 0x01;
+				arr
+			};
+			let mut result = [0u8; 32];
+
+			subtract_be_32(&a, &b, &mut result);
+
+			// 0x0100 - 0x01 = 0xFF
+			assert_eq!(result[30], 0x00);
+			assert_eq!(result[31], 0xFF);
+		}
+	}
 
 	#[test]
 	fn test_seed_from_passphrase() {
