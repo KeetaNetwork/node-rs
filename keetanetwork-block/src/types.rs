@@ -1,0 +1,453 @@
+//! Keeta Network Block Types
+//!
+//! Type definitions for Keeta blockchain blocks and operations.
+//! Zero-copy types with lifetime parameters for efficient parsing in `no_std` environments.
+//!
+//! ## Operation Tags
+//!
+//! | Tag  | Operation           |
+//! |------|---------------------|
+//! | [0]  | Send                |
+//! | [1]  | SetRep              |
+//! | [2]  | SetInfo             |
+//! | [3]  | ModifyPermissions   |
+//! | [4]  | CreateIdentifier    |
+//! | [5]  | TokenAdminSupply    |
+//! | [6]  | TokenModifyBalance  |
+//! | [7]  | Receive             |
+//! | [8]  | ManageCertificate   |
+//! | [9]  | MatchSwap           |
+//! | [10] | CancelSwap          |
+
+// Use alloc for Vec when not using std
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+extern crate alloc;
+
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
+use std::vec::Vec;
+
+// ============================================================================
+// Address/Key Validation
+// ============================================================================
+
+/// Algorithm prefix bytes for Keeta public keys
+pub mod algo_prefix {
+    /// secp256k1 (Bitcoin-style): 33-byte compressed pubkey
+    pub const SECP256K1: u8 = 0x00;
+    /// Ed25519: 32-byte pubkey
+    pub const ED25519: u8 = 0x01;
+    /// secp256r1 (NIST P-256): 33-byte compressed pubkey
+    pub const SECP256R1: u8 = 0x02;
+}
+
+/// Expected key sizes (prefix + pubkey)
+const SECP256K1_KEY_SIZE: usize = 34; // 1 + 33
+const ED25519_KEY_SIZE: usize = 33;   // 1 + 32
+const SECP256R1_KEY_SIZE: usize = 34; // 1 + 33
+
+/// Validate address/public key size based on algorithm prefix.
+///
+/// Keeta public keys have a 1-byte algorithm prefix:
+/// - 0x00 (secp256k1): 1 + 33 = 34 bytes
+/// - 0x01 (Ed25519): 1 + 32 = 33 bytes
+/// - 0x02 (secp256r1): 1 + 33 = 34 bytes
+///
+/// Returns `true` if the address has valid size for its algorithm prefix.
+#[inline]
+pub fn is_valid_address(addr: &[u8]) -> bool {
+    if addr.is_empty() {
+        return false;
+    }
+    match addr[0] {
+        algo_prefix::SECP256K1 => addr.len() == SECP256K1_KEY_SIZE,
+        algo_prefix::ED25519 => addr.len() == ED25519_KEY_SIZE,
+        algo_prefix::SECP256R1 => addr.len() == SECP256R1_KEY_SIZE,
+        _ => false, // Unknown algorithm prefix
+    }
+}
+
+// ============================================================================
+// Block Types
+// ============================================================================
+
+/// Block version
+///
+/// - V1: Plain SEQUENCE with internal version field = 0
+/// - V2: Wrapped in [1] EXPLICIT context tag
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BlockVersion {
+    V1 = 1,
+    V2 = 2,
+}
+
+impl BlockVersion {
+    /// V1 blocks have version field 0 internally, V2 blocks use [1] context tag
+    pub fn from_version_field(version: u8) -> Option<Self> {
+        match version {
+            0 => Some(BlockVersion::V1),
+            _ => None,
+        }
+    }
+
+    /// Create from context tag (for V2)
+    pub fn from_context_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(BlockVersion::V2),
+            _ => None,
+        }
+    }
+}
+
+/// Block purpose (V2 only)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BlockPurpose {
+    Generic = 0,
+    Fee = 1,
+    Unknown(u8),
+}
+
+impl From<u8> for BlockPurpose {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => BlockPurpose::Generic,
+            1 => BlockPurpose::Fee,
+            n => BlockPurpose::Unknown(n),
+        }
+    }
+}
+
+/// Block header information
+#[derive(Debug, Clone)]
+pub struct BlockHeader<'a> {
+    /// Network ID
+    pub network: u64,
+    /// Subnet ID (optional)
+    pub subnet: Option<u64>,
+    /// Idempotent key for deduplication (optional)
+    pub idempotent: Option<&'a [u8]>,
+    /// Date as GeneralizedTime raw bytes
+    pub date: &'a [u8],
+    /// Block purpose (V2 only, defaults to Generic for V1)
+    pub purpose: BlockPurpose,
+    /// Account public key with type prefix
+    pub account: &'a [u8],
+    /// Signer public key with type prefix (may be same as account)
+    pub signer: &'a [u8],
+    /// Previous block hash (32 bytes)
+    pub previous: &'a [u8],
+}
+
+/// Parsed Keeta block (unified view for both V1 and V2)
+///
+/// Requires the `alloc` or `std` feature (uses Vec for operations).
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone)]
+pub struct KeetaBlock<'a> {
+    /// Block version
+    pub version: BlockVersion,
+    /// Block header/metadata
+    pub header: BlockHeader<'a>,
+    /// Operations in the block
+    pub operations: Vec<Operation<'a>>,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl<'a> KeetaBlock<'a> {
+    /// Create a new V1 block with the given header and operations
+    pub fn new(header: BlockHeader<'a>, operations: Vec<Operation<'a>>) -> Self {
+        Self {
+            version: BlockVersion::V1,
+            header,
+            operations,
+        }
+    }
+
+    /// Create a new V2 block
+    pub fn new_v2(header: BlockHeader<'a>, operations: Vec<Operation<'a>>) -> Self {
+        Self {
+            version: BlockVersion::V2,
+            header,
+            operations,
+        }
+    }
+
+    /// Get an iterator over operations
+    pub fn iter_operations(&self) -> impl Iterator<Item = &Operation<'a>> {
+        self.operations.iter()
+    }
+
+    /// Get the number of operations
+    pub fn operation_count(&self) -> usize {
+        self.operations.len()
+    }
+}
+
+// ============================================================================
+// Enum Types
+// ============================================================================
+
+/// Adjust method for supply/balance/permissions operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AdjustMethod {
+    Add = 0,
+    Remove = 1,
+    Set = 2,
+    Unknown(u8),
+}
+
+impl From<u8> for AdjustMethod {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => AdjustMethod::Add,
+            1 => AdjustMethod::Remove,
+            2 => AdjustMethod::Set,
+            n => AdjustMethod::Unknown(n),
+        }
+    }
+}
+
+/// Adjust method for relative operations (add/remove only, no set)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum AdjustMethodRelative {
+    Add = 0,
+    Remove = 1,
+    Unknown(u8),
+}
+
+impl From<u8> for AdjustMethodRelative {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => AdjustMethodRelative::Add,
+            1 => AdjustMethodRelative::Remove,
+            n => AdjustMethodRelative::Unknown(n),
+        }
+    }
+}
+
+// ============================================================================
+// Supporting Types
+// ============================================================================
+
+/// Token and value pair (used in swap operations)
+#[derive(Debug, Clone, Copy)]
+pub struct TokenValue<'a> {
+    /// Token public key
+    pub token: &'a [u8],
+    /// Value (rate or amount)
+    pub value: u64,
+}
+
+/// Fee details for swap operations
+#[derive(Debug, Clone, Copy)]
+pub struct FeeDetails<'a> {
+    /// Fee token (None means use sell token)
+    pub token: Option<&'a [u8]>,
+    /// Fee value
+    pub value: u64,
+}
+
+/// Fee details with recipient for match swap
+#[derive(Debug, Clone, Copy)]
+pub struct FeeDetailsWithRecipient<'a> {
+    /// Fee token (None means use sell token)
+    pub token: Option<&'a [u8]>,
+    /// Fee value
+    pub value: u64,
+    /// Fee recipient
+    pub recipient: &'a [u8],
+}
+
+/// Permission value (base and external)
+#[derive(Debug, Clone, Copy)]
+pub struct Permission {
+    pub base: u64,
+    pub external: u64,
+}
+
+// ============================================================================
+// Operation Structures
+// ============================================================================
+
+/// [0] SEND operation - Transfer tokens to another account
+#[derive(Debug, Clone)]
+pub struct SendOp<'a> {
+    /// Destination account
+    pub to: &'a [u8],
+    /// Amount to send
+    pub amount: u64,
+    /// Token ID to send
+    pub token: &'a [u8],
+    /// External reference (optional)
+    pub external: Option<&'a [u8]>,
+}
+
+/// [1] SET_REP operation - Set representative for delegation
+#[derive(Debug, Clone)]
+pub struct SetRepOp<'a> {
+    /// Representative to delegate to
+    pub to: &'a [u8],
+}
+
+/// [2] SET_INFO operation - Set account information
+#[derive(Debug, Clone)]
+pub struct SetInfoOp<'a> {
+    /// Account name
+    pub name: &'a [u8],
+    /// Account description
+    pub description: &'a [u8],
+    /// Account metadata
+    pub metadata: &'a [u8],
+    /// Default permission (optional)
+    pub default_permission: Option<Permission>,
+}
+
+/// [3] MODIFY_PERMISSIONS operation - Modify account permissions
+#[derive(Debug, Clone)]
+pub struct ModifyPermissionsOp<'a> {
+    /// Principal to modify permissions for
+    pub principal: &'a [u8],
+    /// Method to modify (add/remove/set)
+    pub method: AdjustMethod,
+    /// Permissions to modify (None = null/clear)
+    pub permissions: Option<Permission>,
+    /// Target account (optional)
+    pub target: Option<&'a [u8]>,
+}
+
+/// Identifier creation arguments
+#[derive(Debug, Clone)]
+pub enum CreateIdentifierArgs<'a> {
+    /// Multisig creation arguments [7]
+    Multisig {
+        signers: &'a [u8], // Raw sequence of octet strings
+        quorum: u64,
+    },
+    /// Swap creation arguments [8]
+    Swap {
+        sell_token_rate: TokenValue<'a>,
+        buy_token_rate: TokenValue<'a>,
+        fee_token_rate: Option<FeeDetails<'a>>,
+        quantity: u64,
+    },
+}
+
+/// [4] CREATE_IDENTIFIER operation - Create token, multisig, or swap
+#[derive(Debug, Clone)]
+pub struct CreateIdentifierOp<'a> {
+    /// Identifier to create
+    pub identifier: &'a [u8],
+    /// Creation arguments (optional, depends on identifier type)
+    pub create_arguments: Option<CreateIdentifierArgs<'a>>,
+}
+
+/// [5] TOKEN_ADMIN_SUPPLY operation - Modify token supply
+#[derive(Debug, Clone, Copy)]
+pub struct TokenAdminSupplyOp {
+    /// Amount to modify
+    pub amount: u64,
+    /// Method (add/remove/set)
+    pub method: AdjustMethod,
+}
+
+/// [6] TOKEN_MODIFY_BALANCE operation - Modify account token balance
+#[derive(Debug, Clone)]
+pub struct TokenModifyBalanceOp<'a> {
+    /// Token to modify balance of
+    pub token: &'a [u8],
+    /// Amount to modify
+    pub amount: u64,
+    /// Method (add/remove/set)
+    pub method: AdjustMethod,
+}
+
+/// [7] RECEIVE operation - Receive tokens from another account
+#[derive(Debug, Clone)]
+pub struct ReceiveOp<'a> {
+    /// Amount to receive
+    pub amount: u64,
+    /// Token to receive
+    pub token: &'a [u8],
+    /// Sender account
+    pub from: &'a [u8],
+    /// Whether amount must match exactly
+    pub exact: bool,
+    /// Forward to another account (optional)
+    pub forward: Option<&'a [u8]>,
+}
+
+/// [8] MANAGE_CERTIFICATE operation - Add or remove certificates
+#[derive(Debug, Clone)]
+pub struct ManageCertificateOp<'a> {
+    /// Method (add/remove)
+    pub method: AdjustMethodRelative,
+    /// Certificate (if adding) or certificate hash (if removing)
+    pub certificate_or_hash: &'a [u8],
+    /// Intermediate certificates (required if adding, must be None if removing)
+    pub intermediates: Option<&'a [u8]>,
+}
+
+/// [9] MATCH_SWAP operation - Match two swap orders
+#[derive(Debug, Clone)]
+pub struct MatchSwapOp<'a> {
+    /// Swap account being used
+    pub swap: &'a [u8],
+    /// Other swap account to match against
+    pub other: &'a [u8],
+    /// Token being sold and value
+    pub sell: TokenValue<'a>,
+    /// Token being bought and value
+    pub buy: TokenValue<'a>,
+    /// Fee details with recipient (optional)
+    pub fee: Option<FeeDetailsWithRecipient<'a>>,
+}
+
+/// [10] CANCEL_SWAP operation - Cancel a swap order
+#[derive(Debug, Clone)]
+pub struct CancelSwapOp<'a> {
+    /// Swap account to cancel
+    pub swap: &'a [u8],
+    /// Sell token and value being returned
+    pub sell: TokenValue<'a>,
+    /// Fee details (optional)
+    pub fee: Option<FeeDetails<'a>>,
+}
+
+// ============================================================================
+// Operation Enum
+// ============================================================================
+
+/// Keeta blockchain operation
+#[derive(Debug, Clone)]
+pub enum Operation<'a> {
+    /// [0] Send tokens
+    Send(SendOp<'a>),
+    /// [1] Set representative
+    SetRep(SetRepOp<'a>),
+    /// [2] Set account info
+    SetInfo(SetInfoOp<'a>),
+    /// [3] Modify permissions
+    ModifyPermissions(ModifyPermissionsOp<'a>),
+    /// [4] Create identifier (token, multisig, swap)
+    CreateIdentifier(CreateIdentifierOp<'a>),
+    /// [5] Token admin supply
+    TokenAdminSupply(TokenAdminSupplyOp),
+    /// [6] Token modify balance
+    TokenModifyBalance(TokenModifyBalanceOp<'a>),
+    /// [7] Receive tokens
+    Receive(ReceiveOp<'a>),
+    /// [8] Manage certificate
+    ManageCertificate(ManageCertificateOp<'a>),
+    /// [9] Match swap
+    MatchSwap(MatchSwapOp<'a>),
+    /// [10] Cancel swap
+    CancelSwap(CancelSwapOp<'a>),
+    /// Unknown operation type
+    Unknown(u32),
+}

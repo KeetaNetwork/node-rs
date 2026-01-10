@@ -8,9 +8,12 @@ repository.workspace = true
 homepage.workspace = true
 description = "Block structure and operations for Keetanetwork blockchain"
 
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
 [dependencies]
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-snafu = { workspace = true }
 
 [dev-dependencies]
 
