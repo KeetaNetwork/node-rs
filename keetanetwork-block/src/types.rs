@@ -30,46 +30,6 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 // ============================================================================
-// Address/Key Validation
-// ============================================================================
-
-/// Algorithm prefix bytes for Keeta public keys
-pub mod algo_prefix {
-    /// secp256k1 (Bitcoin-style): 33-byte compressed pubkey
-    pub const SECP256K1: u8 = 0x00;
-    /// Ed25519: 32-byte pubkey
-    pub const ED25519: u8 = 0x01;
-    /// secp256r1 (NIST P-256): 33-byte compressed pubkey
-    pub const SECP256R1: u8 = 0x02;
-}
-
-/// Expected key sizes (prefix + pubkey)
-const SECP256K1_KEY_SIZE: usize = 34; // 1 + 33
-const ED25519_KEY_SIZE: usize = 33;   // 1 + 32
-const SECP256R1_KEY_SIZE: usize = 34; // 1 + 33
-
-/// Validate address/public key size based on algorithm prefix.
-///
-/// Keeta public keys have a 1-byte algorithm prefix:
-/// - 0x00 (secp256k1): 1 + 33 = 34 bytes
-/// - 0x01 (Ed25519): 1 + 32 = 33 bytes
-/// - 0x02 (secp256r1): 1 + 33 = 34 bytes
-///
-/// Returns `true` if the address has valid size for its algorithm prefix.
-#[inline]
-pub fn is_valid_address(addr: &[u8]) -> bool {
-    if addr.is_empty() {
-        return false;
-    }
-    match addr[0] {
-        algo_prefix::SECP256K1 => addr.len() == SECP256K1_KEY_SIZE,
-        algo_prefix::ED25519 => addr.len() == ED25519_KEY_SIZE,
-        algo_prefix::SECP256R1 => addr.len() == SECP256R1_KEY_SIZE,
-        _ => false, // Unknown algorithm prefix
-    }
-}
-
-// ============================================================================
 // Block Types
 // ============================================================================
 
@@ -241,7 +201,7 @@ pub struct TokenValue<'a> {
     /// Token public key
     pub token: &'a [u8],
     /// Value (rate or amount)
-    pub value: u64,
+    pub value: &'a [u8],
 }
 
 /// Fee details for swap operations
@@ -250,7 +210,7 @@ pub struct FeeDetails<'a> {
     /// Fee token (None means use sell token)
     pub token: Option<&'a [u8]>,
     /// Fee value
-    pub value: u64,
+    pub value: &'a [u8],
 }
 
 /// Fee details with recipient for match swap
@@ -259,16 +219,18 @@ pub struct FeeDetailsWithRecipient<'a> {
     /// Fee token (None means use sell token)
     pub token: Option<&'a [u8]>,
     /// Fee value
-    pub value: u64,
+    pub value: &'a [u8],
     /// Fee recipient
     pub recipient: &'a [u8],
 }
 
 /// Permission value (base and external)
 #[derive(Debug, Clone, Copy)]
-pub struct Permission {
-    pub base: u64,
-    pub external: u64,
+pub struct Permission<'a> {
+    /// Base permissions
+    pub base: &'a [u8],
+    /// External permissions
+    pub external: &'a [u8],
 }
 
 // ============================================================================
@@ -281,7 +243,7 @@ pub struct SendOp<'a> {
     /// Destination account
     pub to: &'a [u8],
     /// Amount to send
-    pub amount: u64,
+    pub amount: &'a [u8],
     /// Token ID to send
     pub token: &'a [u8],
     /// External reference (optional)
@@ -305,7 +267,7 @@ pub struct SetInfoOp<'a> {
     /// Account metadata
     pub metadata: &'a [u8],
     /// Default permission (optional)
-    pub default_permission: Option<Permission>,
+    pub default_permission: Option<Permission<'a>>,
 }
 
 /// [3] MODIFY_PERMISSIONS operation - Modify account permissions
@@ -316,7 +278,7 @@ pub struct ModifyPermissionsOp<'a> {
     /// Method to modify (add/remove/set)
     pub method: AdjustMethod,
     /// Permissions to modify (None = null/clear)
-    pub permissions: Option<Permission>,
+    pub permissions: Option<Permission<'a>>,
     /// Target account (optional)
     pub target: Option<&'a [u8]>,
 }
@@ -327,14 +289,14 @@ pub enum CreateIdentifierArgs<'a> {
     /// Multisig creation arguments [7]
     Multisig {
         signers: &'a [u8], // Raw sequence of octet strings
-        quorum: u64,
+        quorum: &'a [u8],
     },
     /// Swap creation arguments [8]
     Swap {
         sell_token_rate: TokenValue<'a>,
         buy_token_rate: TokenValue<'a>,
         fee_token_rate: Option<FeeDetails<'a>>,
-        quantity: u64,
+        quantity: &'a [u8],
     },
 }
 
@@ -349,9 +311,9 @@ pub struct CreateIdentifierOp<'a> {
 
 /// [5] TOKEN_ADMIN_SUPPLY operation - Modify token supply
 #[derive(Debug, Clone, Copy)]
-pub struct TokenAdminSupplyOp {
+pub struct TokenAdminSupplyOp<'a> {
     /// Amount to modify
-    pub amount: u64,
+    pub amount: &'a [u8],
     /// Method (add/remove/set)
     pub method: AdjustMethod,
 }
@@ -362,7 +324,7 @@ pub struct TokenModifyBalanceOp<'a> {
     /// Token to modify balance of
     pub token: &'a [u8],
     /// Amount to modify
-    pub amount: u64,
+    pub amount: &'a [u8],
     /// Method (add/remove/set)
     pub method: AdjustMethod,
 }
@@ -371,7 +333,7 @@ pub struct TokenModifyBalanceOp<'a> {
 #[derive(Debug, Clone)]
 pub struct ReceiveOp<'a> {
     /// Amount to receive
-    pub amount: u64,
+    pub amount: &'a [u8],
     /// Token to receive
     pub token: &'a [u8],
     /// Sender account
@@ -437,7 +399,7 @@ pub enum Operation<'a> {
     /// [4] Create identifier (token, multisig, swap)
     CreateIdentifier(CreateIdentifierOp<'a>),
     /// [5] Token admin supply
-    TokenAdminSupply(TokenAdminSupplyOp),
+    TokenAdminSupply(TokenAdminSupplyOp<'a>),
     /// [6] Token modify balance
     TokenModifyBalance(TokenModifyBalanceOp<'a>),
     /// [7] Receive tokens
