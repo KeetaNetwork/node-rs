@@ -11,8 +11,6 @@ mod types;
 pub use types::KeetaBlock;
 
 pub use types::{
-    // Address validation
-    algo_prefix, is_valid_address,
     // Block types
     BlockHeader, BlockPurpose, BlockVersion,
     // Operation enum
