@@ -64,10 +64,9 @@ impl BlockVersion {
 
 /// Block purpose (V2 only)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum BlockPurpose {
-    Generic = 0,
-    Fee = 1,
+    Generic,
+    Fee,
     Unknown(u8),
 }
 
@@ -153,11 +152,10 @@ impl<'a> KeetaBlock<'a> {
 
 /// Adjust method for supply/balance/permissions operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum AdjustMethod {
-    Add = 0,
-    Remove = 1,
-    Set = 2,
+    Add,
+    Remove,
+    Set,
     Unknown(u8),
 }
 
@@ -174,10 +172,9 @@ impl From<u8> for AdjustMethod {
 
 /// Adjust method for relative operations (add/remove only, no set)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum AdjustMethodRelative {
-    Add = 0,
-    Remove = 1,
+    Add,
+    Remove,
     Unknown(u8),
 }
 
