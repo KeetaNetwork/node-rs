@@ -11,16 +11,31 @@ mod types;
 pub use types::KeetaBlock;
 
 pub use types::{
-    // Block types
-    BlockHeader, BlockPurpose, BlockVersion,
-    // Operation enum
-    Operation,
-    // Operation structs
-    CancelSwapOp, CreateIdentifierOp, CreateIdentifierArgs, ManageCertificateOp, MatchSwapOp,
-    ModifyPermissionsOp, ReceiveOp, SendOp, SetInfoOp, SetRepOp, TokenAdminSupplyOp,
-    TokenModifyBalanceOp,
-    // Supporting types
-    FeeDetails, FeeDetailsWithRecipient, Permission, TokenValue,
-    // Enums
-    AdjustMethod, AdjustMethodRelative,
+	// Enums
+	AdjustMethod,
+	AdjustMethodRelative,
+	// Block types
+	BlockHeader,
+	BlockPurpose,
+	BlockVersion,
+	// Operation structs
+	CancelSwapOp,
+	CreateIdentifierArgs,
+	CreateIdentifierOp,
+	// Supporting types
+	FeeDetails,
+	FeeDetailsWithRecipient,
+	ManageCertificateOp,
+	MatchSwapOp,
+	ModifyPermissionsOp,
+	// Operation enum
+	Operation,
+	Permission,
+	ReceiveOp,
+	SendOp,
+	SetInfoOp,
+	SetRepOp,
+	TokenAdminSupplyOp,
+	TokenModifyBalanceOp,
+	TokenValue,
 };
