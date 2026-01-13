@@ -29,8 +29,6 @@ use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
-use crypto_bigint::U128;
-
 // ============================================================================
 // Block Types
 // ============================================================================
@@ -118,26 +116,37 @@ pub struct KeetaBlock<'a> {
 	pub operations: Vec<Operation<'a>>,
 }
 
+/// Builder for constructing KeetaBlock instances
 #[cfg(any(feature = "alloc", feature = "std"))]
-impl<'a> KeetaBlock<'a> {
-	/// Create a new V1 block with the given header and operations
-	pub fn new(header: BlockHeader<'a>, operations: Vec<Operation<'a>>) -> Self {
-		Self { version: BlockVersion::V1, header, operations }
+#[derive(Debug, Clone)]
+pub struct KeetaBlockBuilder<'a> {
+	version: BlockVersion,
+	header: BlockHeader<'a>,
+	operations: Vec<Operation<'a>>,
+}
+
+#[cfg(any(feature = "alloc", feature = "std"))]
+impl<'a> KeetaBlockBuilder<'a> {
+	/// Create a new builder with the specified block version and header
+	pub fn new(version: BlockVersion, header: BlockHeader<'a>) -> Self {
+		Self { version, header, operations: Vec::new() }
 	}
 
-	/// Create a new V2 block
-	pub fn new_v2(header: BlockHeader<'a>, operations: Vec<Operation<'a>>) -> Self {
-		Self { version: BlockVersion::V2, header, operations }
+	/// Set the operations
+	pub fn operations(mut self, operations: Vec<Operation<'a>>) -> Self {
+		self.operations = operations;
+		self
 	}
 
-	/// Get an iterator over operations
-	pub fn iter_operations(&self) -> impl Iterator<Item = &Operation<'a>> {
-		self.operations.iter()
+	/// Add a single operation
+	pub fn operation(mut self, operation: Operation<'a>) -> Self {
+		self.operations.push(operation);
+		self
 	}
 
-	/// Get the number of operations
-	pub fn operation_count(&self) -> usize {
-		self.operations.len()
+	/// Build the KeetaBlock
+	pub fn build(self) -> KeetaBlock<'a> {
+		KeetaBlock { version: self.version, header: self.header, operations: self.operations }
 	}
 }
 
@@ -195,7 +204,7 @@ pub struct TokenValue<'a> {
 	/// Token public key
 	pub token: &'a [u8],
 	/// Value (rate or amount)
-	pub value: U128,
+	pub value: &'a [u8],
 }
 
 /// Fee details for swap operations
@@ -204,7 +213,7 @@ pub struct FeeDetails<'a> {
 	/// Fee token (None means use sell token)
 	pub token: Option<&'a [u8]>,
 	/// Fee value
-	pub value: U128,
+	pub value: &'a [u8],
 }
 
 /// Fee details with recipient for match swap
@@ -213,7 +222,7 @@ pub struct FeeDetailsWithRecipient<'a> {
 	/// Fee token (None means use sell token)
 	pub token: Option<&'a [u8]>,
 	/// Fee value
-	pub value: U128,
+	pub value: &'a [u8],
 	/// Fee recipient
 	pub recipient: &'a [u8],
 }
@@ -237,7 +246,7 @@ pub struct SendOp<'a> {
 	/// Destination account
 	pub to: &'a [u8],
 	/// Amount to send
-	pub amount: U128,
+	pub amount: &'a [u8],
 	/// Token ID to send
 	pub token: &'a [u8],
 	/// External reference (optional)
@@ -290,7 +299,7 @@ pub enum CreateIdentifierArgs<'a> {
 		sell_token_rate: TokenValue<'a>,
 		buy_token_rate: TokenValue<'a>,
 		fee_token_rate: Option<FeeDetails<'a>>,
-		quantity: U128,
+		quantity: &'a [u8],
 	},
 }
 
@@ -305,9 +314,9 @@ pub struct CreateIdentifierOp<'a> {
 
 /// [5] TOKEN_ADMIN_SUPPLY operation - Modify token supply
 #[derive(Debug, Clone, Copy)]
-pub struct TokenAdminSupplyOp {
+pub struct TokenAdminSupplyOp<'a> {
 	/// Amount to modify
-	pub amount: U128,
+	pub amount: &'a [u8],
 	/// Method (add/subtract/set)
 	pub method: AdjustMethod,
 }
@@ -318,7 +327,7 @@ pub struct TokenAdminModifyBalanceOp<'a> {
 	/// Token to modify balance of
 	pub token: &'a [u8],
 	/// Amount to modify
-	pub amount: U128,
+	pub amount: &'a [u8],
 	/// Method (add/subtract/set)
 	pub method: AdjustMethod,
 }
@@ -327,7 +336,7 @@ pub struct TokenAdminModifyBalanceOp<'a> {
 #[derive(Debug, Clone)]
 pub struct ReceiveOp<'a> {
 	/// Amount to receive
-	pub amount: U128,
+	pub amount: &'a [u8],
 	/// Token to receive
 	pub token: &'a [u8],
 	/// Sender account
@@ -393,7 +402,7 @@ pub enum Operation<'a> {
 	/// [4] Create identifier (token, multisig, swap)
 	CreateIdentifier(CreateIdentifierOp<'a>),
 	/// [5] Token admin supply
-	TokenAdminSupply(TokenAdminSupplyOp),
+	TokenAdminSupply(TokenAdminSupplyOp<'a>),
 	/// [6] Token modify balance
 	TokenModifyBalance(TokenAdminModifyBalanceOp<'a>),
 	/// [7] Receive tokens

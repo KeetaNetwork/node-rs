@@ -6,9 +6,9 @@
 
 mod types;
 
-// KeetaBlock requires alloc (uses Vec<Operation>)
+// KeetaBlock and builder require alloc (uses Vec<Operation>)
 #[cfg(any(feature = "alloc", feature = "std"))]
-pub use types::KeetaBlock;
+pub use types::{KeetaBlock, KeetaBlockBuilder};
 
 pub use types::{
 	// Enums
@@ -35,7 +35,7 @@ pub use types::{
 	SendOp,
 	SetInfoOp,
 	SetRepOp,
-	TokenAdminSupplyOp,
 	TokenAdminModifyBalanceOp,
+	TokenAdminSupplyOp,
 	TokenValue,
 };
