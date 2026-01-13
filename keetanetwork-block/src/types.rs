@@ -29,6 +29,8 @@ use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use std::vec::Vec;
 
+use crypto_bigint::U128;
+
 // ============================================================================
 // Block Types
 // ============================================================================
@@ -67,15 +69,16 @@ impl BlockVersion {
 pub enum BlockPurpose {
 	Generic,
 	Fee,
-	Unknown(u8),
 }
 
-impl From<u8> for BlockPurpose {
-	fn from(value: u8) -> Self {
+impl TryFrom<u8> for BlockPurpose {
+	type Error = u8;
+
+	fn try_from(value: u8) -> Result<Self, Self::Error> {
 		match value {
-			0 => BlockPurpose::Generic,
-			1 => BlockPurpose::Fee,
-			n => BlockPurpose::Unknown(n),
+			0 => Ok(BlockPurpose::Generic),
+			1 => Ok(BlockPurpose::Fee),
+			n => Err(n),
 		}
 	}
 }
@@ -146,36 +149,38 @@ impl<'a> KeetaBlock<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdjustMethod {
 	Add,
-	Remove,
+	Subtract,
 	Set,
-	Unknown(u8),
 }
 
-impl From<u8> for AdjustMethod {
-	fn from(value: u8) -> Self {
+impl TryFrom<u8> for AdjustMethod {
+	type Error = u8;
+
+	fn try_from(value: u8) -> Result<Self, Self::Error> {
 		match value {
-			0 => AdjustMethod::Add,
-			1 => AdjustMethod::Remove,
-			2 => AdjustMethod::Set,
-			n => AdjustMethod::Unknown(n),
+			0 => Ok(AdjustMethod::Add),
+			1 => Ok(AdjustMethod::Subtract),
+			2 => Ok(AdjustMethod::Set),
+			n => Err(n),
 		}
 	}
 }
 
-/// Adjust method for relative operations (add/remove only, no set)
+/// Adjust method for relative operations (add/subtract only, no set)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdjustMethodRelative {
 	Add,
-	Remove,
-	Unknown(u8),
+	Subtract,
 }
 
-impl From<u8> for AdjustMethodRelative {
-	fn from(value: u8) -> Self {
+impl TryFrom<u8> for AdjustMethodRelative {
+	type Error = u8;
+
+	fn try_from(value: u8) -> Result<Self, Self::Error> {
 		match value {
-			0 => AdjustMethodRelative::Add,
-			1 => AdjustMethodRelative::Remove,
-			n => AdjustMethodRelative::Unknown(n),
+			0 => Ok(AdjustMethodRelative::Add),
+			1 => Ok(AdjustMethodRelative::Subtract),
+			n => Err(n),
 		}
 	}
 }
@@ -190,7 +195,7 @@ pub struct TokenValue<'a> {
 	/// Token public key
 	pub token: &'a [u8],
 	/// Value (rate or amount)
-	pub value: &'a [u8],
+	pub value: U128,
 }
 
 /// Fee details for swap operations
@@ -199,7 +204,7 @@ pub struct FeeDetails<'a> {
 	/// Fee token (None means use sell token)
 	pub token: Option<&'a [u8]>,
 	/// Fee value
-	pub value: &'a [u8],
+	pub value: U128,
 }
 
 /// Fee details with recipient for match swap
@@ -208,18 +213,18 @@ pub struct FeeDetailsWithRecipient<'a> {
 	/// Fee token (None means use sell token)
 	pub token: Option<&'a [u8]>,
 	/// Fee value
-	pub value: &'a [u8],
+	pub value: U128,
 	/// Fee recipient
 	pub recipient: &'a [u8],
 }
 
 /// Permission value (base and external)
 #[derive(Debug, Clone, Copy)]
-pub struct Permission<'a> {
+pub struct Permission {
 	/// Base permissions
-	pub base: &'a [u8],
+	pub base: u64,
 	/// External permissions
-	pub external: &'a [u8],
+	pub external: u64,
 }
 
 // ============================================================================
@@ -232,7 +237,7 @@ pub struct SendOp<'a> {
 	/// Destination account
 	pub to: &'a [u8],
 	/// Amount to send
-	pub amount: &'a [u8],
+	pub amount: U128,
 	/// Token ID to send
 	pub token: &'a [u8],
 	/// External reference (optional)
@@ -256,7 +261,7 @@ pub struct SetInfoOp<'a> {
 	/// Account metadata
 	pub metadata: &'a [u8],
 	/// Default permission (optional)
-	pub default_permission: Option<Permission<'a>>,
+	pub default_permission: Option<Permission>,
 }
 
 /// [3] MODIFY_PERMISSIONS operation - Modify account permissions
@@ -264,10 +269,10 @@ pub struct SetInfoOp<'a> {
 pub struct ModifyPermissionsOp<'a> {
 	/// Principal to modify permissions for
 	pub principal: &'a [u8],
-	/// Method to modify (add/remove/set)
+	/// Method to modify (add/subtract/set)
 	pub method: AdjustMethod,
 	/// Permissions to modify (None = null/clear)
-	pub permissions: Option<Permission<'a>>,
+	pub permissions: Option<Permission>,
 	/// Target account (optional)
 	pub target: Option<&'a [u8]>,
 }
@@ -278,14 +283,14 @@ pub enum CreateIdentifierArgs<'a> {
 	/// Multisig creation arguments [7]
 	Multisig {
 		signers: &'a [u8], // Raw sequence of octet strings
-		quorum: &'a [u8],
+		quorum: u64,
 	},
 	/// Swap creation arguments [8]
 	Swap {
 		sell_token_rate: TokenValue<'a>,
 		buy_token_rate: TokenValue<'a>,
 		fee_token_rate: Option<FeeDetails<'a>>,
-		quantity: &'a [u8],
+		quantity: U128,
 	},
 }
 
@@ -300,21 +305,21 @@ pub struct CreateIdentifierOp<'a> {
 
 /// [5] TOKEN_ADMIN_SUPPLY operation - Modify token supply
 #[derive(Debug, Clone, Copy)]
-pub struct TokenAdminSupplyOp<'a> {
+pub struct TokenAdminSupplyOp {
 	/// Amount to modify
-	pub amount: &'a [u8],
-	/// Method (add/remove/set)
+	pub amount: U128,
+	/// Method (add/subtract/set)
 	pub method: AdjustMethod,
 }
 
-/// [6] TOKEN_MODIFY_BALANCE operation - Modify account token balance
+/// [6] TOKEN_ADMIN_MODIFY_BALANCE operation - Modify account token balance
 #[derive(Debug, Clone)]
-pub struct TokenModifyBalanceOp<'a> {
+pub struct TokenAdminModifyBalanceOp<'a> {
 	/// Token to modify balance of
 	pub token: &'a [u8],
 	/// Amount to modify
-	pub amount: &'a [u8],
-	/// Method (add/remove/set)
+	pub amount: U128,
+	/// Method (add/subtract/set)
 	pub method: AdjustMethod,
 }
 
@@ -322,7 +327,7 @@ pub struct TokenModifyBalanceOp<'a> {
 #[derive(Debug, Clone)]
 pub struct ReceiveOp<'a> {
 	/// Amount to receive
-	pub amount: &'a [u8],
+	pub amount: U128,
 	/// Token to receive
 	pub token: &'a [u8],
 	/// Sender account
@@ -333,10 +338,10 @@ pub struct ReceiveOp<'a> {
 	pub forward: Option<&'a [u8]>,
 }
 
-/// [8] MANAGE_CERTIFICATE operation - Add or remove certificates
+/// [8] MANAGE_CERTIFICATE operation - Add or subtract certificates
 #[derive(Debug, Clone)]
 pub struct ManageCertificateOp<'a> {
-	/// Method (add/remove)
+	/// Method (add/subtract)
 	pub method: AdjustMethodRelative,
 	/// Certificate (if adding) or certificate hash (if removing)
 	pub certificate_or_hash: &'a [u8],
@@ -388,9 +393,9 @@ pub enum Operation<'a> {
 	/// [4] Create identifier (token, multisig, swap)
 	CreateIdentifier(CreateIdentifierOp<'a>),
 	/// [5] Token admin supply
-	TokenAdminSupply(TokenAdminSupplyOp<'a>),
+	TokenAdminSupply(TokenAdminSupplyOp),
 	/// [6] Token modify balance
-	TokenModifyBalance(TokenModifyBalanceOp<'a>),
+	TokenModifyBalance(TokenAdminModifyBalanceOp<'a>),
 	/// [7] Receive tokens
 	Receive(ReceiveOp<'a>),
 	/// [8] Manage certificate
@@ -399,6 +404,4 @@ pub enum Operation<'a> {
 	MatchSwap(MatchSwapOp<'a>),
 	/// [10] Cancel swap
 	CancelSwap(CancelSwapOp<'a>),
-	/// Unknown operation type
-	Unknown(u32),
 }

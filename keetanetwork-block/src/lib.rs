@@ -36,6 +36,6 @@ pub use types::{
 	SetInfoOp,
 	SetRepOp,
 	TokenAdminSupplyOp,
-	TokenModifyBalanceOp,
+	TokenAdminModifyBalanceOp,
 	TokenValue,
 };
