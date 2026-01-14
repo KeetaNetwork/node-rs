@@ -96,8 +96,8 @@ pub struct BlockHeader<'a> {
 	pub purpose: BlockPurpose,
 	/// Account public key with type prefix
 	pub account: &'a [u8],
-	/// Signer public key with type prefix (may be same as account)
-	pub signer: &'a [u8],
+	/// Signer information (V1: always Single, V2: can be Single/Multisig/AccountIsSigner)
+	pub signer: SignerField<'a>,
 	/// Previous block hash (32 bytes)
 	pub previous: &'a [u8],
 }
@@ -168,6 +168,48 @@ impl<'a> KeetaBlockBuilder<'a> {
 			signatures: self.signatures,
 		}
 	}
+}
+
+// ============================================================================
+// Signer Types
+// ============================================================================
+
+/// Individual signer in a multisig (can be nested)
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone)]
+pub enum MultiSigSigner<'a> {
+	/// Nested multisig signer info
+	Nested(Box<MultiSigSignerInfo<'a>>),
+	/// Single key signer (public key with type prefix)
+	Key(&'a [u8]),
+}
+
+/// Multisig signer information for V2 blocks
+#[derive(Debug, Clone)]
+#[cfg_attr(not(any(feature = "alloc", feature = "std")), derive(Copy))]
+pub struct MultiSigSignerInfo<'a> {
+	/// Public key of the multisig account
+	pub multisig_pub_key: &'a [u8],
+	/// signers (can be nested multisig or single keys)
+	#[cfg(any(feature = "alloc", feature = "std"))]
+	pub signers: Vec<MultiSigSigner<'a>>,
+	/// Raw DER bytes of the signers sequence
+	#[cfg(not(any(feature = "alloc", feature = "std")))]
+	pub signers_raw: &'a [u8],
+}
+
+/// Signer field for blocks
+///
+/// V1 blocks always use Single. V2 blocks can use any variant.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(any(feature = "alloc", feature = "std")), derive(Copy))]
+pub enum SignerField<'a> {
+	/// Single signer (public key with type prefix)
+	Single(&'a [u8]),
+	/// Multisig signer info (V2 only)
+	Multisig(MultiSigSignerInfo<'a>),
+	/// Account is signer (null case, V2 only)
+	AccountIsSigner,
 }
 
 // ============================================================================
