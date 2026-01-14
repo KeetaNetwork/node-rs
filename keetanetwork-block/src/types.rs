@@ -114,6 +114,8 @@ pub struct KeetaBlock<'a> {
 	pub header: BlockHeader<'a>,
 	/// Operations in the block
 	pub operations: Vec<Operation<'a>>,
+	/// Signatures (V1: single, V2: one or more)
+	pub signatures: Vec<&'a [u8]>,
 }
 
 /// Builder for constructing KeetaBlock instances
@@ -123,13 +125,14 @@ pub struct KeetaBlockBuilder<'a> {
 	version: BlockVersion,
 	header: BlockHeader<'a>,
 	operations: Vec<Operation<'a>>,
+	signatures: Vec<&'a [u8]>,
 }
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 impl<'a> KeetaBlockBuilder<'a> {
 	/// Create a new builder with the specified block version and header
 	pub fn new(version: BlockVersion, header: BlockHeader<'a>) -> Self {
-		Self { version, header, operations: Vec::new() }
+		Self { version, header, operations: Vec::new(), signatures: Vec::new() }
 	}
 
 	/// Set the operations
@@ -144,9 +147,26 @@ impl<'a> KeetaBlockBuilder<'a> {
 		self
 	}
 
+	/// Set the signatures
+	pub fn signatures(mut self, signatures: Vec<&'a [u8]>) -> Self {
+		self.signatures = signatures;
+		self
+	}
+
+	/// Add a single signature
+	pub fn signature(mut self, signature: &'a [u8]) -> Self {
+		self.signatures.push(signature);
+		self
+	}
+
 	/// Build the KeetaBlock
 	pub fn build(self) -> KeetaBlock<'a> {
-		KeetaBlock { version: self.version, header: self.header, operations: self.operations }
+		KeetaBlock {
+			version: self.version,
+			header: self.header,
+			operations: self.operations,
+			signatures: self.signatures,
+		}
 	}
 }
 
