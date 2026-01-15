@@ -13,7 +13,7 @@
 //! | [3]  | ModifyPermissions   |
 //! | [4]  | CreateIdentifier    |
 //! | [5]  | TokenAdminSupply    |
-//! | [6]  | TokenModifyBalance  |
+//! | [6]  | TokenAdminModifyBalance |
 //! | [7]  | Receive             |
 //! | [8]  | ManageCertificate   |
 //! | [9]  | MatchSwap           |
@@ -35,8 +35,8 @@ use std::vec::Vec;
 
 /// Block version
 ///
-/// - V1: Plain SEQUENCE with internal version field = 0
-/// - V2: Wrapped in [1] EXPLICIT context tag
+/// - V1: Unwrapped format with internal version field = 0
+/// - V2: Tagged format (explicit context tag 1)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BlockVersion {
@@ -45,7 +45,7 @@ pub enum BlockVersion {
 }
 
 impl BlockVersion {
-	/// V1 blocks have version field 0 internally, V2 blocks use [1] context tag
+	/// V1 blocks have internal version field 0, V2 blocks use tag 1
 	pub fn from_version_field(version: u8) -> Option<Self> {
 		match version {
 			0 => Some(BlockVersion::V1),
@@ -53,7 +53,7 @@ impl BlockVersion {
 		}
 	}
 
-	/// Create from context tag (for V2)
+	/// Create from tag value (for V2 blocks)
 	pub fn from_context_tag(tag: u8) -> Option<Self> {
 		match tag {
 			1 => Some(BlockVersion::V2),
@@ -90,7 +90,7 @@ pub struct BlockHeader<'a> {
 	pub subnet: Option<u64>,
 	/// Idempotent key for deduplication (optional)
 	pub idempotent: Option<&'a [u8]>,
-	/// Date as GeneralizedTime raw bytes
+	/// Block timestamp as raw bytes
 	pub date: &'a [u8],
 	/// Block purpose (V2 only, defaults to Generic for V1)
 	pub purpose: BlockPurpose,
@@ -103,8 +103,6 @@ pub struct BlockHeader<'a> {
 }
 
 /// Parsed Keeta block (unified view for both V1 and V2)
-///
-/// Requires the `alloc` or `std` feature (uses Vec for operations).
 #[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone)]
 pub struct KeetaBlock<'a> {
@@ -260,27 +258,45 @@ impl TryFrom<u8> for AdjustMethodRelative {
 // Supporting Types
 // ============================================================================
 
-/// Token and value pair (used in swap operations)
+/// Token and rate pair (used in CREATE_IDENTIFIER swap arguments)
+#[derive(Debug, Clone, Copy)]
+pub struct TokenRate<'a> {
+	/// Token public key
+	pub token: &'a [u8],
+	/// Rate
+	pub rate: &'a [u8],
+}
+
+/// Fee rate for CREATE_IDENTIFIER swap arguments
+#[derive(Debug, Clone, Copy)]
+pub struct FeeRate<'a> {
+	/// Fee token (None means use sell token)
+	pub token: Option<&'a [u8]>,
+	/// Fee rate
+	pub rate: &'a [u8],
+}
+
+/// Token and value pair (used in MATCH_SWAP/CANCEL_SWAP operations)
 #[derive(Debug, Clone, Copy)]
 pub struct TokenValue<'a> {
 	/// Token public key
 	pub token: &'a [u8],
-	/// Value (rate or amount)
+	/// Value
 	pub value: &'a [u8],
 }
 
-/// Fee details for swap operations
+/// Fee value for CANCEL_SWAP operation
 #[derive(Debug, Clone, Copy)]
-pub struct FeeDetails<'a> {
+pub struct FeeValue<'a> {
 	/// Fee token (None means use sell token)
 	pub token: Option<&'a [u8]>,
 	/// Fee value
 	pub value: &'a [u8],
 }
 
-/// Fee details with recipient for match swap
+/// Fee value with recipient for MATCH_SWAP operation
 #[derive(Debug, Clone, Copy)]
-pub struct FeeDetailsWithRecipient<'a> {
+pub struct FeeValueWithRecipient<'a> {
 	/// Fee token (None means use sell token)
 	pub token: Option<&'a [u8]>,
 	/// Fee value
@@ -353,14 +369,16 @@ pub struct ModifyPermissionsOp<'a> {
 pub enum CreateIdentifierArgs<'a> {
 	/// Multisig creation arguments [7]
 	Multisig {
-		signers: &'a [u8], // Raw sequence of octet strings
+		/// Signer public keys (raw byte strings)
+		signers: &'a [u8],
+		/// Required number of signatures
 		quorum: u64,
 	},
 	/// Swap creation arguments [8]
 	Swap {
-		sell_token_rate: TokenValue<'a>,
-		buy_token_rate: TokenValue<'a>,
-		fee_token_rate: Option<FeeDetails<'a>>,
+		sell_token_rate: TokenRate<'a>,
+		buy_token_rate: TokenRate<'a>,
+		fee_token_rate: Option<FeeRate<'a>>,
 		quantity: &'a [u8],
 	},
 }
@@ -417,7 +435,7 @@ pub struct ManageCertificateOp<'a> {
 	/// Certificate (if adding) or certificate hash (if removing)
 	pub certificate_or_hash: &'a [u8],
 	/// Intermediate certificates (required if adding, must be None if removing)
-	pub intermediates: Option<&'a [u8]>,
+	pub intermediate_certificates: Option<&'a [u8]>,
 }
 
 /// [9] MATCH_SWAP operation - Match two swap orders
@@ -431,8 +449,8 @@ pub struct MatchSwapOp<'a> {
 	pub sell: TokenValue<'a>,
 	/// Token being bought and value
 	pub buy: TokenValue<'a>,
-	/// Fee details with recipient (optional)
-	pub fee: Option<FeeDetailsWithRecipient<'a>>,
+	/// Fee value with recipient (optional)
+	pub fee: Option<FeeValueWithRecipient<'a>>,
 }
 
 /// [10] CANCEL_SWAP operation - Cancel a swap order
@@ -442,8 +460,8 @@ pub struct CancelSwapOp<'a> {
 	pub swap: &'a [u8],
 	/// Sell token and value being returned
 	pub sell: TokenValue<'a>,
-	/// Fee details (optional)
-	pub fee: Option<FeeDetails<'a>>,
+	/// Fee value (optional)
+	pub fee: Option<FeeValue<'a>>,
 }
 
 // ============================================================================
@@ -465,8 +483,8 @@ pub enum Operation<'a> {
 	CreateIdentifier(CreateIdentifierOp<'a>),
 	/// [5] Token admin supply
 	TokenAdminSupply(TokenAdminSupplyOp<'a>),
-	/// [6] Token modify balance
-	TokenModifyBalance(TokenAdminModifyBalanceOp<'a>),
+	/// [6] Token admin modify balance
+	TokenAdminModifyBalance(TokenAdminModifyBalanceOp<'a>),
 	/// [7] Receive tokens
 	Receive(ReceiveOp<'a>),
 	/// [8] Manage certificate
@@ -475,4 +493,118 @@ pub enum Operation<'a> {
 	MatchSwap(MatchSwapOp<'a>),
 	/// [10] Cancel swap
 	CancelSwap(CancelSwapOp<'a>),
+}
+
+// ============================================================================
+// Vote Types (X.509 Certificate)
+// ============================================================================
+
+/// Algorithm identifier (used in certificates)
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy)]
+pub struct AlgorithmIdentifier<'a> {
+	/// Algorithm identifier
+	pub algorithm: &'a [u8],
+	/// Optional parameters (e.g., curve identifier for ECDSA)
+	pub parameters: Option<&'a [u8]>,
+}
+
+/// Validity period for certificates
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy)]
+pub struct Validity<'a> {
+	/// Certificate validity start time
+	pub not_before: &'a str,
+	/// Certificate validity end time
+	pub not_after: &'a str,
+}
+
+/// Subject public key info
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy)]
+pub struct SubjectPublicKeyInfo<'a> {
+	/// Algorithm identifier
+	pub algorithm: AlgorithmIdentifier<'a>,
+	/// Public key as raw bytes
+	pub public_key: &'a [u8],
+}
+
+/// Certificate extension wrapper
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy)]
+pub struct CertificateExtensionWrapper<'a> {
+	/// Extension identifier
+	pub extension_id: &'a [u8],
+	/// Critical flag
+	pub critical: bool,
+	/// Extension data (contains HashData or FeeData)
+	pub data: &'a [u8],
+}
+
+/// Hash data extension content (OID: 2.16.840.1.101.3.3.1.3)
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone)]
+pub struct HashData<'a> {
+	/// Hash algorithm identifier
+	pub hash_algorithm: &'a [u8],
+	/// Block hashes
+	pub hashes: Vec<&'a [u8]>,
+}
+
+/// Fee data extension content (OID: 1.3.6.1.4.1.62675.0.1.0)
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone, Copy)]
+pub struct FeeData<'a> {
+	/// Whether this is a quote (`true`) or a vote (`false`)
+	pub quote: bool,
+	/// Amount
+	pub amount: &'a [u8],
+	/// Pay to account (optional)
+	pub pay_to: Option<&'a [u8]>,
+	/// Token account (optional)
+	pub token: Option<&'a [u8]>,
+}
+
+/// TBS (To Be Signed) Certificate data
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone)]
+pub struct TbsCertificate<'a> {
+	/// Version (always 2 for v3 certificates)
+	pub version: u8,
+	/// Serial number
+	pub serial: &'a [u8],
+	/// Signature algorithm
+	pub signature_algorithm: AlgorithmIdentifier<'a>,
+	/// Issuer common name
+	pub issuer_cn: &'a str,
+	/// Validity period
+	pub validity: Validity<'a>,
+	/// Subject serial number
+	pub subject_serial: &'a str,
+	/// Subject public key info
+	pub subject_public_key_info: SubjectPublicKeyInfo<'a>,
+	/// Extensions
+	pub extensions: Vec<CertificateExtensionWrapper<'a>>,
+}
+
+/// Vote (X.509v3 Certificate for blockchain voting)
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone)]
+pub struct Vote<'a> {
+	/// TBS Certificate (data to be signed)
+	pub tbs_certificate: TbsCertificate<'a>,
+	/// Signature algorithm
+	pub signature_algorithm: AlgorithmIdentifier<'a>,
+	/// Signature as raw bytes
+	pub signature: &'a [u8],
+}
+
+/// Vote staple - bundles blocks with their votes
+#[cfg(any(feature = "alloc", feature = "std"))]
+#[derive(Debug, Clone)]
+pub struct VoteStaple<'a> {
+	/// Blocks
+	pub blocks: Vec<KeetaBlock<'a>>,
+	/// Votes (X.509 certificates)
+	pub votes: Vec<Vote<'a>>,
 }
