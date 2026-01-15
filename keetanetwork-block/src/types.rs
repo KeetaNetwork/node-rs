@@ -729,3 +729,591 @@ pub struct VoteStaple<'a> {
 	/// Votes (X.509 certificates)
 	pub votes: Vec<Vote<'a>>,
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use der::{Decode, Encode};
+
+	// Helper to create test bytes (33-byte address with Ed25519 prefix)
+	fn test_address() -> [u8; 33] {
+		let mut addr = [0u8; 33];
+		addr[0] = 0x01; // Ed25519 prefix
+		addr[1] = 0xAB;
+		addr[32] = 0xCD;
+		addr
+	}
+
+	// Helper to create test token (33 bytes)
+	fn test_token() -> [u8; 33] {
+		let mut token = [0u8; 33];
+		token[0] = 0x01;
+		token[1] = 0xDE;
+		token[32] = 0xAD;
+		token
+	}
+
+	// ============================================================================
+	// NullOr Tests
+	// ============================================================================
+
+	#[test]
+	fn nullor_null_roundtrip() {
+		let original: NullOr<Bytes> = NullOr::Null;
+		let encoded = original.to_der().unwrap();
+		let decoded: NullOr<Bytes> = NullOr::from_der(&encoded).unwrap();
+		assert_eq!(decoded, NullOr::Null);
+	}
+
+	#[test]
+	fn nullor_value_roundtrip() {
+		let data = [1u8, 2, 3, 4];
+		let original: NullOr<Bytes> = NullOr::Value(Bytes::new(&data).unwrap());
+		let encoded = original.to_der().unwrap();
+		let decoded: NullOr<Bytes> = NullOr::from_der(&encoded).unwrap();
+
+		match decoded {
+			NullOr::Value(bytes) => assert_eq!(bytes.as_bytes(), &data),
+			NullOr::Null => panic!("Expected Value, got Null"),
+		}
+	}
+
+	#[test]
+	fn nullor_value_method() {
+		let data = [1u8, 2, 3];
+		let null: NullOr<Bytes> = NullOr::Null;
+		let value: NullOr<Bytes> = NullOr::Value(Bytes::new(&data).unwrap());
+
+		assert!(null.value().is_none());
+		assert_eq!(value.value().unwrap().as_bytes(), &data);
+	}
+
+	// ============================================================================
+	// Enum Tests
+	// ============================================================================
+
+	#[test]
+	fn adjust_method_roundtrip() {
+		for method in [AdjustMethod::Add, AdjustMethod::Subtract, AdjustMethod::Set] {
+			let encoded = method.to_der().unwrap();
+			let decoded: AdjustMethod = AdjustMethod::from_der(&encoded).unwrap();
+			assert_eq!(decoded, method);
+		}
+	}
+
+	#[test]
+	fn adjust_method_relative_roundtrip() {
+		for method in [AdjustMethodRelative::Add, AdjustMethodRelative::Subtract] {
+			let encoded = method.to_der().unwrap();
+			let decoded: AdjustMethodRelative = AdjustMethodRelative::from_der(&encoded).unwrap();
+			assert_eq!(decoded, method);
+		}
+	}
+
+	// ============================================================================
+	// Supporting Type Tests
+	// ============================================================================
+
+	#[test]
+	fn permission_roundtrip() {
+		let original = Permission { base: 0x1234, external: 0x5678 };
+		let encoded = original.to_der().unwrap();
+		let decoded: Permission = Permission::from_der(&encoded).unwrap();
+		assert_eq!(decoded.base, original.base);
+		assert_eq!(decoded.external, original.external);
+	}
+
+	#[test]
+	fn token_rate_roundtrip() {
+		let token = test_token();
+		let rate = [0x64]; // 100 (canonical form)
+
+		let original = TokenRate { token: Bytes::new(&token).unwrap(), rate: Int::new(&rate).unwrap() };
+		let encoded = original.to_der().unwrap();
+		let decoded: TokenRate = TokenRate::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.token.as_bytes(), &token);
+		assert_eq!(decoded.rate.as_bytes(), &rate);
+	}
+
+	#[test]
+	fn fee_rate_with_null_token_roundtrip() {
+		let rate = [0x0A]; // 10
+
+		let original = FeeRate { token: NullOr::Null, rate: Int::new(&rate).unwrap() };
+		let encoded = original.to_der().unwrap();
+		let decoded: FeeRate = FeeRate::from_der(&encoded).unwrap();
+
+		assert!(matches!(decoded.token, NullOr::Null));
+		assert_eq!(decoded.rate.as_bytes(), &rate);
+	}
+
+	#[test]
+	fn fee_rate_with_token_roundtrip() {
+		let token = test_token();
+		let rate = [0x0A]; // 10
+
+		let original = FeeRate { token: NullOr::Value(Bytes::new(&token).unwrap()), rate: Int::new(&rate).unwrap() };
+		let encoded = original.to_der().unwrap();
+		let decoded: FeeRate = FeeRate::from_der(&encoded).unwrap();
+
+		match decoded.token {
+			NullOr::Value(t) => assert_eq!(t.as_bytes(), &token),
+			NullOr::Null => panic!("Expected token, got Null"),
+		}
+	}
+
+	#[test]
+	fn token_value_roundtrip() {
+		let token = test_token();
+		let value = [0x00, 0xFF]; // 255
+
+		let original = TokenValue { token: Bytes::new(&token).unwrap(), value: Int::new(&value).unwrap() };
+		let encoded = original.to_der().unwrap();
+		let decoded: TokenValue = TokenValue::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.token.as_bytes(), &token);
+		assert_eq!(decoded.value.as_bytes(), &value);
+	}
+
+	#[test]
+	fn fee_value_roundtrip() {
+		let value = [0x64]; // 100
+
+		let original = FeeValue { token: NullOr::Null, value: Int::new(&value).unwrap() };
+		let encoded = original.to_der().unwrap();
+		let decoded: FeeValue = FeeValue::from_der(&encoded).unwrap();
+
+		assert!(matches!(decoded.token, NullOr::Null));
+		assert_eq!(decoded.value.as_bytes(), &value);
+	}
+
+	#[test]
+	fn fee_value_with_recipient_roundtrip() {
+		let token = test_token();
+		let value = [0x64]; // 100
+		let recipient = test_address();
+
+		let original = FeeValueWithRecipient {
+			token: NullOr::Value(Bytes::new(&token).unwrap()),
+			value: Int::new(&value).unwrap(),
+			recipient: Bytes::new(&recipient).unwrap(),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: FeeValueWithRecipient = FeeValueWithRecipient::from_der(&encoded).unwrap();
+
+		match decoded.token {
+			NullOr::Value(t) => assert_eq!(t.as_bytes(), &token),
+			NullOr::Null => panic!("Expected token, got Null"),
+		}
+		assert_eq!(decoded.recipient.as_bytes(), &recipient);
+	}
+
+	// ============================================================================
+	// Operation Tests
+	// ============================================================================
+
+	#[test]
+	fn send_op_roundtrip() {
+		let to = test_address();
+		let amount = [0x10]; // 16 (canonical form - no leading zeros)
+		let token = test_token();
+
+		let original = SendOp {
+			to: Bytes::new(&to).unwrap(),
+			amount: Int::new(&amount).unwrap(),
+			token: Bytes::new(&token).unwrap(),
+			external: None,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: SendOp = SendOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.to.as_bytes(), &to);
+		assert_eq!(decoded.amount.as_bytes(), &amount);
+		assert_eq!(decoded.token.as_bytes(), &token);
+		assert!(decoded.external.is_none());
+	}
+
+	#[test]
+	fn send_op_with_external_roundtrip() {
+		let to = test_address();
+		let amount = [0x10]; // 16
+		let token = test_token();
+		let external = "ref-123";
+
+		let original = SendOp {
+			to: Bytes::new(&to).unwrap(),
+			amount: Int::new(&amount).unwrap(),
+			token: Bytes::new(&token).unwrap(),
+			external: Some(Str::new(external).unwrap()),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: SendOp = SendOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.external.unwrap().as_str(), external);
+	}
+
+	#[test]
+	fn set_rep_op_roundtrip() {
+		let to = test_address();
+
+		let original = SetRepOp { to: Bytes::new(&to).unwrap() };
+		let encoded = original.to_der().unwrap();
+		let decoded: SetRepOp = SetRepOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.to.as_bytes(), &to);
+	}
+
+	#[test]
+	fn set_info_op_roundtrip() {
+		let original = SetInfoOp {
+			name: Str::new("Test Account").unwrap(),
+			description: Str::new("A test account").unwrap(),
+			metadata: Str::new("{}").unwrap(),
+			default_permission: None,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: SetInfoOp = SetInfoOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.name.as_str(), "Test Account");
+		assert_eq!(decoded.description.as_str(), "A test account");
+		assert_eq!(decoded.metadata.as_str(), "{}");
+	}
+
+	#[test]
+	fn set_info_op_with_permission_roundtrip() {
+		let original = SetInfoOp {
+			name: Str::new("Test").unwrap(),
+			description: Str::new("Desc").unwrap(),
+			metadata: Str::new("{}").unwrap(),
+			default_permission: Some(Permission { base: 0xFF, external: 0xAA }),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: SetInfoOp = SetInfoOp::from_der(&encoded).unwrap();
+
+		let perm = decoded.default_permission.unwrap();
+		assert_eq!(perm.base, 0xFF);
+		assert_eq!(perm.external, 0xAA);
+	}
+
+	#[test]
+	fn modify_permissions_op_roundtrip() {
+		let principal = test_address();
+
+		let original = ModifyPermissionsOp {
+			principal: Bytes::new(&principal).unwrap(),
+			method: AdjustMethod::Add,
+			permissions: NullOr::Value(Permission { base: 0x10, external: 0x20 }),
+			target: None,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: ModifyPermissionsOp = ModifyPermissionsOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.principal.as_bytes(), &principal);
+		assert_eq!(decoded.method, AdjustMethod::Add);
+		match decoded.permissions {
+			NullOr::Value(p) => {
+				assert_eq!(p.base, 0x10);
+				assert_eq!(p.external, 0x20);
+			}
+			NullOr::Null => panic!("Expected permissions"),
+		}
+	}
+
+	#[test]
+	fn modify_permissions_op_clear_roundtrip() {
+		let principal = test_address();
+
+		let original = ModifyPermissionsOp {
+			principal: Bytes::new(&principal).unwrap(),
+			method: AdjustMethod::Set,
+			permissions: NullOr::Null,
+			target: None,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: ModifyPermissionsOp = ModifyPermissionsOp::from_der(&encoded).unwrap();
+
+		assert!(matches!(decoded.permissions, NullOr::Null));
+	}
+
+	#[test]
+	fn token_admin_supply_op_roundtrip() {
+		let amount = [0x00, 0xFF, 0xFF]; // 65535
+
+		let original = TokenAdminSupplyOp { amount: Int::new(&amount).unwrap(), method: AdjustMethod::Add };
+		let encoded = original.to_der().unwrap();
+		let decoded: TokenAdminSupplyOp = TokenAdminSupplyOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.amount.as_bytes(), &amount);
+		assert_eq!(decoded.method, AdjustMethod::Add);
+	}
+
+	#[test]
+	fn token_admin_modify_balance_op_roundtrip() {
+		let token = test_token();
+		let amount = [0x64]; // 100
+
+		let original = TokenAdminModifyBalanceOp {
+			token: Bytes::new(&token).unwrap(),
+			amount: Int::new(&amount).unwrap(),
+			method: AdjustMethod::Subtract,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: TokenAdminModifyBalanceOp = TokenAdminModifyBalanceOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.token.as_bytes(), &token);
+		assert_eq!(decoded.method, AdjustMethod::Subtract);
+	}
+
+	#[test]
+	fn receive_op_roundtrip() {
+		let from = test_address();
+		let token = test_token();
+		let amount = [0x10]; // 16
+
+		let original = ReceiveOp {
+			amount: Int::new(&amount).unwrap(),
+			token: Bytes::new(&token).unwrap(),
+			from: Bytes::new(&from).unwrap(),
+			exact: true,
+			forward: None,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: ReceiveOp = ReceiveOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.from.as_bytes(), &from);
+		assert!(decoded.exact);
+		assert!(decoded.forward.is_none());
+	}
+
+	#[test]
+	fn receive_op_with_forward_roundtrip() {
+		let from = test_address();
+		let token = test_token();
+		let amount = [0x10];
+		let mut forward = [0u8; 33];
+		forward[0] = 0x02; // Different address
+
+		let original = ReceiveOp {
+			amount: Int::new(&amount).unwrap(),
+			token: Bytes::new(&token).unwrap(),
+			from: Bytes::new(&from).unwrap(),
+			exact: false,
+			forward: Some(Bytes::new(&forward).unwrap()),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: ReceiveOp = ReceiveOp::from_der(&encoded).unwrap();
+
+		assert!(!decoded.exact);
+		assert_eq!(decoded.forward.unwrap().as_bytes(), &forward);
+	}
+
+	#[test]
+	fn manage_certificate_op_add_roundtrip() {
+		let cert = [0x30, 0x82, 0x01, 0x00]; // Mock certificate
+		let intermediate = [0x30, 0x82, 0x02, 0x00]; // Mock intermediate
+
+		let original = ManageCertificateOp {
+			method: AdjustMethodRelative::Add,
+			certificate_or_hash: Bytes::new(&cert).unwrap(),
+			intermediate_certificates: Some(NullOr::Value(Bytes::new(&intermediate).unwrap())),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: ManageCertificateOp = ManageCertificateOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.method, AdjustMethodRelative::Add);
+		assert_eq!(decoded.certificate_or_hash.as_bytes(), &cert);
+		match decoded.intermediate_certificates {
+			Some(NullOr::Value(i)) => assert_eq!(i.as_bytes(), &intermediate),
+			_ => panic!("Expected intermediate certificates"),
+		}
+	}
+
+	#[test]
+	fn manage_certificate_op_add_no_intermediate_roundtrip() {
+		let cert = [0x30, 0x82, 0x01, 0x00];
+
+		let original = ManageCertificateOp {
+			method: AdjustMethodRelative::Add,
+			certificate_or_hash: Bytes::new(&cert).unwrap(),
+			intermediate_certificates: Some(NullOr::Null),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: ManageCertificateOp = ManageCertificateOp::from_der(&encoded).unwrap();
+
+		assert!(matches!(decoded.intermediate_certificates, Some(NullOr::Null)));
+	}
+
+	#[test]
+	fn manage_certificate_op_subtract_roundtrip() {
+		let hash = [0xAB; 32]; // Certificate hash
+
+		let original = ManageCertificateOp {
+			method: AdjustMethodRelative::Subtract,
+			certificate_or_hash: Bytes::new(&hash).unwrap(),
+			intermediate_certificates: None,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: ManageCertificateOp = ManageCertificateOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.method, AdjustMethodRelative::Subtract);
+		assert!(decoded.intermediate_certificates.is_none());
+	}
+
+	#[test]
+	fn match_swap_op_roundtrip() {
+		let swap = test_address();
+		let other = test_token();
+		let sell_token = test_token();
+		let buy_token = test_address();
+
+		let original = MatchSwapOp {
+			swap: Bytes::new(&swap).unwrap(),
+			other: Bytes::new(&other).unwrap(),
+			sell: TokenValue { token: Bytes::new(&sell_token).unwrap(), value: Int::new(&[0x64]).unwrap() },
+			buy: TokenValue { token: Bytes::new(&buy_token).unwrap(), value: Int::new(&[0x32]).unwrap() },
+			fee: NullOr::Null,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: MatchSwapOp = MatchSwapOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.swap.as_bytes(), &swap);
+		assert!(matches!(decoded.fee, NullOr::Null));
+	}
+
+	#[test]
+	fn cancel_swap_op_roundtrip() {
+		let swap = test_address();
+		let sell_token = test_token();
+
+		let original = CancelSwapOp {
+			swap: Bytes::new(&swap).unwrap(),
+			sell: TokenValue { token: Bytes::new(&sell_token).unwrap(), value: Int::new(&[0x10]).unwrap() },
+			fee: NullOr::Null,
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: CancelSwapOp = CancelSwapOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.swap.as_bytes(), &swap);
+	}
+
+	// ============================================================================
+	// CreateIdentifier Tests
+	// ============================================================================
+
+	#[test]
+	fn create_identifier_token_roundtrip() {
+		let identifier = test_token();
+
+		let original = CreateIdentifierOp { identifier: Bytes::new(&identifier).unwrap(), create_arguments: None };
+		let encoded = original.to_der().unwrap();
+		let decoded: CreateIdentifierOp = CreateIdentifierOp::from_der(&encoded).unwrap();
+
+		assert_eq!(decoded.identifier.as_bytes(), &identifier);
+		assert!(decoded.create_arguments.is_none());
+	}
+
+	#[test]
+	fn create_identifier_multisig_roundtrip() {
+		let identifier = test_token();
+		let signers_raw = [0x30, 0x04, 0x04, 0x02, 0xAB, 0xCD]; // Mock signers sequence
+
+		let original = CreateIdentifierOp {
+			identifier: Bytes::new(&identifier).unwrap(),
+			create_arguments: Some(CreateIdentifierArgs::Multisig(MultisigArgs {
+				signers: Bytes::new(&signers_raw).unwrap(),
+				quorum: 2,
+			})),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: CreateIdentifierOp = CreateIdentifierOp::from_der(&encoded).unwrap();
+
+		match decoded.create_arguments {
+			Some(CreateIdentifierArgs::Multisig(args)) => {
+				assert_eq!(args.signers.as_bytes(), &signers_raw);
+				assert_eq!(args.quorum, 2);
+			}
+			_ => panic!("Expected Multisig args"),
+		}
+	}
+
+	#[test]
+	fn create_identifier_swap_roundtrip() {
+		let identifier = test_token();
+		let sell_token = test_token();
+		let buy_token = test_address();
+
+		let original = CreateIdentifierOp {
+			identifier: Bytes::new(&identifier).unwrap(),
+			create_arguments: Some(CreateIdentifierArgs::Swap(SwapArgs {
+				sell_token_rate: TokenRate {
+					token: Bytes::new(&sell_token).unwrap(),
+					rate: Int::new(&[0x64]).unwrap(),
+				},
+				buy_token_rate: TokenRate { token: Bytes::new(&buy_token).unwrap(), rate: Int::new(&[0x32]).unwrap() },
+				fee_token_rate: NullOr::Null,
+				quantity: Int::new(&[0x0A]).unwrap(),
+			})),
+		};
+		let encoded = original.to_der().unwrap();
+		let decoded: CreateIdentifierOp = CreateIdentifierOp::from_der(&encoded).unwrap();
+
+		match decoded.create_arguments {
+			Some(CreateIdentifierArgs::Swap(args)) => {
+				assert!(matches!(args.fee_token_rate, NullOr::Null));
+			}
+			_ => panic!("Expected Swap args"),
+		}
+	}
+
+	// ============================================================================
+	// Operation Enum Tests
+	// ============================================================================
+
+	#[test]
+	fn operation_send_roundtrip() {
+		let to = test_address();
+		let token = test_token();
+
+		let original = Operation::Send(SendOp {
+			to: Bytes::new(&to).unwrap(),
+			amount: Int::new(&[0x10]).unwrap(),
+			token: Bytes::new(&token).unwrap(),
+			external: None,
+		});
+		let encoded = original.to_der().unwrap();
+		let decoded: Operation = Operation::from_der(&encoded).unwrap();
+
+		assert!(matches!(decoded, Operation::Send(_)));
+	}
+
+	#[test]
+	fn operation_set_rep_roundtrip() {
+		let to = test_address();
+
+		let original = Operation::SetRep(SetRepOp { to: Bytes::new(&to).unwrap() });
+		let encoded = original.to_der().unwrap();
+		let decoded: Operation = Operation::from_der(&encoded).unwrap();
+
+		assert!(matches!(decoded, Operation::SetRep(_)));
+	}
+
+	#[test]
+	fn operation_manage_certificate_roundtrip() {
+		let cert = [0x30, 0x10];
+
+		let original = Operation::ManageCertificate(ManageCertificateOp {
+			method: AdjustMethodRelative::Add,
+			certificate_or_hash: Bytes::new(&cert).unwrap(),
+			intermediate_certificates: None,
+		});
+		let encoded = original.to_der().unwrap();
+		let decoded: Operation = Operation::from_der(&encoded).unwrap();
+
+		assert!(matches!(decoded, Operation::ManageCertificate(_)));
+	}
+}

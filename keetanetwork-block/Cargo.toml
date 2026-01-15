@@ -11,7 +11,7 @@ description = "Block structure and operations for Keetanetwork blockchain"
 [features]
 default = ["std"]
 std = ["alloc"]
-alloc = []
+alloc = ["der/alloc"]
 
 [dependencies]
 der = { version = "0.7.10", default-features = false, features = ["derive"] }
