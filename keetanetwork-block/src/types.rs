@@ -5,19 +5,19 @@
 //!
 //! ## Operation Tags
 //!
-//! | Tag  | Operation           |
-//! |------|---------------------|
-//! | [0]  | Send                |
-//! | [1]  | SetRep              |
-//! | [2]  | SetInfo             |
-//! | [3]  | ModifyPermissions   |
-//! | [4]  | CreateIdentifier    |
-//! | [5]  | TokenAdminSupply    |
+//! | Tag  | Operation               |
+//! |------|-------------------------|
+//! | [0]  | Send                    |
+//! | [1]  | SetRep                  |
+//! | [2]  | SetInfo                 |
+//! | [3]  | ModifyPermissions       |
+//! | [4]  | CreateIdentifier        |
+//! | [5]  | TokenAdminSupply        |
 //! | [6]  | TokenAdminModifyBalance |
-//! | [7]  | Receive             |
-//! | [8]  | ManageCertificate   |
-//! | [9]  | MatchSwap           |
-//! | [10] | CancelSwap          |
+//! | [7]  | Receive                 |
+//! | [8]  | ManageCertificate       |
+//! | [9]  | MatchSwap               |
+//! | [10] | CancelSwap              |
 
 // Use alloc for Vec when not using std
 #[cfg(all(feature = "alloc", not(feature = "std")))]
@@ -28,6 +28,73 @@ use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
 use std::vec::Vec;
+
+// DER encoding/decoding support
+use der::{
+	asn1::{IntRef, Null, OctetStringRef, Utf8StringRef},
+	Choice, Decode, DecodeValue, Encode, EncodeValue, Enumerated, Header, Length, Reader, Sequence, Tag, Writer,
+};
+
+// Type aliases for DER types
+pub type Bytes<'a> = OctetStringRef<'a>;
+pub type Int<'a> = IntRef<'a>;
+pub type Str<'a> = Utf8StringRef<'a>;
+
+// ============================================================================
+// NullOr Type
+// ============================================================================
+
+/// Either a value of type `T` or an explicit "none" marker.
+///
+/// Used for fields where `None` has a specific meaning (e.g., "use sell token
+/// as fee token") rather than just being absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NullOr<T> {
+	/// NULL - represents none/default
+	Null,
+	/// Value present
+	Value(T),
+}
+
+impl<T> NullOr<T> {
+	/// Get the value if present, None if NULL
+	pub fn value(&self) -> Option<&T> {
+		match self {
+			NullOr::Null => None,
+			NullOr::Value(v) => Some(v),
+		}
+	}
+}
+
+// Implement Decode for NullOr<T>
+impl<'a, T: Decode<'a>> Decode<'a> for NullOr<T> {
+	fn decode<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
+		let tag = reader.peek_tag()?;
+		if tag == Tag::Null {
+			let _: Null = reader.decode()?;
+			Ok(NullOr::Null)
+		} else {
+			Ok(NullOr::Value(T::decode(reader)?))
+		}
+	}
+}
+
+// Implement Encode for NullOr<T>
+impl<T: Encode> Encode for NullOr<T> {
+	fn encoded_len(&self) -> der::Result<Length> {
+		match self {
+			NullOr::Null => Null.encoded_len(),
+			NullOr::Value(v) => v.encoded_len(),
+		}
+	}
+
+	fn encode(&self, writer: &mut impl Writer) -> der::Result<()> {
+		match self {
+			NullOr::Null => Null.encode(writer),
+			NullOr::Value(v) => v.encode(writer),
+		}
+	}
+}
 
 // ============================================================================
 // Block Types
@@ -215,43 +282,20 @@ pub enum SignerField<'a> {
 // ============================================================================
 
 /// Adjust method for supply/balance/permissions operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enumerated)]
+#[repr(u8)]
 pub enum AdjustMethod {
-	Add,
-	Subtract,
-	Set,
-}
-
-impl TryFrom<u8> for AdjustMethod {
-	type Error = u8;
-
-	fn try_from(value: u8) -> Result<Self, Self::Error> {
-		match value {
-			0 => Ok(AdjustMethod::Add),
-			1 => Ok(AdjustMethod::Subtract),
-			2 => Ok(AdjustMethod::Set),
-			n => Err(n),
-		}
-	}
+	Add = 0,
+	Subtract = 1,
+	Set = 2,
 }
 
 /// Adjust method for relative operations (add/subtract only, no set)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enumerated)]
+#[repr(u8)]
 pub enum AdjustMethodRelative {
-	Add,
-	Subtract,
-}
-
-impl TryFrom<u8> for AdjustMethodRelative {
-	type Error = u8;
-
-	fn try_from(value: u8) -> Result<Self, Self::Error> {
-		match value {
-			0 => Ok(AdjustMethodRelative::Add),
-			1 => Ok(AdjustMethodRelative::Subtract),
-			n => Err(n),
-		}
-	}
+	Add = 0,
+	Subtract = 1,
 }
 
 // ============================================================================
@@ -259,54 +303,54 @@ impl TryFrom<u8> for AdjustMethodRelative {
 // ============================================================================
 
 /// Token and rate pair (used in CREATE_IDENTIFIER swap arguments)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Sequence)]
 pub struct TokenRate<'a> {
 	/// Token public key
-	pub token: &'a [u8],
+	pub token: Bytes<'a>,
 	/// Rate
-	pub rate: &'a [u8],
+	pub rate: Int<'a>,
 }
 
 /// Fee rate for CREATE_IDENTIFIER swap arguments
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Sequence)]
 pub struct FeeRate<'a> {
-	/// Fee token (None means use sell token)
-	pub token: Option<&'a [u8]>,
+	/// Fee token (NULL means use sell token)
+	pub token: NullOr<Bytes<'a>>,
 	/// Fee rate
-	pub rate: &'a [u8],
+	pub rate: Int<'a>,
 }
 
 /// Token and value pair (used in MATCH_SWAP/CANCEL_SWAP operations)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Sequence)]
 pub struct TokenValue<'a> {
 	/// Token public key
-	pub token: &'a [u8],
+	pub token: Bytes<'a>,
 	/// Value
-	pub value: &'a [u8],
+	pub value: Int<'a>,
 }
 
 /// Fee value for CANCEL_SWAP operation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Sequence)]
 pub struct FeeValue<'a> {
-	/// Fee token (None means use sell token)
-	pub token: Option<&'a [u8]>,
+	/// Fee token (NULL means use sell token)
+	pub token: NullOr<Bytes<'a>>,
 	/// Fee value
-	pub value: &'a [u8],
+	pub value: Int<'a>,
 }
 
 /// Fee value with recipient for MATCH_SWAP operation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Sequence)]
 pub struct FeeValueWithRecipient<'a> {
-	/// Fee token (None means use sell token)
-	pub token: Option<&'a [u8]>,
+	/// Fee token (NULL means use sell token)
+	pub token: NullOr<Bytes<'a>>,
 	/// Fee value
-	pub value: &'a [u8],
+	pub value: Int<'a>,
 	/// Fee recipient
-	pub recipient: &'a [u8],
+	pub recipient: Bytes<'a>,
 }
 
 /// Permission value (base and external)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Sequence)]
 pub struct Permission {
 	/// Base permissions
 	pub base: u64,
@@ -319,149 +363,215 @@ pub struct Permission {
 // ============================================================================
 
 /// [0] SEND operation - Transfer tokens to another account
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct SendOp<'a> {
 	/// Destination account
-	pub to: &'a [u8],
+	pub to: Bytes<'a>,
 	/// Amount to send
-	pub amount: &'a [u8],
+	pub amount: Int<'a>,
 	/// Token ID to send
-	pub token: &'a [u8],
+	pub token: Bytes<'a>,
 	/// External reference (optional)
-	pub external: Option<&'a [u8]>,
+	pub external: Option<Str<'a>>,
 }
 
 /// [1] SET_REP operation - Set representative for delegation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct SetRepOp<'a> {
 	/// Representative to delegate to
-	pub to: &'a [u8],
+	pub to: Bytes<'a>,
 }
 
 /// [2] SET_INFO operation - Set account information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct SetInfoOp<'a> {
 	/// Account name
-	pub name: &'a [u8],
+	pub name: Str<'a>,
 	/// Account description
-	pub description: &'a [u8],
+	pub description: Str<'a>,
 	/// Account metadata
-	pub metadata: &'a [u8],
+	pub metadata: Str<'a>,
 	/// Default permission (optional)
+	#[asn1(optional = "true")]
 	pub default_permission: Option<Permission>,
 }
 
 /// [3] MODIFY_PERMISSIONS operation - Modify account permissions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct ModifyPermissionsOp<'a> {
 	/// Principal to modify permissions for
-	pub principal: &'a [u8],
+	pub principal: Bytes<'a>,
 	/// Method to modify (add/subtract/set)
 	pub method: AdjustMethod,
-	/// Permissions to modify (None = null/clear)
-	pub permissions: Option<Permission>,
+	/// Permissions to modify (NULL = clear)
+	pub permissions: NullOr<Permission>,
 	/// Target account (optional)
-	pub target: Option<&'a [u8]>,
+	#[asn1(optional = "true")]
+	pub target: Option<Bytes<'a>>,
+}
+
+/// Multisig creation arguments
+///
+/// Note: The `signers` field contains raw DER-encoded bytes representing
+/// a sequence of public keys. For `no_std`/`no_alloc` environments, manual
+/// parsing is required.
+#[derive(Debug, Clone, Sequence)]
+pub struct MultisigArgs<'a> {
+	/// Signer public keys (raw DER-encoded bytes)
+	pub signers: Bytes<'a>,
+	/// Required number of signatures
+	pub quorum: u64,
+}
+
+/// Swap creation arguments
+#[derive(Debug, Clone, Sequence)]
+pub struct SwapArgs<'a> {
+	/// Token being sold and rate
+	pub sell_token_rate: TokenRate<'a>,
+	/// Token being bought and rate
+	pub buy_token_rate: TokenRate<'a>,
+	/// Fee token and rate (NULL = no fee)
+	pub fee_token_rate: NullOr<FeeRate<'a>>,
+	/// Quantity
+	pub quantity: Int<'a>,
 }
 
 /// Identifier creation arguments
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Choice)]
 pub enum CreateIdentifierArgs<'a> {
 	/// Multisig creation arguments [7]
-	Multisig {
-		/// Signer public keys (raw byte strings)
-		signers: &'a [u8],
-		/// Required number of signatures
-		quorum: u64,
-	},
+	#[asn1(context_specific = "7", tag_mode = "EXPLICIT", constructed = "true")]
+	Multisig(MultisigArgs<'a>),
 	/// Swap creation arguments [8]
-	Swap {
-		sell_token_rate: TokenRate<'a>,
-		buy_token_rate: TokenRate<'a>,
-		fee_token_rate: Option<FeeRate<'a>>,
-		quantity: &'a [u8],
-	},
+	#[asn1(context_specific = "8", tag_mode = "EXPLICIT", constructed = "true")]
+	Swap(SwapArgs<'a>),
 }
 
 /// [4] CREATE_IDENTIFIER operation - Create token, multisig, or swap
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct CreateIdentifierOp<'a> {
 	/// Identifier to create
-	pub identifier: &'a [u8],
+	pub identifier: Bytes<'a>,
 	/// Creation arguments (optional, depends on identifier type)
+	#[asn1(optional = "true")]
 	pub create_arguments: Option<CreateIdentifierArgs<'a>>,
 }
 
 /// [5] TOKEN_ADMIN_SUPPLY operation - Modify token supply
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Sequence)]
 pub struct TokenAdminSupplyOp<'a> {
 	/// Amount to modify
-	pub amount: &'a [u8],
+	pub amount: Int<'a>,
 	/// Method (add/subtract/set)
 	pub method: AdjustMethod,
 }
 
 /// [6] TOKEN_ADMIN_MODIFY_BALANCE operation - Modify account token balance
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct TokenAdminModifyBalanceOp<'a> {
 	/// Token to modify balance of
-	pub token: &'a [u8],
+	pub token: Bytes<'a>,
 	/// Amount to modify
-	pub amount: &'a [u8],
+	pub amount: Int<'a>,
 	/// Method (add/subtract/set)
 	pub method: AdjustMethod,
 }
 
 /// [7] RECEIVE operation - Receive tokens from another account
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct ReceiveOp<'a> {
 	/// Amount to receive
-	pub amount: &'a [u8],
+	pub amount: Int<'a>,
 	/// Token to receive
-	pub token: &'a [u8],
+	pub token: Bytes<'a>,
 	/// Sender account
-	pub from: &'a [u8],
+	pub from: Bytes<'a>,
 	/// Whether amount must match exactly
 	pub exact: bool,
 	/// Forward to another account (optional)
-	pub forward: Option<&'a [u8]>,
+	#[asn1(optional = "true")]
+	pub forward: Option<Bytes<'a>>,
 }
 
 /// [8] MANAGE_CERTIFICATE operation - Add or subtract certificates
+///
+/// Implemented manually because `Option<NullOr<T>>` doesn't implement `Decode`
+/// (the `Option<T>` impl requires `T: FixedTag`, but `NullOr` has no fixed tag).
 #[derive(Debug, Clone)]
 pub struct ManageCertificateOp<'a> {
 	/// Method (add/subtract)
 	pub method: AdjustMethodRelative,
 	/// Certificate (if adding) or certificate hash (if removing)
-	pub certificate_or_hash: &'a [u8],
-	/// Intermediate certificates (required if adding, must be None if removing)
-	pub intermediate_certificates: Option<&'a [u8]>,
+	pub certificate_or_hash: Bytes<'a>,
+	/// Intermediate certificates (either raw bytes or explicit none)
+	/// Required when adding a certificate, optional overall
+	pub intermediate_certificates: Option<NullOr<Bytes<'a>>>,
 }
 
+impl<'a> DecodeValue<'a> for ManageCertificateOp<'a> {
+	fn decode_value<R: Reader<'a>>(reader: &mut R, _header: Header) -> der::Result<Self> {
+		let method = reader.decode()?;
+		let certificate_or_hash = reader.decode()?;
+
+		// Handle optional field that can be either bytes or explicit none
+		let intermediate_certificates = if reader.is_finished() {
+			None
+		} else {
+			Some(reader.decode()?)
+		};
+
+		Ok(ManageCertificateOp { method, certificate_or_hash, intermediate_certificates })
+	}
+}
+
+impl EncodeValue for ManageCertificateOp<'_> {
+	fn value_len(&self) -> der::Result<Length> {
+		self.method.encoded_len()?
+			+ self.certificate_or_hash.encoded_len()?
+			+ self
+				.intermediate_certificates
+				.as_ref()
+				.map(|v| v.encoded_len())
+				.transpose()?
+				.unwrap_or(Length::ZERO)
+	}
+
+	fn encode_value(&self, writer: &mut impl Writer) -> der::Result<()> {
+		self.method.encode(writer)?;
+		self.certificate_or_hash.encode(writer)?;
+		if let Some(ref certs) = self.intermediate_certificates {
+			certs.encode(writer)?;
+		}
+		Ok(())
+	}
+}
+
+impl<'a> Sequence<'a> for ManageCertificateOp<'a> {}
+
 /// [9] MATCH_SWAP operation - Match two swap orders
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct MatchSwapOp<'a> {
 	/// Swap account being used
-	pub swap: &'a [u8],
+	pub swap: Bytes<'a>,
 	/// Other swap account to match against
-	pub other: &'a [u8],
+	pub other: Bytes<'a>,
 	/// Token being sold and value
 	pub sell: TokenValue<'a>,
 	/// Token being bought and value
 	pub buy: TokenValue<'a>,
-	/// Fee value with recipient (optional)
-	pub fee: Option<FeeValueWithRecipient<'a>>,
+	/// Fee value with recipient (NULL = no fee)
+	pub fee: NullOr<FeeValueWithRecipient<'a>>,
 }
 
 /// [10] CANCEL_SWAP operation - Cancel a swap order
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Sequence)]
 pub struct CancelSwapOp<'a> {
 	/// Swap account to cancel
-	pub swap: &'a [u8],
+	pub swap: Bytes<'a>,
 	/// Sell token and value being returned
 	pub sell: TokenValue<'a>,
-	/// Fee value (optional)
-	pub fee: Option<FeeValue<'a>>,
+	/// Fee value (NULL = no fee)
+	pub fee: NullOr<FeeValue<'a>>,
 }
 
 // ============================================================================
@@ -469,29 +579,40 @@ pub struct CancelSwapOp<'a> {
 // ============================================================================
 
 /// Keeta blockchain operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Choice)]
 pub enum Operation<'a> {
 	/// [0] Send tokens
+	#[asn1(context_specific = "0", tag_mode = "EXPLICIT", constructed = "true")]
 	Send(SendOp<'a>),
 	/// [1] Set representative
+	#[asn1(context_specific = "1", tag_mode = "EXPLICIT", constructed = "true")]
 	SetRep(SetRepOp<'a>),
 	/// [2] Set account info
+	#[asn1(context_specific = "2", tag_mode = "EXPLICIT", constructed = "true")]
 	SetInfo(SetInfoOp<'a>),
 	/// [3] Modify permissions
+	#[asn1(context_specific = "3", tag_mode = "EXPLICIT", constructed = "true")]
 	ModifyPermissions(ModifyPermissionsOp<'a>),
 	/// [4] Create identifier (token, multisig, swap)
+	#[asn1(context_specific = "4", tag_mode = "EXPLICIT", constructed = "true")]
 	CreateIdentifier(CreateIdentifierOp<'a>),
 	/// [5] Token admin supply
+	#[asn1(context_specific = "5", tag_mode = "EXPLICIT", constructed = "true")]
 	TokenAdminSupply(TokenAdminSupplyOp<'a>),
 	/// [6] Token admin modify balance
+	#[asn1(context_specific = "6", tag_mode = "EXPLICIT", constructed = "true")]
 	TokenAdminModifyBalance(TokenAdminModifyBalanceOp<'a>),
 	/// [7] Receive tokens
+	#[asn1(context_specific = "7", tag_mode = "EXPLICIT", constructed = "true")]
 	Receive(ReceiveOp<'a>),
 	/// [8] Manage certificate
+	#[asn1(context_specific = "8", tag_mode = "EXPLICIT", constructed = "true")]
 	ManageCertificate(ManageCertificateOp<'a>),
 	/// [9] Match swap
+	#[asn1(context_specific = "9", tag_mode = "EXPLICIT", constructed = "true")]
 	MatchSwap(MatchSwapOp<'a>),
 	/// [10] Cancel swap
+	#[asn1(context_specific = "10", tag_mode = "EXPLICIT", constructed = "true")]
 	CancelSwap(CancelSwapOp<'a>),
 }
 

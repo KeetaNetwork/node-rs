@@ -18,16 +18,23 @@ pub use types::{
 	BlockHeader,
 	BlockPurpose,
 	BlockVersion,
+	// Type aliases (maps to der types or raw bytes)
+	Bytes,
 	// Operation structs
 	CancelSwapOp,
 	CreateIdentifierArgs,
 	CreateIdentifierOp,
 	// Supporting types
-	FeeDetails,
-	FeeDetailsWithRecipient,
+	FeeRate,
+	FeeValue,
+	FeeValueWithRecipient,
+	Int,
 	ManageCertificateOp,
 	MatchSwapOp,
 	ModifyPermissionsOp,
+	MultisigArgs,
+	// Value-or-none wrapper (like Option but NULL has meaning)
+	NullOr,
 	// Operation enum
 	Operation,
 	Permission,
@@ -35,7 +42,10 @@ pub use types::{
 	SendOp,
 	SetInfoOp,
 	SetRepOp,
+	Str,
+	SwapArgs,
 	TokenAdminModifyBalanceOp,
 	TokenAdminSupplyOp,
+	TokenRate,
 	TokenValue,
 };
