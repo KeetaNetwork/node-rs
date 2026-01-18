@@ -30,6 +30,7 @@ const SAMPLES: &[&str] = &[
 	"SET_REP",
 	"SET_INFO",
 	"CREATE_IDENTIFIER",
+	"CREATE_IDENTIFIER_MULTISIG",
 	"TOKEN_ADMIN_SUPPLY",
 	"SEND",
 	"SWAP",
@@ -42,8 +43,10 @@ fn test_block_roundtrip_all_samples() {
 	for sample_name in SAMPLES {
 		let original_bytes = load_block_hex(sample_name);
 
-		let block =
-			KeetaBlock::from_der(&original_bytes).unwrap_or_else(|_| panic!("Failed to parse {} block", sample_name));
+		let block = match KeetaBlock::from_der(&original_bytes) {
+			Ok(b) => b,
+			Err(e) => panic!("Failed to parse {} block: {:?}", sample_name, e),
+		};
 
 		assert!(!block.operations.is_empty(), "{} block should have operations", sample_name);
 		assert!(!block.signatures.is_empty(), "{} block should have signatures", sample_name);

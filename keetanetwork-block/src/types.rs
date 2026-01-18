@@ -452,15 +452,154 @@ pub struct ModifyPermissionsOp<'a> {
 
 /// Multisig creation arguments
 ///
-/// Note: The `signers` field contains raw DER-encoded bytes representing
-/// a sequence of public keys. For `no_std`/`no_alloc` environments, manual
-/// parsing is required.
-#[derive(Debug, Clone, Sequence)]
+/// The `signers` field contains raw DER-encoded bytes representing
+/// SEQUENCE OF OCTET STRING. Use `iter_signers()` to iterate over
+/// individual signer public keys without allocation.
+#[derive(Debug, Clone)]
 pub struct MultisigArgs<'a> {
-	/// Signer public keys (raw DER-encoded bytes)
-	pub signers: Bytes<'a>,
+	/// Raw DER bytes of the signers SEQUENCE (tag 0x30 + length + content).
+	/// Contains SEQUENCE OF OCTET STRING where each OCTET STRING is a signer public key.
+	pub signers: &'a [u8],
 	/// Required number of signatures
 	pub quorum: u64,
+}
+
+impl<'a> MultisigArgs<'a> {
+	/// Returns an iterator over signer public keys.
+	///
+	/// Each item is a Result containing the raw bytes of one signer's
+	/// public key (the OCTET STRING content, without tag/length).
+	///
+	/// # Example
+	/// ```ignore
+	/// for signer_result in multisig_args.iter_signers() {
+	///     let signer_pubkey = signer_result?;
+	///     // signer_pubkey is &[u8] containing the public key bytes
+	/// }
+	/// ```
+	pub fn iter_signers(&self) -> SignersIter<'a> {
+		SignersIter::new(self.signers)
+	}
+
+	/// Returns the number of signers.
+	///
+	/// Returns an error if the signers data is malformed.
+	pub fn signer_count(&self) -> der::Result<usize> {
+		let mut count = 0;
+		for result in self.iter_signers() {
+			result?;
+			count += 1;
+		}
+		Ok(count)
+	}
+}
+
+impl<'a> DecodeValue<'a> for MultisigArgs<'a> {
+	fn decode_value<R: Reader<'a>>(reader: &mut R, _header: Header) -> der::Result<Self> {
+		// Read signers as raw TLV bytes (SEQUENCE OF OCTET STRING)
+		let signers = read_tlv_bytes(reader)?;
+		let quorum: u64 = reader.decode()?;
+		Ok(MultisigArgs { signers, quorum })
+	}
+}
+
+impl EncodeValue for MultisigArgs<'_> {
+	fn value_len(&self) -> der::Result<Length> {
+		Length::try_from(self.signers.len())? + self.quorum.encoded_len()?
+	}
+
+	fn encode_value(&self, writer: &mut impl Writer) -> der::Result<()> {
+		writer.write(self.signers)?;
+		self.quorum.encode(writer)
+	}
+}
+
+impl<'a> Sequence<'a> for MultisigArgs<'a> {}
+
+/// Iterator that yields raw signer public key bytes (without DER tag/length).
+#[derive(Debug, Clone)]
+pub struct SignersIter<'a> {
+	remaining: &'a [u8],
+}
+
+impl<'a> SignersIter<'a> {
+	/// Creates a new iterator from the raw signers SEQUENCE bytes.
+	fn new(signers_sequence: &'a [u8]) -> Self {
+		// Parse the SEQUENCE header to get to the content
+		if signers_sequence.is_empty() {
+			return SignersIter { remaining: &[] };
+		}
+
+		// Check for SEQUENCE tag (0x30)
+		if signers_sequence[0] != 0x30 {
+			return SignersIter { remaining: &[] };
+		}
+
+		if signers_sequence.len() < 2 {
+			return SignersIter { remaining: &[] };
+		}
+
+		// Parse length
+		let content_start = if signers_sequence[1] < 0x80 {
+			// Short form length
+			2
+		} else {
+			// Long form length
+			let num_len_bytes = (signers_sequence[1] & 0x7F) as usize;
+			if signers_sequence.len() < 2 + num_len_bytes {
+				return SignersIter { remaining: &[] };
+			}
+			2 + num_len_bytes
+		};
+
+		SignersIter { remaining: &signers_sequence[content_start..] }
+	}
+}
+
+impl<'a> Iterator for SignersIter<'a> {
+	type Item = der::Result<&'a [u8]>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		if self.remaining.is_empty() {
+			return None;
+		}
+
+		// Expect OCTET STRING tag (0x04)
+		if self.remaining[0] != 0x04 {
+			return Some(Err(Tag::OctetString.value_error()));
+		}
+
+		if self.remaining.len() < 2 {
+			return Some(Err(Tag::OctetString.value_error()));
+		}
+
+		// Parse length
+		let (content_start, content_len) = if self.remaining[1] < 0x80 {
+			// Short form length
+			(2usize, self.remaining[1] as usize)
+		} else {
+			// Long form length
+			let num_len_bytes = (self.remaining[1] & 0x7F) as usize;
+			if self.remaining.len() < 2 + num_len_bytes {
+				return Some(Err(Tag::OctetString.value_error()));
+			}
+			let mut len: usize = 0;
+			for i in 0..num_len_bytes {
+				len = (len << 8) | (self.remaining[2 + i] as usize);
+			}
+			(2 + num_len_bytes, len)
+		};
+
+		let total_len = content_start + content_len;
+		if self.remaining.len() < total_len {
+			return Some(Err(Tag::OctetString.value_error()));
+		}
+
+		let content = &self.remaining[content_start..total_len];
+		self.remaining = &self.remaining[total_len..];
+
+		Some(Ok(content))
+	}
 }
 
 /// Swap creation arguments
@@ -1285,25 +1424,81 @@ mod tests {
 	#[test]
 	fn create_identifier_multisig_roundtrip() {
 		let identifier = test_token();
-		let signers_raw = [0x30, 0x04, 0x04, 0x02, 0xAB, 0xCD]; // Mock signers sequence
+		// SEQUENCE OF OCTET STRING with 2 signers (each 3 bytes)
+		// SEQUENCE { OCTET STRING (AA BB CC), OCTET STRING (DD EE FF) }
+		let signers_raw = [
+			0x30, 0x0A, // SEQUENCE, length 10
+			0x04, 0x03, 0xAA, 0xBB, 0xCC, // OCTET STRING, length 3, content
+			0x04, 0x03, 0xDD, 0xEE, 0xFF, // OCTET STRING, length 3, content
+		];
 
 		let original = CreateIdentifierOp {
 			identifier: Bytes::new(&identifier).unwrap(),
-			create_arguments: Some(CreateIdentifierArgs::Multisig(MultisigArgs {
-				signers: Bytes::new(&signers_raw).unwrap(),
-				quorum: 2,
-			})),
+			create_arguments: Some(CreateIdentifierArgs::Multisig(MultisigArgs { signers: &signers_raw, quorum: 2 })),
 		};
 		let encoded = original.to_der().unwrap();
 		let decoded: CreateIdentifierOp = CreateIdentifierOp::from_der(&encoded).unwrap();
 
 		match decoded.create_arguments {
 			Some(CreateIdentifierArgs::Multisig(args)) => {
-				assert_eq!(args.signers.as_bytes(), &signers_raw);
+				assert_eq!(args.signers, &signers_raw);
 				assert_eq!(args.quorum, 2);
+
+				// Test the iterator
+				let signers: Vec<&[u8]> = args.iter_signers().map(|r| r.unwrap()).collect();
+				assert_eq!(signers.len(), 2);
+				assert_eq!(signers[0], &[0xAA, 0xBB, 0xCC]);
+				assert_eq!(signers[1], &[0xDD, 0xEE, 0xFF]);
+
+				// Test signer_count
+				assert_eq!(args.signer_count().unwrap(), 2);
 			}
 			_ => panic!("Expected Multisig args"),
 		}
+	}
+
+	#[test]
+	fn multisig_args_iter_signers() {
+		// Test with realistic 33-byte public keys (Ed25519 prefix + 32 bytes)
+		let signer1 = test_address(); // 33 bytes
+		let signer2 = test_token(); // 33 bytes
+
+		// Build SEQUENCE OF OCTET STRING manually
+		// Each signer: 04 21 <33 bytes> = 35 bytes
+		// Total content: 70 bytes
+		// SEQUENCE header: 30 46 (0x46 = 70)
+		let mut signers_raw = Vec::new();
+		signers_raw.push(0x30); // SEQUENCE tag
+		signers_raw.push(0x46); // length 70
+		signers_raw.push(0x04); // OCTET STRING tag
+		signers_raw.push(0x21); // length 33
+		signers_raw.extend_from_slice(&signer1);
+		signers_raw.push(0x04); // OCTET STRING tag
+		signers_raw.push(0x21); // length 33
+		signers_raw.extend_from_slice(&signer2);
+
+		let args = MultisigArgs { signers: &signers_raw, quorum: 2 };
+
+		// Test iteration
+		let collected: Vec<&[u8]> = args.iter_signers().map(|r| r.unwrap()).collect();
+		assert_eq!(collected.len(), 2);
+		assert_eq!(collected[0], &signer1[..]);
+		assert_eq!(collected[1], &signer2[..]);
+
+		// Test signer_count
+		assert_eq!(args.signer_count().unwrap(), 2);
+	}
+
+	#[test]
+	fn multisig_args_empty_signers() {
+		// Empty SEQUENCE
+		let signers_raw = [0x30, 0x00]; // SEQUENCE, length 0
+
+		let args = MultisigArgs { signers: &signers_raw, quorum: 0 };
+
+		let collected: Vec<&[u8]> = args.iter_signers().map(|r| r.unwrap()).collect();
+		assert_eq!(collected.len(), 0);
+		assert_eq!(args.signer_count().unwrap(), 0);
 	}
 
 	#[test]
