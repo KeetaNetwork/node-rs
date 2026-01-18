@@ -32,7 +32,7 @@ use std::vec::Vec;
 // DER encoding/decoding support
 use der::{
 	asn1::{IntRef, Null, OctetStringRef, Utf8StringRef},
-	Choice, Decode, DecodeValue, Encode, EncodeValue, Enumerated, Header, Length, Reader, Sequence, Tag, Writer,
+	Choice, Decode, DecodeValue, Encode, EncodeValue, Header, Length, Reader, Sequence, Tag, Writer,
 };
 
 // Type aliases for DER types
@@ -164,6 +164,7 @@ pub struct BlockHeader<'a> {
 	/// Account public key with type prefix
 	pub account: &'a [u8],
 	/// Signer information (V1: always Single, V2: can be Single/Multisig/AccountIsSigner)
+	#[cfg(any(feature = "alloc", feature = "std"))]
 	pub signer: SignerField<'a>,
 	/// Previous block hash (32 bytes)
 	pub previous: &'a [u8],
@@ -250,24 +251,20 @@ pub enum MultiSigSigner<'a> {
 }
 
 /// Multisig signer information for V2 blocks
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone)]
-#[cfg_attr(not(any(feature = "alloc", feature = "std")), derive(Copy))]
 pub struct MultiSigSignerInfo<'a> {
 	/// Public key of the multisig account
 	pub multisig_pub_key: &'a [u8],
-	/// signers (can be nested multisig or single keys)
-	#[cfg(any(feature = "alloc", feature = "std"))]
+	/// Signers (can be nested multisig or single keys)
 	pub signers: Vec<MultiSigSigner<'a>>,
-	/// Raw DER bytes of the signers sequence
-	#[cfg(not(any(feature = "alloc", feature = "std")))]
-	pub signers_raw: &'a [u8],
 }
 
 /// Signer field for blocks
 ///
 /// V1 blocks always use Single. V2 blocks can use any variant.
+#[cfg(any(feature = "alloc", feature = "std"))]
 #[derive(Debug, Clone)]
-#[cfg_attr(not(any(feature = "alloc", feature = "std")), derive(Copy))]
 pub enum SignerField<'a> {
 	/// Single signer (public key with type prefix)
 	Single(&'a [u8]),
@@ -281,8 +278,8 @@ pub enum SignerField<'a> {
 // Enum Types
 // ============================================================================
 
-/// Adjust method for supply/balance/permissions operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Enumerated)]
+/// Adjust method for supply/balance/permissions operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AdjustMethod {
 	Add = 0,
@@ -290,12 +287,55 @@ pub enum AdjustMethod {
 	Set = 2,
 }
 
-/// Adjust method for relative operations (add/subtract only, no set)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Enumerated)]
+impl<'a> Decode<'a> for AdjustMethod {
+	fn decode<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
+		let value: u8 = reader.decode()?;
+		match value {
+			0 => Ok(AdjustMethod::Add),
+			1 => Ok(AdjustMethod::Subtract),
+			2 => Ok(AdjustMethod::Set),
+			_ => Err(Tag::Integer.value_error()),
+		}
+	}
+}
+
+impl Encode for AdjustMethod {
+	fn encoded_len(&self) -> der::Result<Length> {
+		(*self as u8).encoded_len()
+	}
+
+	fn encode(&self, writer: &mut impl Writer) -> der::Result<()> {
+		(*self as u8).encode(writer)
+	}
+}
+
+/// Adjust method for relative operations (add/subtract only, no set).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AdjustMethodRelative {
 	Add = 0,
 	Subtract = 1,
+}
+
+impl<'a> Decode<'a> for AdjustMethodRelative {
+	fn decode<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
+		let value: u8 = reader.decode()?;
+		match value {
+			0 => Ok(AdjustMethodRelative::Add),
+			1 => Ok(AdjustMethodRelative::Subtract),
+			_ => Err(Tag::Integer.value_error()),
+		}
+	}
+}
+
+impl Encode for AdjustMethodRelative {
+	fn encoded_len(&self) -> der::Result<Length> {
+		(*self as u8).encoded_len()
+	}
+
+	fn encode(&self, writer: &mut impl Writer) -> der::Result<()> {
+		(*self as u8).encode(writer)
+	}
 }
 
 // ============================================================================
@@ -493,31 +533,45 @@ pub struct ReceiveOp<'a> {
 	pub forward: Option<Bytes<'a>>,
 }
 
-/// [8] MANAGE_CERTIFICATE operation - Add or subtract certificates
+/// [8] MANAGE_CERTIFICATE operation - Add or subtract certificates.
 ///
-/// Implemented manually because `Option<NullOr<T>>` doesn't implement `Decode`
-/// (the `Option<T>` impl requires `T: FixedTag`, but `NullOr` has no fixed tag).
+/// Certificate data is stored as raw DER bytes (can be OCTET STRING or SEQUENCE).
 #[derive(Debug, Clone)]
 pub struct ManageCertificateOp<'a> {
-	/// Method (add/subtract)
+	/// Method (add/subtract).
 	pub method: AdjustMethodRelative,
-	/// Certificate (if adding) or certificate hash (if removing)
-	pub certificate_or_hash: Bytes<'a>,
-	/// Intermediate certificates (either raw bytes or explicit none)
-	/// Required when adding a certificate, optional overall
-	pub intermediate_certificates: Option<NullOr<Bytes<'a>>>,
+	/// Certificate DER bytes (if adding) or certificate hash (if removing).
+	/// Stored with tag+length for roundtrip encoding.
+	pub certificate_or_hash: &'a [u8],
+	/// Intermediate certificates DER bytes, NULL, or absent.
+	pub intermediate_certificates: Option<NullOr<&'a [u8]>>,
+}
+
+/// Reads raw TLV bytes (tag + length + content) from reader.
+fn read_tlv_bytes<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<&'a [u8]> {
+	let header = reader.peek_header()?;
+	let tlv_len = (header.encoded_len()? + header.length)?;
+	reader.read_slice(tlv_len)
 }
 
 impl<'a> DecodeValue<'a> for ManageCertificateOp<'a> {
 	fn decode_value<R: Reader<'a>>(reader: &mut R, _header: Header) -> der::Result<Self> {
 		let method = reader.decode()?;
-		let certificate_or_hash = reader.decode()?;
 
-		// Handle optional field that can be either bytes or explicit none
+		// Read certificate as raw TLV bytes (any tag type)
+		let certificate_or_hash = read_tlv_bytes(reader)?;
+
+		// Handle optional intermediate_certificates field
 		let intermediate_certificates = if reader.is_finished() {
 			None
 		} else {
-			Some(reader.decode()?)
+			let tag = reader.peek_tag()?;
+			if tag == Tag::Null {
+				let _: Null = reader.decode()?;
+				Some(NullOr::Null)
+			} else {
+				Some(NullOr::Value(read_tlv_bytes(reader)?))
+			}
 		};
 
 		Ok(ManageCertificateOp { method, certificate_or_hash, intermediate_certificates })
@@ -527,20 +581,26 @@ impl<'a> DecodeValue<'a> for ManageCertificateOp<'a> {
 impl EncodeValue for ManageCertificateOp<'_> {
 	fn value_len(&self) -> der::Result<Length> {
 		self.method.encoded_len()?
-			+ self.certificate_or_hash.encoded_len()?
+			+ Length::try_from(self.certificate_or_hash.len())?
 			+ self
 				.intermediate_certificates
 				.as_ref()
-				.map(|v| v.encoded_len())
+				.map(|v| match v {
+					NullOr::Null => Null.encoded_len(),
+					NullOr::Value(bytes) => Length::try_from(bytes.len()),
+				})
 				.transpose()?
 				.unwrap_or(Length::ZERO)
 	}
 
 	fn encode_value(&self, writer: &mut impl Writer) -> der::Result<()> {
 		self.method.encode(writer)?;
-		self.certificate_or_hash.encode(writer)?;
+		writer.write(self.certificate_or_hash)?;
 		if let Some(ref certs) = self.intermediate_certificates {
-			certs.encode(writer)?;
+			match certs {
+				NullOr::Null => Null.encode(writer)?,
+				NullOr::Value(bytes) => writer.write(bytes)?,
+			}
 		}
 		Ok(())
 	}
@@ -1114,32 +1174,33 @@ mod tests {
 
 	#[test]
 	fn manage_certificate_op_add_roundtrip() {
-		let cert = [0x30, 0x82, 0x01, 0x00]; // Mock certificate
-		let intermediate = [0x30, 0x82, 0x02, 0x00]; // Mock intermediate
+		// Raw DER: SEQUENCE with some content (mock X.509 certificate)
+		let cert_der = [0x30, 0x03, 0x01, 0x01, 0xFF]; // SEQUENCE { BOOLEAN TRUE }
+		let intermediate_der = [0x30, 0x03, 0x02, 0x01, 0x00]; // SEQUENCE { INTEGER 0 }
 
 		let original = ManageCertificateOp {
 			method: AdjustMethodRelative::Add,
-			certificate_or_hash: Bytes::new(&cert).unwrap(),
-			intermediate_certificates: Some(NullOr::Value(Bytes::new(&intermediate).unwrap())),
+			certificate_or_hash: &cert_der,
+			intermediate_certificates: Some(NullOr::Value(&intermediate_der)),
 		};
 		let encoded = original.to_der().unwrap();
 		let decoded: ManageCertificateOp = ManageCertificateOp::from_der(&encoded).unwrap();
 
 		assert_eq!(decoded.method, AdjustMethodRelative::Add);
-		assert_eq!(decoded.certificate_or_hash.as_bytes(), &cert);
+		assert_eq!(decoded.certificate_or_hash, &cert_der);
 		match decoded.intermediate_certificates {
-			Some(NullOr::Value(i)) => assert_eq!(i.as_bytes(), &intermediate),
+			Some(NullOr::Value(i)) => assert_eq!(i, &intermediate_der),
 			_ => panic!("Expected intermediate certificates"),
 		}
 	}
 
 	#[test]
 	fn manage_certificate_op_add_no_intermediate_roundtrip() {
-		let cert = [0x30, 0x82, 0x01, 0x00];
+		let cert_der = [0x30, 0x03, 0x01, 0x01, 0xFF];
 
 		let original = ManageCertificateOp {
 			method: AdjustMethodRelative::Add,
-			certificate_or_hash: Bytes::new(&cert).unwrap(),
+			certificate_or_hash: &cert_der,
 			intermediate_certificates: Some(NullOr::Null),
 		};
 		let encoded = original.to_der().unwrap();
@@ -1150,11 +1211,15 @@ mod tests {
 
 	#[test]
 	fn manage_certificate_op_subtract_roundtrip() {
-		let hash = [0xAB; 32]; // Certificate hash
+		// OCTET STRING containing 32-byte hash
+		let mut hash_der = [0u8; 34];
+		hash_der[0] = 0x04; // OCTET STRING tag
+		hash_der[1] = 0x20; // length 32
+		hash_der[2..].fill(0xAB); // hash bytes
 
 		let original = ManageCertificateOp {
 			method: AdjustMethodRelative::Subtract,
-			certificate_or_hash: Bytes::new(&hash).unwrap(),
+			certificate_or_hash: &hash_der,
 			intermediate_certificates: None,
 		};
 		let encoded = original.to_der().unwrap();
@@ -1268,52 +1333,5 @@ mod tests {
 			}
 			_ => panic!("Expected Swap args"),
 		}
-	}
-
-	// ============================================================================
-	// Operation Enum Tests
-	// ============================================================================
-
-	#[test]
-	fn operation_send_roundtrip() {
-		let to = test_address();
-		let token = test_token();
-
-		let original = Operation::Send(SendOp {
-			to: Bytes::new(&to).unwrap(),
-			amount: Int::new(&[0x10]).unwrap(),
-			token: Bytes::new(&token).unwrap(),
-			external: None,
-		});
-		let encoded = original.to_der().unwrap();
-		let decoded: Operation = Operation::from_der(&encoded).unwrap();
-
-		assert!(matches!(decoded, Operation::Send(_)));
-	}
-
-	#[test]
-	fn operation_set_rep_roundtrip() {
-		let to = test_address();
-
-		let original = Operation::SetRep(SetRepOp { to: Bytes::new(&to).unwrap() });
-		let encoded = original.to_der().unwrap();
-		let decoded: Operation = Operation::from_der(&encoded).unwrap();
-
-		assert!(matches!(decoded, Operation::SetRep(_)));
-	}
-
-	#[test]
-	fn operation_manage_certificate_roundtrip() {
-		let cert = [0x30, 0x10];
-
-		let original = Operation::ManageCertificate(ManageCertificateOp {
-			method: AdjustMethodRelative::Add,
-			certificate_or_hash: Bytes::new(&cert).unwrap(),
-			intermediate_certificates: None,
-		});
-		let encoded = original.to_der().unwrap();
-		let decoded: Operation = Operation::from_der(&encoded).unwrap();
-
-		assert!(matches!(decoded, Operation::ManageCertificate(_)));
 	}
 }

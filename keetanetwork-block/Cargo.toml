@@ -17,6 +17,8 @@ alloc = ["der/alloc"]
 der = { version = "0.7.10", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
+der = "0.7.10"
+hex = "0.4"
 
 [lib]
 name = "keetanetwork_block"

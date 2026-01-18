@@ -6,6 +6,9 @@
 
 mod types;
 
+#[cfg(any(feature = "alloc", feature = "std"))]
+mod block;
+
 // Types that require alloc (use Vec)
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{
