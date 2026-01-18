@@ -641,8 +641,8 @@ pub struct CreateIdentifierOp<'a> {
 pub struct TokenAdminSupplyOp<'a> {
 	/// Amount to modify
 	pub amount: Int<'a>,
-	/// Method (add/subtract/set)
-	pub method: AdjustMethod,
+	/// Method (add/subtract only, set is not allowed)
+	pub method: AdjustMethodRelative,
 }
 
 /// [6] TOKEN_ADMIN_MODIFY_BALANCE operation - Modify account token balance
@@ -1243,12 +1243,12 @@ mod tests {
 	fn token_admin_supply_op_roundtrip() {
 		let amount = [0x00, 0xFF, 0xFF]; // 65535
 
-		let original = TokenAdminSupplyOp { amount: Int::new(&amount).unwrap(), method: AdjustMethod::Add };
+		let original = TokenAdminSupplyOp { amount: Int::new(&amount).unwrap(), method: AdjustMethodRelative::Add };
 		let encoded = original.to_der().unwrap();
 		let decoded: TokenAdminSupplyOp = TokenAdminSupplyOp::from_der(&encoded).unwrap();
 
 		assert_eq!(decoded.amount.as_bytes(), &amount);
-		assert_eq!(decoded.method, AdjustMethod::Add);
+		assert_eq!(decoded.method, AdjustMethodRelative::Add);
 	}
 
 	#[test]
@@ -1467,14 +1467,14 @@ mod tests {
 		// Each signer: 04 21 <33 bytes> = 35 bytes
 		// Total content: 70 bytes
 		// SEQUENCE header: 30 46 (0x46 = 70)
-		let mut signers_raw = Vec::new();
-		signers_raw.push(0x30); // SEQUENCE tag
-		signers_raw.push(0x46); // length 70
-		signers_raw.push(0x04); // OCTET STRING tag
-		signers_raw.push(0x21); // length 33
+		let mut signers_raw = vec![
+			0x30, // SEQUENCE tag
+			0x46, // length 70
+			0x04, // OCTET STRING tag
+			0x21, // length 33
+		];
 		signers_raw.extend_from_slice(&signer1);
-		signers_raw.push(0x04); // OCTET STRING tag
-		signers_raw.push(0x21); // length 33
+		signers_raw.extend_from_slice(&[0x04, 0x21]); // OCTET STRING tag + length 33
 		signers_raw.extend_from_slice(&signer2);
 
 		let args = MultisigArgs { signers: &signers_raw, quorum: 2 };
