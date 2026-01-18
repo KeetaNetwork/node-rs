@@ -14,7 +14,7 @@ fn get_samples_dir() -> PathBuf {
 
 fn load_block_hex(name: &str) -> Vec<u8> {
 	let path = get_samples_dir().join(format!("{}.hex", name));
-	let content = fs::read_to_string(&path).expect(&format!("Failed to read {}", path.display()));
+	let content = fs::read_to_string(&path).unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
 
 	// Filter out comment lines and empty lines
 	let hex: String = content
@@ -22,7 +22,7 @@ fn load_block_hex(name: &str) -> Vec<u8> {
 		.filter(|line| !line.starts_with("//") && !line.trim().is_empty())
 		.collect();
 
-	hex::decode(&hex).expect(&format!("Invalid hex in {}", path.display()))
+	hex::decode(&hex).unwrap_or_else(|_| panic!("Invalid hex in {}", path.display()))
 }
 
 /// Block samples to test.
@@ -42,14 +42,15 @@ fn test_block_roundtrip_all_samples() {
 	for sample_name in SAMPLES {
 		let original_bytes = load_block_hex(sample_name);
 
-		let block = KeetaBlock::from_der(&original_bytes).expect(&format!("Failed to parse {} block", sample_name));
+		let block =
+			KeetaBlock::from_der(&original_bytes).unwrap_or_else(|_| panic!("Failed to parse {} block", sample_name));
 
 		assert!(!block.operations.is_empty(), "{} block should have operations", sample_name);
 		assert!(!block.signatures.is_empty(), "{} block should have signatures", sample_name);
 
 		let encoded = block
 			.to_der()
-			.expect(&format!("Failed to encode {} block", sample_name));
+			.unwrap_or_else(|_| panic!("Failed to encode {} block", sample_name));
 
 		assert_eq!(encoded, original_bytes, "Roundtrip encoding mismatch for {} block", sample_name);
 	}
