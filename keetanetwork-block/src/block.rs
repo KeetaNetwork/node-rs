@@ -96,7 +96,6 @@ fn decode_v1_block<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<KeetaBlock<
 			header: BlockHeader {
 				network,
 				subnet,
-				idempotent: None,
 				date,
 				purpose: BlockPurpose::Generic,
 				account: account.as_bytes(),
@@ -166,7 +165,6 @@ fn decode_v2_block<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<KeetaBlock<
 			header: BlockHeader {
 				network,
 				subnet: None,
-				idempotent: None,
 				date,
 				purpose,
 				account: account.as_bytes(),

@@ -153,10 +153,8 @@ impl TryFrom<u8> for BlockPurpose {
 pub struct BlockHeader<'a> {
 	/// Network ID
 	pub network: u64,
-	/// Subnet ID (optional)
+	/// Subnet ID (optional, V1 only - ignored for V2 blocks)
 	pub subnet: Option<u64>,
-	/// Idempotent key for deduplication (optional)
-	pub idempotent: Option<&'a [u8]>,
 	/// Block timestamp as raw bytes
 	pub date: &'a [u8],
 	/// Block purpose (V2 only, defaults to Generic for V1)
