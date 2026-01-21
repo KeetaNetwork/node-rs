@@ -6,7 +6,7 @@
 //! ## Block Formats
 //!
 //! - **V1**: Plain SEQUENCE with version field = 0
-//! - **V2**: Wrapped in context tag [1]
+//! - **V2**: Wrapped in context tag `1`
 
 #[cfg(all(feature = "alloc", not(feature = "std")))]
 use alloc::vec::Vec;

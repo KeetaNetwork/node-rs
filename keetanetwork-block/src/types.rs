@@ -7,17 +7,17 @@
 //!
 //! | Tag  | Operation               |
 //! |------|-------------------------|
-//! | [0]  | Send                    |
-//! | [1]  | SetRep                  |
-//! | [2]  | SetInfo                 |
-//! | [3]  | ModifyPermissions       |
-//! | [4]  | CreateIdentifier        |
-//! | [5]  | TokenAdminSupply        |
-//! | [6]  | TokenAdminModifyBalance |
-//! | [7]  | Receive                 |
-//! | [8]  | ManageCertificate       |
-//! | [9]  | MatchSwap               |
-//! | [10] | CancelSwap              |
+//! | `0`  | Send                    |
+//! | `1`  | SetRep                  |
+//! | `2`  | SetInfo                 |
+//! | `3`  | ModifyPermissions       |
+//! | `4`  | CreateIdentifier        |
+//! | `5`  | TokenAdminSupply        |
+//! | `6`  | TokenAdminModifyBalance |
+//! | `7`  | Receive                 |
+//! | `8`  | ManageCertificate       |
+//! | `9`  | MatchSwap               |
+//! | `10` | CancelSwap              |
 
 // Use alloc for Vec when not using std
 #[cfg(all(feature = "alloc", not(feature = "std")))]
@@ -400,7 +400,7 @@ pub struct Permission {
 // Operation Structures
 // ============================================================================
 
-/// [0] SEND operation - Transfer tokens to another account
+/// Tag `0`: SEND operation - Transfer tokens to another account
 #[derive(Debug, Clone, Sequence)]
 pub struct SendOp<'a> {
 	/// Destination account
@@ -413,14 +413,14 @@ pub struct SendOp<'a> {
 	pub external: Option<Str<'a>>,
 }
 
-/// [1] SET_REP operation - Set representative for delegation
+/// Tag `1`: SET_REP operation - Set representative for delegation
 #[derive(Debug, Clone, Sequence)]
 pub struct SetRepOp<'a> {
 	/// Representative to delegate to
 	pub to: Bytes<'a>,
 }
 
-/// [2] SET_INFO operation - Set account information
+/// Tag `2`: SET_INFO operation - Set account information
 #[derive(Debug, Clone, Sequence)]
 pub struct SetInfoOp<'a> {
 	/// Account name
@@ -434,7 +434,7 @@ pub struct SetInfoOp<'a> {
 	pub default_permission: Option<Permission>,
 }
 
-/// [3] MODIFY_PERMISSIONS operation - Modify account permissions
+/// Tag `3`: MODIFY_PERMISSIONS operation - Modify account permissions
 #[derive(Debug, Clone, Sequence)]
 pub struct ModifyPermissionsOp<'a> {
 	/// Principal to modify permissions for
@@ -616,15 +616,15 @@ pub struct SwapArgs<'a> {
 /// Identifier creation arguments
 #[derive(Debug, Clone, Choice)]
 pub enum CreateIdentifierArgs<'a> {
-	/// Multisig creation arguments [7]
+	/// Multisig creation arguments (tag `7`)
 	#[asn1(context_specific = "7", tag_mode = "EXPLICIT", constructed = "true")]
 	Multisig(MultisigArgs<'a>),
-	/// Swap creation arguments [8]
+	/// Swap creation arguments (tag `8`)
 	#[asn1(context_specific = "8", tag_mode = "EXPLICIT", constructed = "true")]
 	Swap(SwapArgs<'a>),
 }
 
-/// [4] CREATE_IDENTIFIER operation - Create token, multisig, or swap
+/// Tag `4`: CREATE_IDENTIFIER operation - Create token, multisig, or swap
 #[derive(Debug, Clone, Sequence)]
 pub struct CreateIdentifierOp<'a> {
 	/// Identifier to create
@@ -634,7 +634,7 @@ pub struct CreateIdentifierOp<'a> {
 	pub create_arguments: Option<CreateIdentifierArgs<'a>>,
 }
 
-/// [5] TOKEN_ADMIN_SUPPLY operation - Modify token supply
+/// Tag `5`: TOKEN_ADMIN_SUPPLY operation - Modify token supply
 #[derive(Debug, Clone, Copy, Sequence)]
 pub struct TokenAdminSupplyOp<'a> {
 	/// Amount to modify
@@ -643,7 +643,7 @@ pub struct TokenAdminSupplyOp<'a> {
 	pub method: AdjustMethodRelative,
 }
 
-/// [6] TOKEN_ADMIN_MODIFY_BALANCE operation - Modify account token balance
+/// Tag `6`: TOKEN_ADMIN_MODIFY_BALANCE operation - Modify account token balance
 #[derive(Debug, Clone, Sequence)]
 pub struct TokenAdminModifyBalanceOp<'a> {
 	/// Token to modify balance of
@@ -654,7 +654,7 @@ pub struct TokenAdminModifyBalanceOp<'a> {
 	pub method: AdjustMethod,
 }
 
-/// [7] RECEIVE operation - Receive tokens from another account
+/// Tag `7`: RECEIVE operation - Receive tokens from another account
 #[derive(Debug, Clone, Sequence)]
 pub struct ReceiveOp<'a> {
 	/// Amount to receive
@@ -670,7 +670,7 @@ pub struct ReceiveOp<'a> {
 	pub forward: Option<Bytes<'a>>,
 }
 
-/// [8] MANAGE_CERTIFICATE operation - Add or subtract certificates.
+/// Tag `8`: MANAGE_CERTIFICATE operation - Add or subtract certificates.
 ///
 /// Certificate data is stored as raw DER bytes (can be OCTET STRING or SEQUENCE).
 #[derive(Debug, Clone)]
@@ -745,7 +745,7 @@ impl EncodeValue for ManageCertificateOp<'_> {
 
 impl<'a> Sequence<'a> for ManageCertificateOp<'a> {}
 
-/// [9] MATCH_SWAP operation - Match two swap orders
+/// Tag `9`: MATCH_SWAP operation - Match two swap orders
 #[derive(Debug, Clone, Sequence)]
 pub struct MatchSwapOp<'a> {
 	/// Swap account being used
@@ -760,7 +760,7 @@ pub struct MatchSwapOp<'a> {
 	pub fee: NullOr<FeeValueWithRecipient<'a>>,
 }
 
-/// [10] CANCEL_SWAP operation - Cancel a swap order
+/// Tag `10`: CANCEL_SWAP operation - Cancel a swap order
 #[derive(Debug, Clone, Sequence)]
 pub struct CancelSwapOp<'a> {
 	/// Swap account to cancel
@@ -778,37 +778,37 @@ pub struct CancelSwapOp<'a> {
 /// Keeta blockchain operation
 #[derive(Debug, Clone, Choice)]
 pub enum Operation<'a> {
-	/// [0] Send tokens
+	/// Tag `0`: Send tokens
 	#[asn1(context_specific = "0", tag_mode = "EXPLICIT", constructed = "true")]
 	Send(SendOp<'a>),
-	/// [1] Set representative
+	/// Tag `1`: Set representative
 	#[asn1(context_specific = "1", tag_mode = "EXPLICIT", constructed = "true")]
 	SetRep(SetRepOp<'a>),
-	/// [2] Set account info
+	/// Tag `2`: Set account info
 	#[asn1(context_specific = "2", tag_mode = "EXPLICIT", constructed = "true")]
 	SetInfo(SetInfoOp<'a>),
-	/// [3] Modify permissions
+	/// Tag `3`: Modify permissions
 	#[asn1(context_specific = "3", tag_mode = "EXPLICIT", constructed = "true")]
 	ModifyPermissions(ModifyPermissionsOp<'a>),
-	/// [4] Create identifier (token, multisig, swap)
+	/// Tag `4`: Create identifier (token, multisig, swap)
 	#[asn1(context_specific = "4", tag_mode = "EXPLICIT", constructed = "true")]
 	CreateIdentifier(CreateIdentifierOp<'a>),
-	/// [5] Token admin supply
+	/// Tag `5`: Token admin supply
 	#[asn1(context_specific = "5", tag_mode = "EXPLICIT", constructed = "true")]
 	TokenAdminSupply(TokenAdminSupplyOp<'a>),
-	/// [6] Token admin modify balance
+	/// Tag `6`: Token admin modify balance
 	#[asn1(context_specific = "6", tag_mode = "EXPLICIT", constructed = "true")]
 	TokenAdminModifyBalance(TokenAdminModifyBalanceOp<'a>),
-	/// [7] Receive tokens
+	/// Tag `7`: Receive tokens
 	#[asn1(context_specific = "7", tag_mode = "EXPLICIT", constructed = "true")]
 	Receive(ReceiveOp<'a>),
-	/// [8] Manage certificate
+	/// Tag `8`: Manage certificate
 	#[asn1(context_specific = "8", tag_mode = "EXPLICIT", constructed = "true")]
 	ManageCertificate(ManageCertificateOp<'a>),
-	/// [9] Match swap
+	/// Tag `9`: Match swap
 	#[asn1(context_specific = "9", tag_mode = "EXPLICIT", constructed = "true")]
 	MatchSwap(MatchSwapOp<'a>),
-	/// [10] Cancel swap
+	/// Tag `10`: Cancel swap
 	#[asn1(context_specific = "10", tag_mode = "EXPLICIT", constructed = "true")]
 	CancelSwap(CancelSwapOp<'a>),
 }
