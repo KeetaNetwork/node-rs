@@ -32,7 +32,7 @@ use std::vec::Vec;
 // DER encoding/decoding support
 use der::{
 	asn1::{IntRef, Null, OctetStringRef, Utf8StringRef},
-	Choice, Decode, DecodeValue, Encode, EncodeValue, Header, Length, Reader, Sequence, Tag, Writer,
+	Choice, Decode, DecodeValue, Encode, EncodeValue, Header, Length, Reader, Sequence, SliceReader, Tag, Writer,
 };
 
 // Type aliases for DER types
@@ -517,40 +517,47 @@ impl<'a> Sequence<'a> for MultisigArgs<'a> {}
 /// Iterator that yields raw signer public key bytes (without DER tag/length).
 #[derive(Debug, Clone)]
 pub struct SignersIter<'a> {
-	remaining: &'a [u8],
+	content: SliceReader<'a>,
 }
 
 impl<'a> SignersIter<'a> {
 	/// Creates a new iterator from the raw signers SEQUENCE bytes.
 	fn new(signers_sequence: &'a [u8]) -> Self {
-		// Parse the SEQUENCE header to get to the content
 		if signers_sequence.is_empty() {
-			return SignersIter { remaining: &[] };
+			return SignersIter { content: SliceReader::new(&[]).unwrap() };
 		}
 
-		// Check for SEQUENCE tag (0x30)
-		if signers_sequence[0] != 0x30 {
-			return SignersIter { remaining: &[] };
-		}
-
-		if signers_sequence.len() < 2 {
-			return SignersIter { remaining: &[] };
-		}
-
-		// Parse length
-		let content_start = if signers_sequence[1] < 0x80 {
-			// Short form length
-			2
-		} else {
-			// Long form length
-			let num_len_bytes = (signers_sequence[1] & 0x7F) as usize;
-			if signers_sequence.len() < 2 + num_len_bytes {
-				return SignersIter { remaining: &[] };
-			}
-			2 + num_len_bytes
+		// Parse the SEQUENCE header to get the content bytes
+		let outer_reader = match SliceReader::new(signers_sequence) {
+			Ok(r) => r,
+			Err(_) => return SignersIter { content: SliceReader::new(&[]).unwrap() },
 		};
 
-		SignersIter { remaining: &signers_sequence[content_start..] }
+		// Read the SEQUENCE header and get content length
+		let header = match outer_reader.peek_header() {
+			Ok(h) => h,
+			Err(_) => return SignersIter { content: SliceReader::new(&[]).unwrap() },
+		};
+
+		if header.tag != Tag::Sequence {
+			return SignersIter { content: SliceReader::new(&[]).unwrap() };
+		}
+
+		// Skip the header and create a reader for just the content
+		let header_len = match header.encoded_len() {
+			Ok(len) => len,
+			Err(_) => return SignersIter { content: SliceReader::new(&[]).unwrap() },
+		};
+
+		let content_len: usize = header.length.try_into().unwrap_or(0);
+		let header_bytes: usize = header_len.try_into().unwrap_or(0);
+
+		if signers_sequence.len() < header_bytes + content_len {
+			return SignersIter { content: SliceReader::new(&[]).unwrap() };
+		}
+
+		let content = &signers_sequence[header_bytes..header_bytes + content_len];
+		SignersIter { content: SliceReader::new(content).unwrap() }
 	}
 }
 
@@ -558,45 +565,15 @@ impl<'a> Iterator for SignersIter<'a> {
 	type Item = der::Result<&'a [u8]>;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		if self.remaining.is_empty() {
+		if self.content.is_finished() {
 			return None;
 		}
 
-		// Expect OCTET STRING tag (0x04)
-		if self.remaining[0] != 0x04 {
-			return Some(Err(Tag::OctetString.value_error()));
+		// Decode the next OCTET STRING
+		match Bytes::decode(&mut self.content) {
+			Ok(octet_string) => Some(Ok(octet_string.as_bytes())),
+			Err(e) => Some(Err(e)),
 		}
-
-		if self.remaining.len() < 2 {
-			return Some(Err(Tag::OctetString.value_error()));
-		}
-
-		// Parse length
-		let (content_start, content_len) = if self.remaining[1] < 0x80 {
-			// Short form length
-			(2usize, self.remaining[1] as usize)
-		} else {
-			// Long form length
-			let num_len_bytes = (self.remaining[1] & 0x7F) as usize;
-			if self.remaining.len() < 2 + num_len_bytes {
-				return Some(Err(Tag::OctetString.value_error()));
-			}
-			let mut len: usize = 0;
-			for i in 0..num_len_bytes {
-				len = (len << 8) | (self.remaining[2 + i] as usize);
-			}
-			(2 + num_len_bytes, len)
-		};
-
-		let total_len = content_start + content_len;
-		if self.remaining.len() < total_len {
-			return Some(Err(Tag::OctetString.value_error()));
-		}
-
-		let content = &self.remaining[content_start..total_len];
-		self.remaining = &self.remaining[total_len..];
-
-		Some(Ok(content))
 	}
 }
 
