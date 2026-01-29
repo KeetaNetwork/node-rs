@@ -128,32 +128,30 @@ mod tests {
 
 		let result = aes_cbc.decrypt(key, short_ciphertext);
 		assert!(result.is_err());
-		assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
+		assert!(matches!(result.unwrap_err(), CryptoError::DecryptionFailed));
 	}
 
 	#[test]
-	fn test_aes_256_cbc_pkcs7_padding() -> Result<(), CryptoError> {
+	fn test_aes_256_cbc_pkcs7_padding() {
 		let aes_cbc = Aes256Cbc;
 		let key = [0x42u8; 32];
 
 		// Test with data that's exactly block-aligned (16 bytes)
 		let block_aligned = [0x55u8; 16];
-		let ciphertext = aes_cbc.encrypt(key, None, block_aligned)?;
-		let decrypted = aes_cbc.decrypt(key, &ciphertext)?;
+		let ciphertext = aes_cbc.encrypt(key, None, block_aligned).unwrap();
+		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, block_aligned);
 
 		// Test with data that needs padding (15 bytes)
 		let needs_padding = [0x66u8; 15];
-		let ciphertext = aes_cbc.encrypt(key, None, needs_padding)?;
-		let decrypted = aes_cbc.decrypt(key, &ciphertext)?;
+		let ciphertext = aes_cbc.encrypt(key, None, needs_padding).unwrap();
+		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, needs_padding);
 
 		// Test with data that needs lots of padding (1 byte)
 		let minimal_data = [0x77u8; 1];
-		let ciphertext = aes_cbc.encrypt(key, None, minimal_data)?;
-		let decrypted = aes_cbc.decrypt(key, &ciphertext)?;
+		let ciphertext = aes_cbc.encrypt(key, None, minimal_data).unwrap();
+		let decrypted = aes_cbc.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, minimal_data);
-
-		Ok(())
 	}
 }

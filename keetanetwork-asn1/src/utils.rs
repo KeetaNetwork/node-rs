@@ -403,9 +403,11 @@ mod tests {
 	use crate::error::Asn1Error;
 	use serde_json;
 
+	use crate::oids;
+
 	// Test data constants
-	const TEST_OID_STR: &str = "1.2.840.113549.1.1.1";
-	const TEST_OID_JSON: &str = r#""1.2.840.113549.1.1.1""#;
+	const TEST_OID_STR: &str = oids::RSA_ENCRYPTION;
+	const TEST_OID_JSON: &str = concat!('"', "1.2.840.113549.1.1.1", '"');
 
 	const TEST_OCTET_BYTES: &[u8] = &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
 	const TEST_OCTET_JSON: &str = r#""0123456789abcdef""#;
@@ -414,11 +416,12 @@ mod tests {
 	const TEST_BIT_JSON: &str = r#""fedcba98""#;
 
 	// Test OID database
+	// Note: SHA256 hash OID is kept hardcoded as it's not defined in keetanetwork-asn1::oids
 	const TEST_OID_DB: &[(&str, &str)] = &[
-		("RSA", "1.2.840.113549.1.1.1"),
+		("RSA", oids::RSA_ENCRYPTION),
 		("SHA256", "2.16.840.1.101.3.4.2.1"),
-		("Ed25519", "1.3.101.112"),
-		("ECDSA_P256", "1.2.840.10045.3.1.7"),
+		("Ed25519", oids::ED25519),
+		("ECDSA_P256", oids::SECP256R1),
 	];
 
 	fn get_test_oid_db() -> HashMap<&'static str, &'static str> {
@@ -596,7 +599,7 @@ mod tests {
 
 		// Test successful lookup
 		let result = get_oid("RSA", &oid_db)?;
-		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
+		assert_eq!(result.to_string(), oids::RSA_ENCRYPTION);
 
 		// Test unknown algorithm
 		let result = get_oid("UnknownAlgorithm", &oid_db);
@@ -616,7 +619,7 @@ mod tests {
 		let oid_db = get_test_oid_db();
 
 		// Test successful lookup
-		let result = lookup_by_oid("1.2.840.113549.1.1.1", &oid_db)?;
+		let result = lookup_by_oid(oids::RSA_ENCRYPTION, &oid_db)?;
 		assert_eq!(result, "RSA");
 
 		// Test unknown OID (using a valid but non-existent OID)
@@ -632,9 +635,9 @@ mod tests {
 
 		// Test successful lookup
 		#[cfg(feature = "der")]
-		let oid = ObjectIdentifier::new("1.2.840.113549.1.1.1")?;
+		let oid = ObjectIdentifier::new(oids::RSA_ENCRYPTION)?;
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
-		let oid = crate::utils::parse_oid_string("1.2.840.113549.1.1.1")?;
+		let oid = crate::utils::parse_oid_string(oids::RSA_ENCRYPTION)?;
 
 		let result = lookup_by_object_identifier(&oid, &oid_db)?;
 		assert_eq!(result, "RSA");
@@ -654,8 +657,8 @@ mod tests {
 	#[test]
 	fn test_parse_oid_string() -> Result<(), Asn1Error> {
 		// Test successful parsing
-		let result = parse_oid_string("1.2.840.113549.1.1.1")?;
-		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
+		let result = parse_oid_string(oids::RSA_ENCRYPTION)?;
+		assert_eq!(result.to_string(), oids::RSA_ENCRYPTION);
 
 		// Test invalid OID format
 		let result = parse_oid_string("invalid.oid");
@@ -667,7 +670,7 @@ mod tests {
 	#[test]
 	fn test_validate_oid_format() -> Result<(), Asn1Error> {
 		// Test successful validation
-		let result = validate_oid_format("1.2.840.113549.1.1.1")?;
+		let result = validate_oid_format(oids::RSA_ENCRYPTION)?;
 		assert_eq!(result, vec![1, 2, 840, 113549, 1, 1, 1]);
 
 		// Test empty string

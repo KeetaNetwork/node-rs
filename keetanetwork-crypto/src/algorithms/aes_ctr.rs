@@ -196,26 +196,24 @@ mod tests {
 	crate::test_utils::test_aes_symmetric!(Aes128CtrCipher, 16, "AES-128-CTR");
 
 	#[test]
-	fn test_aes_128_ctr_with_iv() -> Result<(), CryptoError> {
+	fn test_aes_128_ctr_with_iv() {
 		let cipher = Aes128CtrCipher::new();
 		let key = [0x42u8; 16];
 		let iv = [0x12u8; 16];
 		let plaintext = b"Test with specific IV";
 
 		// Test encryption with specific IV
-		let ciphertext = cipher.encrypt_with_iv(key, iv, plaintext)?;
+		let ciphertext = cipher.encrypt_with_iv(key, iv, plaintext).unwrap();
 		assert_ne!(ciphertext.as_slice(), plaintext);
 		assert_eq!(ciphertext.len(), plaintext.len()); // CTR preserves length
 
 		// Test decryption with same IV
-		let decrypted = cipher.decrypt_with_iv(key, iv, &ciphertext)?;
+		let decrypted = cipher.decrypt_with_iv(key, iv, &ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
-
-		Ok(())
 	}
 
 	#[test]
-	fn test_aes_128_ctr_deterministic_with_same_iv() -> Result<(), CryptoError> {
+	fn test_aes_128_ctr_deterministic_with_same_iv() {
 		let cipher = Aes128CtrCipher::new();
 		let key = [0x42u8; 16];
 		let iv = [0x12u8; 16];
@@ -223,17 +221,15 @@ mod tests {
 
 		// Encrypt the same plaintext with the same IV twice
 		// Should be identical (deterministic with same key + IV)
-		let ciphertext1 = cipher.encrypt_with_iv(key, iv, plaintext)?;
-		let ciphertext2 = cipher.encrypt_with_iv(key, iv, plaintext)?;
+		let ciphertext1 = cipher.encrypt_with_iv(key, iv, plaintext).unwrap();
+		let ciphertext2 = cipher.encrypt_with_iv(key, iv, plaintext).unwrap();
 		assert_eq!(ciphertext1, ciphertext2);
 
 		// Both should decrypt correctly
-		let decrypted1 = cipher.decrypt_with_iv(key, iv, &ciphertext1)?;
-		let decrypted2 = cipher.decrypt_with_iv(key, iv, &ciphertext2)?;
+		let decrypted1 = cipher.decrypt_with_iv(key, iv, &ciphertext1).unwrap();
+		let decrypted2 = cipher.decrypt_with_iv(key, iv, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
-
-		Ok(())
 	}
 
 	#[test]
@@ -248,22 +244,20 @@ mod tests {
 	}
 
 	#[test]
-	fn test_aes_128_ctr_default_constructor() -> Result<(), CryptoError> {
+	fn test_aes_128_ctr_default_constructor() {
 		// This fixes coverage issues and ensures the default is covered
 		#[allow(clippy::default_constructed_unit_structs)]
 		let cipher = Aes128CtrCipher::default();
 		let key = [0x42u8; 16];
 		let plaintext = b"Default constructor test";
 
-		let ciphertext = cipher.encrypt(key, None, plaintext)?;
-		let decrypted = cipher.decrypt(key, &ciphertext)?;
+		let ciphertext = cipher.encrypt(key, None, plaintext).unwrap();
+		let decrypted = cipher.decrypt(key, &ciphertext).unwrap();
 		assert_eq!(decrypted, plaintext);
-
-		Ok(())
 	}
 
 	#[test]
-	fn test_aes_128_ctr_stream_property() -> Result<(), CryptoError> {
+	fn test_aes_128_ctr_stream_property() {
 		let cipher = Aes128CtrCipher::new();
 		let key = [0x42u8; 16];
 		let iv = [0x12u8; 16];
@@ -271,18 +265,16 @@ mod tests {
 		let plaintext1 = b"short";
 		let plaintext2 = b"a much longer plaintext message";
 
-		let ciphertext1 = cipher.encrypt_with_iv(key, iv, plaintext1)?;
-		let ciphertext2 = cipher.encrypt_with_iv(key, iv, plaintext2)?;
+		let ciphertext1 = cipher.encrypt_with_iv(key, iv, plaintext1).unwrap();
+		let ciphertext2 = cipher.encrypt_with_iv(key, iv, plaintext2).unwrap();
 		assert_eq!(ciphertext1.len(), plaintext1.len());
 		assert_eq!(ciphertext2.len(), plaintext2.len());
 
 		// Verify decryption works correctly
-		let decrypted1 = cipher.decrypt_with_iv(key, iv, &ciphertext1)?;
-		let decrypted2 = cipher.decrypt_with_iv(key, iv, &ciphertext2)?;
+		let decrypted1 = cipher.decrypt_with_iv(key, iv, &ciphertext1).unwrap();
+		let decrypted2 = cipher.decrypt_with_iv(key, iv, &ciphertext2).unwrap();
 		assert_eq!(decrypted1, plaintext1);
 		assert_eq!(decrypted2, plaintext2);
-
-		Ok(())
 	}
 
 	#[test]

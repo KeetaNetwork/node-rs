@@ -124,10 +124,7 @@ impl TryFrom<&[u8]> for Ed25519PrivateKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] = bytes
-			.try_into()
-			.map_err(|_| CryptoError::InvalidPrivateKey)?;
-
+		let bytes_array: [u8; ed25519_dalek::SECRET_KEY_LENGTH] = bytes.try_into()?;
 		let signing_key = SigningKey::from_bytes(&bytes_array);
 		Ok(Ed25519PrivateKey { inner: signing_key })
 	}
@@ -262,10 +259,7 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] = bytes
-			.try_into()
-			.map_err(|_| CryptoError::InvalidPublicKey)?;
-
+		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] = bytes.try_into()?;
 		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
 		Ok(Ed25519PublicKey { inner: verifying_key, bytes: bytes.to_vec() })
 	}
@@ -416,10 +410,7 @@ impl TryFrom<&[u8]> for X25519PrivateKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; 32] = bytes
-			.try_into()
-			.map_err(|_| CryptoError::InvalidPrivateKey)?;
-
+		let bytes_array: [u8; 32] = bytes.try_into()?;
 		let bytes = bytes_array.into_secret();
 		Ok(X25519PrivateKey { bytes })
 	}
@@ -881,19 +872,19 @@ mod tests {
 		let wrong_length_bytes = [0x01; 16]; // Wrong length
 		let result = Ed25519PublicKey::try_from(wrong_length_bytes.as_slice());
 		assert!(result.is_err());
-		assert!(matches!(result, Err(CryptoError::InvalidPublicKey)));
+		assert!(matches!(result, Err(CryptoError::InvalidKeySize)));
 
 		// Test with empty bytes
 		let empty_bytes = [];
 		let result = Ed25519PublicKey::try_from(empty_bytes.as_slice());
 		assert!(result.is_err());
-		assert!(matches!(result, Err(CryptoError::InvalidPublicKey)));
+		assert!(matches!(result, Err(CryptoError::InvalidKeySize)));
 
 		// Test with too long bytes
 		let too_long_bytes = [0x01; 64]; // Too long
 		let result = Ed25519PublicKey::try_from(too_long_bytes.as_slice());
 		assert!(result.is_err());
-		assert!(matches!(result, Err(CryptoError::InvalidPublicKey)));
+		assert!(matches!(result, Err(CryptoError::InvalidKeySize)));
 	}
 
 	#[test]

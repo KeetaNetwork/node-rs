@@ -390,11 +390,11 @@ mod tests {
 	fn test_object_identifier_ext_from_str() -> Result<(), Asn1Error> {
 		// Test valid OID strings
 		let valid_oids = [
-			("1.2.840.113549.1.1.1", vec![1, 2, 840, 113549, 1, 1, 1]), // RSA encryption
-			("1.3.101.112", vec![1, 3, 101, 112]),                      // Ed25519
-			("1.2.840.10045.3.1.7", vec![1, 2, 840, 10045, 3, 1, 7]),   // secp256r1
-			("1.3.132.0.10", vec![1, 3, 132, 0, 10]),                   // secp256k1
-			("1.2", vec![1, 2]),                                        // Simple OID
+			(oids::RSA_ENCRYPTION, vec![1, 2, 840, 113549, 1, 1, 1]),
+			(oids::ED25519, vec![1, 3, 101, 112]),
+			(oids::SECP256R1, vec![1, 2, 840, 10045, 3, 1, 7]),
+			(oids::SECP256K1, vec![1, 3, 132, 0, 10]),
+			("1.2", vec![1, 2]), // Simple OID (intentionally hardcoded)
 		];
 
 		for (oid_str, expected_arcs) in valid_oids {
@@ -425,7 +425,7 @@ mod tests {
 
 	#[test]
 	fn test_object_identifier_ext_from_str_with_as_ref() -> Result<(), Asn1Error> {
-		let oid_str = "1.3.101.112";
+		let oid_str = oids::ED25519;
 		let oid1 = ObjectIdentifier::from_str(oid_str)?;
 		let oid_string = oid_str.to_string();
 		let oid2 = ObjectIdentifier::from_str(&oid_string)?;

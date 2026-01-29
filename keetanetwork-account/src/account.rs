@@ -436,7 +436,7 @@ impl FromHex for IdentifierKey {
 	type Error = AccountError;
 
 	fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
-		let bytes = hex::decode(hex).map_err(|_| AccountError::InvalidConstruction)?;
+		let bytes = hex::decode(hex)?;
 		Self::try_from(bytes)
 	}
 }
@@ -1319,7 +1319,7 @@ impl FromHex for GenericAccount {
 	type Error = AccountError;
 
 	fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
-		let data = hex::decode(hex).map_err(|_| AccountError::InvalidConstruction)?;
+		let data = hex::decode(hex)?;
 		if data.is_empty() {
 			return Err(AccountError::InvalidConstruction);
 		}
@@ -2849,7 +2849,7 @@ macro_rules! impl_from_hex {
 			type Error = AccountError;
 
 			fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
-				let data = hex::decode(hex).map_err(|_| AccountError::InvalidConstruction)?;
+				let data = hex::decode(hex)?;
 				if data.len() < 2 {
 					return Err(AccountError::InvalidConstruction);
 				}
@@ -3926,6 +3926,7 @@ mod tests {
 				ed25519_account.keypair.to_public_key_string()?
 			);
 		}
+
 		Ok(())
 	}
 
@@ -4023,6 +4024,7 @@ mod tests {
 		// Test network -> token generation (should succeed)
 		let token_from_network = network_account.generate_identifier(KeyPairType::TOKEN, None, 0);
 		assert!(token_from_network.is_ok());
+
 		Ok(())
 	}
 
@@ -4524,6 +4526,7 @@ mod tests {
 		assert_eq!(network_account.to_string(), public_network.to_string());
 		assert_eq!(network_account.is_identifier(), public_network.is_identifier());
 		assert!(!public_network.has_private_key());
+
 		Ok(())
 	}
 
@@ -4582,6 +4585,7 @@ mod tests {
 				GenericAccount::Multisig(acc) => assert_eq!(acc.to_keypair_type(), KeyPairType::MULTISIG),
 			}
 		}
+
 		Ok(())
 	}
 

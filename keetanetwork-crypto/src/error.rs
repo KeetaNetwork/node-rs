@@ -63,6 +63,7 @@ pub enum CryptoError {
 impl_variant_error_from!(CryptoError, {
 	hkdf::InvalidLength => KeyDerivationFailed,
 	hkdf::InvalidPrkLength => KeyDerivationFailed,
+	core::array::TryFromSliceError => InvalidKeySize,
 });
 
 #[cfg(feature = "encryption")]
@@ -140,6 +141,13 @@ mod tests {
 		test_hkdf_error_conversions, CryptoError, [
 			hkdf::InvalidLength,
 			hkdf::InvalidPrkLength,
+		]
+	}
+
+	// Test From conversion for TryFromSliceError
+	test_error_from_conversions! {
+		test_try_from_slice_error_conversion, CryptoError, [
+			<[u8; 32]>::try_from([1u8, 2, 3].as_slice()).unwrap_err(),
 		]
 	}
 
