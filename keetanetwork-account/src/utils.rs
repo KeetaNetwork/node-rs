@@ -154,12 +154,13 @@ fn parse_public_key_hex(hex_key: &str) -> Result<(Vec<u8>, Algorithm), AccountEr
 
 #[cfg(test)]
 mod tests {
+	use crate::error::AccountError;
 	use keetanetwork_crypto::utils::{generate_random_passphrase, generate_random_seed, seed_from_passphrase};
 
 	use super::*;
 
 	#[test]
-	fn test_format_public_key_string() {
+	fn test_format_public_key_string() -> Result<(), AccountError> {
 		let test_cases = [
 			// Cryptographic key types
 			(Algorithm::Secp256k1.id(), vec![0x02; 33]),
@@ -173,11 +174,11 @@ mod tests {
 		];
 
 		for (key_type, test_data) in test_cases {
-			let result = format_public_key_string(&test_data, key_type).unwrap();
+			let result = format_public_key_string(&test_data, key_type)?;
 			assert!(result.starts_with("keeta_"));
 
 			// Verify we can parse it back
-			let (parsed_bytes, parsed_algorithm) = parse_public_key(&result).unwrap();
+			let (parsed_bytes, parsed_algorithm) = parse_public_key(&result)?;
 			// For identifier keys, the parsed bytes should be the normalized 32-byte version
 			if matches!(key_type, 2 | 3 | 4 | 7) {
 				assert_eq!(parsed_bytes.len(), 32, "Identifier keys should normalize to 32 bytes");
@@ -187,6 +188,8 @@ mod tests {
 				assert!(parsed_algorithm.is_some(), "Cryptographic keys should have an algorithm");
 			}
 		}
+
+		Ok(())
 	}
 
 	#[test]
@@ -204,20 +207,22 @@ mod tests {
 	}
 
 	#[test]
-	fn test_create_identifier_key() {
+	fn test_create_identifier_key() -> Result<(), AccountError> {
 		let seed_data = [1u8; 32];
 		let seed = seed_data.into_secret();
 		let index = 42;
 
-		let result = create_identifier_key(&seed, index).unwrap();
+		let result = create_identifier_key(&seed, index)?;
 		let (identifier, public_key) = result;
 		assert_eq!(identifier.len(), 64); // 32 bytes as hex = 64 chars
 		assert_eq!(public_key, identifier); // No prefix, raw identifier
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_generate_random_passphrase() {
-		let passphrase = generate_random_passphrase(None).unwrap();
+	fn test_generate_random_passphrase() -> Result<(), AccountError> {
+		let passphrase = generate_random_passphrase(None)?;
 		let passphrase = passphrase.expose_secret();
 		assert_eq!(passphrase.len(), 24);
 
@@ -225,26 +230,29 @@ mod tests {
 		for word in passphrase {
 			assert!(bip39_dict::ENGLISH.words.contains(&word.as_str()));
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_generate_random_seed() {
-		let seed = generate_random_seed().unwrap();
+	fn test_generate_random_seed() -> Result<(), AccountError> {
+		let seed = generate_random_seed()?;
 		let seed = seed.expose_secret();
 		assert_eq!(seed.len(), 32);
 		// Should not be all zeros (extremely unlikely)
 		assert_ne!(*seed, [0u8; 32]);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_seed_from_passphrase() {
+	fn test_seed_from_passphrase() -> Result<(), AccountError> {
 		let passphrase = "panic category office glow ski camera file slight room escape indicate fiction";
 
-		let seed = seed_from_passphrase(passphrase);
-		assert!(seed.is_ok());
-
-		let seed = seed.unwrap();
+		let seed = seed_from_passphrase(passphrase)?;
 		assert_eq!(seed.expose_secret().len(), 32);
+
+		Ok(())
 	}
 
 	#[test]
@@ -258,19 +266,21 @@ mod tests {
 	}
 
 	#[test]
-	fn test_checksum_validation() {
+	fn test_checksum_validation() -> Result<(), AccountError> {
 		let pubkey = vec![0x04; 33];
-		let mut formatted = format_public_key_string(&pubkey, Algorithm::Secp256k1.id()).unwrap();
+		let mut formatted = format_public_key_string(&pubkey, Algorithm::Secp256k1.id())?;
 
 		// Corrupt the last character (checksum)
 		formatted.pop();
 		formatted.push('x');
 
 		assert!(parse_public_key(&formatted).is_err());
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_hex_format_parsing() {
+	fn test_hex_format_parsing() -> Result<(), AccountError> {
 		let test_cases = [
 			(Algorithm::Secp256k1, vec![0x02; 33]),
 			(Algorithm::Ed25519, vec![0x03; 32]),
@@ -279,11 +289,13 @@ mod tests {
 
 		for (algorithm, pubkey) in test_cases {
 			// Test that base32 format works
-			let base32_formatted = format_public_key_string(&pubkey, algorithm.id()).unwrap();
-			let (parsed_pubkey, parsed_algorithm) = parse_public_key(&base32_formatted).unwrap();
+			let base32_formatted = format_public_key_string(&pubkey, algorithm.id())?;
+			let (parsed_pubkey, parsed_algorithm) = parse_public_key(&base32_formatted)?;
 			assert_eq!(pubkey, parsed_pubkey);
 			assert_eq!(Some(algorithm), parsed_algorithm);
 		}
+
+		Ok(())
 	}
 
 	#[test]

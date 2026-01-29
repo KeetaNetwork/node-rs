@@ -187,7 +187,7 @@ fn test_typescript_encryption_compatibility() -> Result<(), AccountError> {
 		// Decode base64 encrypted data
 		let encrypted_data = BASE64
 			.decode(test_case.encrypted_data_base64)
-			.expect("invariant: constant base64 test data");
+			.expect("constant base64 test data should decode");
 
 		// Try to decrypt TypeScript-encrypted data with Rust implementation
 		if let Ok(decrypted) = account.decrypt(&encrypted_data) {

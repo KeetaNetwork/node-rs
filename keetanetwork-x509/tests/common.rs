@@ -104,19 +104,19 @@ pub const TEST_ALGORITHMS: [Algorithm; 3] = [Algorithm::Ed25519, Algorithm::Secp
 pub fn test_moment() -> DateTime<Utc> {
 	Utc.timestamp_opt(CERT_MOMENT_TIMESTAMP, 0)
 		.single()
-		.expect("invariant: constant timestamp always produces valid DateTime")
+		.expect("constant timestamp should produce valid DateTime")
 }
 
 pub fn ca_certificate() -> Certificate {
 	CA_CERT_PEM
 		.parse()
-		.expect("invariant: constant PEM always parses successfully")
+		.expect("constant PEM should parse successfully")
 }
 
 pub fn user_certificate() -> Certificate {
 	USER_CERT_PEM
 		.parse()
-		.expect("invariant: constant PEM always parses successfully")
+		.expect("constant PEM should parse successfully")
 }
 
 /// Creates test public key bytes based on algorithm and index

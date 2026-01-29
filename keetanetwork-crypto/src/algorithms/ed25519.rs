@@ -624,6 +624,7 @@ mod tests {
 	use std::collections::HashMap;
 
 	use super::*;
+	use crate::error::CryptoError;
 	use x25519_dalek::PublicKey as DalekX25519PublicKey;
 
 	#[cfg(feature = "signature")]
@@ -650,16 +651,16 @@ mod tests {
 	crate::test_utils::test_der!(Ed25519Derivation, keetanetwork_asn1::oids::ED25519, "ed25519");
 
 	#[test]
-	fn test_ed25519_to_x25519_conversion() {
+	fn test_ed25519_to_x25519_conversion() -> Result<(), CryptoError> {
 		let seed = b"test seed for x25519 conversion!!!!!!".into_secret();
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed).unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed)?;
 
 		// Convert to X25519
-		let x25519_key = ed25519_key.to_x25519().unwrap();
+		let x25519_key = ed25519_key.to_x25519()?;
 		let x25519_public = x25519_key.derive_public_key();
 
 		// Test that conversion is deterministic
-		let x25519_key2 = ed25519_key.to_x25519().unwrap();
+		let x25519_key2 = ed25519_key.to_x25519()?;
 		assert_eq!(
 			SecretBox::<Vec<u8>>::from(&x25519_key).expose_secret(),
 			SecretBox::<Vec<u8>>::from(&x25519_key2).expose_secret()
@@ -667,14 +668,14 @@ mod tests {
 
 		// Test serialization roundtrip
 		let x25519_bytes = SecretBox::<Vec<u8>>::from(&x25519_key);
-		let recovered_x25519 = X25519PrivateKey::try_from(x25519_bytes.expose_secret().as_slice()).unwrap();
+		let recovered_x25519 = X25519PrivateKey::try_from(x25519_bytes.expose_secret().as_slice())?;
 		assert_eq!(
 			SecretBox::<Vec<u8>>::from(&x25519_key).expose_secret(),
 			SecretBox::<Vec<u8>>::from(&recovered_x25519).expose_secret()
 		);
 
 		let x25519_pub_bytes = Vec::<u8>::from(&x25519_public);
-		let recovered_x25519_pub = X25519PublicKey::try_from(x25519_pub_bytes.as_slice()).unwrap();
+		let recovered_x25519_pub = X25519PublicKey::try_from(x25519_pub_bytes.as_slice())?;
 		assert_eq!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&recovered_x25519_pub));
 
 		// Verify X25519 keys are different from Ed25519 keys
@@ -686,18 +687,20 @@ mod tests {
 		let ed25519_public_for_comparison = ed25519_key.as_public_key();
 
 		assert_ne!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&ed25519_public_for_comparison));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_ed25519_public_to_x25519_conversion() {
+	fn test_ed25519_public_to_x25519_conversion() -> Result<(), CryptoError> {
 		let seed = b"seed_for_testing_public_conversion!!";
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
 		let ed25519_public = ed25519_key.as_public_key();
 
 		// Convert Ed25519 public key directly to X25519 public key
-		let x25519_public_direct = ed25519_public.to_x25519().unwrap();
+		let x25519_public_direct = ed25519_public.to_x25519()?;
 		// Convert via private key for comparison
-		let x25519_private = ed25519_key.to_x25519().unwrap();
+		let x25519_private = ed25519_key.to_x25519()?;
 		let x25519_public_via_private = x25519_private.derive_public_key();
 
 		// Both conversions should work (they produce different results as expected)
@@ -707,20 +710,22 @@ mod tests {
 		// Both methods should produce valid 32-byte keys
 		assert_eq!(Vec::<u8>::from(&x25519_public_direct).len(), 32);
 		assert_eq!(Vec::<u8>::from(&x25519_public_via_private).len(), 32);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_x25519_diffie_hellman() {
+	fn test_x25519_diffie_hellman() -> Result<(), CryptoError> {
 		// Alice generates her keys
 		let alice_seed = b"alice_test_seed_for_diffie_hellman!";
-		let alice_ed25519 = Ed25519Derivation::derive_from_seed(alice_seed.into_secret()).unwrap();
-		let alice_x25519 = alice_ed25519.to_x25519().unwrap();
+		let alice_ed25519 = Ed25519Derivation::derive_from_seed(alice_seed.into_secret())?;
+		let alice_x25519 = alice_ed25519.to_x25519()?;
 		let alice_public = alice_x25519.derive_public_key();
 
 		// Bob generates his keys
 		let bob_seed = b"bob_test_seed_for_diffie_hellman!!!";
-		let bob_ed25519 = Ed25519Derivation::derive_from_seed(bob_seed.into_secret()).unwrap();
-		let bob_x25519 = bob_ed25519.to_x25519().unwrap();
+		let bob_ed25519 = Ed25519Derivation::derive_from_seed(bob_seed.into_secret())?;
+		let bob_x25519 = bob_ed25519.to_x25519()?;
 		let bob_public = bob_x25519.derive_public_key();
 
 		// Both parties compute the shared secret
@@ -739,37 +744,41 @@ mod tests {
 
 		// Verify that different key pairs produce different shared secrets
 		let charlie_seed = b"charlie_test_seed_different_result!";
-		let charlie_ed25519 = Ed25519Derivation::derive_from_seed(charlie_seed.into_secret()).unwrap();
-		let charlie_x25519 = charlie_ed25519.to_x25519().unwrap();
+		let charlie_ed25519 = Ed25519Derivation::derive_from_seed(charlie_seed.into_secret())?;
+		let charlie_x25519 = charlie_ed25519.to_x25519()?;
 		let charlie_public = charlie_x25519.derive_public_key();
 
 		let alice_charlie_shared = alice_x25519.diffie_hellman(&charlie_public);
 		assert_ne!(alice_shared, alice_charlie_shared);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_x25519_debug_formatting() {
+	fn test_x25519_debug_formatting() -> Result<(), CryptoError> {
 		let seed = b"test seed for x25519 debug format!!!";
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
-		let x25519_key = ed25519_key.to_x25519().unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
+		let x25519_key = ed25519_key.to_x25519()?;
 
 		// Test that Debug format hides the private key
 		let debug_string = format!("{x25519_key:?}");
 		assert!(debug_string.contains("X25519PrivateKey"));
 		assert!(debug_string.contains("[REDACTED]"));
 		// The debug format shows "bytes: [REDACTED]" which is correct for hiding the secret
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_x25519_serialization_round_trips() {
+	fn test_x25519_serialization_round_trips() -> Result<(), CryptoError> {
 		let seed = b"test seed for x25519 serialization!!!";
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
-		let x25519_private = ed25519_key.to_x25519().unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
+		let x25519_private = ed25519_key.to_x25519()?;
 		let x25519_public = x25519_private.derive_public_key();
 
 		// Test X25519PrivateKey TryFrom<&[u8]>
 		let x25519_bytes: SecretBox<Vec<u8>> = (&x25519_private).into();
-		let recovered_x25519_private = X25519PrivateKey::try_from(x25519_bytes.expose_secret().as_slice()).unwrap();
+		let recovered_x25519_private = X25519PrivateKey::try_from(x25519_bytes.expose_secret().as_slice())?;
 		assert_eq!(
 			SecretBox::<Vec<u8>>::from(&x25519_private).expose_secret(),
 			SecretBox::<Vec<u8>>::from(&recovered_x25519_private).expose_secret()
@@ -777,7 +786,7 @@ mod tests {
 
 		// Test X25519PublicKey TryFrom<&[u8]>
 		let x25519_pub_bytes: Vec<u8> = (&x25519_public).into();
-		let recovered_x25519_public = X25519PublicKey::try_from(x25519_pub_bytes.as_slice()).unwrap();
+		let recovered_x25519_public = X25519PublicKey::try_from(x25519_pub_bytes.as_slice())?;
 		assert_eq!(Vec::<u8>::from(&x25519_public), Vec::<u8>::from(&recovered_x25519_public));
 
 		// Test SecretBox From conversions for X25519PrivateKey
@@ -788,6 +797,8 @@ mod tests {
 		let public_vec_owned: Vec<u8> = x25519_public.into();
 		let public_vec_ref: Vec<u8> = (&x25519_public).into();
 		assert_eq!(public_vec_owned, public_vec_ref);
+
+		Ok(())
 	}
 
 	#[test]
@@ -810,14 +821,14 @@ mod tests {
 	}
 
 	#[test]
-	fn test_direct_x25519_key_operations() {
+	fn test_direct_x25519_key_operations() -> Result<(), CryptoError> {
 		// Create X25519 keys directly from bytes
 		let alice_private_bytes = [0x77; 32];
-		let alice_private = X25519PrivateKey::try_from(alice_private_bytes.as_slice()).unwrap();
+		let alice_private = X25519PrivateKey::try_from(alice_private_bytes.as_slice())?;
 		let alice_public = alice_private.derive_public_key();
 
 		let bob_private_bytes = [0x88; 32];
-		let bob_private = X25519PrivateKey::try_from(bob_private_bytes.as_slice()).unwrap();
+		let bob_private = X25519PrivateKey::try_from(bob_private_bytes.as_slice())?;
 		let bob_public = bob_private.derive_public_key();
 
 		// Test Diffie-Hellman
@@ -829,24 +840,28 @@ mod tests {
 		assert_eq!(alice_shared.len(), 32);
 		assert_eq!(Vec::<u8>::from(&alice_public).len(), 32);
 		assert_eq!(Vec::<u8>::from(&bob_public).len(), 32);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_x25519_owned_conversions() {
+	fn test_x25519_owned_conversions() -> Result<(), CryptoError> {
 		// Create X25519 private key to test owned conversions
 		let private_bytes = [0x42; 32];
-		let x25519_private = X25519PrivateKey::try_from(private_bytes.as_slice()).unwrap();
+		let x25519_private = X25519PrivateKey::try_from(private_bytes.as_slice())?;
 
 		// Test the From<X25519PrivateKey> for SecretBox<Vec<u8>> implementation (owned)
 		let secret_box_owned: SecretBox<Vec<u8>> = x25519_private.into();
 		assert_eq!(secret_box_owned.expose_secret().len(), 32);
 		assert_eq!(secret_box_owned.expose_secret(), &private_bytes.to_vec());
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_ed25519_public_key_uncompressed_bytes() {
+	fn test_ed25519_public_key_uncompressed_bytes() -> Result<(), CryptoError> {
 		let seed = b"test seed for ed25519 uncompressed bytes";
-		let private_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
+		let private_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
 		let public_key = private_key.as_public_key();
 
 		// Test to_uncompressed_bytes method
@@ -856,6 +871,8 @@ mod tests {
 		// Compare with regular Vec conversion
 		let regular_bytes: Vec<u8> = (&public_key).into();
 		assert_eq!(uncompressed, regular_bytes);
+
+		Ok(())
 	}
 
 	#[test]
@@ -864,64 +881,66 @@ mod tests {
 		let wrong_length_bytes = [0x01; 16]; // Wrong length
 		let result = Ed25519PublicKey::try_from(wrong_length_bytes.as_slice());
 		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidPublicKey));
+		assert!(matches!(result, Err(CryptoError::InvalidPublicKey)));
 
 		// Test with empty bytes
 		let empty_bytes = [];
 		let result = Ed25519PublicKey::try_from(empty_bytes.as_slice());
 		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidPublicKey));
+		assert!(matches!(result, Err(CryptoError::InvalidPublicKey)));
 
 		// Test with too long bytes
 		let too_long_bytes = [0x01; 64]; // Too long
 		let result = Ed25519PublicKey::try_from(too_long_bytes.as_slice());
 		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidPublicKey));
+		assert!(matches!(result, Err(CryptoError::InvalidPublicKey)));
 	}
 
 	#[test]
-	fn test_ed25519_to_x25519_public_conversion_edge_cases() {
+	fn test_ed25519_to_x25519_public_conversion_edge_cases() -> Result<(), CryptoError> {
 		let seed = b"test seed for ed25519 to x25519 public edge";
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
 		let ed25519_public = ed25519_key.as_public_key();
 
 		// Test that the conversion produces a valid X25519 public key
-		let x25519_public = ed25519_public.to_x25519().unwrap();
+		let x25519_public = ed25519_public.to_x25519()?;
 		let x25519_bytes: Vec<u8> = (&x25519_public).into();
 		assert_eq!(x25519_bytes.len(), 32);
 
 		// Test that conversion is deterministic
-		let x25519_public2 = ed25519_public.to_x25519().unwrap();
+		let x25519_public2 = ed25519_public.to_x25519()?;
 		let x25519_bytes2: Vec<u8> = (&x25519_public2).into();
 		assert_eq!(x25519_bytes, x25519_bytes2);
 
 		// Test that the conversion can be used for key agreement
 		let alice_seed = b"alice_seed_for_conversion_test!!!!!!";
-		let alice_ed25519 = Ed25519Derivation::derive_from_seed(alice_seed.into_secret()).unwrap();
-		let alice_x25519_from_ed25519 = alice_ed25519.to_x25519().unwrap();
+		let alice_ed25519 = Ed25519Derivation::derive_from_seed(alice_seed.into_secret())?;
+		let alice_x25519_from_ed25519 = alice_ed25519.to_x25519()?;
 		let alice_x25519_public = alice_x25519_from_ed25519.derive_public_key();
 
 		let bob_seed = b"bob_seed_for_conversion_test_here!!!";
-		let bob_ed25519 = Ed25519Derivation::derive_from_seed(bob_seed.into_secret()).unwrap();
-		let bob_x25519_from_ed25519 = bob_ed25519.to_x25519().unwrap();
+		let bob_ed25519 = Ed25519Derivation::derive_from_seed(bob_seed.into_secret())?;
+		let bob_x25519_from_ed25519 = bob_ed25519.to_x25519()?;
 		let bob_x25519_public = bob_x25519_from_ed25519.derive_public_key();
 
 		// Test ECDH between converted keys
 		let alice_shared = alice_x25519_from_ed25519.diffie_hellman(&bob_x25519_public);
 		let bob_shared = bob_x25519_from_ed25519.diffie_hellman(&alice_x25519_public);
 		assert_eq!(alice_shared, bob_shared);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_x25519_public_key_equality_and_hashing() {
+	fn test_x25519_public_key_equality_and_hashing() -> Result<(), CryptoError> {
 		let seed1 = b"test seed for x25519 equality test 1!";
 		let seed2 = b"test seed for x25519 equality test 2!";
 
-		let ed25519_key1 = Ed25519Derivation::derive_from_seed(seed1.into_secret()).unwrap();
-		let ed25519_key2 = Ed25519Derivation::derive_from_seed(seed2.into_secret()).unwrap();
+		let ed25519_key1 = Ed25519Derivation::derive_from_seed(seed1.into_secret())?;
+		let ed25519_key2 = Ed25519Derivation::derive_from_seed(seed2.into_secret())?;
 
-		let x25519_key1 = ed25519_key1.to_x25519().unwrap();
-		let x25519_key2 = ed25519_key2.to_x25519().unwrap();
+		let x25519_key1 = ed25519_key1.to_x25519()?;
+		let x25519_key2 = ed25519_key2.to_x25519()?;
 
 		let x25519_public1 = x25519_key1.derive_public_key();
 		let x25519_public2 = x25519_key2.derive_public_key();
@@ -939,13 +958,15 @@ mod tests {
 
 		// Test that the same key maps to the same value
 		assert_eq!(map.get(&x25519_public1_copy), Some(&"alice"));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_x25519_copy_and_clone_traits() {
+	fn test_x25519_copy_and_clone_traits() -> Result<(), CryptoError> {
 		let seed = b"test seed for x25519 copy clone traits!";
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
-		let x25519_key = ed25519_key.to_x25519().unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
+		let x25519_key = ed25519_key.to_x25519()?;
 		let x25519_public = x25519_key.derive_public_key();
 
 		// Test Copy trait for X25519PublicKey
@@ -962,6 +983,8 @@ mod tests {
 		let bytes_clone: Vec<u8> = x25519_public_clone.into();
 		assert_eq!(bytes_original, bytes_copy);
 		assert_eq!(bytes_original, bytes_clone);
+
+		Ok(())
 	}
 
 	#[test]
@@ -995,10 +1018,10 @@ mod tests {
 	}
 
 	#[test]
-	fn test_x25519_private_key_zeroize() {
+	fn test_x25519_private_key_zeroize() -> Result<(), CryptoError> {
 		let seed = b"test seed for x25519 zeroize test!!!";
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
-		let mut x25519_key = ed25519_key.to_x25519().unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
+		let mut x25519_key = ed25519_key.to_x25519()?;
 
 		// Get the bytes before zeroize
 		let original_bytes = SecretBox::<Vec<u8>>::from(&x25519_key);
@@ -1010,61 +1033,65 @@ mod tests {
 		// Verify the internal bytes are zeroed
 		let zeroed_bytes = SecretBox::<Vec<u8>>::from(&x25519_key);
 		assert_eq!(zeroed_bytes.expose_secret(), &vec![0u8; 32]);
+
+		Ok(())
 	}
 
 	#[cfg(feature = "encryption")]
 	#[test]
-	fn test_x25519_encrypt_decrypt() {
+	fn test_x25519_encrypt_decrypt() -> Result<(), CryptoError> {
 		let seed = b"test seed for x25519 encrypt decrypt!";
-		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret()).unwrap();
-		let x25519_private = ed25519_key.to_x25519().unwrap();
+		let ed25519_key = Ed25519Derivation::derive_from_seed(seed.into_secret())?;
+		let x25519_private = ed25519_key.to_x25519()?;
 		let x25519_public = x25519_private.derive_public_key();
 
 		let plaintext = b"X25519 ECIES encryption test message";
 
 		// Test encryption with X25519 private key (should delegate to public key)
-		let ciphertext_from_private = x25519_private.encrypt(plaintext).unwrap();
+		let ciphertext_from_private = x25519_private.encrypt(plaintext)?;
 		assert!(!ciphertext_from_private.is_empty());
 		assert_ne!(ciphertext_from_private.as_slice(), plaintext);
 
 		// Test encryption with X25519 public key directly
-		let ciphertext_from_public = x25519_public.encrypt(plaintext).unwrap();
+		let ciphertext_from_public = x25519_public.encrypt(plaintext)?;
 		assert!(!ciphertext_from_public.is_empty());
 		assert_ne!(ciphertext_from_public.as_slice(), plaintext);
 		// Both should be different due to ephemeral keys in ECIES
 		assert_ne!(ciphertext_from_private, ciphertext_from_public);
 
 		// Test decryption with X25519 private key
-		let decrypted_from_private = x25519_private.decrypt(&ciphertext_from_private).unwrap();
+		let decrypted_from_private = x25519_private.decrypt(&ciphertext_from_private)?;
 		assert_eq!(decrypted_from_private, plaintext);
 
-		let decrypted_from_public = x25519_private.decrypt(&ciphertext_from_public).unwrap();
+		let decrypted_from_public = x25519_private.decrypt(&ciphertext_from_public)?;
 		assert_eq!(decrypted_from_public, plaintext);
 
 		// Test that X25519 public key cannot decrypt
 		let decrypt_result1 = x25519_public.decrypt(&ciphertext_from_private);
 		assert!(decrypt_result1.is_err());
-		assert!(matches!(decrypt_result1.unwrap_err(), CryptoError::InvalidOperation));
+		assert!(matches!(decrypt_result1, Err(CryptoError::InvalidOperation)));
 
 		let decrypt_result2 = x25519_public.decrypt(&ciphertext_from_public);
 		assert!(decrypt_result2.is_err());
-		assert!(matches!(decrypt_result2.unwrap_err(), CryptoError::InvalidOperation));
+		assert!(matches!(decrypt_result2, Err(CryptoError::InvalidOperation)));
 
 		// Test cross-key encryption (different X25519 keys)
 		let bob_seed = b"bob_seed_for_x25519_encryption_test!";
-		let bob_ed25519 = Ed25519Derivation::derive_from_seed(bob_seed.into_secret()).unwrap();
-		let bob_x25519_private = bob_ed25519.to_x25519().unwrap();
+		let bob_ed25519 = Ed25519Derivation::derive_from_seed(bob_seed.into_secret())?;
+		let bob_x25519_private = bob_ed25519.to_x25519()?;
 		let bob_x25519_public = bob_x25519_private.derive_public_key();
 
 		// Encrypt with Bob's public key
-		let ciphertext_for_bob = bob_x25519_public.encrypt(plaintext).unwrap();
+		let ciphertext_for_bob = bob_x25519_public.encrypt(plaintext)?;
 
 		// Bob should be able to decrypt
-		let decrypted_by_bob = bob_x25519_private.decrypt(&ciphertext_for_bob).unwrap();
+		let decrypted_by_bob = bob_x25519_private.decrypt(&ciphertext_for_bob)?;
 		assert_eq!(decrypted_by_bob, plaintext);
 
 		// Original private key should NOT be able to decrypt Bob's message
 		let cross_decrypt_result = x25519_private.decrypt(&ciphertext_for_bob);
 		assert!(cross_decrypt_result.is_err());
+
+		Ok(())
 	}
 }

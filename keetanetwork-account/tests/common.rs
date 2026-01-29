@@ -130,10 +130,8 @@ pub const TEST_PRIVATE_ACCOUNT: PrivateAccountTestData = PrivateAccountTestData 
 /// Helper function to create a test seed array from the test data
 #[allow(dead_code)]
 pub fn create_test_seed_array() -> [u8; 32] {
-	let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).expect("invariant: constant hex seed");
-	seed_bytes
-		.try_into()
-		.expect("invariant: constant 32-byte seed")
+	let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).expect("constant hex seed should decode");
+	seed_bytes.try_into().expect("seed should be 32 bytes")
 }
 
 /// Helper function to create an account from seed for different key types

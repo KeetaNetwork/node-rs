@@ -33,7 +33,8 @@ use crate::serde::NameValuePair;
 ///     (oids::O, "Example Organization")
 /// ];
 ///
-/// let dn = create_dn(pairs).unwrap();
+/// let dn = create_dn(pairs)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<DistinguishedName, CertificateError> {
 	pairs
@@ -64,8 +65,9 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 ///
 /// let public_key_bytes = &[0x04, 0x01, 0x02, 0x03]; // Example public key
 ///
-/// let key_id = generate_key_identifier(public_key_bytes).unwrap();
+/// let key_id = generate_key_identifier(public_key_bytes)?;
 /// assert_eq!(key_id.len(), 32); // SHA-3-256 produces 32 bytes
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn generate_key_identifier<T: AsRef<[u8]>>(public_key_bytes: T) -> Result<Vec<u8>, CertificateError> {
 	let key_bytes = public_key_bytes.as_ref();
@@ -82,18 +84,21 @@ pub fn generate_key_identifier<T: AsRef<[u8]>>(public_key_bytes: T) -> Result<Ve
 ///
 /// ```rust
 /// # #[cfg(feature = "serde")]
-/// # {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use keetanetwork_x509::utils::{create_dn, dn_to_name_value_pairs};
 /// use keetanetwork_asn1::oids;
 ///
 /// let pairs = &[(oids::CN, "example.com"), (oids::O, "Example Org")];
-/// let dn = create_dn(pairs).unwrap();
+/// let dn = create_dn(pairs)?;
 /// let name_value_pairs = dn_to_name_value_pairs(&dn);
 ///
 /// assert_eq!(name_value_pairs.len(), 2);
 /// assert_eq!(name_value_pairs[0].name, "commonName");
 /// assert_eq!(name_value_pairs[0].value, "example.com");
+/// # Ok(())
 /// # }
+/// # #[cfg(not(feature = "serde"))]
+/// # fn main() {}
 /// ```
 #[cfg(feature = "serde")]
 pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
@@ -133,7 +138,7 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 ///
 /// ```rust
 /// # #[cfg(feature = "serde")]
-/// # {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use keetanetwork_x509::utils::name_value_pairs_to_dn;
 /// use keetanetwork_x509::serde::NameValuePair;
 ///
@@ -142,9 +147,12 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 ///     NameValuePair { name: "organizationName".to_string(), value: "Example Org".to_string() },
 /// ];
 ///
-/// let dn = name_value_pairs_to_dn(&pairs).unwrap();
+/// let dn = name_value_pairs_to_dn(&pairs)?;
 /// assert_eq!(dn.0.len(), 2);
+/// # Ok(())
 /// # }
+/// # #[cfg(not(feature = "serde"))]
+/// # fn main() {}
 /// ```
 #[cfg(feature = "serde")]
 pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedName, CertificateError> {
@@ -188,8 +196,9 @@ pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedNa
 /// let extension_bytes = &[0x04, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 ///                         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14];
 ///
-/// let key_id = parse_key_identifier(extension_bytes).unwrap();
+/// let key_id = parse_key_identifier(extension_bytes).ok_or("invalid key identifier")?;
 /// assert_eq!(key_id.len(), 20);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>> {
 	// Subject Key Identifier is an OCTET STRING
@@ -213,8 +222,9 @@ pub fn parse_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>> {
 /// let extension_bytes = &[0x30, 0x16, 0x80, 0x14, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 ///                         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14];
 ///
-/// let key_id = parse_authority_key_identifier(extension_bytes).unwrap();
+/// let key_id = parse_authority_key_identifier(extension_bytes).ok_or("invalid authority key id")?;
 /// assert_eq!(key_id.len(), 20);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_authority_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>> {
 	let mut reader = SliceReader::new(bytes.as_ref()).ok()?;
@@ -262,11 +272,12 @@ pub fn parse_authority_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>
 /// use keetanetwork_asn1::oids;
 ///
 /// let pairs = &[(oids::CN, "example.com"), (oids::O, "Example Org")];
-/// let dn = create_dn(pairs).unwrap();
+/// let dn = create_dn(pairs)?;
 ///
 /// let dn_string = dn_to_string(&dn);
 /// assert!(dn_string.contains("example.com"));
 /// assert!(dn_string.contains("Example Org"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn dn_to_string(dn: &DistinguishedName) -> String {
 	dn.0.iter()
@@ -295,15 +306,16 @@ pub fn dn_to_string(dn: &DistinguishedName) -> String {
 ///
 /// // Short form: SEQUENCE with 5 bytes of content
 /// let short_form = &[0x30, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05];
-/// let (content_len, header_len) = parse_der_length(short_form).unwrap();
+/// let (content_len, header_len) = parse_der_length(short_form).ok_or("invalid DER")?;
 /// assert_eq!(content_len, 5);
 /// assert_eq!(header_len, 2);
 ///
 /// // Long form: SEQUENCE with 256 bytes of content
 /// let long_form = &[0x30, 0x82, 0x01, 0x00]; // 0x82 = long form with 2 bytes, 0x0100 = 256
-/// let (content_len, header_len) = parse_der_length(long_form).unwrap();
+/// let (content_len, header_len) = parse_der_length(long_form).ok_or("invalid DER")?;
 /// assert_eq!(content_len, 256);
 /// assert_eq!(header_len, 4);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_der_length(data: impl AsRef<[u8]>) -> Option<(usize, usize)> {
 	let data = data.as_ref();
@@ -720,10 +732,11 @@ pub fn verify_ecdsa_signature(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::error::CertificateError;
 	use keetanetwork_asn1::oids;
 
 	#[test]
-	fn test_create_dn() {
+	fn test_create_dn() -> Result<(), CertificateError> {
 		// Test cases: (input_pairs, expected_length, should_succeed)
 		let test_cases = [
 			// Valid cases
@@ -748,27 +761,33 @@ mod tests {
 			let result = create_dn(pairs);
 
 			if should_succeed {
-				let dn = result.unwrap();
+				let dn = result?;
 				assert_eq!(dn.0.len(), expected_len, "Failed for pairs: {pairs:?}");
 
 				// Verify each attribute is correctly stored
 				for (i, (expected_oid, expected_value)) in pairs.iter().enumerate() {
 					let rdn = &dn.0[i];
 					// Access the first attribute using iterator
-					let attr = rdn.0.iter().next().unwrap();
+					let attr = rdn
+						.0
+						.iter()
+						.next()
+						.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
 					assert_eq!(attr.oid.to_string(), *expected_oid);
 
-					let ia5_string: Ia5String = attr.value.decode_as().unwrap();
+					let ia5_string: Ia5String = attr.value.decode_as()?;
 					assert_eq!(ia5_string.as_str(), *expected_value);
 				}
 			} else {
 				assert!(result.is_err(), "Expected error for pairs: {pairs:?}");
 			}
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_dn_to_string() {
+	fn test_dn_to_string() -> Result<(), CertificateError> {
 		// Test cases: (input_pairs, expected_contains, should_not_contain)
 		let test_cases = [
 			// Empty DN
@@ -798,7 +817,7 @@ mod tests {
 			let dn = if pairs.is_empty() {
 				RdnSequence(Vec::new())
 			} else {
-				create_dn(pairs).unwrap()
+				create_dn(pairs)?
 			};
 
 			let dn_string = dn_to_string(&dn);
@@ -811,6 +830,8 @@ mod tests {
 				assert!(!dn_string.contains(unexpected), "DN string '{dn_string}' should not contain '{unexpected}'");
 			}
 		}
+
+		Ok(())
 	}
 
 	#[test]
@@ -948,7 +969,7 @@ mod tests {
 
 	#[test]
 	#[cfg(feature = "serde")]
-	fn test_dn_to_name_value_pairs() {
+	fn test_dn_to_name_value_pairs() -> Result<(), CertificateError> {
 		// Test with empty DN
 		let empty_dn: DistinguishedName = RdnSequence(Vec::new());
 		let empty_pairs = dn_to_name_value_pairs(&empty_dn);
@@ -956,7 +977,7 @@ mod tests {
 
 		// Test with single attribute
 		let single_dn_pairs = &[(oids::CN, "example.com")];
-		let single_dn = create_dn(single_dn_pairs).unwrap();
+		let single_dn = create_dn(single_dn_pairs)?;
 		let single_pairs = dn_to_name_value_pairs(&single_dn);
 		assert_eq!(single_pairs.len(), 1);
 		assert_eq!(single_pairs[0].name, "commonName");
@@ -972,7 +993,7 @@ mod tests {
 			(oids::ST, "California"),
 			(oids::EMAIL_ADDRESS, "admin@example.com"), // Email
 		];
-		let multi_dn = create_dn(multi_dn_pairs).unwrap();
+		let multi_dn = create_dn(multi_dn_pairs)?;
 		let multi_pairs = dn_to_name_value_pairs(&multi_dn);
 		assert_eq!(multi_pairs.len(), 7);
 
@@ -995,32 +1016,38 @@ mod tests {
 
 		// Test with unknown OID (should keep original OID string)
 		let unknown_oid_pairs = &[("1.2.3.4.5", "unknown_value")];
-		let unknown_dn = create_dn(unknown_oid_pairs).unwrap();
+		let unknown_dn = create_dn(unknown_oid_pairs)?;
 		let unknown_pairs = dn_to_name_value_pairs(&unknown_dn);
 		assert_eq!(unknown_pairs.len(), 1);
 		assert_eq!(unknown_pairs[0].name, "1.2.3.4.5");
 		assert_eq!(unknown_pairs[0].value, "unknown_value");
+
+		Ok(())
 	}
 
 	#[test]
 	#[cfg(feature = "serde")]
-	fn test_name_value_pairs_to_dn() {
+	fn test_name_value_pairs_to_dn() -> Result<(), CertificateError> {
 		// Test with empty pairs
 		let empty_pairs: Vec<NameValuePair> = vec![];
-		let empty_dn = name_value_pairs_to_dn(&empty_pairs).unwrap();
+		let empty_dn = name_value_pairs_to_dn(&empty_pairs)?;
 		assert_eq!(empty_dn.0.len(), 0);
 
 		// Test with single pair using common name
 		let single_pairs = vec![NameValuePair { name: "commonName".to_string(), value: "example.com".to_string() }];
-		let single_dn = name_value_pairs_to_dn(&single_pairs).unwrap();
+		let single_dn = name_value_pairs_to_dn(&single_pairs)?;
 		assert_eq!(single_dn.0.len(), 1);
 
 		let rdn = &single_dn.0[0];
 		// Access the first attribute using iterator
-		let attr = rdn.0.iter().next().unwrap();
+		let attr = rdn
+			.0
+			.iter()
+			.next()
+			.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
 		assert_eq!(attr.oid.to_string(), oids::CN);
 
-		let ia5_string: Ia5String = attr.value.decode_as().unwrap();
+		let ia5_string: Ia5String = attr.value.decode_as()?;
 		assert_eq!(ia5_string.as_str(), "example.com");
 
 		// Test with multiple pairs using both common names and short forms
@@ -1034,7 +1061,7 @@ mod tests {
 			NameValuePair { name: "emailAddress".to_string(), value: "admin@example.com".to_string() },
 		];
 
-		let multi_dn = name_value_pairs_to_dn(&multi_pairs).unwrap();
+		let multi_dn = name_value_pairs_to_dn(&multi_pairs)?;
 		assert_eq!(multi_dn.0.len(), 7);
 
 		// Verify each attribute
@@ -1050,34 +1077,44 @@ mod tests {
 		for (i, (expected_oid, expected_value)) in expected.iter().enumerate() {
 			let rdn = &multi_dn.0[i];
 			// Access the first attribute using iterator
-			let attr = rdn.0.iter().next().unwrap();
+			let attr = rdn
+				.0
+				.iter()
+				.next()
+				.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
 			assert_eq!(attr.oid.to_string(), *expected_oid);
 
-			let ia5_string: Ia5String = attr.value.decode_as().unwrap();
+			let ia5_string: Ia5String = attr.value.decode_as()?;
 			assert_eq!(ia5_string.as_str(), *expected_value);
 		}
 
 		// Test with direct OID
 		let oid_pairs = vec![NameValuePair { name: oids::CN.to_string(), value: "direct_oid.com".to_string() }];
-		let oid_dn = name_value_pairs_to_dn(&oid_pairs).unwrap();
+		let oid_dn = name_value_pairs_to_dn(&oid_pairs)?;
 		assert_eq!(oid_dn.0.len(), 1);
 
 		let rdn = &oid_dn.0[0];
-		let attr = rdn.0.iter().next().unwrap();
+		let attr = rdn
+			.0
+			.iter()
+			.next()
+			.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
 		assert_eq!(attr.oid.to_string(), oids::CN);
 
-		let ia5_string: Ia5String = attr.value.decode_as().unwrap();
+		let ia5_string: Ia5String = attr.value.decode_as()?;
 		assert_eq!(ia5_string.as_str(), "direct_oid.com");
 
 		// Test with invalid OID
 		let invalid_pairs = vec![NameValuePair { name: "invalid.oid".to_string(), value: "value".to_string() }];
 		let result = name_value_pairs_to_dn(&invalid_pairs);
 		assert!(result.is_err());
+
+		Ok(())
 	}
 
 	#[test]
 	#[cfg(feature = "serde")]
-	fn test_dn_roundtrip() {
+	fn test_dn_roundtrip() -> Result<(), CertificateError> {
 		// Test roundtrip conversion: DN -> name-value pairs -> DN
 		let original_pairs = &[
 			(oids::CN, "example.com"),
@@ -1087,9 +1124,9 @@ mod tests {
 		];
 
 		// Should have same number of attributes
-		let original_dn = create_dn(original_pairs).unwrap();
+		let original_dn = create_dn(original_pairs)?;
 		let name_value_pairs = dn_to_name_value_pairs(&original_dn);
-		let reconstructed_dn = name_value_pairs_to_dn(&name_value_pairs).unwrap();
+		let reconstructed_dn = name_value_pairs_to_dn(&name_value_pairs)?;
 		assert_eq!(original_dn.0.len(), reconstructed_dn.0.len());
 
 		// Each attribute should match
@@ -1100,10 +1137,12 @@ mod tests {
 				assert_eq!(original_attr.value.value(), reconstructed_attr.value.value());
 			}
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_der_to_raw_signature() {
+	fn test_der_to_raw_signature() -> Result<(), CertificateError> {
 		// Test with valid DER signature (minimal valid structure)
 		// This represents: SEQUENCE { INTEGER r (32 bytes), INTEGER s (32 bytes) }
 		let valid_der = vec![
@@ -1116,7 +1155,7 @@ mod tests {
 			0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40,
 		];
 
-		let result = der_to_raw_signature(&valid_der).unwrap();
+		let result = der_to_raw_signature(&valid_der)?;
 		assert_eq!(result.len(), 64);
 
 		// Verify r and s values are correctly extracted
@@ -1136,11 +1175,13 @@ mod tests {
 		assert!(der_to_raw_signature([]).is_err()); // Empty
 		assert!(der_to_raw_signature([0x31, 0x44]).is_err()); // Wrong tag
 		assert!(der_to_raw_signature([0x30, 0x02]).is_err()); // Too short
+
+		Ok(())
 	}
 
 	#[test]
 	#[cfg(any(feature = "der", feature = "rasn"))]
-	fn test_raw_to_der_signature() {
+	fn test_raw_to_der_signature() -> Result<(), CertificateError> {
 		// Test with valid 64-byte raw signature
 		let mut raw_sig = [0u8; 64];
 		// Set up r and s components with known values
@@ -1150,12 +1191,12 @@ mod tests {
 		raw_sig[63] = 0x40; // s ends with 0x40
 
 		// DER signature should start with SEQUENCE tag
-		let der_result = raw_to_der_signature(&raw_sig).unwrap();
+		let der_result = raw_to_der_signature(&raw_sig)?;
 		assert_eq!(der_result[0], 0x30);
 		assert!(der_result.len() > 64);
 
 		// Verify we can convert it back to the original raw signature
-		let round_trip = der_to_raw_signature(&der_result).unwrap();
+		let round_trip = der_to_raw_signature(&der_result)?;
 		assert_eq!(round_trip, raw_sig);
 
 		// Test with signature that needs MSB padding (high bit set)
@@ -1163,11 +1204,11 @@ mod tests {
 		high_bit_sig[0] = 0x80; // r starts with high bit set
 		high_bit_sig[32] = 0xFF; // s starts with high bit set
 
-		let der_result = raw_to_der_signature(&high_bit_sig).unwrap();
+		let der_result = raw_to_der_signature(&high_bit_sig)?;
 		assert_eq!(der_result[0], 0x30); // SEQUENCE tag
 
 		// Should handle MSB padding correctly
-		let round_trip = der_to_raw_signature(&der_result).unwrap();
+		let round_trip = der_to_raw_signature(&der_result)?;
 		assert_eq!(round_trip, high_bit_sig);
 
 		// Test error cases
@@ -1176,10 +1217,12 @@ mod tests {
 		assert!(raw_to_der_signature(&[0u8; 96]).is_err()); // Too long (96 bytes)
 		assert!(raw_to_der_signature(&[0u8; 63]).is_err()); // Almost correct length
 		assert!(raw_to_der_signature(&[0u8; 65]).is_err()); // Almost correct length
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_verify_ed25519_signature() {
+	fn test_verify_ed25519_signature() -> Result<(), CertificateError> {
 		let tbs_der = b"test data to sign";
 		let test_cases = [
 			// Invalid signature lengths (should return Ok(false))
@@ -1202,13 +1245,15 @@ mod tests {
 			let result = verify_ed25519_signature(&public_key_bytes, &signature_bytes, tbs_der);
 			match expected {
 				Ok(expected_bool) => {
-					assert_eq!(result.unwrap(), expected_bool);
+					assert_eq!(result?, expected_bool);
 				}
 				Err(_) => {
 					assert!(result.is_err());
 				}
 			}
 		}
+
+		Ok(())
 	}
 
 	#[test]
@@ -1240,7 +1285,7 @@ mod tests {
 					let result = $curve_fn(&public_key_bytes, signature_bytes, tbs_der);
 
 					if *should_error {
-						assert!(result.is_err() || result.unwrap() == false);
+						assert!(result.is_err() || matches!(result, Ok(false)));
 					} else {
 						assert!(result.is_ok());
 					}

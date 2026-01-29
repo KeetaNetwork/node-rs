@@ -204,7 +204,7 @@
 //!     account_clone.verify(message, &[0u8; 64], None)
 //! });
 //!
-//! handle.join().unwrap();
+//! let _ = handle.join();
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -741,7 +741,7 @@ pub trait KeyPair: AccountSigner + AccountVerifier + Send + Sync + TryFrom<Keyab
 	/// ```
 	fn to_public_key_string(&self) -> Result<String, AccountError> {
 		let key_type_value = self.to_keypair_type() as u8;
-		Ok(format_public_key_string(self.to_public_key(), key_type_value)?)
+		format_public_key_string(self.to_public_key(), key_type_value)
 	}
 
 	/// Returns the key pair type for this instance.
@@ -2520,36 +2520,29 @@ macro_rules! impl_crypto_key_try_from {
 
 			fn try_from(input: Keyable) -> Result<Self, AccountError> {
 				// Helper closure to derive keys from seed
-				let derive_from_seed = |seed: SecretBox<[u8; 32]>,
-				                        index: u32|
-				 -> Result<(Option<$private_key_type>, String), AccountError> {
-					let any_private_key = $key_type::seed_to_private_key(&seed, index)?;
-					let public_key_string = $key_type::derive_public_key_string(&any_private_key)?;
+				let derive_from_seed =
+					|seed: SecretBox<[u8; 32]>, index: u32| -> Result<($private_key_type, String), AccountError> {
+						let any_private_key = $key_type::seed_to_private_key(&seed, index)?;
+						let public_key_string = $key_type::derive_public_key_string(&any_private_key)?;
 
-					if let AnyPrivateKey::$any_private_key_variant(key) = any_private_key {
-						Ok((Some(key), public_key_string))
-					} else {
-						Err(AccountError::InvalidKeyType)
-					}
-				};
+						if let AnyPrivateKey::$any_private_key_variant(key) = any_private_key {
+							Ok((key, public_key_string))
+						} else {
+							Err(AccountError::InvalidKeyType)
+						}
+					};
 
 				match input {
 					Keyable::Passphrase((passphrase, index)) => {
 						let seed = seed_from_passphrase(&passphrase.expose_secret().join(" "))?;
 						let (private_key, _) = derive_from_seed(seed, index)?;
-						let public_key = private_key
-							.as_ref()
-							.expect("invariant: private_key set by derive_from_seed")
-							.as_public_key();
-						Ok($key_type { private_key, public_key })
+						let public_key = private_key.as_public_key();
+						Ok($key_type { private_key: Some(private_key), public_key })
 					}
 					Keyable::Seed((seed, index)) => {
 						let (private_key, _) = derive_from_seed(seed, index)?;
-						let public_key = private_key
-							.as_ref()
-							.expect("invariant: private_key set by derive_from_seed")
-							.as_public_key();
-						Ok($key_type { private_key, public_key })
+						let public_key = private_key.as_public_key();
+						Ok($key_type { private_key: Some(private_key), public_key })
 					}
 					Keyable::HexSeed((seed, index)) => {
 						let decoded = hex::decode(seed.expose_secret())?;
@@ -2559,11 +2552,8 @@ macro_rules! impl_crypto_key_try_from {
 
 						let seed = bytes.into_secret();
 						let (private_key, _) = derive_from_seed(seed, index)?;
-						let public_key = private_key
-							.as_ref()
-							.expect("invariant: private_key set by derive_from_seed")
-							.as_public_key();
-						Ok($key_type { private_key, public_key })
+						let public_key = private_key.as_public_key();
+						Ok($key_type { private_key: Some(private_key), public_key })
 					}
 					Keyable::PublicKeyString(public_key_string) => {
 						// Validate the prefix first

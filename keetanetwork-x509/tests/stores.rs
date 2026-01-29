@@ -8,7 +8,7 @@ use common::*;
 fn create_trusted_ca_bundle() -> CertificateBundle {
 	let ca_cert = ca_certificate();
 	CertificateBundle::try_from(vec![ca_cert])
-		.expect("invariant: test CA certificate always creates valid bundle")
+		.expect("test CA certificate should create valid bundle")
 		.as_trusted()
 }
 
@@ -16,7 +16,7 @@ fn create_trusted_ca_bundle() -> CertificateBundle {
 fn create_untrusted_user_bundle() -> CertificateBundle {
 	let user_cert = user_certificate();
 	CertificateBundle::try_from(vec![user_cert])
-		.expect("invariant: test user certificate always creates valid bundle")
+		.expect("test user certificate should create valid bundle")
 		.as_untrusted()
 }
 
@@ -27,7 +27,7 @@ fn create_user_bundle_with_ca_store() -> CertificateBundle {
 	let chain = vec![user_cert, ca_cert];
 
 	CertificateBundle::try_from(chain)
-		.expect("invariant: test certificate chain always creates valid bundle")
+		.expect("test certificate chain should create valid bundle")
 		.as_trusted()
 }
 

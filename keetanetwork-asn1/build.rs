@@ -511,7 +511,7 @@ use rasn::types::ObjectIdentifier;
 	}
 
 	ensure_single_newline_ending(&mut generated_code);
-	fs::write(&dest_path, generated_code).unwrap();
+	fs::write(&dest_path, generated_code).expect("OUT_DIR must be writable during build");
 }
 
 fn update_generated_rs_with_from_imp(filename: &str) {
@@ -833,7 +833,11 @@ fn camel_to_snake_upper(s: &str) -> String {
 		if c.is_uppercase() && !result.is_empty() {
 			result.push('_');
 		}
-		result.push(c.to_uppercase().next().unwrap());
+		result.push(
+			c.to_uppercase()
+				.next()
+				.expect("ASCII char must have uppercase"),
+		);
 	}
 
 	result
@@ -845,7 +849,12 @@ fn camel_to_pascal_case(s: &str) -> String {
 	let mut chars = s.chars();
 
 	if let Some(first_char) = chars.next() {
-		result.push(first_char.to_uppercase().next().unwrap());
+		result.push(
+			first_char
+				.to_uppercase()
+				.next()
+				.expect("ASCII char must have uppercase"),
+		);
 		for c in chars {
 			result.push(c);
 		}

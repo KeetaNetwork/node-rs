@@ -2,18 +2,18 @@
 //!
 //! This module defines commonly used OIDs for cryptographic algorithms.
 
-// Algorithm identifiers
+// Algorithm identifiers (string format for backwards compatibility)
 pub const RSA_ENCRYPTION: &str = "1.2.840.113549.1.1.1";
 pub const SHA256_WITH_RSA: &str = "1.2.840.113549.1.1.11";
 pub const EC_PUBLIC_KEY: &str = "1.2.840.10045.2.1";
 pub const ECDSA_WITH_SHA256: &str = "1.2.840.10045.4.3.2";
 pub const ECDSA_WITH_SHA3_256: &str = "2.16.840.1.101.3.4.3.10";
 
-// Elliptic curve identifiers
+// Elliptic curve identifiers (string format for backwards compatibility)
 pub const SECP256R1: &str = "1.2.840.10045.3.1.7";
 pub const SECP256K1: &str = "1.3.132.0.10";
 
-// EdDSA identifiers
+// EdDSA identifiers (string format for backwards compatibility)
 pub const ED25519: &str = "1.3.101.112";
 
 // Extensions
@@ -41,6 +41,23 @@ pub const ST: &str = "2.5.4.8";
 pub const L: &str = "2.5.4.7";
 pub const EMAIL_ADDRESS: &str = "1.2.840.113549.1.9.1";
 
-// Include the generated OIDs from build.rs
+/// Typed OID constants for the `der` backend.
+#[cfg(feature = "der")]
+pub mod typed {
+	use der::oid::ObjectIdentifier;
+
+	/// NIST P-256 elliptic curve (secp256r1)
+	pub const SECP256R1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
+	/// Bitcoin elliptic curve (secp256k1)
+	pub const SECP256K1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.132.0.10");
+	/// Ed25519 signature algorithm
+	pub const ED25519: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.101.112");
+	/// EC Public Key algorithm identifier
+	pub const EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+	/// ECDSA with SHA-256 signature algorithm
+	pub const ECDSA_WITH_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
+}
+
+// Include the generated OIDs from build.rs for rasn backend
 #[cfg(all(feature = "rasn", not(feature = "der")))]
 include!("../generated/oids.rs");

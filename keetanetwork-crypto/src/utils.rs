@@ -225,7 +225,7 @@ pub fn create_keypair_from_seed(
 ///
 /// ```rust
 /// # #[cfg(any(feature = "der", feature = "rasn"))]
-/// # {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use keetanetwork_crypto::utils::parse_der_ecdsa_signature;
 ///
 /// // Example DER-encoded ECDSA signature (minimal valid structure)
@@ -243,10 +243,13 @@ pub fn create_keypair_from_seed(
 ///     0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,
 /// ];
 ///
-/// let (r, s) = parse_der_ecdsa_signature(der_sig).unwrap();
+/// let (r, s) = parse_der_ecdsa_signature(der_sig)?;
 /// assert_eq!(r.len(), 32);
 /// assert_eq!(s.len(), 32);
+/// # Ok(())
 /// # }
+/// # #[cfg(not(any(feature = "der", feature = "rasn")))]
+/// # fn main() {}
 /// ```
 #[cfg(any(feature = "der", feature = "rasn"))]
 pub fn parse_der_ecdsa_signature(der_bytes: &[u8]) -> Result<([u8; 32], [u8; 32]), CryptoError> {
@@ -404,26 +407,26 @@ mod tests {
 	use crate::prelude::{Algorithm, ExposeSecret, IntoSecret};
 
 	#[test]
-	fn test_seed_from_passphrase() {
+	fn test_seed_from_passphrase() -> Result<(), CryptoError> {
 		let passphrase = "panic category office glow ski camera file slight room escape indicate fiction";
 
 		let seed = seed_from_passphrase(passphrase);
 		assert!(seed.is_ok());
 
-		let seed = seed.unwrap();
+		let seed = seed?;
 		assert_eq!(seed.expose_secret().len(), 32);
 
 		// Test with passphrase shorter than MIN_PASSPHRASE_LENGTH (60 characters)
 		let short_passphrase = "short"; // Only 5 characters
 		let result = seed_from_passphrase(short_passphrase);
 		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidLength { .. }));
+		assert!(matches!(result, Err(CryptoError::InvalidLength { .. })));
 
 		// Test with passphrase that's just under the limit
 		let almost_long_passphrase = "a".repeat(59); // 59 characters, 1 under limit
 		let result = seed_from_passphrase(&almost_long_passphrase);
 		assert!(result.is_err());
-		assert!(matches!(result.unwrap_err(), CryptoError::InvalidLength { .. }));
+		assert!(matches!(result, Err(CryptoError::InvalidLength { .. })));
 
 		// Test with passphrase that meets the minimum length
 		let min_length_passphrase = "a".repeat(60); // Exactly 60 characters
@@ -436,14 +439,16 @@ mod tests {
 		let normalized_passphrase = "paniccategoryofficeglowskicamerafileslightroomescapeindicatefiction";
 
 		// Both should produce the same result
-		let seed1 = seed_from_passphrase(passphrase_with_spaces).unwrap();
-		let seed2 = seed_from_passphrase(normalized_passphrase).unwrap();
+		let seed1 = seed_from_passphrase(passphrase_with_spaces)?;
+		let seed2 = seed_from_passphrase(normalized_passphrase)?;
 		assert_eq!(seed1.expose_secret(), seed2.expose_secret());
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_generate_random_passphrase() {
-		let passphrase = generate_random_passphrase(None).unwrap();
+	fn test_generate_random_passphrase() -> Result<(), CryptoError> {
+		let passphrase = generate_random_passphrase(None)?;
 		let passphrase = passphrase.expose_secret();
 		assert_eq!(passphrase.len(), 24);
 
@@ -451,55 +456,61 @@ mod tests {
 		for word in passphrase {
 			assert!(bip39_dict::ENGLISH.words.contains(&word.as_str()));
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_generate_random_seed() {
-		let seed = generate_random_seed().unwrap();
+	fn test_generate_random_seed() -> Result<(), CryptoError> {
+		let seed = generate_random_seed()?;
 		let seed = seed.expose_secret();
 
 		assert_eq!(seed.len(), 32);
 		// Should not be all zeros (extremely unlikely)
 		assert_ne!(*seed, [0u8; 32]);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_generate_random_bytes() {
+	fn test_generate_random_bytes() -> Result<(), CryptoError> {
 		// Test 16-byte generation
-		let bytes16 = generate_random_bytes::<16>().unwrap();
+		let bytes16 = generate_random_bytes::<16>()?;
 		assert_eq!(bytes16.len(), 16);
 		assert_ne!(bytes16, [0u8; 16]); // Should not be all zeros
 
 		// Test 32-byte generation
-		let bytes32 = generate_random_bytes::<32>().unwrap();
+		let bytes32 = generate_random_bytes::<32>()?;
 		assert_eq!(bytes32.len(), 32);
 		assert_ne!(bytes32, [0u8; 32]); // Should not be all zeros
 
 		// Test that multiple calls produce different results
-		let bytes1 = generate_random_bytes::<16>().unwrap();
-		let bytes2 = generate_random_bytes::<16>().unwrap();
+		let bytes1 = generate_random_bytes::<16>()?;
+		let bytes2 = generate_random_bytes::<16>()?;
 		assert_ne!(bytes1, bytes2); // Should be different
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_create_keypair_from_seed() {
+	fn test_create_keypair_from_seed() -> Result<(), CryptoError> {
 		let seed = b"test seed for keypair creation!!!!!";
 
 		// Test secp256k1 creation
-		let (private_key, public_key) =
-			create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Secp256k1).unwrap();
+		let (private_key, public_key) = create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Secp256k1)?;
 		assert_eq!(Algorithm::from(&private_key), Algorithm::Secp256k1);
 		assert_eq!(Algorithm::from(&public_key), Algorithm::Secp256k1);
 
 		// Test Ed25519 creation
-		let (private_key, public_key) =
-			create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Ed25519).unwrap();
+		let (private_key, public_key) = create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Ed25519)?;
 		assert_eq!(Algorithm::from(&private_key), Algorithm::Ed25519);
 		assert_eq!(Algorithm::from(&public_key), Algorithm::Ed25519);
 
 		// Test unsupported algorithm
 		let result = create_keypair_from_seed(seed.to_vec().into_secret(), Algorithm::Secp256r1);
 		assert!(result.is_err());
+
+		Ok(())
 	}
 
 	#[test]
@@ -511,7 +522,7 @@ mod tests {
 
 	#[test]
 	#[cfg(any(feature = "der", feature = "rasn"))]
-	fn test_parse_der_ecdsa_signature() {
+	fn test_parse_der_ecdsa_signature() -> Result<(), CryptoError> {
 		// Valid DER-encoded ECDSA signature
 		let valid_der = [
 			0x30, 0x44, // SEQUENCE, length 68
@@ -526,7 +537,7 @@ mod tests {
 		let result = parse_der_ecdsa_signature(&valid_der);
 		assert!(result.is_ok());
 
-		let (r, s) = result.unwrap();
+		let (r, s) = result?;
 		assert_eq!(r.len(), 32);
 		assert_eq!(s.len(), 32);
 
@@ -535,11 +546,13 @@ mod tests {
 		assert_eq!(r[31], 0x20);
 		assert_eq!(s[0], 0x21);
 		assert_eq!(s[31], 0x40);
+
+		Ok(())
 	}
 
 	#[test]
 	#[cfg(any(feature = "der", feature = "rasn"))]
-	fn test_encode_ecdsa_signature_to_der() {
+	fn test_encode_ecdsa_signature_to_der() -> Result<(), CryptoError> {
 		// Test with simple values
 		let r = [0x01u8; 32];
 		let s = [0x02u8; 32];
@@ -549,7 +562,7 @@ mod tests {
 		assert_eq!(der_encoded[0], 0x30);
 
 		// Parse it back to verify round-trip
-		let (parsed_r, parsed_s) = parse_der_ecdsa_signature(&der_encoded).unwrap();
+		let (parsed_r, parsed_s) = parse_der_ecdsa_signature(&der_encoded)?;
 		assert_eq!(parsed_r, r);
 		assert_eq!(parsed_s, s);
 
@@ -564,7 +577,7 @@ mod tests {
 		];
 
 		let der_encoded2 = encode_ecdsa_signature_to_der(&r_with_zeros, &s_with_zeros);
-		let (parsed_r2, parsed_s2) = parse_der_ecdsa_signature(&der_encoded2).unwrap();
+		let (parsed_r2, parsed_s2) = parse_der_ecdsa_signature(&der_encoded2)?;
 		assert_eq!(parsed_r2, r_with_zeros);
 		assert_eq!(parsed_s2, s_with_zeros);
 
@@ -573,9 +586,11 @@ mod tests {
 		let s_msb_set = [0xFFu8; 32];
 
 		let der_encoded3 = encode_ecdsa_signature_to_der(&r_msb_set, &s_msb_set);
-		let (parsed_r3, parsed_s3) = parse_der_ecdsa_signature(&der_encoded3).unwrap();
+		let (parsed_r3, parsed_s3) = parse_der_ecdsa_signature(&der_encoded3)?;
 		assert_eq!(parsed_r3, r_msb_set);
 		assert_eq!(parsed_s3, s_msb_set);
+
+		Ok(())
 	}
 
 	#[test]

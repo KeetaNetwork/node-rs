@@ -400,6 +400,7 @@ pub fn get_oid_json() -> String {
 #[cfg(all(test, feature = "serde"))]
 mod tests {
 	use super::*;
+	use crate::error::Asn1Error;
 	use serde_json;
 
 	// Test data constants
@@ -529,15 +530,19 @@ mod tests {
 	macro_rules! test_serialize_output {
 		($($create_fn:expr, $serialize_fn:ident => $expected:expr),+ $(,)?) => {
 			#[test]
-			fn test_serialize_outputs() {
+			fn test_serialize_outputs() -> Result<(), Box<dyn core::error::Error>> {
 				$(
 					let value = $create_fn;
 					let mut serialized_output = Vec::new();
 					let mut serializer = serde_json::Serializer::new(&mut serialized_output);
-					$serialize_fn(&value, &mut serializer).unwrap();
-					let serialized = String::from_utf8(serialized_output).unwrap();
+
+					$serialize_fn(&value, &mut serializer)?;
+
+					let serialized = String::from_utf8(serialized_output)?;
 					assert_eq!(serialized, $expected);
 				)+
+
+				Ok(())
 			}
 		};
 	}
@@ -545,33 +550,33 @@ mod tests {
 	test_serialize_output!(
 		{
 			#[cfg(feature = "der")]
-			{ OctetString::new([]).unwrap() }
+			{ OctetString::new([])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ OctetString::from_slice(&[]) }
 		}, serialize_octet_string => r#""""#,
 		{
 			#[cfg(feature = "der")]
-			{ BitString::from_bytes(&[]).unwrap() }
+			{ BitString::from_bytes(&[])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ BitString::from_vec(vec![]) }
 		}, serialize_bit_string => r#""""#,
 		{
 			#[cfg(feature = "der")]
-			{ OctetString::new([0xAB, 0xCD, 0xEF]).unwrap() }
+			{ OctetString::new([0xAB, 0xCD, 0xEF])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ OctetString::from_slice(&[0xAB, 0xCD, 0xEF]) }
 		}, serialize_octet_string => r#""abcdef""#,
 		{
 			#[cfg(feature = "der")]
-			{ BitString::from_bytes(&[0xFF, 0x00]).unwrap() }
+			{ BitString::from_bytes(&[0xFF, 0x00])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ BitString::from_vec(vec![0xFF, 0x00]) }
 		}, serialize_bit_string => r#""ff00""#,
 		{
 			#[cfg(feature = "der")]
-			{ ObjectIdentifier::new("1.2.3.4.5").unwrap() }
+			{ ObjectIdentifier::new("1.2.3.4.5")? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
-			{ crate::utils::parse_oid_string("1.2.3.4.5").unwrap() }
+			{ crate::utils::parse_oid_string("1.2.3.4.5")? }
 		}, serialize_oid => r#""1.2.3.4.5""#,
 	);
 
@@ -586,11 +591,11 @@ mod tests {
 	}
 
 	#[test]
-	fn test_get_oid() {
+	fn test_get_oid() -> Result<(), Asn1Error> {
 		let oid_db = get_test_oid_db();
 
 		// Test successful lookup
-		let result = get_oid("RSA", &oid_db).unwrap();
+		let result = get_oid("RSA", &oid_db)?;
 		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
 
 		// Test unknown algorithm
@@ -602,59 +607,67 @@ mod tests {
 		invalid_oid_db.insert("InvalidOID", "invalid.oid.format");
 		let result = get_oid("InvalidOID", &invalid_oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_lookup_by_oid() {
+	fn test_lookup_by_oid() -> Result<(), Asn1Error> {
 		let oid_db = get_test_oid_db();
 
 		// Test successful lookup
-		let result = lookup_by_oid("1.2.840.113549.1.1.1", &oid_db).unwrap();
+		let result = lookup_by_oid("1.2.840.113549.1.1.1", &oid_db)?;
 		assert_eq!(result, "RSA");
 
 		// Test unknown OID (using a valid but non-existent OID)
 		let result = lookup_by_oid("1.2.3.4.5.6.7", &oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_lookup_by_object_identifier() {
+	fn test_lookup_by_object_identifier() -> Result<(), Asn1Error> {
 		let oid_db = get_test_oid_db();
 
 		// Test successful lookup
 		#[cfg(feature = "der")]
-		let oid = ObjectIdentifier::new("1.2.840.113549.1.1.1").unwrap();
+		let oid = ObjectIdentifier::new("1.2.840.113549.1.1.1")?;
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
-		let oid = crate::utils::parse_oid_string("1.2.840.113549.1.1.1").unwrap();
+		let oid = crate::utils::parse_oid_string("1.2.840.113549.1.1.1")?;
 
-		let result = lookup_by_object_identifier(&oid, &oid_db).unwrap();
+		let result = lookup_by_object_identifier(&oid, &oid_db)?;
 		assert_eq!(result, "RSA");
 
 		// Test unknown OID (using a valid but non-existent OID)
 		#[cfg(feature = "der")]
-		let unknown_oid = ObjectIdentifier::new("1.2.3.4.5.6.7").unwrap();
+		let unknown_oid = ObjectIdentifier::new("1.2.3.4.5.6.7")?;
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
-		let unknown_oid = crate::utils::parse_oid_string("1.2.3.4.5.6.7").unwrap();
+		let unknown_oid = crate::utils::parse_oid_string("1.2.3.4.5.6.7")?;
 
 		let result = lookup_by_object_identifier(&unknown_oid, &oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_parse_oid_string() {
+	fn test_parse_oid_string() -> Result<(), Asn1Error> {
 		// Test successful parsing
-		let result = parse_oid_string("1.2.840.113549.1.1.1").unwrap();
+		let result = parse_oid_string("1.2.840.113549.1.1.1")?;
 		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
 
 		// Test invalid OID format
 		let result = parse_oid_string("invalid.oid");
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_validate_oid_format() {
+	fn test_validate_oid_format() -> Result<(), Asn1Error> {
 		// Test successful validation
-		let result = validate_oid_format("1.2.840.113549.1.1.1").unwrap();
+		let result = validate_oid_format("1.2.840.113549.1.1.1")?;
 		assert_eq!(result, vec![1, 2, 840, 113549, 1, 1, 1]);
 
 		// Test empty string
@@ -664,15 +677,19 @@ mod tests {
 		// Test invalid component
 		let result = validate_oid_format("1.invalid.3");
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_get_oid_json() {
+	fn test_get_oid_json() -> Result<(), Box<dyn core::error::Error>> {
 		let json_content = get_oid_json();
 		assert!(!json_content.is_empty());
 
 		// Verify it's valid JSON
-		let parsed: serde_json::Value = serde_json::from_str(&json_content).unwrap();
+		let parsed: serde_json::Value = serde_json::from_str(&json_content)?;
 		assert!(parsed.is_object());
+
+		Ok(())
 	}
 }

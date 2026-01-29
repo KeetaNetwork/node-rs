@@ -154,7 +154,11 @@ pub fn compile_asn1_directory_with_full_config(config: &Asn1CompileConfig) -> Re
 			asn1_module_name_to_import_name(&asn1_module_name)
 		} else {
 			// Fallback to filename if we can't extract the module name
-			asn_file.file_stem().unwrap().to_string_lossy().to_string()
+			asn_file
+				.file_stem()
+				.expect("ASN file must have a stem")
+				.to_string_lossy()
+				.to_string()
 		};
 
 		let output_file = Path::new(&config.out_dir).join(format!("{module_name}.rs"));
@@ -210,10 +214,11 @@ pub fn compile_asn1_directory_with_full_config(config: &Asn1CompileConfig) -> Re
 
 	// Generate the generated.rs file - use provided path or default to src/generated.rs
 	let default_generated_path = Path::new("src").join("generated.rs");
-	let generated_path = config
-		.generated_rs_path
-		.as_deref()
-		.unwrap_or(default_generated_path.to_str().unwrap());
+	let generated_path = config.generated_rs_path.as_deref().unwrap_or(
+		default_generated_path
+			.to_str()
+			.expect("OUT_DIR path must be valid UTF-8"),
+	);
 	generate_generated_rs(&generated_modules, generated_path, &config.out_dir, config)?;
 
 	// Run clippy fixes if enabled
@@ -440,8 +445,12 @@ pub fn add_lint_suppressions(code: &str) -> String {
 /// Calculate relative path from one directory to another
 fn calculate_relative_path(from: &Path, to: &Path) -> String {
 	// Convert both paths to absolute paths for easier comparison
-	let from_absolute = std::env::current_dir().unwrap().join(from);
-	let to_absolute = std::env::current_dir().unwrap().join(to);
+	let from_absolute = std::env::current_dir()
+		.expect("current_dir must exist during build")
+		.join(from);
+	let to_absolute = std::env::current_dir()
+		.expect("current_dir must exist during build")
+		.join(to);
 	// Get the components of both paths
 	let from_components: Vec<_> = from_absolute.components().collect();
 	let to_components: Vec<_> = to_absolute.components().collect();
