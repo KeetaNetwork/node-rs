@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::Path;
 
@@ -6,16 +7,25 @@ use serde_json::Value;
 use keetanetwork_utils::build::{compile_asn1_directory_with_full_config, Asn1CompileConfig};
 
 fn main() {
+	// Get OUT_DIR for generated files (required by cargo for publishable crates)
+	let out_dir = env::var("OUT_DIR").expect("OUT_DIR must be set by cargo");
+	let generated_dir = Path::new(&out_dir).join("generated");
+
 	// Ensure the generated directory exists
-	fs::create_dir_all("generated").expect("Failed to create generated directory");
+	fs::create_dir_all(&generated_dir).expect("Failed to create generated directory");
+
+	let generated_dir_str = generated_dir
+		.to_str()
+		.expect("OUT_DIR path must be valid UTF-8");
 
 	// Generate OID schema tokens
 	generate_schema();
 	// Generate OIDs from JSON
-	generate_oids_from_json("generated");
+	generate_oids_from_json(generated_dir_str);
 
-	let config = Asn1CompileConfig::new("asn1", "generated")
-		.with_generated_rs_path("src/generated.rs")
+	// Use OUT_DIR includes pattern for cargo publish compatibility
+	let config = Asn1CompileConfig::new("asn1", generated_dir_str)
+		.with_out_dir_includes(true)
 		.with_strip_prebuilt_methods(true)
 		.with_methods_to_strip("algorithm_identifier_definitions", vec!["new"])
 		.with_methods_to_strip("subject_public_key_info_definitions", vec!["new"])
@@ -26,7 +36,7 @@ fn main() {
 	}
 
 	// Generate From implementations for wrapper types
-	generate_from_implementations("generated");
+	generate_from_implementations(generated_dir_str);
 }
 
 fn generate_sequence_fields_with_context_tags(
@@ -514,47 +524,6 @@ use rasn::types::ObjectIdentifier;
 	fs::write(&dest_path, generated_code).expect("OUT_DIR must be writable during build");
 }
 
-fn update_generated_rs_with_from_imp(filename: &str) {
-	let module = filename.replace(".rs", "");
-	let generated_rs_path = Path::new("src/generated.rs");
-	let current_content = fs::read_to_string(generated_rs_path).expect("Failed to read generated.rs");
-	if current_content.contains("mod from_imp;") {
-		return; // Already updated
-	}
-
-	// Find the insertion point
-	let lines: Vec<&str> = current_content.lines().collect();
-	let mut updated_lines = Vec::new();
-	let mut inserted = false;
-
-	for line in lines {
-		// Insert before the first re-export line (which starts with "// Re-export" or "pub use")
-		if (line.starts_with("// Re-export") || line.starts_with("pub use")) && !inserted {
-			updated_lines.push(format!("#[path = \"../generated/{filename}\"]"));
-			updated_lines.push(format!("mod {module};"));
-			updated_lines.push("".to_string()); // Add empty line before re-exports
-			inserted = true;
-		}
-
-		updated_lines.push(line.to_string());
-	}
-
-	// If we didn't find re-exports, append at the end
-	if !inserted {
-		updated_lines.push("".to_string());
-		updated_lines.push(format!("#[path = \"generated/{filename}\"]"));
-		updated_lines.push(format!("mod {module};"));
-	}
-
-	// Write the updated content back
-	let mut updated_content = updated_lines.join("\n");
-
-	// Ensure proper file ending
-	ensure_single_newline_ending(&mut updated_content);
-
-	fs::write(generated_rs_path, updated_content).expect("Failed to update generated.rs");
-}
-
 #[derive(Debug)]
 struct TypeMapping {
 	asn1_type: &'static str,
@@ -808,9 +777,6 @@ use crate::generated::iso20022::*;
 
 	ensure_single_newline_ending(&mut generated_code);
 	fs::write(&dest_path, generated_code).unwrap_or_else(|_| panic!("Failed to write {filename}"));
-
-	// Update generated.rs to include this module
-	update_generated_rs_with_from_imp(filename);
 }
 
 fn format_oid_array(value: &Value) -> String {

@@ -60,4 +60,4 @@ pub mod typed {
 
 // Include the generated OIDs from build.rs for rasn backend
 #[cfg(all(feature = "rasn", not(feature = "der")))]
-include!("../generated/oids.rs");
+include!(concat!(env!("OUT_DIR"), "/generated/oids.rs"));
