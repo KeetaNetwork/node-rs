@@ -40,13 +40,11 @@ impl Aes128CtrCipher {
 	}
 
 	/// Generate a random IV for CTR mode
-	pub fn generate_iv() -> [u8; 16] {
+	pub fn generate_iv() -> Result<[u8; 16], CryptoError> {
 		let mut iv = [0u8; 16];
-		OsRng
-			.try_fill_bytes(&mut iv)
-			.expect("Failed to generate random IV");
+		OsRng.try_fill_bytes(&mut iv)?;
 
-		iv
+		Ok(iv)
 	}
 
 	/// Encrypt data with a provided IV.
@@ -146,7 +144,7 @@ impl SymmetricEncryption for Aes128CtrCipher {
 				iv_array.copy_from_slice(iv_slice);
 				iv_array
 			}
-			None => Self::generate_iv(),
+			None => Self::generate_iv()?,
 		};
 
 		// Encrypt with the IV
@@ -235,13 +233,14 @@ mod tests {
 	}
 
 	#[test]
-	fn test_aes_128_ctr_iv_generation() {
+	fn test_aes_128_ctr_iv_generation() -> Result<(), CryptoError> {
 		// Test that IV generation produces different values
-		let iv1 = Aes128CtrCipher::generate_iv();
-		let iv2 = Aes128CtrCipher::generate_iv();
+		let iv1 = Aes128CtrCipher::generate_iv()?;
+		let iv2 = Aes128CtrCipher::generate_iv()?;
 		assert_ne!(iv1, iv2);
 		assert_eq!(iv1.len(), 16);
 		assert_eq!(iv2.len(), 16);
+		Ok(())
 	}
 
 	#[test]

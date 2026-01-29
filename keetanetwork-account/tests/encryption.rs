@@ -1,52 +1,57 @@
 //! Integration tests for encryption and decryption operations.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use keetanetwork_account::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyPairType};
+use keetanetwork_account::{AccountError, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyPairType};
 use keetanetwork_crypto::algorithms::Algorithm;
 
 mod common;
 use common::*;
 
 #[test]
-fn test_encryption_round_trip_operations() {
+fn test_encryption_round_trip_operations() -> Result<(), AccountError> {
 	let plaintext = b"Hello, encryption world!";
 
 	fn test_encryption_round_trip_for_account<T>(
 		account: &keetanetwork_account::Account<T>,
 		plaintext: &[u8],
 		name: &str,
-	) where
+	) -> Result<(), AccountError>
+	where
 		T: keetanetwork_account::KeyPair,
 	{
-		let encrypted = account.encrypt(plaintext).unwrap();
-		let decrypted = account.decrypt(&encrypted).unwrap();
+		let encrypted = account.encrypt(plaintext)?;
+		let decrypted = account.decrypt(&encrypted)?;
 		assert_eq!(plaintext, decrypted.as_slice(), "{name}: Decrypted data should match original plaintext");
 
 		// Verify encryption produces different output each time (should be non-deterministic)
-		let encrypted2 = account.encrypt(plaintext).unwrap();
+		let encrypted2 = account.encrypt(plaintext)?;
 		assert_ne!(encrypted, encrypted2, "{name}: Encryption should produce different output each time");
 
 		// But both should decrypt to the same plaintext
-		let decrypted2 = account.decrypt(&encrypted2).unwrap();
+		let decrypted2 = account.decrypt(&encrypted2)?;
 		assert_eq!(plaintext, decrypted2.as_slice(), "{name}: Second decryption should match original plaintext");
+
+		Ok(())
 	}
 
 	// Test SECP256K1
-	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
-	test_encryption_round_trip_for_account(&account, plaintext, "SECP256K1");
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0)?;
+	test_encryption_round_trip_for_account(&account, plaintext, "SECP256K1")?;
 
 	// Test ED25519
-	let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, 0);
-	test_encryption_round_trip_for_account(&account, plaintext, "ED25519");
+	let account = create_account_from_seed::<KeyED25519>(KeyPairType::ED25519, 0)?;
+	test_encryption_round_trip_for_account(&account, plaintext, "ED25519")?;
 
 	// Test SECP256R1
-	let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, 0);
-	test_encryption_round_trip_for_account(&account, plaintext, "SECP256R1");
+	let account = create_account_from_seed::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, 0)?;
+	test_encryption_round_trip_for_account(&account, plaintext, "SECP256R1")?;
+
+	Ok(())
 }
 
 #[test]
-fn test_encryption_message_sizes() {
-	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
+fn test_encryption_message_sizes() -> Result<(), AccountError> {
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0)?;
 
 	// Test various message sizes
 	let test_messages = [
@@ -59,8 +64,8 @@ fn test_encryption_message_sizes() {
 	];
 
 	for (i, message) in test_messages.iter().enumerate() {
-		let encrypted = account.encrypt(message).unwrap();
-		let decrypted = account.decrypt(&encrypted).unwrap();
+		let encrypted = account.encrypt(message)?;
+		let decrypted = account.decrypt(&encrypted)?;
 		assert_eq!(message, &decrypted, "Message {i} failed round-trip");
 
 		// Verify encrypted data is different from original
@@ -71,12 +76,14 @@ fn test_encryption_message_sizes() {
 			"Encrypted data should differ from plaintext for message {i}"
 		);
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_encryption_error_cases() {
+fn test_encryption_error_cases() -> Result<(), AccountError> {
 	// Test with an account that supports encryption but with invalid data
-	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0)?;
 
 	// Decryption with invalid data should fail
 	let decrypt_result = account.decrypt([1, 2, 3, 4]);
@@ -84,12 +91,14 @@ fn test_encryption_error_cases() {
 
 	let decrypt_result = account.decrypt([]);
 	assert!(decrypt_result.is_err(), "Decryption should fail with empty data");
+
+	Ok(())
 }
 
 /// Test decryption with invalid data
 #[test]
-fn test_decryption_invalid_data() {
-	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
+fn test_decryption_invalid_data() -> Result<(), AccountError> {
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0)?;
 
 	// Test various invalid encrypted data
 	let invalid_data_cases = [
@@ -104,18 +113,20 @@ fn test_decryption_invalid_data() {
 		let decrypt_result = account.decrypt(invalid_data);
 		assert!(decrypt_result.is_err(), "Decryption should fail with invalid data case {i}");
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_encryption_nondeterministic() {
-	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0);
+fn test_encryption_nondeterministic() -> Result<(), AccountError> {
+	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0)?;
 
 	let message = b"Test message for determinism check";
 	let mut encryptions = Vec::new();
 
 	// Create multiple encryptions of the same message
 	for _ in 0..5 {
-		let encrypted = account.encrypt(message).unwrap();
+		let encrypted = account.encrypt(message)?;
 		encryptions.push(encrypted);
 	}
 
@@ -128,13 +139,15 @@ fn test_encryption_nondeterministic() {
 
 	// All should decrypt to the same original message
 	for (i, encrypted) in encryptions.iter().enumerate() {
-		let decrypted = account.decrypt(encrypted).unwrap();
+		let decrypted = account.decrypt(encrypted)?;
 		assert_eq!(message, decrypted.as_slice(), "Decryption {i} should match original");
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_typescript_encryption_compatibility() {
+fn test_typescript_encryption_compatibility() -> Result<(), AccountError> {
 	// Test data from TypeScript implementation - these encrypted values were
 	// generated using the same seed and keys as the TypeScript tests
 	let test_seed = "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D";
@@ -164,14 +177,17 @@ fn test_typescript_encryption_compatibility() {
 	];
 
 	// Helper function to test encryption compatibility for a specific account type
-	fn test_account_encryption<T>(test_case: &EncryptionTestCase, account: &keetanetwork_account::Account<T>)
+	fn test_account_encryption<T>(
+		test_case: &EncryptionTestCase,
+		account: &keetanetwork_account::Account<T>,
+	) -> Result<(), AccountError>
 	where
 		T: keetanetwork_account::KeyPair,
 	{
 		// Decode base64 encrypted data
 		let encrypted_data = BASE64
 			.decode(test_case.encrypted_data_base64)
-			.unwrap_or_else(|_| panic!("{:?}: Failed to decode base64", test_case.algorithm));
+			.expect("invariant: constant base64 test data");
 
 		// Try to decrypt TypeScript-encrypted data with Rust implementation
 		if let Ok(decrypted) = account.decrypt(&encrypted_data) {
@@ -184,12 +200,8 @@ fn test_typescript_encryption_compatibility() {
 		}
 
 		// Test round-trip: encrypt and verify we can decrypt
-		let rust_encrypted = account
-			.encrypt(test_case.expected_plaintext)
-			.unwrap_or_else(|_| panic!("{:?}: Rust encryption failed", test_case.algorithm));
-		let rust_decrypted = account
-			.decrypt(&rust_encrypted)
-			.unwrap_or_else(|_| panic!("{:?}: Rust decryption failed", test_case.algorithm));
+		let rust_encrypted = account.encrypt(test_case.expected_plaintext)?;
+		let rust_decrypted = account.decrypt(&rust_encrypted)?;
 
 		assert_eq!(
 			rust_decrypted.as_slice(),
@@ -197,6 +209,8 @@ fn test_typescript_encryption_compatibility() {
 			"{:?}: Rust round-trip failed",
 			test_case.algorithm
 		);
+
+		Ok(())
 	}
 
 	// Test each algorithm
@@ -204,18 +218,20 @@ fn test_typescript_encryption_compatibility() {
 		match test_case.algorithm {
 			Algorithm::Secp256k1 => {
 				let account =
-					create_account_from_seed_hex::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, test_seed, 0);
-				test_account_encryption(test_case, &account);
+					create_account_from_seed_hex::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, test_seed, 0)?;
+				test_account_encryption(test_case, &account)?;
 			}
 			Algorithm::Ed25519 => {
-				let account = create_account_from_seed_hex::<KeyED25519>(KeyPairType::ED25519, test_seed, 0);
-				test_account_encryption(test_case, &account);
+				let account = create_account_from_seed_hex::<KeyED25519>(KeyPairType::ED25519, test_seed, 0)?;
+				test_account_encryption(test_case, &account)?;
 			}
 			Algorithm::Secp256r1 => {
 				let account =
-					create_account_from_seed_hex::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, test_seed, 0);
-				test_account_encryption(test_case, &account);
+					create_account_from_seed_hex::<KeyECDSASECP256R1>(KeyPairType::ECDSASECP256R1, test_seed, 0)?;
+				test_account_encryption(test_case, &account)?;
 			}
 		}
 	}
+
+	Ok(())
 }

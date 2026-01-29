@@ -358,6 +358,29 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push('\n');
 	}
 
+	// Generate crypto OID constants in a typed module to avoid conflicts with string constants
+	if let Some(crypto) = oids["crypto"].as_object() {
+		generated_code.push_str("/// Typed OID constants for the rasn backend.\n");
+		generated_code.push_str("/// These are const-evaluated at compile time, avoiding runtime panics.\n");
+		generated_code.push_str("pub mod typed {\n");
+		generated_code.push_str("    use super::*;\n\n");
+		for (name, crypto_info) in crypto {
+			if let Some(oid_array) = crypto_info["oid"].as_array() {
+				let const_name = name.to_uppercase().replace('-', "_");
+				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+
+				if let Some(description) = crypto_info["description"].as_str() {
+					generated_code.push_str(&format!("    /// {description}\n"));
+				}
+
+				generated_code.push_str(&format!(
+					"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+				));
+			}
+		}
+		generated_code.push_str("}\n\n");
+	}
+
 	// Generate plain attribute constants
 	if let Some(plain_attrs) = oids["plain_attributes"].as_object() {
 		generated_code.push_str("// Plain attribute OID constants\n");

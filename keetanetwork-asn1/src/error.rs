@@ -45,6 +45,14 @@ impl From<der::Error> for Asn1Error {
 	}
 }
 
+// Add const_oid::Error conversion when using rasn feature for interop
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+impl From<der::oid::Error> for Asn1Error {
+	fn from(e: der::oid::Error) -> Self {
+		Asn1Error::InvalidOid { reason: format!("{e:?}") }
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

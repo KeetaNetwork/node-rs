@@ -64,9 +64,13 @@
 
 use std::time::SystemTime;
 
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use chrono::{DateTime, Duration, Utc};
 use der::asn1::ObjectIdentifier;
 use der::Encode;
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+use keetanetwork_asn1::BitStringExt;
 use keetanetwork_asn1::SubjectPublicKeyInfo;
 use keetanetwork_crypto::prelude::{Algorithm, CryptoSignerWithOptions, SignatureEncoding, SigningOptions};
 use x509_cert::name::DistinguishedName;
@@ -254,7 +258,7 @@ impl ExtensionBuilder {
 			.with_critical(true)
 			.with_basic_constraints_value(is_ca, path_length)
 			.build()
-			.expect("Valid basic constraints extension")
+			.expect("invariant: valid basic constraints extension")
 	}
 
 	/// Create a key usage extension according to RFC 5280 Section 4.2.1.3.
@@ -320,7 +324,7 @@ impl ExtensionBuilder {
 			.with_key_usage_value(key_usage_bits)
 			.as_critical()
 			.build()
-			.expect("Valid key usage extension")
+			.expect("invariant: valid key usage extension")
 	}
 
 	/// Create an extended key usage according to RFC 5280 Section 4.2.1.12.
@@ -384,7 +388,7 @@ impl ExtensionBuilder {
 			.with_extended_key_usage_value(ext_key_use)
 			.as_non_critical()
 			.build()
-			.expect("Valid extended key usage extension")
+			.expect("invariant: valid extended key usage extension")
 	}
 
 	/// Create a subject alternative name according to RFC 5280 Section 4.2.1.6.
@@ -462,7 +466,7 @@ impl ExtensionBuilder {
 			.with_subject_alt_name_value(san_entries)
 			.as_non_critical()
 			.build()
-			.expect("Valid subject alternative name extension")
+			.expect("invariant: valid subject alternative name extension")
 	}
 
 	/// Create a subject key identifier according to RFC 5280 Section 4.2.1.2.
@@ -509,7 +513,7 @@ impl ExtensionBuilder {
 			.with_value(key_id)
 			.as_non_critical()
 			.build()
-			.expect("Valid subject key identifier extension")
+			.expect("invariant: valid subject key identifier extension")
 	}
 
 	/// Create an authority key identifier according to RFC 5280 Section 4.2.1.1.
@@ -558,7 +562,7 @@ impl ExtensionBuilder {
 			.with_authority_key_identifier_value(key_id)
 			.as_non_critical()
 			.build()
-			.expect("Valid authority key identifier extension")
+			.expect("invariant: valid authority key identifier extension")
 	}
 
 	/// Set the extension OID (Object Identifier).
@@ -874,10 +878,10 @@ impl ExtensionBuilder {
 					name.push(san_entry.len() as u8);
 					name.extend_from_slice(san_entry.as_bytes());
 					name
-				} else if san_entry.parse::<core::net::IpAddr>().is_ok() {
-					let ip_bytes = if let Ok(ip) = san_entry.parse::<core::net::Ipv4Addr>() {
+				} else if san_entry.parse::<IpAddr>().is_ok() {
+					let ip_bytes = if let Ok(ip) = san_entry.parse::<Ipv4Addr>() {
 						ip.octets().to_vec()
-					} else if let Ok(ip) = san_entry.parse::<core::net::Ipv6Addr>() {
+					} else if let Ok(ip) = san_entry.parse::<Ipv6Addr>() {
 						ip.octets().to_vec()
 					} else {
 						san_entry.as_bytes().to_vec()
@@ -1359,7 +1363,7 @@ impl ExtensionBuilder {
 /// - [RFC 3279 - Algorithms and Identifiers for the Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile](https://datatracker.ietf.org/doc/html/rfc3279)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateBuilder {
-	pub subject_public_key: Option<SubjectPublicKeyInfoOwned>,
+	pub subject_public_key: Option<SubjectPublicKeyInfo>,
 	pub subject_dn: Option<DistinguishedName>,
 	pub issuer_dn: Option<DistinguishedName>,
 	pub valid_from: Option<DateTime<Utc>>,
@@ -1420,9 +1424,7 @@ impl CertificateBuilder {
 	///     .with_subject_public_key(public_key_info);
 	/// ```
 	pub fn with_subject_public_key(mut self, public_key: SubjectPublicKeyInfo) -> Self {
-		let spki_key = SubjectPublicKeyInfoOwned::from(public_key);
-
-		self.subject_public_key = Some(spki_key);
+		self.subject_public_key = Some(public_key);
 		self
 	}
 
@@ -1924,7 +1926,7 @@ impl CertificateBuilder {
 	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn as_self_signed(mut self) -> Self {
-		if let Some(ref subject) = self.subject_dn.clone() {
+		if let Some(ref subject) = self.subject_dn {
 			self.issuer_dn = Some(subject.clone());
 		}
 
@@ -2130,10 +2132,11 @@ impl CertificateBuilder {
 	/// # Ok::<(), Box<dyn std::error::Error>>(())
 	/// ```
 	pub fn build_tbs(&self) -> Result<TbsCertificate, CertificateError> {
-		let subject_public_key = self
+		let subject_public_key_info = self
 			.subject_public_key
 			.as_ref()
 			.ok_or(CertificateError::MissingField { field: "subject_public_key".to_string() })?;
+		let subject_public_key = SubjectPublicKeyInfoOwned::try_from(subject_public_key_info.clone())?;
 		let subject_dn = self
 			.subject_dn
 			.as_ref()
@@ -2179,7 +2182,7 @@ impl CertificateBuilder {
 				not_after: Time::try_from(SystemTime::from(valid_to))?,
 			},
 			subject: subject_dn.clone(),
-			subject_public_key_info: subject_public_key.clone(),
+			subject_public_key_info: subject_public_key,
 			issuer_unique_id: None,
 			subject_unique_id: None,
 			extensions: extensions_option,
@@ -2376,7 +2379,7 @@ impl CertificateBuilder {
 
 		// Subject Key Identifier extension
 		if let Some(subject_public_key) = &self.subject_public_key {
-			let subject_key_id = generate_key_identifier(&subject_public_key.subject_public_key)?;
+			let subject_key_id = generate_key_identifier(subject_public_key.subject_public_key.raw_bytes())?;
 			extensions.push(ExtensionBuilder::for_subject_key_identifier(&subject_key_id));
 		}
 
@@ -2385,7 +2388,7 @@ impl CertificateBuilder {
 			(&self.issuer_dn, &self.subject_dn, &self.subject_public_key)
 		{
 			if issuer_dn == subject_dn {
-				let authority_key_id = generate_key_identifier(&subject_public_key.subject_public_key)?;
+				let authority_key_id = generate_key_identifier(subject_public_key.subject_public_key.raw_bytes())?;
 				extensions.push(ExtensionBuilder::for_authority_key_identifier(&authority_key_id));
 			}
 		}
@@ -2397,7 +2400,7 @@ impl CertificateBuilder {
 #[cfg(test)]
 mod tests {
 	#[cfg(feature = "der")]
-	use std::str::FromStr;
+	use core::str::FromStr;
 
 	use chrono::Utc;
 	use der::Decode;
@@ -2458,13 +2461,16 @@ mod tests {
 				.with_serial_number(serial.clone())
 				.with_is_ca($is_ca);
 
-			let tbs = builder.build_tbs().unwrap();
+			let tbs = builder.build_tbs().expect("Failed to build TBS");
 
 			let expected_serial = SerialNumber::from(serial);
 			assert_eq!(tbs.serial_number, expected_serial);
 			assert_eq!(tbs.subject, subject_dn);
 			assert_eq!(tbs.issuer, issuer_dn);
-			assert_eq!(tbs.subject_public_key_info, SubjectPublicKeyInfoOwned::from(public_key_info));
+			assert_eq!(
+				tbs.subject_public_key_info,
+				SubjectPublicKeyInfoOwned::try_from(public_key_info).expect("Failed conversion")
+			);
 			assert_eq!(tbs.version, Version::V3);
 			assert!(tbs.extensions.is_some());
 
@@ -2637,8 +2643,10 @@ mod tests {
 			assert!(!certificate.signature.raw_bytes().is_empty());
 
 			// Verify the certificate is self-signed and can be verified with its own public key
-			let subject_public_key = &certificate.to_subject_public_key();
-			let signature_verification = certificate.verify_signature(subject_public_key);
+			let subject_public_key = certificate
+				.to_subject_public_key()
+				.expect("Failed to get public key");
+			let signature_verification = certificate.verify_signature(&subject_public_key);
 			assert!(signature_verification.is_ok());
 			assert!(signature_verification.unwrap());
 

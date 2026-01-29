@@ -51,17 +51,19 @@ fn test_certificate_public_key_extraction() {
 }
 
 #[test]
-fn test_certificate_der_roundtrip() {
+fn test_certificate_der_roundtrip() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_der = ca_cert.to_der().unwrap();
-	let user_der = user_cert.to_der().unwrap();
+	let ca_der = ca_cert.to_der()?;
+	let user_der = user_cert.to_der()?;
 
-	let ca_cert_from_der = Certificate::try_from(ca_der).unwrap();
-	let user_cert_from_der = Certificate::try_from(user_der).unwrap();
+	let ca_cert_from_der = Certificate::try_from(ca_der)?;
+	let user_cert_from_der = Certificate::try_from(user_der)?;
 	assert_eq!(ca_cert.tbs_certificate.subject, ca_cert_from_der.tbs_certificate.subject);
 	assert_eq!(user_cert.tbs_certificate.subject, user_cert_from_der.tbs_certificate.subject);
+
+	Ok(())
 }
 
 #[test]

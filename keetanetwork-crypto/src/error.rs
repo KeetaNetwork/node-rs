@@ -66,6 +66,13 @@ impl_variant_error_from!(CryptoError, {
 });
 
 #[cfg(feature = "encryption")]
+impl From<rand_core::OsError> for CryptoError {
+	fn from(error: rand_core::OsError) -> Self {
+		CryptoError::InternalError { message: error.to_string() }
+	}
+}
+
+#[cfg(feature = "encryption")]
 impl_variant_error_from!(CryptoError, {
 	cbc::cipher::InvalidLength => InvalidKeySize,
 	cbc::cipher::inout::PadError => DecryptionFailed,

@@ -221,44 +221,31 @@ impl_any_signature!(
 	(Secp256r1, crate::algorithms::secp256r1::Secp256r1Signature, Algorithm::Secp256r1),
 );
 
+/// Helper function to wrap an ObjectIdentifier in Any for parameters (rasn backend)
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+fn create_parameter_any(oid: ObjectIdentifier) -> Any {
+	let encoded_bytes = oid
+		.to_der()
+		.expect("invariant: valid OID always encodes to DER");
+	Any::from(encoded_bytes)
+}
+
+/// Helper function to wrap an ObjectIdentifier in Any for parameters (der backend)
+#[cfg(feature = "der")]
+fn create_parameter_any(oid: ObjectIdentifier) -> Any {
+	Any::from(oid)
+}
+
 #[cfg(any(feature = "der", feature = "rasn"))]
 macro_rules! impl_subject_public_key_info {
 	($(($variant:ident, $public_key_type:ty, $oid:expr, $params_oid:expr)),* $(,)?) => {
-		/// Helper function to create ObjectIdentifier from string with proper backend support
-		fn create_object_identifier(oid: &str) -> ObjectIdentifier {
-			#[cfg(feature = "der")]
-			{
-				ObjectIdentifier::new(oid).expect("Invalid OID")
-			}
-			#[cfg(all(feature = "rasn", not(feature = "der")))]
-			{
-				ObjectIdentifier::from_str(oid).expect("Invalid OID")
-			}
-		}
-
-		/// Helper function to create ObjectIdentifier wrapped in Any for parameters
-		fn create_parameter_any(param_oid: &str) -> Any {
-			#[cfg(feature = "der")]
-			{
-				Any::from(ObjectIdentifier::new(param_oid).expect("Invalid OID"))
-			}
-			#[cfg(all(feature = "rasn", not(feature = "der")))]
-			{
-				let oid = ObjectIdentifier::from_str(param_oid).expect("Invalid OID");
-				let encoded_bytes = oid.to_der().expect("Failed to encode OID");
-				Any::from(encoded_bytes)
-			}
-		}
-
 		impl From<Algorithm> for ObjectIdentifier {
 			fn from(algorithm: Algorithm) -> Self {
-				let oid = match algorithm {
+				match algorithm {
 					$(
 						Algorithm::$variant => $oid,
 					)*
-				};
-
-				create_object_identifier(oid)
+				}
 			}
 		}
 
@@ -266,10 +253,11 @@ macro_rules! impl_subject_public_key_info {
 			impl From<$public_key_type> for SubjectPublicKeyInfo {
 				fn from(public_key: $public_key_type) -> Self {
 					let algorithm = ObjectIdentifier::from(Algorithm::$variant);
-					let parameters = $params_oid.map(|param_oid| create_parameter_any(param_oid));
+					let parameters: Option<ObjectIdentifier> = $params_oid;
+					let parameters = parameters.map(create_parameter_any);
 					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
-					let public_key_bytes = Vec::from(public_key);
-					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).expect("Failed to create SubjectPublicKeyInfo")
+				let public_key_bytes = Vec::from(public_key);
+				SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).expect("invariant: valid algorithm and key bytes create SubjectPublicKeyInfo")
 				}
 			}
 		)*
@@ -287,23 +275,30 @@ macro_rules! impl_subject_public_key_info {
 		impl From<Algorithm> for AlgorithmIdentifier {
 			fn from(algorithm: Algorithm) -> Self {
 				let oid = ObjectIdentifier::from(algorithm);
-				let parameters = match algorithm {
+				let parameters: Option<ObjectIdentifier> = match algorithm {
 					$(
-						Algorithm::$variant => $params_oid.map(|param_oid| create_parameter_any(param_oid)),
+						Algorithm::$variant => $params_oid,
 					)*
 				};
-
+				let parameters = parameters.map(create_parameter_any);
 				AlgorithmIdentifier { algorithm: oid, parameters }
 			}
 		}
 	};
 }
 
-#[cfg(any(feature = "der", feature = "rasn"))]
+#[cfg(feature = "der")]
 impl_subject_public_key_info!(
-	(Secp256k1, Secp256k1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256K1)),
-	(Ed25519, Ed25519PublicKey, oids::ED25519, None::<&str>),
-	(Secp256r1, Secp256r1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256R1)),
+	(Secp256k1, Secp256k1PublicKey, oids::typed::EC_PUBLIC_KEY, Some(oids::typed::SECP256K1)),
+	(Ed25519, Ed25519PublicKey, oids::typed::ED25519, None),
+	(Secp256r1, Secp256r1PublicKey, oids::typed::EC_PUBLIC_KEY, Some(oids::typed::SECP256R1)),
+);
+
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+impl_subject_public_key_info!(
+	(Secp256k1, Secp256k1PublicKey, oids::typed::EC_PUBLIC_KEY.clone(), Some(oids::typed::SECP256K1.clone())),
+	(Ed25519, Ed25519PublicKey, oids::typed::ED25519.clone(), None),
+	(Secp256r1, Secp256r1PublicKey, oids::typed::EC_PUBLIC_KEY.clone(), Some(oids::typed::SECP256R1.clone())),
 );
 
 /// Trait for key derivation algorithms
@@ -316,7 +311,7 @@ pub trait KeyDerivation {
 		T: IntoIterator<Item = u8> + AsRef<[u8]> + zeroize::Zeroize + Clone;
 
 	/// Validate that bytes represent valid key material
-	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool;
+	fn is_valid_key_material<T: AsRef<[u8]>>(bytes: T) -> bool;
 
 	/// Get the expected key size in bytes
 	fn key_size() -> usize;
@@ -390,7 +385,7 @@ macro_rules! impl_constant_time_key_derivation {
 				}
 			}
 
-			fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
+			fn is_valid_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
 				let bytes = bytes.as_ref();
 				bytes.len() == 32 && <$secret_key_type>::from_slice(bytes).is_ok()
 			}

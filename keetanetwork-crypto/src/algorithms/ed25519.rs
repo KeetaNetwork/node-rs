@@ -27,6 +27,9 @@
 // Re-export algorithm-specific signature types
 pub use ed25519_dalek::Signature as Ed25519Signature;
 
+use core::fmt::{Debug, Formatter, Result as FmtResult};
+use core::sync::atomic::{fence, Ordering};
+
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use secrecy::{ExposeSecret, SecretBox};
@@ -35,8 +38,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
-#[cfg(all(feature = "rasn", not(feature = "der")))]
-use keetanetwork_asn1::ObjectIdentifierExt;
 
 #[cfg(feature = "encryption")]
 use crate::algorithms::ecies::{Ecies, EciesX25519};
@@ -99,8 +100,8 @@ impl CryptoAlgorithm for Ed25519PrivateKey {
 	}
 }
 
-impl core::fmt::Debug for Ed25519PrivateKey {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl Debug for Ed25519PrivateKey {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
 		f.debug_struct("Ed25519PrivateKey")
 			.field("inner", &"[REDACTED]")
 			.finish()
@@ -137,14 +138,11 @@ impl From<Ed25519PrivateKey> for keetanetwork_asn1::ObjectIdentifier {
 	fn from(_private_key: Ed25519PrivateKey) -> Self {
 		#[cfg(feature = "der")]
 		{
-			keetanetwork_asn1::ObjectIdentifier::new(keetanetwork_asn1::oids::ED25519)
-				.expect("Failed to create OID for Ed25519")
+			keetanetwork_asn1::oids::typed::ED25519
 		}
-
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
 		{
-			keetanetwork_asn1::ObjectIdentifier::from_str(keetanetwork_asn1::oids::ED25519)
-				.expect("Failed to create OID for Ed25519")
+			keetanetwork_asn1::oids::typed::ED25519.clone()
 		}
 	}
 }
@@ -282,16 +280,13 @@ impl AsRef<[u8]> for Ed25519PublicKey {
 #[cfg(any(feature = "der", feature = "rasn"))]
 impl From<Ed25519PublicKey> for keetanetwork_asn1::ObjectIdentifier {
 	fn from(_public_key: Ed25519PublicKey) -> Self {
-		// This should never fail as we are using a constant known OID
 		#[cfg(feature = "der")]
 		{
-			keetanetwork_asn1::ObjectIdentifier::new(keetanetwork_asn1::oids::ED25519)
-				.expect("Failed to create OID for Ed25519")
+			keetanetwork_asn1::oids::typed::ED25519
 		}
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
 		{
-			keetanetwork_asn1::ObjectIdentifier::from_str(keetanetwork_asn1::oids::ED25519)
-				.expect("Failed to create OID for Ed25519")
+			keetanetwork_asn1::oids::typed::ED25519.clone()
 		}
 	}
 }
@@ -353,8 +348,8 @@ pub struct X25519PrivateKey {
 	bytes: SecretBox<[u8; 32]>,
 }
 
-impl core::fmt::Debug for X25519PrivateKey {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl Debug for X25519PrivateKey {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
 		f.debug_struct("X25519PrivateKey")
 			.field("bytes", &"[REDACTED]")
 			.finish()
@@ -591,7 +586,7 @@ impl KeyDerivation for Ed25519Derivation {
 		T: IntoIterator<Item = u8> + AsRef<[u8]> + zeroize::Zeroize + Clone,
 	{
 		// Pre-derivation fence: Ensure no prior operations leak timing info
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		let seed = seed.expose_secret();
 		// Hash the seed+index buffer directly using our hash abstraction
@@ -610,12 +605,12 @@ impl KeyDerivation for Ed25519Derivation {
 		let signing_key = SigningKey::from_bytes(&key_bytes);
 
 		// Post-attempt fence: Ensure operations complete before
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		Ok(Ed25519PrivateKey { inner: signing_key })
 	}
 
-	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
+	fn is_valid_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
 		bytes.as_ref().len() == ed25519_dalek::SECRET_KEY_LENGTH
 	}
 

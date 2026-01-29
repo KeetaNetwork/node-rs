@@ -43,10 +43,10 @@ const TEST_CASES: &[TypeScriptTestCase] = &[
 
 #[cfg(feature = "encryption")]
 #[test]
-fn test_ecies_typescript_compatibility() {
+fn test_ecies_typescript_compatibility() -> Result<(), Box<dyn core::error::Error>> {
 	for test_case in TEST_CASES {
-		let seed = hex::decode(test_case.seed_hex).unwrap();
-		let encrypted_data = BASE64.decode(test_case.encrypted_data_base64).unwrap();
+		let seed = hex::decode(test_case.seed_hex)?;
+		let encrypted_data = BASE64.decode(test_case.encrypted_data_base64)?;
 
 		match test_case.algorithm {
 			Algorithm::Secp256k1 => {
@@ -56,17 +56,16 @@ fn test_ecies_typescript_compatibility() {
 				indexed_seed[..32].copy_from_slice(&seed);
 				indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
 
-				let private_key = Secp256k1Derivation::derive_from_seed(indexed_seed.into_secret()).unwrap();
+				let private_key = Secp256k1Derivation::derive_from_seed(indexed_seed.into_secret())?;
 				let public_key = private_key.as_public_key();
 
 				// Test decryption of TypeScript data
-				let decrypted = EciesSecp256k1::decrypt(&private_key, &encrypted_data).unwrap();
+				let decrypted = EciesSecp256k1::decrypt(&private_key, &encrypted_data)?;
 				assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
 
 				// Test round-trip encryption/decryption
-				let rust_encrypted =
-					EciesSecp256k1::encrypt(&public_key, test_case.expected_plaintext.as_bytes()).unwrap();
-				let rust_decrypted = EciesSecp256k1::decrypt(&private_key, &rust_encrypted).unwrap();
+				let rust_encrypted = EciesSecp256k1::encrypt(&public_key, test_case.expected_plaintext.as_bytes())?;
+				let rust_decrypted = EciesSecp256k1::decrypt(&private_key, &rust_encrypted)?;
 				assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
 			}
 			Algorithm::Ed25519 => {
@@ -77,34 +76,33 @@ fn test_ecies_typescript_compatibility() {
 				indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
 
 				// Derive Ed25519 key first, then convert to X25519
-				let ed25519_private = Ed25519Derivation::derive_from_seed(indexed_seed.into_secret()).unwrap();
-				let x25519_private = ed25519_to_x25519_private(&ed25519_private).unwrap();
+				let ed25519_private = Ed25519Derivation::derive_from_seed(indexed_seed.into_secret())?;
+				let x25519_private = ed25519_to_x25519_private(&ed25519_private)?;
 				let x25519_public = x25519_private.derive_public_key();
 
 				// Test decryption of TypeScript data
-				let decrypted = EciesX25519::decrypt(&x25519_private, &encrypted_data).unwrap();
+				let decrypted = EciesX25519::decrypt(&x25519_private, &encrypted_data)?;
 				assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
 
 				// Test round-trip encryption/decryption
-				let rust_encrypted =
-					EciesX25519::encrypt(&x25519_public, test_case.expected_plaintext.as_bytes()).unwrap();
-				let rust_decrypted = EciesX25519::decrypt(&x25519_private, &rust_encrypted).unwrap();
+				let rust_encrypted = EciesX25519::encrypt(&x25519_public, test_case.expected_plaintext.as_bytes())?;
+				let rust_decrypted = EciesX25519::decrypt(&x25519_private, &rust_encrypted)?;
 				assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
 			}
 			Algorithm::Secp256r1 => {
-				let private_key = Secp256r1Derivation::derive_from_seed(seed.into_secret()).unwrap();
+				let private_key = Secp256r1Derivation::derive_from_seed(seed.into_secret())?;
 				let public_key = private_key.as_public_key();
 
 				// Test decryption of TypeScript data
-				let decrypted = EciesSecp256r1::decrypt(&private_key, &encrypted_data).unwrap();
+				let decrypted = EciesSecp256r1::decrypt(&private_key, &encrypted_data)?;
 				assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
 
 				// Test round-trip encryption/decryption
-				let rust_encrypted =
-					EciesSecp256r1::encrypt(&public_key, test_case.expected_plaintext.as_bytes()).unwrap();
-				let rust_decrypted = EciesSecp256r1::decrypt(&private_key, &rust_encrypted).unwrap();
+				let rust_encrypted = EciesSecp256r1::encrypt(&public_key, test_case.expected_plaintext.as_bytes())?;
+				let rust_decrypted = EciesSecp256r1::decrypt(&private_key, &rust_encrypted)?;
 				assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
 			}
 		}
 	}
+	Ok(())
 }

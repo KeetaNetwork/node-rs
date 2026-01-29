@@ -1,5 +1,6 @@
 //! Integration tests for seed derivation from passphrase functionality.
 
+use keetanetwork_crypto::error::CryptoError;
 use keetanetwork_crypto::prelude::ExposeSecret;
 use keetanetwork_crypto::utils::seed_from_passphrase;
 
@@ -46,9 +47,9 @@ const PASSPHRASE_FAILURE_CASES: &[PassphraseFailureCase] = &[
 ];
 
 #[test]
-fn test_passphrase_to_seed_success_cases() {
+fn test_passphrase_to_seed_success_cases() -> Result<(), CryptoError> {
 	for test_case in PASSPHRASE_SUCCESS_CASES {
-		let result_seed = seed_from_passphrase(test_case.passphrase).unwrap();
+		let result_seed = seed_from_passphrase(test_case.passphrase)?;
 		let result_hex = hex::encode(*result_seed.expose_secret()).to_lowercase();
 		assert_eq!(
 			result_hex, test_case.expected_seed,
@@ -56,6 +57,8 @@ fn test_passphrase_to_seed_success_cases() {
 			test_case.passphrase
 		);
 	}
+
+	Ok(())
 }
 
 #[test]
@@ -64,27 +67,31 @@ fn test_passphrase_to_seed_failure_cases() {
 		let result = seed_from_passphrase(test_case.passphrase);
 		assert!(result.is_err(), "Expected passphrase '{}' to fail but it succeeded", test_case.passphrase);
 
-		let error_msg = format!("{}", result.unwrap_err());
-		assert!(
-			error_msg.contains(test_case.expected_error_contains),
-			"Error message '{}' does not contain expected text '{}' for passphrase '{}'",
-			error_msg,
-			test_case.expected_error_contains,
-			test_case.passphrase
-		);
+		if let Err(err) = result {
+			let error_msg = format!("{err}");
+			assert!(
+				error_msg.contains(test_case.expected_error_contains),
+				"Error message '{}' does not contain expected text '{}' for passphrase '{}'",
+				error_msg,
+				test_case.expected_error_contains,
+				test_case.passphrase
+			);
+		}
 	}
 }
 
 #[test]
-fn test_passphrase_deterministic_behavior() {
+fn test_passphrase_deterministic_behavior() -> Result<(), CryptoError> {
 	// Multiple calls with same passphrase should produce identical results
-	let seed1 = seed_from_passphrase(TEST_PASSPHRASE).unwrap();
-	let seed2 = seed_from_passphrase(TEST_PASSPHRASE).unwrap();
+	let seed1 = seed_from_passphrase(TEST_PASSPHRASE)?;
+	let seed2 = seed_from_passphrase(TEST_PASSPHRASE)?;
 	assert_eq!(*seed1.expose_secret(), *seed2.expose_secret(), "Passphrase derivation should be deterministic");
+
+	Ok(())
 }
 
 #[test]
-fn test_passphrase_different_inputs_different_outputs() {
+fn test_passphrase_different_inputs_different_outputs() -> Result<(), CryptoError> {
 	let passphrase_variations = [
 		(TEST_PASSPHRASE, "Original passphrase"),
 		("this is the example length for a sufficient passphrase to be set secured1", "One char added"),
@@ -96,7 +103,7 @@ fn test_passphrase_different_inputs_different_outputs() {
 	// Generate seeds for all variations
 	let mut seeds = Vec::new();
 	for (passphrase, description) in &passphrase_variations {
-		let seed = seed_from_passphrase(passphrase).unwrap();
+		let seed = seed_from_passphrase(passphrase)?;
 		seeds.push((*seed.expose_secret(), description));
 	}
 
@@ -106,10 +113,12 @@ fn test_passphrase_different_inputs_different_outputs() {
 			assert_ne!(seeds[i].0, seeds[j].0, "Seeds should be different: {} vs {}", seeds[i].1, seeds[j].1);
 		}
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_passphrase_normalization() {
+fn test_passphrase_normalization() -> Result<(), CryptoError> {
 	let normalization_test_cases = [
 		(
 			"This Is The Example Length For A Sufficient Passphrase To Be Set Secured",
@@ -140,11 +149,11 @@ fn test_passphrase_normalization() {
 	// All these should produce the same seed due to normalization
 	let mut seeds = Vec::new();
 	for (passphrase, normalized_expected, description) in &normalization_test_cases {
-		let seed = seed_from_passphrase(passphrase).unwrap();
+		let seed = seed_from_passphrase(passphrase)?;
 		seeds.push((*seed.expose_secret(), description));
 
 		// Also verify the normalized version produces the same result
-		let normalized_seed = seed_from_passphrase(normalized_expected).unwrap();
+		let normalized_seed = seed_from_passphrase(normalized_expected)?;
 		assert_eq!(
 			*seed.expose_secret(),
 			*normalized_seed.expose_secret(),
@@ -156,4 +165,6 @@ fn test_passphrase_normalization() {
 	for i in 1..seeds.len() {
 		assert_eq!(seeds[0].0, seeds[i].0, "Normalization failed: '{}' vs '{}'", seeds[0].1, seeds[i].1);
 	}
+
+	Ok(())
 }

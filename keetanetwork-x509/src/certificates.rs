@@ -6,13 +6,17 @@
 pub use crate::builder::{CertificateBuilder, ExtensionBuilder};
 
 use std::collections::HashSet;
-use std::str::FromStr;
+use std::iter::once;
+
+use core::fmt::{Display, Error as FmtError, Formatter, Result as FmtResult};
+use core::hash::{Hash, Hasher};
+use core::str::{from_utf8, FromStr};
 
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
 use der::asn1::{ObjectIdentifier, OctetString};
 use der::{Decode, Encode, Sequence, ValueOrd};
-use keetanetwork_asn1::SubjectPublicKeyInfo;
+use keetanetwork_asn1::{BitStringExt, SubjectPublicKeyInfo};
 use keetanetwork_crypto::prelude::HashAlgorithm;
 use x509_cert::certificate::{CertificateInner, Profile, TbsCertificateInner};
 use x509_cert::ext::Extension as X509Extension;
@@ -176,23 +180,27 @@ impl Extension {
 	}
 }
 
-impl From<x509_cert::ext::Extension> for Extension {
-	fn from(ext: x509_cert::ext::Extension) -> Self {
-		Self {
-			extn_id: ObjectIdentifier::new(&ext.extn_id.to_string()).unwrap(),
+impl TryFrom<x509_cert::ext::Extension> for Extension {
+	type Error = CertificateError;
+
+	fn try_from(ext: x509_cert::ext::Extension) -> Result<Self, Self::Error> {
+		Ok(Self {
+			extn_id: ObjectIdentifier::new(&ext.extn_id.to_string())?,
 			critical: ext.critical,
-			extn_value: OctetString::new(ext.extn_value.as_bytes()).unwrap(),
-		}
+			extn_value: OctetString::new(ext.extn_value.as_bytes())?,
+		})
 	}
 }
 
-impl From<Extension> for x509_cert::ext::Extension {
-	fn from(ext: Extension) -> Self {
-		Self {
-			extn_id: ObjectIdentifier::new(ext.extn_id.to_string().as_str()).unwrap(),
+impl TryFrom<Extension> for x509_cert::ext::Extension {
+	type Error = CertificateError;
+
+	fn try_from(ext: Extension) -> Result<Self, Self::Error> {
+		Ok(Self {
+			extn_id: ObjectIdentifier::new(ext.extn_id.to_string().as_str())?,
 			critical: ext.critical,
-			extn_value: OctetString::new(ext.extn_value.as_bytes()).unwrap(),
-		}
+			extn_value: OctetString::new(ext.extn_value.as_bytes())?,
+		})
 	}
 }
 
@@ -270,11 +278,22 @@ pub struct TbsCertificate {
 	pub extensions: Option<Extensions>,
 }
 
-impl<P: Profile> From<TbsCertificateInner<P>> for TbsCertificate {
-	fn from(tbs: TbsCertificateInner<P>) -> Self {
-		Self {
+impl<P: Profile> TryFrom<TbsCertificateInner<P>> for TbsCertificate {
+	type Error = CertificateError;
+
+	fn try_from(tbs: TbsCertificateInner<P>) -> Result<Self, Self::Error> {
+		let extensions = match tbs.extensions {
+			Some(ext_vec) => {
+				let converted: Result<Vec<Extension>, CertificateError> =
+					ext_vec.into_iter().map(Extension::try_from).collect();
+				Some(converted?)
+			}
+			None => None,
+		};
+
+		Ok(Self {
 			version: tbs.version,
-			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
+			serial_number: SerialNumber::new(tbs.serial_number.as_bytes())?,
 			signature_algorithm: tbs.signature,
 			issuer: tbs.issuer,
 			validity: tbs.validity,
@@ -282,18 +301,27 @@ impl<P: Profile> From<TbsCertificateInner<P>> for TbsCertificate {
 			subject_public_key_info: tbs.subject_public_key_info,
 			issuer_unique_id: tbs.issuer_unique_id,
 			subject_unique_id: tbs.subject_unique_id,
-			extensions: tbs
-				.extensions
-				.map(|ext_vec| ext_vec.into_iter().map(Extension::from).collect()),
-		}
+			extensions,
+		})
 	}
 }
 
-impl<P: Profile> From<TbsCertificate> for TbsCertificateInner<P> {
-	fn from(tbs: TbsCertificate) -> Self {
-		Self {
+impl<P: Profile> TryFrom<TbsCertificate> for TbsCertificateInner<P> {
+	type Error = CertificateError;
+
+	fn try_from(tbs: TbsCertificate) -> Result<Self, Self::Error> {
+		let extensions = match tbs.extensions {
+			Some(ext_vec) => {
+				let converted: Result<Vec<X509Extension>, CertificateError> =
+					ext_vec.into_iter().map(X509Extension::try_from).collect();
+				Some(converted?)
+			}
+			None => None,
+		};
+
+		Ok(Self {
 			version: tbs.version,
-			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
+			serial_number: SerialNumber::new(tbs.serial_number.as_bytes())?,
 			signature: tbs.signature_algorithm,
 			issuer: tbs.issuer,
 			validity: tbs.validity,
@@ -301,10 +329,8 @@ impl<P: Profile> From<TbsCertificate> for TbsCertificateInner<P> {
 			subject_public_key_info: tbs.subject_public_key_info,
 			issuer_unique_id: tbs.issuer_unique_id,
 			subject_unique_id: tbs.subject_unique_id,
-			extensions: tbs
-				.extensions
-				.map(|ext_vec| ext_vec.into_iter().map(X509Extension::from).collect()),
-		}
+			extensions,
+		})
 	}
 }
 
@@ -477,7 +503,7 @@ impl CertificateBundle {
 	/// Get the issuer's public key from the chain.
 	pub fn to_issuer_public_key(&self) -> Option<SubjectPublicKeyInfo> {
 		self.to_issuer_certificate()
-			.map(|cert| cert.to_subject_public_key())
+			.and_then(|cert| cert.to_subject_public_key().ok())
 	}
 
 	/// Get chain length.
@@ -673,7 +699,7 @@ impl TryFrom<Vec<u8>> for CertificateBundle {
 
 impl From<&CertificateBundle> for Vec<Certificate> {
 	fn from(bundle: &CertificateBundle) -> Self {
-		std::iter::once(bundle.certificate.clone())
+		once(bundle.certificate.clone())
 			.chain(bundle.root.iter().cloned())
 			.chain(bundle.intermediate.iter().cloned())
 			.collect()
@@ -778,8 +804,8 @@ impl CertificateHash {
 	}
 }
 
-impl std::fmt::Display for CertificateHash {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for CertificateHash {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
 		write!(f, "{}", hex::encode(&self.hash))
 	}
 }
@@ -813,7 +839,7 @@ impl TryFrom<Certificate> for CertificateHash {
 	}
 }
 
-impl std::str::FromStr for CertificateHash {
+impl core::str::FromStr for CertificateHash {
 	type Err = CertificateError;
 
 	fn from_str(hex: &str) -> Result<Self, Self::Err> {
@@ -952,11 +978,9 @@ impl Certificate {
 	/// Check if the certificate is valid at a specific time
 	pub fn is_valid_at(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
 		let validity = &self.tbs_certificate.validity;
-
 		if time < DateTime::<Utc>::from(validity.not_before.to_system_time()) {
 			return Ok(false);
 		}
-
 		if time > DateTime::<Utc>::from(validity.not_after.to_system_time()) {
 			return Ok(false);
 		}
@@ -1033,8 +1057,8 @@ impl Certificate {
 	}
 
 	/// Get the subject public key
-	pub fn to_subject_public_key(&self) -> SubjectPublicKeyInfo {
-		SubjectPublicKeyInfo::from(self.tbs_certificate.subject_public_key_info.clone())
+	pub fn to_subject_public_key(&self) -> Result<SubjectPublicKeyInfo, CertificateError> {
+		Ok(SubjectPublicKeyInfo::try_from(self.tbs_certificate.subject_public_key_info.clone())?)
 	}
 
 	/// Check if this is a self-signed certificate
@@ -1044,7 +1068,7 @@ impl Certificate {
 	}
 
 	/// Get an extension by OID
-	pub fn get_extension<S: AsRef<str>>(&self, oid: S) -> Option<&Extension> {
+	pub fn extension<S: AsRef<str>>(&self, oid: S) -> Option<&Extension> {
 		if let Some(ref extensions) = self.tbs_certificate.extensions {
 			let target_oid = ObjectIdentifier::new(oid.as_ref()).ok()?;
 			extensions.iter().find(|ext| ext.extn_id == target_oid)
@@ -1054,7 +1078,7 @@ impl Certificate {
 	}
 
 	/// Get all extensions from the certificate
-	pub fn get_extensions(&self) -> impl Iterator<Item = &Extension> {
+	pub fn extensions(&self) -> impl Iterator<Item = &Extension> {
 		self.tbs_certificate
 			.extensions
 			.iter()
@@ -1063,7 +1087,7 @@ impl Certificate {
 
 	/// Check if this is a CA certificate (has Basic Constraints CA=true)
 	pub fn is_ca(&self) -> bool {
-		if let Some(basic_constraints) = self.get_extension(oids::BASIC_CONSTRAINTS) {
+		if let Some(basic_constraints) = self.extension(oids::BASIC_CONSTRAINTS) {
 			match BasicConstraints::from_der(basic_constraints.extn_value.as_bytes()) {
 				Ok(constraints) => constraints.ca,
 				Err(_) => false, // Invalid extension, assume not a CA
@@ -1077,17 +1101,17 @@ impl Certificate {
 	/// Check if this certificate and another form a valid issuer-subject relationship
 	pub fn is_valid_issuer_subject_pair(&self, issuer: &Certificate) -> Result<bool, CertificateError> {
 		// Check DN matching
-		if !self.validate_issuer_subject_dn_match(issuer) {
+		if !self.has_matching_issuer_subject_dn(issuer) {
 			return Ok(false);
 		}
 
 		// Check Authority/Subject Key Identifier matching
-		if !self.validate_authority_key_identifier(issuer) {
+		if !self.has_valid_authority_key_identifier(issuer) {
 			return Ok(false);
 		}
 
 		// Check signature
-		let issuer_public_key = SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
+		let issuer_public_key = SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone())?;
 		if !self.verify_signature(&issuer_public_key)? {
 			return Ok(false);
 		}
@@ -1126,10 +1150,8 @@ impl Certificate {
 			.map_err(CertificateError::from)?;
 
 		let signature_bytes = self.signature.raw_bytes();
-
-		// Convert asn1 SubjectPublicKeyInfo back to spki for raw bytes access
-		let spki_public_key = SubjectPublicKeyInfoOwned::from(issuer_public_key.clone());
-		let public_key_bytes = spki_public_key.subject_public_key.raw_bytes();
+		// Get public key bytes directly from the subject public key info
+		let public_key_bytes = issuer_public_key.subject_public_key.raw_bytes();
 
 		// Dispatch to appropriate verification function based on signature algorithm
 		match cert_sig_oid.to_string().as_str() {
@@ -1204,7 +1226,7 @@ impl Certificate {
 	}
 
 	/// Check if two certificates have the same public key
-	pub fn same_public_key(&self, other: &Certificate) -> bool {
+	pub fn has_same_public_key(&self, other: &Certificate) -> bool {
 		self.tbs_certificate.subject_public_key_info == other.tbs_certificate.subject_public_key_info
 	}
 
@@ -1239,10 +1261,14 @@ impl Certificate {
 	}
 
 	/// Check if this certificate was issued by the given issuer
-	pub fn check_issued(&self, issuer: &Certificate) -> bool {
-		let issuer_public_key = SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
-		self.validate_issuer_subject_dn_match(issuer)
-			&& self.validate_authority_key_identifier(issuer)
+	pub fn is_issued_by(&self, issuer: &Certificate) -> bool {
+		let issuer_public_key =
+			match SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone()) {
+				Ok(key) => key,
+				Err(_) => return false,
+			};
+		self.has_matching_issuer_subject_dn(issuer)
+			&& self.has_valid_authority_key_identifier(issuer)
 			&& self.verify_signature(&issuer_public_key).unwrap_or(false)
 	}
 
@@ -1327,7 +1353,7 @@ impl Certificate {
 			}
 
 			// Validate Basic Constraints consistency
-			if let Some(basic_constraints_ext) = self.get_extension(oids::BASIC_CONSTRAINTS) {
+			if let Some(basic_constraints_ext) = self.extension(oids::BASIC_CONSTRAINTS) {
 				if let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.extn_value.as_bytes()) {
 					// CA certificates MUST have Basic Constraints marked as critical
 					if basic_constraints.ca && !basic_constraints_ext.critical {
@@ -1347,7 +1373,7 @@ impl Certificate {
 		// Validate subject DN
 		if self.tbs_certificate.subject.is_empty() {
 			// Subject can be empty only if Subject Alternative Name is present and marked critical
-			if let Some(san_ext) = self.get_extension(oids::SUBJECT_ALT_NAME) {
+			if let Some(san_ext) = self.extension(oids::SUBJECT_ALT_NAME) {
 				if !san_ext.critical {
 					return Err(CertificateError::ValidationFailed {
 						reason: "Empty subject DN requires critical Subject Alternative Name extension".to_string(),
@@ -1368,21 +1394,21 @@ impl Certificate {
 		Ok(())
 	}
 
-	/// Validate issuer/subject DN relationship per RFC 5280 section 4.1.2.4
+	/// Check issuer/subject DN relationship per RFC 5280 section 4.1.2.4
 	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.4>
-	pub fn validate_issuer_subject_dn_match(&self, issuer: &Certificate) -> bool {
+	pub fn has_matching_issuer_subject_dn(&self, issuer: &Certificate) -> bool {
 		// The issuer field of this certificate must match the subject field of the issuer certificate
 		self.tbs_certificate.issuer == issuer.tbs_certificate.subject
 	}
 
-	/// Validate Authority Key Identifier extension per RFC 5280 section 4.2.1.1
+	/// Check Authority Key Identifier extension per RFC 5280 section 4.2.1.1
 	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
 	///
 	/// TODO Make this more readable and verify
-	pub fn validate_authority_key_identifier(&self, issuer: &Certificate) -> bool {
+	pub fn has_valid_authority_key_identifier(&self, issuer: &Certificate) -> bool {
 		// If Authority Key Identifier is present, validate it matches the issuer's Subject Key Identifier
-		if let Some(auth_key_ext) = self.get_extension(oids::AUTHORITY_KEY_IDENTIFIER) {
-			if let Some(issuer_subject_key_ext) = issuer.get_extension(oids::SUBJECT_KEY_IDENTIFIER) {
+		if let Some(auth_key_ext) = self.extension(oids::AUTHORITY_KEY_IDENTIFIER) {
+			if let Some(issuer_subject_key_ext) = issuer.extension(oids::SUBJECT_KEY_IDENTIFIER) {
 				// Parse both key identifiers and compare
 				if let (Some(auth_key_id), Some(subject_key_id)) = (
 					utils::parse_authority_key_identifier(auth_key_ext.extn_value.as_bytes()),
@@ -1406,10 +1432,11 @@ impl Certificate {
 	{
 		let certificates: Vec<Certificate> = certificates.into_iter().collect();
 		let mut current = self;
-		let mut ordered_chain = vec![self.clone()];
+		let self_clone = self.clone();
+		let mut ordered_chain = vec![self_clone.clone()];
 
 		let mut chain_set = HashSet::new();
-		chain_set.insert(self.clone());
+		chain_set.insert(self_clone);
 
 		// Build the chain by following issuer certificates
 		loop {
@@ -1422,13 +1449,14 @@ impl Certificate {
 			// Skips certificates that are identical to self
 			let issuer = certificates
 				.iter()
-				.find(|cert| **cert != *self && current.check_issued(cert));
+				.find(|cert| **cert != *self && current.is_issued_by(cert));
 
 			if let Some(issuer_cert) = issuer {
 				// Only add if not already in the chain
 				if !chain_set.contains(issuer_cert) {
-					chain_set.insert(issuer_cert.clone());
-					ordered_chain.push(issuer_cert.clone());
+					let cloned = issuer_cert.clone();
+					chain_set.insert(cloned.clone());
+					ordered_chain.push(cloned);
 				}
 
 				current = issuer_cert;
@@ -1520,19 +1548,14 @@ impl Certificate {
 
 			// Find potential issuers of current certificate
 			for cert in certificates {
-				// Check if cert could be issuer of current
-				if current.tbs_certificate.issuer == cert.tbs_certificate.subject {
-					connected.insert(cert.clone());
-					if !visited.contains(cert) {
-						to_visit.push(cert.clone());
-					}
-				}
+				let is_potential_issuer = current.tbs_certificate.issuer == cert.tbs_certificate.subject;
+				let is_potential_subject = cert.tbs_certificate.issuer == current.tbs_certificate.subject;
 
-				// Check if current could be issuer of cert
-				if cert.tbs_certificate.issuer == current.tbs_certificate.subject {
-					connected.insert(cert.clone());
+				if is_potential_issuer || is_potential_subject {
+					let cloned = cert.clone();
+					connected.insert(cloned.clone());
 					if !visited.contains(cert) {
-						to_visit.push(cert.clone());
+						to_visit.push(cloned);
 					}
 				}
 			}
@@ -1592,28 +1615,32 @@ impl Certificate {
 	}
 }
 
-impl<P: Profile> From<CertificateInner<P>> for Certificate {
-	fn from(cert: CertificateInner<P>) -> Self {
-		Self {
-			tbs_certificate: TbsCertificate::from(cert.tbs_certificate),
+impl<P: Profile> TryFrom<CertificateInner<P>> for Certificate {
+	type Error = CertificateError;
+
+	fn try_from(cert: CertificateInner<P>) -> Result<Self, Self::Error> {
+		Ok(Self {
+			tbs_certificate: TbsCertificate::try_from(cert.tbs_certificate)?,
 			signature_algorithm: cert.signature_algorithm,
-			signature: cert.signature.clone(),
-		}
+			signature: cert.signature,
+		})
 	}
 }
 
-impl<P: Profile> From<Certificate> for CertificateInner<P> {
-	fn from(cert: Certificate) -> Self {
-		Self {
-			tbs_certificate: TbsCertificateInner::from(cert.tbs_certificate),
+impl<P: Profile> TryFrom<Certificate> for CertificateInner<P> {
+	type Error = CertificateError;
+
+	fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
+		Ok(Self {
+			tbs_certificate: TbsCertificateInner::try_from(cert.tbs_certificate)?,
 			signature_algorithm: cert.signature_algorithm,
-			signature: cert.signature.clone(),
-		}
+			signature: cert.signature,
+		})
 	}
 }
 
-impl core::hash::Hash for Certificate {
-	fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+impl Hash for Certificate {
+	fn hash<H: Hasher>(&self, state: &mut H) {
 		// Hash based on the DER bytes of the certificate
 		if let Ok(der_bytes) = self.to_der() {
 			der_bytes.hash(state);
@@ -1621,16 +1648,16 @@ impl core::hash::Hash for Certificate {
 	}
 }
 
-impl std::fmt::Display for Certificate {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let der = self.to_der().map_err(|_| std::fmt::Error)?;
+impl Display for Certificate {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+		let der = self.to_der().map_err(|_| FmtError)?;
 		let base64_content = general_purpose::STANDARD.encode(&der);
 
 		// Write PEM format header
 		writeln!(f, "-----BEGIN CERTIFICATE-----")?;
 		// Split into 64-character lines
 		for chunk in base64_content.as_bytes().chunks(64) {
-			let chunk_str = core::str::from_utf8(chunk).map_err(|_| std::fmt::Error)?;
+			let chunk_str = from_utf8(chunk).map_err(|_| FmtError)?;
 			writeln!(f, "{chunk_str}")?;
 		}
 		// Write PEM format footer
@@ -1638,7 +1665,7 @@ impl std::fmt::Display for Certificate {
 	}
 }
 
-impl std::str::FromStr for Certificate {
+impl core::str::FromStr for Certificate {
 	type Err = CertificateError;
 
 	fn from_str(pem: &str) -> Result<Self, Self::Err> {
@@ -2197,7 +2224,9 @@ mod tests {
 			assert!(!subject_name.is_empty());
 			assert!(!issuer_name.is_empty());
 
-			let public_key = cert.to_subject_public_key();
+			let public_key = cert
+				.to_subject_public_key()
+				.expect("Failed to get public key");
 			let raw_bytes = public_key.subject_public_key.raw_bytes();
 			assert!(!raw_bytes.is_empty());
 		});
@@ -2252,8 +2281,8 @@ mod tests {
 			assert_eq!(ca_cert.to_issuer(), ca_cert.to_subject()); // Self-signed
 
 			// Test cryptographic relationship
-			assert!(intermediate_cert.check_issued(ca_cert));
-			assert!(user_cert.check_issued(intermediate_cert));
+			assert!(intermediate_cert.is_issued_by(ca_cert));
+			assert!(user_cert.is_issued_by(intermediate_cert));
 		});
 	}
 
@@ -2371,20 +2400,24 @@ mod tests {
 				extract_certificates(&test_set.chain);
 
 			// Get the correct signing keys for each certificate
-			let ca_key = &ca_cert.to_subject_public_key();
-			let intermediate_key = &intermediate_cert.to_subject_public_key();
+			let ca_key = ca_cert
+				.to_subject_public_key()
+				.expect("Failed to get CA key");
+			let intermediate_key = intermediate_cert
+				.to_subject_public_key()
+				.expect("Failed to get intermediate key");
 			// let client_key = &client_cert.tbs_certificate.subject_public_key_info;
 
 			// Test positive cases
 			// TODO Bug with verifying self-signed
-			// assert!(ca_cert.verify_signature(ca_key).unwrap());
-			assert!(intermediate_cert.verify_signature(ca_key).unwrap());
-			assert!(client_cert.verify_signature(intermediate_key).unwrap());
+			// assert!(ca_cert.verify_signature(&ca_key).unwrap());
+			assert!(intermediate_cert.verify_signature(&ca_key).unwrap());
+			assert!(client_cert.verify_signature(&intermediate_key).unwrap());
 
-			// Test check_issued relationships
-			// assert!(ca_cert.check_issued(&ca_cert));
-			assert!(intermediate_cert.check_issued(&ca_cert));
-			assert!(client_cert.check_issued(&intermediate_cert));
+			// Test is_issued_by relationships
+			// assert!(ca_cert.is_issued_by(&ca_cert));
+			assert!(intermediate_cert.is_issued_by(&ca_cert));
+			assert!(client_cert.is_issued_by(&intermediate_cert));
 
 			// Test negative cases (wrong key usage)
 			// assert!(!client_cert.verify_signature(client_key).unwrap());
@@ -2396,10 +2429,10 @@ mod tests {
 			assert_eq!(intermediate_cert.to_issuer(), ca_cert.to_subject());
 			assert_eq!(ca_cert.to_issuer(), ca_cert.to_subject());
 
-			// Test negative check_issued cases
-			assert!(!client_cert.check_issued(&client_cert));
-			assert!(!intermediate_cert.check_issued(&client_cert));
-			assert!(!ca_cert.check_issued(&client_cert));
+			// Test negative is_issued_by cases
+			assert!(!client_cert.is_issued_by(&client_cert));
+			assert!(!intermediate_cert.is_issued_by(&client_cert));
+			assert!(!ca_cert.is_issued_by(&client_cert));
 
 			// Verify signature and TBS data is present
 			assert!(!ca_cert.signature.raw_bytes().is_empty());
@@ -2420,10 +2453,10 @@ mod tests {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
 				extract_certificates(&test_set.chain);
-			assert!(user_cert.check_issued(&intermediate_cert));
-			assert!(!user_cert.check_issued(&user_cert));
-			assert!(intermediate_cert.check_issued(&ca_cert));
-			assert!(!ca_cert.check_issued(&user_cert));
+			assert!(user_cert.is_issued_by(&intermediate_cert));
+			assert!(!user_cert.is_issued_by(&user_cert));
+			assert!(intermediate_cert.is_issued_by(&ca_cert));
+			assert!(!ca_cert.is_issued_by(&user_cert));
 
 			let verification_cases = [
 				//(&ca_cert, &ca_cert, true),
@@ -2435,7 +2468,8 @@ mod tests {
 			];
 			for (cert, issuer, expected) in verification_cases {
 				let issuer_public_key =
-					SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
+					SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone())
+						.expect("Failed to get issuer public key");
 				let result = cert.verify_signature(&issuer_public_key);
 				assert_eq!(result.unwrap_or(false), expected);
 			}
@@ -2457,12 +2491,22 @@ mod tests {
 			assert!(!user_sig_alg.oid.to_string().is_empty());
 
 			// Verify signatures
-			let ca_public_key = &ca_cert.to_subject_public_key();
-			let intermediate_public_key = &intermediate_cert.to_subject_public_key();
-			let user_public_key = &user_cert.to_subject_public_key();
-			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
-			assert!(intermediate_cert.verify_signature(ca_public_key).unwrap());
-			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
+			let ca_public_key = ca_cert
+				.to_subject_public_key()
+				.expect("Failed to get CA key");
+			let intermediate_public_key = intermediate_cert
+				.to_subject_public_key()
+				.expect("Failed to get intermediate key");
+			let user_public_key = user_cert
+				.to_subject_public_key()
+				.expect("Failed to get user key");
+			assert!(user_cert
+				.verify_signature(&intermediate_public_key)
+				.unwrap());
+			assert!(intermediate_cert.verify_signature(&ca_public_key).unwrap());
+			assert!(user_cert
+				.verify_signature(&intermediate_public_key)
+				.unwrap());
 
 			// Verify public key algorithms match the expected OID from key data
 			if let Some(key_data) = &test_set.key_data {
@@ -2853,12 +2897,12 @@ mod tests {
 
 		for (subject, issuer, san_critical) in dn_test_cases {
 			// Create a minimal public key info for Ed25519
-			let algorithm = oids::ED25519.parse().unwrap();
-			let subject_public_key = BitString::from_bytes(&[0u8; 32]).unwrap();
+			let algorithm = oids::ED25519.parse().expect("Invalid OID");
+			let subject_public_key = BitString::from_bytes(&[0u8; 32]).expect("Invalid bytes");
 			let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
-			let oid = ObjectIdentifier::new(oids::ED25519).unwrap();
+			let oid = ObjectIdentifier::new(oids::ED25519).expect("Invalid OID");
 			let signature_algorithm = AlgorithmIdentifierOwned { oid, parameters: None };
-			let signature = der::asn1::BitString::from_bytes(&[0u8; 64]).unwrap();
+			let signature = der::asn1::BitString::from_bytes(&[0u8; 64]).expect("Invalid bytes");
 			let mut builder = CertificateBuilder::new()
 				.with_serial_number(SerialNumber::from(1u8))
 				.with_validity_days(365)
@@ -2882,7 +2926,7 @@ mod tests {
 				builder = builder.with_extension(san_ext);
 			}
 
-			let tbs_certificate = builder.build_tbs().unwrap();
+			let tbs_certificate = builder.build_tbs().expect("Failed to build TBS");
 			let cert = Certificate { tbs_certificate, signature_algorithm, signature };
 			let result = cert.validate_distinguished_names();
 			assert!(result.is_err());
@@ -2895,13 +2939,13 @@ mod tests {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 			// Test valid issuer-subject relationships
-			assert!(intermediate_cert.validate_issuer_subject_dn_match(ca_cert));
-			assert!(client_cert.validate_issuer_subject_dn_match(intermediate_cert));
+			assert!(intermediate_cert.has_matching_issuer_subject_dn(ca_cert));
+			assert!(client_cert.has_matching_issuer_subject_dn(intermediate_cert));
 			// Test self-signed certificate
-			assert!(ca_cert.validate_issuer_subject_dn_match(ca_cert));
+			assert!(ca_cert.has_matching_issuer_subject_dn(ca_cert));
 			// Test invalid relationships
-			assert!(!client_cert.validate_issuer_subject_dn_match(ca_cert));
-			assert!(!ca_cert.validate_issuer_subject_dn_match(client_cert));
+			assert!(!client_cert.has_matching_issuer_subject_dn(ca_cert));
+			assert!(!ca_cert.has_matching_issuer_subject_dn(client_cert));
 		});
 	}
 
@@ -2910,15 +2954,12 @@ mod tests {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 			// Test Authority Key Identifier validation
-			assert!(intermediate_cert.validate_authority_key_identifier(ca_cert));
-			assert!(client_cert.validate_authority_key_identifier(intermediate_cert));
+			assert!(intermediate_cert.has_valid_authority_key_identifier(ca_cert));
+			assert!(client_cert.has_valid_authority_key_identifier(intermediate_cert));
 
 			// Self-signed certificates may or may not have AKI
-			if ca_cert
-				.get_extension(oids::AUTHORITY_KEY_IDENTIFIER)
-				.is_some()
-			{
-				assert!(ca_cert.validate_authority_key_identifier(ca_cert));
+			if ca_cert.extension(oids::AUTHORITY_KEY_IDENTIFIER).is_some() {
+				assert!(ca_cert.has_valid_authority_key_identifier(ca_cert));
 			}
 		});
 	}
@@ -2927,13 +2968,13 @@ mod tests {
 	fn test_enhanced_certificate_validation() {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
-			// Test enhanced check_issued with RFC 5280 compliance
-			assert!(intermediate_cert.check_issued(ca_cert));
-			assert!(client_cert.check_issued(intermediate_cert));
-			assert!(!client_cert.check_issued(ca_cert));
+			// Test enhanced is_issued_by with RFC 5280 compliance
+			assert!(intermediate_cert.is_issued_by(ca_cert));
+			assert!(client_cert.is_issued_by(intermediate_cert));
+			assert!(!client_cert.is_issued_by(ca_cert));
 			// Test same public key comparison
-			assert!(ca_cert.same_public_key(ca_cert));
-			assert!(!ca_cert.same_public_key(client_cert));
+			assert!(ca_cert.has_same_public_key(ca_cert));
+			assert!(!ca_cert.has_same_public_key(client_cert));
 			// Test valid issuer-subject pair validation
 			assert!(intermediate_cert
 				.is_valid_issuer_subject_pair(ca_cert)
@@ -3067,16 +3108,26 @@ mod tests {
 
 		for (oid, value, critical) in test_extensions {
 			let original = Extension::new(oid, &value, critical).unwrap();
-			let x509_ext: X509Extension = original.clone().into();
-			let round_trip: Extension = x509_ext.into();
+			let x509_ext: X509Extension = original
+				.clone()
+				.try_into()
+				.expect("invariant: valid extension converts");
+			let round_trip: Extension = x509_ext
+				.try_into()
+				.expect("invariant: valid extension converts back");
 			assert_eq!(original, round_trip);
 		}
 
 		// Test TbsCertificate converter with real test certificate
 		test_all_certificate_sets(|bundle| {
 			let original_tbs = &bundle.ca_cert.tbs_certificate;
-			let x509_tbs: TbsCertificateInner<x509_cert::certificate::Rfc5280> = original_tbs.clone().into();
-			let round_trip: TbsCertificate = x509_tbs.into();
+			let x509_tbs: TbsCertificateInner<x509_cert::certificate::Rfc5280> = original_tbs
+				.clone()
+				.try_into()
+				.expect("invariant: valid tbs converts");
+			let round_trip: TbsCertificate = x509_tbs
+				.try_into()
+				.expect("invariant: valid tbs converts back");
 			assert_eq!(original_tbs.version, round_trip.version);
 			assert_eq!(original_tbs.serial_number, round_trip.serial_number);
 			assert_eq!(original_tbs.issuer, round_trip.issuer);
@@ -3087,8 +3138,13 @@ mod tests {
 		// Test Certificate converter with real test certificate
 		test_all_certificate_sets(|bundle| {
 			let original_cert = &bundle.ca_cert;
-			let x509_cert: CertificateInner<x509_cert::certificate::Rfc5280> = original_cert.clone().into();
-			let round_trip: Certificate = x509_cert.into();
+			let x509_cert: CertificateInner<x509_cert::certificate::Rfc5280> = original_cert
+				.clone()
+				.try_into()
+				.expect("invariant: valid certificate converts");
+			let round_trip: Certificate = x509_cert
+				.try_into()
+				.expect("invariant: valid certificate converts back");
 			assert_eq!(original_cert.tbs_certificate.version, round_trip.tbs_certificate.version);
 			assert_eq!(original_cert.tbs_certificate.serial_number, round_trip.tbs_certificate.serial_number);
 			assert_eq!(original_cert.tbs_certificate.issuer, round_trip.tbs_certificate.issuer);

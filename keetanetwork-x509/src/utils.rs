@@ -1,4 +1,4 @@
-use der::asn1::{Any, BitString, Ia5String, ObjectIdentifier, OctetString};
+use der::asn1::{Any, Ia5String, ObjectIdentifier, OctetString};
 use der::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
 use x509_cert::attr::AttributeTypeAndValue;
 use x509_cert::name::{DistinguishedName, RdnSequence, RelativeDistinguishedName};
@@ -63,13 +63,12 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 /// use keetanetwork_x509::asn1::BitString;
 ///
 /// let public_key_bytes = &[0x04, 0x01, 0x02, 0x03]; // Example public key
-/// let bit_string = BitString::from_bytes(public_key_bytes).unwrap();
 ///
-/// let key_id = generate_key_identifier(&bit_string).unwrap();
+/// let key_id = generate_key_identifier(public_key_bytes).unwrap();
 /// assert_eq!(key_id.len(), 32); // SHA-3-256 produces 32 bytes
 /// ```
-pub fn generate_key_identifier(public_key: &BitString) -> Result<Vec<u8>, CertificateError> {
-	let key_bytes = public_key.raw_bytes();
+pub fn generate_key_identifier<T: AsRef<[u8]>>(public_key_bytes: T) -> Result<Vec<u8>, CertificateError> {
+	let key_bytes = public_key_bytes.as_ref();
 	let hash = HashAlgorithm::Sha3_256.hash(key_bytes);
 	Ok(hash)
 }
@@ -815,7 +814,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_generate_key_identifier() {
+	fn test_generate_key_identifier() -> Result<(), CertificateError> {
 		// Test cases: (input_bytes, description)
 		let test_cases = [
 			&[0x04, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08][..],
@@ -826,10 +825,8 @@ mod tests {
 
 		let mut previous_hashes = Vec::new();
 		for key_bytes in test_cases {
-			let bit_string = BitString::from_bytes(key_bytes).unwrap();
-
 			// SHA-3-256 always produces 32 bytes
-			let key_id = generate_key_identifier(&bit_string).unwrap();
+			let key_id = generate_key_identifier(key_bytes)?;
 			assert_eq!(key_id.len(), 32);
 
 			// Different inputs should produce different outputs (except for identical inputs)
@@ -841,6 +838,8 @@ mod tests {
 
 			previous_hashes.push(key_id);
 		}
+
+		Ok(())
 	}
 
 	#[test]

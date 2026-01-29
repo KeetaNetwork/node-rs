@@ -214,12 +214,13 @@ macro_rules! test_algorithm_identifier {
 		invalid: { $($invalid_oid:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_algorithm_identifier_valid_creation() {
+		fn test_algorithm_identifier_valid_creation() -> Result<(), Box<dyn core::error::Error>> {
 			$(
-				let alg_id = <$algorithm_identifier_type>::new($valid_oid).unwrap();
+				let alg_id = <$algorithm_identifier_type>::new($valid_oid)?;
 				assert_eq!(alg_id.algorithm.to_string(), $valid_oid);
 				assert!(alg_id.parameters.is_none());
 			)+
+			Ok(())
 		}
 
 		#[test]
@@ -241,16 +242,17 @@ macro_rules! test_subject_public_key_info {
 		test_cases: { $($oid:expr, $key_bytes:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_subject_public_key_info_creation() {
+		fn test_subject_public_key_info_creation() -> Result<(), Box<dyn core::error::Error>> {
 			let test_cases = [
 				$(($oid, $key_bytes)),+
 			];
 
 			for (oid, public_key_bytes) in test_cases {
-				let alg_id = <$algorithm_identifier_type>::new(oid).unwrap();
-				let spki = <$subject_public_key_info_type>::new(alg_id, &public_key_bytes).unwrap();
+				let alg_id = <$algorithm_identifier_type>::new(oid)?;
+				let spki = <$subject_public_key_info_type>::new(alg_id, &public_key_bytes)?;
 				assert_eq!(spki.subject_public_key.raw_bytes(), &public_key_bytes);
 			}
+			Ok(())
 		}
 	};
 }
@@ -263,19 +265,20 @@ macro_rules! test_algorithm_identifier_try_from {
 		invalid: { $($invalid_input:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_try_from_valid_oids() {
+		fn test_try_from_valid_oids() -> Result<(), Box<dyn core::error::Error>> {
 			$(
 				// Test &str conversion
-				let alg_id: $algorithm_identifier_type = $valid_input.parse().unwrap();
+				let alg_id: $algorithm_identifier_type = $valid_input.parse()?;
 				assert_eq!(alg_id.algorithm.to_string(), $valid_expected);
 				assert!(alg_id.parameters.is_none());
 
 				// Test String conversion
 				let oid_string = $valid_input.to_string();
-				let alg_id: $algorithm_identifier_type = oid_string.parse().unwrap();
+				let alg_id: $algorithm_identifier_type = oid_string.parse()?;
 				assert_eq!(alg_id.algorithm.to_string(), $valid_expected);
 				assert!(alg_id.parameters.is_none());
 			)+
+			Ok(())
 		}
 
 		#[test]
@@ -303,24 +306,29 @@ macro_rules! test_algorithm_identifier_with_params {
 		test_oids: { $($oid:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_algorithm_identifier_with_params() {
+		fn test_algorithm_identifier_with_params() -> Result<(), Box<dyn core::error::Error>> {
 			let test_oids = [$($oid),+];
 
 			for oid in test_oids {
 				// Create a dummy Any parameter (NULL in this case)
-				let null_param = <$any_type>::from_der(&[0x05, 0x00]).unwrap(); // ASN.1 NULL
-				let alg_id = <$algorithm_identifier_type>::new_with_params(oid, null_param.clone()).unwrap();
+				let null_param = <$any_type>::from_der(&[0x05, 0x00])?; // ASN.1 NULL
+				let alg_id = <$algorithm_identifier_type>::new_with_params(oid, null_param.clone())?;
 				assert_eq!(alg_id.algorithm.to_string(), oid);
 				assert!(alg_id.parameters.is_some());
-				assert_eq!(alg_id.parameters.unwrap(), null_param);
+				assert_eq!(
+					alg_id.parameters.ok_or("expected parameters")?,
+					null_param
+				);
 			}
+			Ok(())
 		}
 
 		#[test]
-		fn test_algorithm_identifier_with_invalid_oid_in_new_with_params() {
-			let null_param = <$any_type>::from_der(&[0x05, 0x00]).unwrap();
+		fn test_algorithm_identifier_with_invalid_oid_in_new_with_params() -> Result<(), Box<dyn core::error::Error>> {
+			let null_param = <$any_type>::from_der(&[0x05, 0x00])?;
 			let result = <$algorithm_identifier_type>::new_with_params("invalid.oid", null_param);
 			assert!(result.is_err());
+			Ok(())
 		}
 	};
 }
@@ -334,9 +342,9 @@ macro_rules! test_subject_public_key_info_key_sizes {
 		test_oid: $test_oid:expr
 	) => {
 		#[test]
-		fn test_subject_public_key_info_with_various_key_sizes() {
+		fn test_subject_public_key_info_with_various_key_sizes() -> Result<(), Box<dyn core::error::Error>> {
 			// Test with empty key bytes
-			let alg_id = <$algorithm_identifier_type>::new($test_oid).unwrap();
+			let alg_id = <$algorithm_identifier_type>::new($test_oid)?;
 			let empty_key_result = <$subject_public_key_info_type>::new(alg_id.clone(), []);
 			assert!(empty_key_result.is_ok()); // Empty bytes should be valid for BitString
 
@@ -346,13 +354,10 @@ macro_rules! test_subject_public_key_info_key_sizes {
 				let key_bytes = vec![0x42; size];
 
 				// Test with valid key bytes
-				let spki_result = <$subject_public_key_info_type>::new(alg_id.clone(), &key_bytes);
-				assert!(spki_result.is_ok());
-
-				// Verify the created SubjectPublicKeyInfo
-				let spki = spki_result.unwrap();
+				let spki = <$subject_public_key_info_type>::new(alg_id.clone(), &key_bytes)?;
 				assert_eq!(spki.subject_public_key.raw_bytes(), &key_bytes);
 			}
+			Ok(())
 		}
 	};
 }
@@ -362,25 +367,26 @@ macro_rules! test_subject_public_key_info_key_sizes {
 macro_rules! test_der_round_trip {
 	($($struct_type:ty: $create_fn:expr),+ $(,)?) => {
 		#[test]
-		fn test_der_round_trip() {
+		fn test_der_round_trip() -> Result<(), Box<dyn core::error::Error>> {
 			$(
 				let original: $struct_type = $create_fn;
 
 				// Test encoding to DER bytes
-				let der_bytes: Vec<u8> = (&original).try_into().unwrap();
+				let der_bytes: Vec<u8> = (&original).try_into()?;
 				assert!(!der_bytes.is_empty());
 
 				// Test decoding from DER bytes
-				let decoded: $struct_type = der_bytes.as_slice().try_into().unwrap();
+				let decoded: $struct_type = der_bytes.as_slice().try_into()?;
 				// Verify round-trip equality
 				assert_eq!(original, decoded);
 
-				let der_bytes = original.to_der().unwrap();
+				let der_bytes = original.to_der()?;
 				assert!(!der_bytes.is_empty());
 
-				let decoded: $struct_type = <$struct_type>::from_der(&der_bytes).unwrap();
+				let decoded: $struct_type = <$struct_type>::from_der(&der_bytes)?;
 				assert_eq!(original, decoded);
 			)+
+			Ok(())
 		}
 	};
 }
@@ -422,21 +428,24 @@ mod tests {
 	macro_rules! test_utility_functions {
 		($test_name:ident, $type:ty, $create_fn:expr, $serialize_fn:ident, $deserialize_fn:ident, $expected_json:expr) => {
 			#[test]
-			fn $test_name() {
+			fn $test_name() -> Result<(), Box<dyn core::error::Error>> {
 				let original: $type = $create_fn;
 
 				// Test serialization function
 				let mut serialized_output = Vec::new();
 				let mut serializer = serde_json::Serializer::new(&mut serialized_output);
-				$serialize_fn(&original, &mut serializer).expect("serialization failed");
-				let serialized = String::from_utf8(serialized_output).unwrap();
+
+				$serialize_fn(&original, &mut serializer)?;
+
+				let serialized = String::from_utf8(serialized_output)?;
 				assert_eq!(serialized, $expected_json);
 
 				// Test deserialization function
 				// Verify round-trip equality
 				let mut deserializer = serde_json::Deserializer::from_str(&serialized);
-				let deserialized = $deserialize_fn(&mut deserializer).expect("deserialization failed");
+				let deserialized = $deserialize_fn(&mut deserializer)?;
 				assert_eq!(original, deserialized);
+				Ok(())
 			}
 		};
 	}
@@ -447,11 +456,11 @@ mod tests {
 		{
 			#[cfg(feature = "der")]
 			{
-				ObjectIdentifier::new(TEST_OID_STR).unwrap()
+				ObjectIdentifier::new(TEST_OID_STR)?
 			}
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{
-				crate::utils::parse_oid_string(TEST_OID_STR).unwrap()
+				crate::utils::parse_oid_string(TEST_OID_STR)?
 			}
 		},
 		serialize_oid,
@@ -464,7 +473,7 @@ mod tests {
 		{
 			#[cfg(feature = "der")]
 			{
-				OctetString::new(TEST_OCTET_BYTES).unwrap()
+				OctetString::new(TEST_OCTET_BYTES)?
 			}
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{
@@ -481,7 +490,7 @@ mod tests {
 		{
 			#[cfg(feature = "der")]
 			{
-				BitString::from_bytes(TEST_BIT_BYTES).unwrap()
+				BitString::from_bytes(TEST_BIT_BYTES)?
 			}
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{

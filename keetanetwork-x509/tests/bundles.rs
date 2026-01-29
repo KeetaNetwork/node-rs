@@ -7,12 +7,12 @@ use keetanetwork_x509::certificates::*;
 use common::*;
 
 #[test]
-fn test_certificate_bundle_creation() {
+fn test_certificate_bundle_creation() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
 	// Test basic bundle properties
-	let bundle = CertificateBundle::try_from(vec![ca_cert.clone(), user_cert.clone()]).unwrap();
+	let bundle = CertificateBundle::try_from(vec![ca_cert.clone(), user_cert.clone()])?;
 	assert_eq!(bundle.clone().into_iter().count(), 1); // Only returns valid chains
 
 	// Test that we can access all certificates through stores
@@ -23,6 +23,8 @@ fn test_certificate_bundle_creation() {
 		all_certs
 	};
 	assert!(!all_certificates.is_empty());
+
+	Ok(())
 }
 
 #[test]
@@ -61,21 +63,22 @@ fn test_certificate_bundle_with_chain() {
 }
 
 #[test]
-fn test_certificate_bundle_operations() {
+fn test_certificate_bundle_operations() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 
 	// Test DER encoding/decoding round trip
-	let bundle = CertificateBundle::try_from(vec![ca_cert.clone()]).unwrap();
-	let der_buffer: Vec<u8> = (&bundle).try_into().unwrap();
+	let bundle = CertificateBundle::try_from(vec![ca_cert.clone()])?;
+	let der_buffer: Vec<u8> = (&bundle).try_into()?;
 	assert!(!der_buffer.is_empty());
 
 	// Test reconstruction from DER
-	let reconstructed_bundle = CertificateBundle::try_from(der_buffer.as_slice()).unwrap();
+	let reconstructed_bundle = CertificateBundle::try_from(der_buffer.as_slice())?;
 	assert_eq!(reconstructed_bundle.into_iter().count(), 1);
+	Ok(())
 }
 
 #[test]
-fn test_certificate_bundle_stores() {
+fn test_certificate_bundle_stores() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 	let cert_moment = test_moment();
@@ -97,22 +100,26 @@ fn test_certificate_bundle_stores() {
 
 	// Test trusted certificate creation
 	let options_trusted = CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) };
-	let ca_pem = ca_cert.to_pem().unwrap();
-	let trusted_cert = CertificateBundle::new(&ca_pem, Some(options_trusted), None, None).unwrap();
+	let ca_pem = ca_cert.to_pem()?;
+	let trusted_cert = CertificateBundle::new(&ca_pem, Some(options_trusted), None, None)?;
 	assert!(trusted_cert.is_trusted());
+
+	Ok(())
 }
 
 #[test]
-fn test_certificate_bundle_constructor() {
+fn test_certificate_bundle_constructor() -> Result<(), Box<dyn core::error::Error>> {
 	let cert_moment = test_moment();
 
 	// Test CertificateBundle constructor variants
-	let cert_with_opts = CertificateBundle::new(CA_CERT_PEM, None, None, None).unwrap();
+	let cert_with_opts = CertificateBundle::new(CA_CERT_PEM, None, None, None)?;
 	assert!(!cert_with_opts.is_trusted());
 	assert_eq!(cert_with_opts.to_chain_length(), 1);
 
 	// Test with trusted root option
 	let trusted_opts = CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) };
-	let trusted_bundle = CertificateBundle::new(CA_CERT_PEM, Some(trusted_opts), None, None).unwrap();
+	let trusted_bundle = CertificateBundle::new(CA_CERT_PEM, Some(trusted_opts), None, None)?;
 	assert!(trusted_bundle.is_trusted());
+
+	Ok(())
 }

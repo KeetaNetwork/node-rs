@@ -1,4 +1,7 @@
+use core::mem::size_of;
+use core::slice::from_raw_parts_mut;
 use core::str::FromStr;
+use core::sync::atomic::{fence, Ordering};
 
 use bip39_dict::DefaultDictionary;
 use pbkdf2;
@@ -144,15 +147,10 @@ pub fn generate_random_passphrase(
 	let mut random_indices = [0u32; 24];
 
 	rand_core::OsRng
-		.try_fill_bytes(unsafe {
-			core::slice::from_raw_parts_mut(
-				random_indices.as_mut_ptr() as *mut u8,
-				core::mem::size_of_val(&random_indices),
-			)
-		})
+		.try_fill_bytes(unsafe { from_raw_parts_mut(random_indices.as_mut_ptr() as *mut u8, size_of::<[u32; 24]>()) })
 		.map_err(|_| create_rng_error())?;
 
-	core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+	fence(Ordering::SeqCst);
 
 	// Convert random bytes to word indices
 	for &raw_index in &random_indices {
@@ -167,7 +165,7 @@ pub fn generate_random_passphrase(
 	// Clear the random indices array
 	random_indices.zeroize();
 
-	core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+	fence(Ordering::SeqCst);
 
 	Ok(passphrase.into_secret())
 }

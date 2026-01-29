@@ -2,6 +2,8 @@
 //!
 //! This module provides ECIES encryption.
 
+use core::sync::atomic::{fence, Ordering};
+
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
@@ -67,7 +69,7 @@ impl EciesSecp256k1 {
 	/// This matches the ecies-geth implementation which uses a counter-based
 	/// KDF and then SHA-256 for the MAC key derivation.
 	fn derive_keys(shared_secret: impl AsRef<[u8]>) -> Result<([u8; 16], [u8; 32]), CryptoError> {
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// First derive 32 bytes using the KDF
 		let kdf_output = Self::kdf(shared_secret.as_ref(), 32)?;
@@ -79,7 +81,7 @@ impl EciesSecp256k1 {
 		// MAC key is SHA-256 of the last 16 bytes
 		let mac_key_hash = HashAlgorithm::Sha2_256.hash_array::<32>(&kdf_output[16..32])?;
 
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		Ok((encryption_key, mac_key_hash))
 	}
@@ -138,7 +140,7 @@ impl Ecies for EciesSecp256k1 {
 		// Derive keys using custom KDF (matches ecies-geth)
 		let (encryption_key, mac_key) = Self::derive_keys(&shared_secret)?;
 		// Generate IV for AES-128-CTR
-		let iv = Aes128CtrCipher::generate_iv();
+		let iv = Aes128CtrCipher::generate_iv()?;
 		// Encrypt with AES-128-CTR
 		let cipher = Aes128CtrCipher::new();
 		let ciphertext_only = cipher.encrypt_with_iv(encryption_key, iv, plaintext.as_ref())?;
@@ -194,7 +196,7 @@ impl Ecies for EciesSecp256k1 {
 		let computed_hmac = mac.finalize().into_bytes();
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		let hmac_matches = computed_hmac.ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
@@ -202,7 +204,7 @@ impl Ecies for EciesSecp256k1 {
 		}
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// Extract IV and ciphertext
 		if cipher_with_iv.len() < 16 {
@@ -310,7 +312,7 @@ impl Ecies for EciesX25519 {
 		mac.update(encrypted_data);
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		let computed_mac = mac.finalize().into_bytes();
 		let mac_matches = computed_mac.ct_eq(received_mac);
@@ -319,7 +321,7 @@ impl Ecies for EciesX25519 {
 		}
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// Decrypt with AES-CBC
 		let cipher = Aes256Cbc;
@@ -431,7 +433,7 @@ impl Ecies for EciesSecp256r1 {
 		let computed_hmac = mac.finalize().into_bytes();
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		let hmac_matches = computed_hmac.ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
@@ -439,7 +441,7 @@ impl Ecies for EciesSecp256r1 {
 		}
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// Decrypt with AES-256-CBC
 		let cipher = Aes256Cbc;
