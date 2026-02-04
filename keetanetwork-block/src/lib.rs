@@ -4,10 +4,13 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+mod parse;
 mod types;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 mod block;
+
+pub use parse::extract_operations_slice;
 
 // Types that require alloc (use Vec)
 #[cfg(any(feature = "alloc", feature = "std"))]

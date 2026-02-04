@@ -35,6 +35,13 @@ use der::{
 	Choice, Decode, DecodeValue, Encode, EncodeValue, Header, Length, Reader, Sequence, SliceReader, Tag, Writer,
 };
 
+/// Reads raw TLV bytes (tag + length + content) from reader.
+fn read_tlv_bytes<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<&'a [u8]> {
+	let header = reader.peek_header()?;
+	let tlv_len = (header.encoded_len()? + header.length)?;
+	reader.read_slice(tlv_len)
+}
+
 // Type aliases for DER types
 pub type Bytes<'a> = OctetStringRef<'a>;
 pub type Int<'a> = IntRef<'a>;
@@ -659,13 +666,6 @@ pub struct ManageCertificateOp<'a> {
 	pub certificate_or_hash: &'a [u8],
 	/// Intermediate certificates DER bytes, NULL, or absent.
 	pub intermediate_certificates: Option<NullOr<&'a [u8]>>,
-}
-
-/// Reads raw TLV bytes (tag + length + content) from reader.
-fn read_tlv_bytes<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<&'a [u8]> {
-	let header = reader.peek_header()?;
-	let tlv_len = (header.encoded_len()? + header.length)?;
-	reader.read_slice(tlv_len)
 }
 
 impl<'a> DecodeValue<'a> for ManageCertificateOp<'a> {

@@ -182,6 +182,7 @@ fn decode_v2_block<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<KeetaBlock<
 // ============================================================================
 
 /// Decodes `NULL` or `INTEGER`, returning `Option<u64>`.
+#[cfg(any(feature = "alloc", feature = "std"))]
 fn decode_null_or_integer<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<Option<u64>> {
 	let tag = reader.peek_tag()?;
 	if tag == Tag::Null {
@@ -194,6 +195,7 @@ fn decode_null_or_integer<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<Opti
 }
 
 /// Reads `GeneralizedTime` as raw content bytes.
+#[cfg(any(feature = "alloc", feature = "std"))]
 fn read_generalized_time_bytes<'a, R: Reader<'a>>(reader: &mut R) -> der::Result<&'a [u8]> {
 	let header = Header::decode(reader)?;
 	if header.tag != Tag::GeneralizedTime {
@@ -659,12 +661,14 @@ fn encode_multisig(info: &MultiSigSignerInfo, writer: &mut impl Writer) -> der::
 }
 
 /// Calculates `GeneralizedTime` encoded length.
+#[cfg(any(feature = "alloc", feature = "std"))]
 fn encode_generalized_time_len(date_bytes: &[u8]) -> der::Result<Length> {
 	let content_len = Length::try_from(date_bytes.len())?;
 	Header::new(Tag::GeneralizedTime, content_len)?.encoded_len() + content_len
 }
 
 /// Encodes `GeneralizedTime` from raw bytes.
+#[cfg(any(feature = "alloc", feature = "std"))]
 fn encode_generalized_time(date_bytes: &[u8], writer: &mut impl Writer) -> der::Result<()> {
 	let content_len = Length::try_from(date_bytes.len())?;
 	Header::new(Tag::GeneralizedTime, content_len)?.encode(writer)?;
@@ -675,6 +679,7 @@ fn encode_generalized_time(date_bytes: &[u8], writer: &mut impl Writer) -> der::
 // BlockPurpose Encode
 // ============================================================================
 
+#[cfg(any(feature = "alloc", feature = "std"))]
 impl From<BlockPurpose> for u8 {
 	fn from(purpose: BlockPurpose) -> u8 {
 		match purpose {
