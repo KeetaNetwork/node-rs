@@ -1,0 +1,13 @@
+[package]
+name = "keetanetwork-permissions"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Permission bit definitions for Keetanetwork blockchain"
+
+[lib]
+name = "keetanetwork_permissions"
+path = "src/lib.rs"
