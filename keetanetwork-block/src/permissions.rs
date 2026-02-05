@@ -1,8 +1,7 @@
-//! # Keetanetwork Permissions
-//!
 //! Permission bit definitions for the Keetanetwork blockchain.
-
-#![no_std]
+//!
+//! This module defines the semantic meaning of permission bits used in
+//! [`Permission`](crate::Permission) values.
 
 // Base permission bit constants
 pub const ACCESS: u64 = 1 << 0;

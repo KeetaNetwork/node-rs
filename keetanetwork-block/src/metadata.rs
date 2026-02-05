@@ -1,0 +1,256 @@
+//! Metadata parsing.
+//!
+//! Decodes base64 JSON metadata and extracts asset_id/authority/symbol.
+//! This module is no_std compatible and does not allocate.
+
+use base64ct::{Base64, Encoding};
+use serde::Deserialize;
+
+const MAX_FIELD_LEN: usize = 64;
+
+/// Raw metadata structure for JSON deserialization.
+#[derive(Deserialize)]
+struct RawMetadata<'a> {
+	#[serde(default)]
+	asset_id: Option<&'a str>,
+	#[serde(default)]
+	authority: Option<&'a str>,
+	#[serde(default)]
+	symbol: Option<&'a str>,
+}
+
+/// Decoded metadata with fixed-size buffers.
+pub struct DecodedMetadata {
+	pub asset_id: [u8; MAX_FIELD_LEN],
+	pub asset_id_len: usize,
+	pub authority: [u8; MAX_FIELD_LEN],
+	pub authority_len: usize,
+	pub symbol: [u8; MAX_FIELD_LEN],
+	pub symbol_len: usize,
+}
+
+impl DecodedMetadata {
+	/// Create a new empty metadata instance.
+	pub fn new() -> Self {
+		Self {
+			asset_id: [0u8; MAX_FIELD_LEN],
+			asset_id_len: 0,
+			authority: [0u8; MAX_FIELD_LEN],
+			authority_len: 0,
+			symbol: [0u8; MAX_FIELD_LEN],
+			symbol_len: 0,
+		}
+	}
+
+	/// Get the asset_id as a string slice, if present.
+	pub fn asset_id_str(&self) -> Option<&str> {
+		if self.asset_id_len > 0 {
+			core::str::from_utf8(&self.asset_id[..self.asset_id_len]).ok()
+		} else {
+			None
+		}
+	}
+
+	/// Get the authority as a string slice, if present.
+	pub fn authority_str(&self) -> Option<&str> {
+		if self.authority_len > 0 {
+			core::str::from_utf8(&self.authority[..self.authority_len]).ok()
+		} else {
+			None
+		}
+	}
+
+	/// Get the symbol as a string slice, if present.
+	pub fn symbol_str(&self) -> Option<&str> {
+		if self.symbol_len > 0 {
+			core::str::from_utf8(&self.symbol[..self.symbol_len]).ok()
+		} else {
+			None
+		}
+	}
+}
+
+impl Default for DecodedMetadata {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+/// Result of metadata decoding.
+pub enum MetadataDisplay {
+	/// Successfully decoded metadata with at least one known field.
+	Decoded(DecodedMetadata),
+	/// Valid JSON but no known fields (asset_id, authority, symbol).
+	Unknown,
+	/// Invalid base64 encoding or malformed JSON.
+	Invalid,
+	/// Empty input string.
+	Empty,
+}
+
+/// Decode base64 metadata and extract known fields.
+///
+/// # Arguments
+/// * `base64_input` - Base64-encoded JSON string
+/// * `decode_buf` - Buffer for base64 decoding, must be >= input.len() * 3/4
+///
+/// # Returns
+/// A `MetadataDisplay` variant indicating the result.
+pub fn decode_metadata(base64_input: &str, decode_buf: &mut [u8]) -> MetadataDisplay {
+	if base64_input.is_empty() {
+		return MetadataDisplay::Empty;
+	}
+
+	let decoded = match Base64::decode(base64_input.as_bytes(), decode_buf) {
+		Ok(bytes) => bytes,
+		Err(_) => return MetadataDisplay::Invalid,
+	};
+
+	let raw: RawMetadata = match serde_json_core::from_slice(decoded) {
+		Ok((meta, _)) => meta,
+		Err(_) => return MetadataDisplay::Invalid,
+	};
+
+	let mut result = DecodedMetadata::new();
+	let mut found_any = false;
+
+	if let Some(value) = raw.asset_id {
+		let bytes = value.as_bytes();
+		let copy_len = bytes.len().min(MAX_FIELD_LEN);
+		result.asset_id[..copy_len].copy_from_slice(&bytes[..copy_len]);
+		result.asset_id_len = copy_len;
+		found_any = true;
+	}
+
+	if let Some(value) = raw.authority {
+		let bytes = value.as_bytes();
+		let copy_len = bytes.len().min(MAX_FIELD_LEN);
+		result.authority[..copy_len].copy_from_slice(&bytes[..copy_len]);
+		result.authority_len = copy_len;
+		found_any = true;
+	}
+
+	if let Some(value) = raw.symbol {
+		let bytes = value.as_bytes();
+		let copy_len = bytes.len().min(MAX_FIELD_LEN);
+		result.symbol[..copy_len].copy_from_slice(&bytes[..copy_len]);
+		result.symbol_len = copy_len;
+		found_any = true;
+	}
+
+	if found_any {
+		MetadataDisplay::Decoded(result)
+	} else {
+		MetadataDisplay::Unknown
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_decode_metadata_full() {
+		let mut buf = [0u8; 512];
+
+		let json = r#"{"asset_id":"asset://1f0ccae9-5666/1","authority":"keeta_abc123def456","signature":"c2lnbmF0dXJl"}"#;
+		let b64 = base64_encode_for_test(json.as_bytes());
+
+		match decode_metadata(&b64, &mut buf) {
+			MetadataDisplay::Decoded(meta) => {
+				assert_eq!(meta.asset_id_str(), Some("asset://1f0ccae9-5666/1"));
+				assert_eq!(meta.authority_str(), Some("keeta_abc123def456"));
+			}
+			_ => panic!("Expected Decoded variant"),
+		}
+	}
+
+	#[test]
+	fn test_decode_metadata_with_symbol() {
+		let mut buf = [0u8; 512];
+
+		let json = r#"{"asset_id":"asset://123","symbol":"KEETA"}"#;
+		let b64 = base64_encode_for_test(json.as_bytes());
+
+		match decode_metadata(&b64, &mut buf) {
+			MetadataDisplay::Decoded(meta) => {
+				assert_eq!(meta.asset_id_str(), Some("asset://123"));
+				assert_eq!(meta.symbol_str(), Some("KEETA"));
+				assert_eq!(meta.authority_str(), None);
+			}
+			_ => panic!("Expected Decoded variant"),
+		}
+	}
+
+	#[test]
+	fn test_decode_metadata_empty() {
+		let mut buf = [0u8; 100];
+		match decode_metadata("", &mut buf) {
+			MetadataDisplay::Empty => {}
+			_ => panic!("Expected Empty variant"),
+		}
+	}
+
+	#[test]
+	fn test_decode_metadata_unknown_fields_only() {
+		let mut buf = [0u8; 512];
+
+		let json = r#"{"foo":"bar","baz":123}"#;
+		let b64 = base64_encode_for_test(json.as_bytes());
+
+		match decode_metadata(&b64, &mut buf) {
+			MetadataDisplay::Unknown => {}
+			_ => panic!("Expected Unknown variant"),
+		}
+	}
+
+	#[test]
+	fn test_decode_metadata_invalid_base64() {
+		let mut buf = [0u8; 100];
+		match decode_metadata("not-valid-base64!!!", &mut buf) {
+			MetadataDisplay::Invalid => {}
+			_ => panic!("Expected Invalid variant"),
+		}
+	}
+
+	#[test]
+	fn test_decode_metadata_invalid_json() {
+		let mut buf = [0u8; 100];
+		let b64 = base64_encode_for_test(b"not json at all");
+
+		match decode_metadata(&b64, &mut buf) {
+			MetadataDisplay::Invalid => {}
+			_ => panic!("Expected Invalid variant"),
+		}
+	}
+
+	fn base64_encode_for_test(input: &[u8]) -> String {
+		const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		let mut result = String::new();
+
+		for chunk in input.chunks(3) {
+			let b0 = chunk[0] as u32;
+			let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+			let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+
+			let n = (b0 << 16) | (b1 << 8) | b2;
+
+			result.push(CHARS[((n >> 18) & 0x3F) as usize] as char);
+			result.push(CHARS[((n >> 12) & 0x3F) as usize] as char);
+
+			if chunk.len() > 1 {
+				result.push(CHARS[((n >> 6) & 0x3F) as usize] as char);
+			} else {
+				result.push('=');
+			}
+
+			if chunk.len() > 2 {
+				result.push(CHARS[(n & 0x3F) as usize] as char);
+			} else {
+				result.push('=');
+			}
+		}
+
+		result
+	}
+}

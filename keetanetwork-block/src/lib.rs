@@ -5,6 +5,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 mod parse;
+pub mod metadata;
+pub mod permissions;
 mod types;
 
 #[cfg(any(feature = "alloc", feature = "std"))]

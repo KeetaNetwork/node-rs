@@ -8,7 +8,6 @@ members = [
 	"keetanetwork-asn1",
 	"keetanetwork-utils",
 	"keetanetwork-block",
-	"keetanetwork-permissions",
 	"keetanetwork-ledger",
 	"keetanetwork-node",
 ]
