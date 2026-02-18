@@ -17,19 +17,9 @@ pub use parse::extract_operations_slice;
 // Types that require alloc (use Vec)
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use types::{
-	// Vote/Certificate types
-	AlgorithmIdentifier,
-	CertificateExtensionWrapper,
-	FeeData,
-	HashData,
 	// Block types
 	KeetaBlock,
 	KeetaBlockBuilder,
-	SubjectPublicKeyInfo,
-	TbsCertificate,
-	Validity,
-	Vote,
-	VoteStaple,
 };
 
 pub use types::{
