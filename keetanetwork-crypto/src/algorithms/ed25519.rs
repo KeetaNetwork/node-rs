@@ -27,6 +27,8 @@
 // Re-export algorithm-specific signature types
 pub use ed25519_dalek::Signature as Ed25519Signature;
 
+use alloc::vec::Vec;
+
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::sync::atomic::{fence, Ordering};
 

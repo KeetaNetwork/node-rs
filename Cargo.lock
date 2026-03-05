@@ -265,7 +265,6 @@ checksum = "96272c2ff28b807e09250b180ad1fb7889a3258f7455759b5c3c58b719467130"
 dependencies = [
  "der",
  "num-traits",
- "rand_core 0.6.4",
  "serdect",
  "subtle",
  "zeroize",
@@ -419,7 +418,6 @@ dependencies = [
  "generic-array",
  "group",
  "hkdf",
- "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",
@@ -617,9 +615,7 @@ dependencies = [
  "cfg-if",
  "ecdsa",
  "elliptic-curve",
- "once_cell",
  "sha2",
- "signature",
 ]
 
 [[package]]
@@ -1371,6 +1367,9 @@ name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
+dependencies = [
+ "strum_macros",
+]
 
 [[package]]
 name = "strum_macros"
@@ -1623,7 +1622,6 @@ checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
 dependencies = [
  "curve25519-dalek",
  "rand_core 0.6.4",
- "serde",
  "zeroize",
 ]
 

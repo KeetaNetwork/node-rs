@@ -1,3 +1,5 @@
+use alloc::string::{String, ToString};
+
 use keetanetwork_utils::impl_variant_error_from;
 use snafu::Snafu;
 

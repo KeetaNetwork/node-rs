@@ -3,6 +3,8 @@
 //! This module provides abstractions over different key derivation functions
 //! used for expanding key material and deriving cryptographic keys.
 
+use alloc::vec::Vec;
+
 use hkdf::Hkdf;
 use sha2::{Sha256, Sha512};
 use sha3::Sha3_256;

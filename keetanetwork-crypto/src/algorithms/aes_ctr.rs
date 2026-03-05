@@ -2,6 +2,8 @@
 //!
 //! This module provides AES-CTR symmetric encryption.
 
+use alloc::vec::Vec;
+
 use aes::Aes128;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use ctr::Ctr128BE;

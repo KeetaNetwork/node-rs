@@ -1,3 +1,6 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use core::mem::size_of;
 use core::slice::from_raw_parts_mut;
 use core::str::FromStr;

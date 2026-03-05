@@ -2,6 +2,8 @@
 //!
 //! This module provides a flexible abstraction over different hash algorithms.
 
+use alloc::vec::Vec;
+
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use sha3::{Digest, Sha3_256};

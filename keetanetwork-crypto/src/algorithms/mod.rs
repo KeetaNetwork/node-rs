@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use core::fmt::Debug;
 
 use secrecy::SecretBox;
@@ -193,6 +195,8 @@ macro_rules! impl_any_signature {
 
 		impl $any_signature_type {
 			pub fn to_bytes(&self) -> Vec<u8> {
+				#[allow(unused_imports)]
+				use ::signature::SignatureEncoding;
 				match self {
 					$(
 						$any_signature_type::$variant(sig) => sig.to_vec(),
