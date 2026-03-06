@@ -19,6 +19,5 @@ mod subject_public_key_info_definitions {
 }
 
 // Re-export all types from the generated modules
-pub use algorithm_identifier_definitions::{AlgorithmIdentifier};
-pub use subject_public_key_info_definitions::{SubjectPublicKeyInfo};
-
+pub use algorithm_identifier_definitions::AlgorithmIdentifier;
+pub use subject_public_key_info_definitions::SubjectPublicKeyInfo;
