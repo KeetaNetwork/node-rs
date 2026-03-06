@@ -69,7 +69,7 @@ default-features = false
 features = ["os_rng"]
 
 [dependencies.snafu]
-version = "0.8.7"
+workspace = true
 default-features = false
 
 # RustCrypto trait crates
