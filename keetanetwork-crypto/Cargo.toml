@@ -191,6 +191,9 @@ std = [
 	"dep:chrono",
 	"dep:keetanetwork-error",
 	"keetanetwork-utils/std",
+	"signature?/std",
+	"aead?/std",
+	"rand?/std",
 ]
 alloc = []
 signature = ["dep:signature"]

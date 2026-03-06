@@ -59,11 +59,16 @@ do-lint-ci:
 
 # Test crate packages features
 test-feat:
-	cargo test -p keetanetwork-crypto --no-default-features --features signature
-	cargo test -p keetanetwork-crypto --no-default-features --features encryption
-	cargo test -p keetanetwork-crypto --no-default-features --features der
+	cargo test -p keetanetwork-crypto --no-default-features --features std,signature
+	cargo test -p keetanetwork-crypto --no-default-features --features std,encryption
+	cargo test -p keetanetwork-crypto --no-default-features --features std,der
 	cargo test -p keetanetwork-account --no-default-features --features der
 	cargo test -p keetanetwork-account --no-default-features --features rasn
+	cargo test -p keetanetwork-crypto --no-default-features --features std
+	cargo check -p keetanetwork-crypto --no-default-features
+	cargo check -p keetanetwork-crypto --no-default-features --features signature
+	cargo check -p keetanetwork-crypto --no-default-features --features encryption
+	cargo check -p keetanetwork-crypto --no-default-features --features signature,encryption,rasn
 	cargo test -p keetanetwork-x509 --no-default-features --features der
 	cargo test -p keetanetwork-x509 --no-default-features --features rasn
 	cargo test -p keetanetwork-x509 --no-default-features --features der, serde
@@ -73,7 +78,6 @@ test-feat:
 	cargo test -p keetanetwork-asn1 --no-default-features --features der,serde
 	cargo test -p keetanetwork-asn1 --no-default-features --features rasn,serde
 	cargo test -p keetanetwork-crypto -p keetanetwork-x509 --all-features
-	cargo test -p keetanetwork-crypto --no-default-features
 
 # Run tests with host system's default target
 test:

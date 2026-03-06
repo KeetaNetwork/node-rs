@@ -614,6 +614,7 @@ impl KeyDerivation for Ed25519Derivation {
 
 #[cfg(test)]
 mod tests {
+	extern crate std;
 	use std::collections::HashMap;
 
 	use super::*;
