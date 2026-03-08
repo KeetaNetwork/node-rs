@@ -175,44 +175,28 @@ mod tests {
 	}
 
 	#[test]
-	fn test_decode_metadata_empty() {
-		let mut buf = [0u8; 100];
-		match decode_metadata("", &mut buf) {
-			MetadataDisplay::Empty => {}
-			_ => panic!("Expected Empty variant"),
-		}
-	}
+	fn test_decode_metadata_non_decoded_cases() {
+		let unknown_json = r#"{"foo":"bar","baz":123}"#;
+		let unknown_b64 = base64_encode_for_test(unknown_json.as_bytes());
+		let invalid_json_b64 = base64_encode_for_test(b"not json at all");
 
-	#[test]
-	fn test_decode_metadata_unknown_fields_only() {
-		let mut buf = [0u8; 512];
+		let cases: &[(&str, &str)] = &[
+			("empty", ""),
+			("unknown_fields", &unknown_b64),
+			("invalid_base64", "not-valid-base64!!!"),
+			("invalid_json", &invalid_json_b64),
+		];
 
-		let json = r#"{"foo":"bar","baz":123}"#;
-		let b64 = base64_encode_for_test(json.as_bytes());
-
-		match decode_metadata(&b64, &mut buf) {
-			MetadataDisplay::Unknown => {}
-			_ => panic!("Expected Unknown variant"),
-		}
-	}
-
-	#[test]
-	fn test_decode_metadata_invalid_base64() {
-		let mut buf = [0u8; 100];
-		match decode_metadata("not-valid-base64!!!", &mut buf) {
-			MetadataDisplay::Invalid => {}
-			_ => panic!("Expected Invalid variant"),
-		}
-	}
-
-	#[test]
-	fn test_decode_metadata_invalid_json() {
-		let mut buf = [0u8; 100];
-		let b64 = base64_encode_for_test(b"not json at all");
-
-		match decode_metadata(&b64, &mut buf) {
-			MetadataDisplay::Invalid => {}
-			_ => panic!("Expected Invalid variant"),
+		for (name, input) in cases {
+			let mut buf = [0u8; 512];
+			let result = decode_metadata(input, &mut buf);
+			match (name, &result) {
+				(&"empty", MetadataDisplay::Empty)
+				| (&"unknown_fields", MetadataDisplay::Unknown)
+				| (&"invalid_base64", MetadataDisplay::Invalid)
+				| (&"invalid_json", MetadataDisplay::Invalid) => {}
+				_ => panic!("Unexpected result for case: {name}"),
+			}
 		}
 	}
 
