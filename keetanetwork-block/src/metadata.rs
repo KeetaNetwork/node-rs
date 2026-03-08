@@ -112,33 +112,24 @@ pub fn decode_metadata(base64_input: &str, decode_buf: &mut [u8]) -> MetadataDis
 	};
 
 	let mut result = DecodedMetadata::new();
-	let mut found_any = false;
 
-	if let Some(value) = raw.asset_id {
-		let bytes = value.as_bytes();
-		let copy_len = bytes.len().min(MAX_FIELD_LEN);
-		result.asset_id[..copy_len].copy_from_slice(&bytes[..copy_len]);
-		result.asset_id_len = copy_len;
-		found_any = true;
+	let copy_field = |value: &str, buf: &mut [u8; MAX_FIELD_LEN]| -> usize {
+		let len = value.len().min(MAX_FIELD_LEN);
+		buf[..len].copy_from_slice(&value.as_bytes()[..len]);
+		len
+	};
+
+	if let Some(v) = raw.asset_id {
+		result.asset_id_len = copy_field(v, &mut result.asset_id);
+	}
+	if let Some(v) = raw.authority {
+		result.authority_len = copy_field(v, &mut result.authority);
+	}
+	if let Some(v) = raw.symbol {
+		result.symbol_len = copy_field(v, &mut result.symbol);
 	}
 
-	if let Some(value) = raw.authority {
-		let bytes = value.as_bytes();
-		let copy_len = bytes.len().min(MAX_FIELD_LEN);
-		result.authority[..copy_len].copy_from_slice(&bytes[..copy_len]);
-		result.authority_len = copy_len;
-		found_any = true;
-	}
-
-	if let Some(value) = raw.symbol {
-		let bytes = value.as_bytes();
-		let copy_len = bytes.len().min(MAX_FIELD_LEN);
-		result.symbol[..copy_len].copy_from_slice(&bytes[..copy_len]);
-		result.symbol_len = copy_len;
-		found_any = true;
-	}
-
-	if found_any {
+	if result.asset_id_len > 0 || result.authority_len > 0 || result.symbol_len > 0 {
 		MetadataDisplay::Decoded(result)
 	} else {
 		MetadataDisplay::Unknown
