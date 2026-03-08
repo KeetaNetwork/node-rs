@@ -4,23 +4,12 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-mod parse;
 pub mod metadata;
+mod parse;
 pub mod permissions;
 mod types;
 
-#[cfg(any(feature = "alloc", feature = "std"))]
-mod block;
-
 pub use parse::extract_operations_slice;
-
-// Types that require alloc (use Vec)
-#[cfg(any(feature = "alloc", feature = "std"))]
-pub use types::{
-	// Block types
-	KeetaBlock,
-	KeetaBlockBuilder,
-};
 
 pub use types::{
 	// Enums

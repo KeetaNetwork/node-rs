@@ -19,16 +19,6 @@
 //! | `9`  | MatchSwap               |
 //! | `10` | CancelSwap              |
 
-// Use alloc for Vec when not using std
-#[cfg(all(feature = "alloc", not(feature = "std")))]
-extern crate alloc;
-
-#[cfg(all(feature = "alloc", not(feature = "std")))]
-use alloc::vec::Vec;
-
-#[cfg(feature = "std")]
-use std::vec::Vec;
-
 // DER encoding/decoding support
 use der::{
 	asn1::{IntRef, Null, OctetStringRef, Utf8StringRef},
@@ -168,115 +158,8 @@ pub struct BlockHeader<'a> {
 	pub purpose: BlockPurpose,
 	/// Account public key with type prefix
 	pub account: &'a [u8],
-	/// Signer information (V1: always Single, V2: can be Single/Multisig/AccountIsSigner)
-	#[cfg(any(feature = "alloc", feature = "std"))]
-	pub signer: SignerField<'a>,
 	/// Previous block hash (32 bytes)
 	pub previous: &'a [u8],
-}
-
-/// Parsed Keeta block (unified view for both V1 and V2)
-#[cfg(any(feature = "alloc", feature = "std"))]
-#[derive(Debug, Clone)]
-pub struct KeetaBlock<'a> {
-	/// Block version
-	pub version: BlockVersion,
-	/// Block header/metadata
-	pub header: BlockHeader<'a>,
-	/// Operations in the block
-	pub operations: Vec<Operation<'a>>,
-	/// Signatures (V1: single, V2: one or more)
-	pub signatures: Vec<&'a [u8]>,
-}
-
-/// Builder for constructing KeetaBlock instances
-#[cfg(any(feature = "alloc", feature = "std"))]
-#[derive(Debug, Clone)]
-pub struct KeetaBlockBuilder<'a> {
-	version: BlockVersion,
-	header: BlockHeader<'a>,
-	operations: Vec<Operation<'a>>,
-	signatures: Vec<&'a [u8]>,
-}
-
-#[cfg(any(feature = "alloc", feature = "std"))]
-impl<'a> KeetaBlockBuilder<'a> {
-	/// Create a new builder with the specified block version and header
-	pub fn new(version: BlockVersion, header: BlockHeader<'a>) -> Self {
-		Self { version, header, operations: Vec::new(), signatures: Vec::new() }
-	}
-
-	/// Set the operations
-	pub fn operations(mut self, operations: Vec<Operation<'a>>) -> Self {
-		self.operations = operations;
-		self
-	}
-
-	/// Add a single operation
-	pub fn operation(mut self, operation: Operation<'a>) -> Self {
-		self.operations.push(operation);
-		self
-	}
-
-	/// Set the signatures
-	pub fn signatures(mut self, signatures: Vec<&'a [u8]>) -> Self {
-		self.signatures = signatures;
-		self
-	}
-
-	/// Add a single signature
-	pub fn signature(mut self, signature: &'a [u8]) -> Self {
-		self.signatures.push(signature);
-		self
-	}
-
-	/// Build the KeetaBlock
-	pub fn build(self) -> KeetaBlock<'a> {
-		KeetaBlock {
-			version: self.version,
-			header: self.header,
-			operations: self.operations,
-			signatures: self.signatures,
-		}
-	}
-}
-
-// ============================================================================
-// Signer Types
-// ============================================================================
-
-/// Individual signer in a multisig (can be nested)
-#[cfg(any(feature = "alloc", feature = "std"))]
-#[derive(Debug, Clone)]
-pub enum MultiSigSigner<'a> {
-	/// Nested multisig signer info
-	Nested(Box<MultiSigSignerInfo<'a>>),
-	/// Single key signer (public key with type prefix)
-	Key(&'a [u8]),
-}
-
-/// Multisig signer information for V2 blocks
-#[cfg(any(feature = "alloc", feature = "std"))]
-#[derive(Debug, Clone)]
-pub struct MultiSigSignerInfo<'a> {
-	/// Public key of the multisig account
-	pub multisig_pub_key: &'a [u8],
-	/// Signers (can be nested multisig or single keys)
-	pub signers: Vec<MultiSigSigner<'a>>,
-}
-
-/// Signer field for blocks
-///
-/// V1 blocks always use Single. V2 blocks can use any variant.
-#[cfg(any(feature = "alloc", feature = "std"))]
-#[derive(Debug, Clone)]
-pub enum SignerField<'a> {
-	/// Single signer (public key with type prefix)
-	Single(&'a [u8]),
-	/// Multisig signer info (V2 only)
-	Multisig(MultiSigSignerInfo<'a>),
-	/// Account is signer (null case, V2 only)
-	AccountIsSigner,
 }
 
 // ============================================================================

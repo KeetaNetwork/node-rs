@@ -153,7 +153,8 @@ mod tests {
 	fn test_decode_metadata_full() {
 		let mut buf = [0u8; 512];
 
-		let json = r#"{"asset_id":"asset://1f0ccae9-5666/1","authority":"keeta_abc123def456","signature":"c2lnbmF0dXJl"}"#;
+		let json =
+			r#"{"asset_id":"asset://1f0ccae9-5666/1","authority":"keeta_abc123def456","signature":"c2lnbmF0dXJl"}"#;
 		let b64 = base64_encode_for_test(json.as_bytes());
 
 		match decode_metadata(&b64, &mut buf) {
