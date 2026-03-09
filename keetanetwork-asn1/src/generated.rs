@@ -1,3 +1,4 @@
+#![cfg_attr(rustfmt, rustfmt::skip)]
 //! Generated ASN.1 code
 //!
 //! This module contains all the generated ASN.1 structures and re-exports them

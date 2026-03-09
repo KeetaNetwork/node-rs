@@ -3,9 +3,6 @@
 # This configuration file controls the formatting of Rust code in this project.
 # It enforces a consistent style with a focus on readability.
 
-# Ignore generated files
-ignore = ["keetanetwork-asn1/src/generated.rs"]
-
 # Indentation settings
 # --------------------
 # Use tabs instead of spaces for indentation
