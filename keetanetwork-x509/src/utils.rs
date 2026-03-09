@@ -998,7 +998,7 @@ mod tests {
 		assert_eq!(multi_pairs.len(), 7);
 
 		// Verify each mapping
-		let expected_mappings = vec![
+		let expected_mappings = [
 			("commonName", "example.com"),
 			("organizationName", "Example Organization"),
 			("organizationalUnitName", "IT Department"),
