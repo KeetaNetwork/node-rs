@@ -672,7 +672,19 @@ dependencies = [
 name = "keetanetwork-block"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "der",
+ "hex",
+ "hex-literal",
+ "keetanetwork-account",
+ "keetanetwork-crypto",
  "keetanetwork-error",
+ "keetanetwork-utils",
+ "keetanetwork-x509",
+ "num-bigint",
+ "num-traits",
+ "serde",
+ "serde_json",
  "snafu",
 ]
 
@@ -748,6 +760,8 @@ name = "keetanetwork-utils"
 version = "0.1.0"
 dependencies = [
  "rasn-compiler",
+ "serde_json",
+ "snafu",
 ]
 
 [[package]]

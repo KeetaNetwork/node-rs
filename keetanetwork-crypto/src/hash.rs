@@ -2,6 +2,9 @@
 //!
 //! This module provides a flexible abstraction over different hash algorithms.
 
+use core::fmt::{Display, Formatter, Result as FmtResult};
+use core::str::FromStr;
+
 use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use sha3::{Digest, Sha3_256};
@@ -140,6 +143,75 @@ pub fn hash_array<const N: usize>(
 	let algo = algorithm.unwrap_or(DEFAULT_HASH_ALGORITHM);
 
 	algo.hash_array::<N>(data)
+}
+
+/// A 32-byte block hash produced by the default hash algorithm (SHA3-256).
+///
+/// This is the canonical hash type for blocks and block-derived values such
+/// as account opening hashes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlockHash([u8; HASH_FUNCTION_LENGTH]);
+
+impl BlockHash {
+	/// Compute the account opening hash from a raw public key
+	/// (without the key type prefix byte).
+	pub fn opening(raw_public_key: impl AsRef<[u8]>) -> Self {
+		Self(hash_default(raw_public_key))
+	}
+
+	/// Borrow the hash as a fixed-size byte array.
+	pub fn as_bytes(&self) -> &[u8; HASH_FUNCTION_LENGTH] {
+		&self.0
+	}
+}
+
+impl From<[u8; HASH_FUNCTION_LENGTH]> for BlockHash {
+	fn from(bytes: [u8; HASH_FUNCTION_LENGTH]) -> Self {
+		Self(bytes)
+	}
+}
+
+impl From<BlockHash> for [u8; HASH_FUNCTION_LENGTH] {
+	fn from(hash: BlockHash) -> Self {
+		hash.0
+	}
+}
+
+impl AsRef<[u8]> for BlockHash {
+	fn as_ref(&self) -> &[u8] {
+		&self.0
+	}
+}
+
+impl TryFrom<&[u8]> for BlockHash {
+	type Error = CryptoError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		let array: [u8; HASH_FUNCTION_LENGTH] = bytes.try_into()?;
+		Ok(Self(array))
+	}
+}
+
+impl Display for BlockHash {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+		write!(f, "{}", hex::encode_upper(self.0))
+	}
+}
+
+impl FromStr for BlockHash {
+	type Err = CryptoError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let mut bytes = [0u8; HASH_FUNCTION_LENGTH];
+		hex::decode_to_slice(s, &mut bytes)?;
+		Ok(Self(bytes))
+	}
+}
+
+/// Types that can be hashed into a [`BlockHash`] using the default algorithm.
+pub trait Hashable {
+	/// Compute the hash of this value.
+	fn hash(&self) -> BlockHash;
 }
 
 /// Get the hash function name
@@ -450,6 +522,38 @@ mod tests {
 		assert_eq!(hash_result, hash_array_result);
 
 		Ok(())
+	}
+
+	#[test]
+	fn test_block_hash_roundtrip() {
+		let hash = BlockHash::from(hash_default(b"test data"));
+		let text = hash.to_string();
+		let parsed: BlockHash = text.parse().unwrap();
+		assert_eq!(parsed, hash);
+		assert_eq!(text, text.to_uppercase());
+		assert_eq!(hash.as_ref().len(), 32);
+		assert_eq!(<[u8; 32]>::from(hash), *hash.as_bytes());
+	}
+
+	#[test]
+	fn test_block_hash_parse_lowercase() {
+		let hash = BlockHash::from(hash_default(b"abc"));
+		let parsed: BlockHash = hash.to_string().to_lowercase().parse().unwrap();
+		assert_eq!(parsed, hash);
+	}
+
+	#[test]
+	fn test_block_hash_parse_invalid() {
+		assert!(matches!("zz".parse::<BlockHash>(), Err(CryptoError::InvalidInput)));
+		assert!(matches!("aabb".parse::<BlockHash>(), Err(CryptoError::InvalidInput)));
+		assert!(matches!(BlockHash::try_from([0u8; 16].as_slice()), Err(CryptoError::InvalidKeySize)));
+	}
+
+	#[test]
+	fn test_block_hash_opening() {
+		let raw_key = [7u8; 32];
+		let opening = BlockHash::opening(raw_key);
+		assert_eq!(*opening.as_bytes(), hash_default(raw_key));
 	}
 
 	#[test]

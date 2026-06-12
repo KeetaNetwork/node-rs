@@ -64,6 +64,7 @@ impl_variant_error_from!(CryptoError, {
 	hkdf::InvalidLength => KeyDerivationFailed,
 	hkdf::InvalidPrkLength => KeyDerivationFailed,
 	core::array::TryFromSliceError => InvalidKeySize,
+	hex::FromHexError => InvalidInput,
 });
 
 #[cfg(feature = "encryption")]

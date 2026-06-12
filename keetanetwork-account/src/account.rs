@@ -224,14 +224,13 @@ use keetanetwork_crypto::algorithms::secp256r1::{
 };
 use keetanetwork_crypto::algorithms::{Algorithm, CryptoAlgorithm};
 use keetanetwork_crypto::error::CryptoError;
-use keetanetwork_crypto::hash::{hash_array, hash_default};
+use keetanetwork_crypto::hash::{hash_array, BlockHash};
 use keetanetwork_crypto::operations::SignatureError;
 use keetanetwork_crypto::prelude::*;
 use keetanetwork_crypto::utils::{generate_random_passphrase, seed_from_passphrase};
 use strum_macros::{Display, EnumIter, EnumString};
 use zeroize::Zeroize;
 
-use crate::constants::NO_PREVIOUS;
 use crate::error::AccountError;
 use crate::utils::*;
 use crate::{HexSeedAndIndex, Index, PassphraseAndIndex, Seed, SeedAndIndex};
@@ -1250,68 +1249,15 @@ impl FromStr for GenericAccount {
 	type Err = AccountError;
 
 	fn from_str(s: &str) -> Result<Self, Self::Err> {
-		// Handle keeta_ format - Try to determine the account type based on prefix
-		if s.starts_with("keeta_aa") {
-			let account = Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-				Keyable::PublicKeyString(s.to_string()),
-				KeyPairType::ECDSASECP256K1,
-			))?;
-			Ok(GenericAccount::EcdsaSecp256k1(account))
-		} else if s.starts_with("keeta_ae") || s.starts_with("keeta_ah") {
-			let account = Account::<KeyED25519>::try_from(Accountable::KeyAndType(
-				Keyable::PublicKeyString(s.to_string()),
-				KeyPairType::ED25519,
-			))?;
-			Ok(GenericAccount::Ed25519(account))
-		} else if s.starts_with("keeta_ay") {
-			let account = Account::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
-				Keyable::PublicKeyString(s.to_string()),
-				KeyPairType::ECDSASECP256R1,
-			))?;
-			Ok(GenericAccount::EcdsaSecp256r1(account))
-		} else if s.starts_with("keeta_ai")
-			|| s.starts_with("keeta_aj")
-			|| s.starts_with("keeta_ak")
-			|| s.starts_with("keeta_al")
-		{
-			let account = Account::<KeyNETWORK>::try_from(Accountable::KeyAndType(
-				Keyable::PublicKeyString(s.to_string()),
-				KeyPairType::NETWORK,
-			))?;
-			Ok(GenericAccount::Network(account))
-		} else if s.starts_with("keeta_am")
-			|| s.starts_with("keeta_an")
-			|| s.starts_with("keeta_ao")
-			|| s.starts_with("keeta_ap")
-		{
-			let account = Account::<KeyTOKEN>::try_from(Accountable::KeyAndType(
-				Keyable::PublicKeyString(s.to_string()),
-				KeyPairType::TOKEN,
-			))?;
-			Ok(GenericAccount::Token(account))
-		} else if s.starts_with("keeta_aq")
-			|| s.starts_with("keeta_ar")
-			|| s.starts_with("keeta_as")
-			|| s.starts_with("keeta_at")
-		{
-			let account = Account::<KeySTORAGE>::try_from(Accountable::KeyAndType(
-				Keyable::PublicKeyString(s.to_string()),
-				KeyPairType::STORAGE,
-			))?;
-			Ok(GenericAccount::Storage(account))
-		} else if s.starts_with("keeta_a4")
-			|| s.starts_with("keeta_a5")
-			|| s.starts_with("keeta_a6")
-			|| s.starts_with("keeta_a7")
-		{
-			let account = Account::<KeyMULTISIG>::try_from(Accountable::KeyAndType(
-				Keyable::PublicKeyString(s.to_string()),
-				KeyPairType::MULTISIG,
-			))?;
-			Ok(GenericAccount::Multisig(account))
-		} else {
-			Err(AccountError::InvalidConstruction)
-		}
+		// Decode the string (validating its checksum) and dispatch on the
+		// embedded key type byte.
+		let (key_type, public_key) = decode_public_key_string(s)?;
+		let mut typed = Vec::with_capacity(public_key.len() + 1);
+
+		typed.push(key_type);
+		typed.extend_from_slice(&public_key);
+
+		Self::from_hex(hex::encode(typed))
 	}
 }
 
@@ -1501,8 +1447,20 @@ impl<KEYTYPE> Account<KEYTYPE>
 where
 	KEYTYPE: KeyPair,
 {
+	/// Returns the key pair type for this instance.
 	pub fn to_keypair_type(&self) -> KeyPairType {
 		self.keypair.to_keypair_type()
+	}
+
+	/// Returns the public key bytes prefixed with the key type byte.
+	pub fn to_public_key_with_type(&self) -> Vec<u8> {
+		let public_key = self.keypair.to_public_key();
+		let raw_key = public_key.as_ref();
+
+		let mut bytes = Vec::with_capacity(1 + raw_key.len());
+		bytes.push(self.to_keypair_type() as u8);
+		bytes.extend_from_slice(raw_key);
+		bytes
 	}
 
 	/// Creates a new account containing only the public key.
@@ -1838,11 +1796,13 @@ where
 	}
 
 	/// Generate an identifier from this account
+	///
+	/// A `block_hash` of `None` derives against the account opening hash
+	/// (the semantics of an opening block).
 	pub fn generate_identifier(
 		&self,
 		identifier_type: KeyPairType,
-		// TODO Use Hashable once block crate is written
-		block_hash: Option<&str>,
+		block_hash: Option<&BlockHash>,
 		operation_index: u32,
 	) -> Result<GenericAccount, AccountError> {
 		// Validate that we're generating an identifier type
@@ -1850,22 +1810,10 @@ where
 			return Err(AccountError::InvalidIdentifierConstruction);
 		}
 
-		// Get the account opening hash (for now, use a placeholder)
-		let account_opening_hash = self.to_opening_hash();
 		// Determine the block hash to use
 		let hash_to_use = match block_hash {
-			Some(NO_PREVIOUS) | None => account_opening_hash,
-			Some(hash_str) => {
-				// Validate hex string format - must not be empty
-				if hash_str.is_empty()
-					|| (!hash_str.starts_with("0x") && !hash_str.chars().all(|c| c.is_ascii_hexdigit()))
-				{
-					return Err(AccountError::InvalidConstruction);
-				}
-
-				// Parse hex string to bytes
-				hex::decode(hash_str.strip_prefix("0x").unwrap_or(hash_str))?
-			}
+			Some(hash) => *hash,
+			None => self.to_opening_hash(),
 		};
 
 		// Validate identifier generation rules
@@ -1874,7 +1822,7 @@ where
 			let is_network = self.to_keypair_type() == KeyPairType::NETWORK;
 			let is_generating_token = identifier_type == KeyPairType::TOKEN;
 			let is_first_operation = operation_index == 0;
-			let is_opening = block_hash.is_none() || block_hash == Some(NO_PREVIOUS);
+			let is_opening = block_hash.is_none();
 			if !(is_network && is_generating_token && is_first_operation && is_opening) {
 				return Err(AccountError::InvalidIdentifierConstruction);
 			}
@@ -1884,7 +1832,7 @@ where
 		let mut seed_data = Vec::new();
 		seed_data.push(self.to_keypair_type() as u8);
 		seed_data.extend_from_slice(self.keypair.to_public_key().as_ref());
-		seed_data.extend_from_slice(&hash_to_use);
+		seed_data.extend_from_slice(hash_to_use.as_bytes());
 
 		// Hash the combined data to create the seed
 		let seed_hash: [u8; 32] = hash_array(&seed_data, None)?;
@@ -1911,10 +1859,10 @@ where
 		}
 	}
 
-	/// Get the account's opening hash
-	/// // TODO Use BlockHash once available
-	fn to_opening_hash(&self) -> Vec<u8> {
-		hash_default(self.keypair.to_public_key()).to_vec()
+	/// Get the account's opening hash: the hash of its raw public key
+	/// bytes (without the key type byte).
+	pub fn to_opening_hash(&self) -> BlockHash {
+		BlockHash::opening(self.keypair.to_public_key())
 	}
 
 	/// Determines if this account is an identifier account.
@@ -2747,6 +2695,33 @@ impl GenericAccount {
 	/// Returns the key pair type for this instance.
 	pub fn to_keypair_type(&self) -> KeyPairType {
 		delegate_to_variants!(self, to_keypair_type)
+	}
+
+	/// Returns the public key bytes prefixed with the key type byte.
+	///
+	/// This is the wire representation used for accounts in block
+	/// serialization: `[key_type_byte || raw_public_key]`.
+	pub fn to_public_key_with_type(&self) -> Vec<u8> {
+		delegate_to_variants!(self, to_public_key_with_type)
+	}
+
+	/// Get the account's opening hash: the hash of its raw public key
+	/// bytes (without the key type byte).
+	pub fn to_opening_hash(&self) -> BlockHash {
+		delegate_to_variants!(self, to_opening_hash)
+	}
+
+	/// Generate an identifier from this account
+	///
+	/// A `block_hash` of `None` derives against the account opening hash
+	/// (the semantics of an opening block).
+	pub fn generate_identifier(
+		&self,
+		identifier_type: KeyPairType,
+		block_hash: Option<&BlockHash>,
+		operation_index: u32,
+	) -> Result<GenericAccount, AccountError> {
+		delegate_to_variants!(self, generate_identifier, identifier_type, block_hash, operation_index)
 	}
 }
 
@@ -3990,22 +3965,6 @@ mod tests {
 		test_invalid_identifier_construction!(secp256r1_account, KeyPairType::ECDSASECP256R1);
 		// Test token account
 		test_invalid_identifier_construction!(token_account, KeyPairType::STORAGE);
-
-		// Macro to test invalid construction cases
-		macro_rules! test_invalid_construction {
-			($account:expr, $keypair_type:expr, $invalid_input:expr) => {
-				let result = $account.generate_identifier($keypair_type, $invalid_input, 0);
-				assert!(matches!(result, Err(AccountError::InvalidConstruction)));
-			};
-		}
-
-		// Test cases that should fail with InvalidConstruction for all crypto types
-		test_invalid_construction!(secp256k1_account, KeyPairType::TOKEN, Some("not_hex"));
-		test_invalid_construction!(secp256k1_account, KeyPairType::TOKEN, Some(""));
-		test_invalid_construction!(ed25519_account, KeyPairType::TOKEN, Some("not_hex"));
-		test_invalid_construction!(ed25519_account, KeyPairType::TOKEN, Some(""));
-		test_invalid_construction!(secp256r1_account, KeyPairType::TOKEN, Some("not_hex"));
-		test_invalid_construction!(secp256r1_account, KeyPairType::TOKEN, Some(""));
 
 		// Test network account generation - special case
 		let network_account = create_test_network_account(12345)?;
@@ -5729,7 +5688,7 @@ mod tests {
 			($key_type:ty, $test_data:expr) => {
 				let account: Account<$key_type> = $test_data.1.parse()?;
 				let opening_hash = account.to_opening_hash();
-				let expected_hash = hex::decode($test_data.2)?;
+				let expected_hash: BlockHash = $test_data.2.parse()?;
 				assert_eq!(opening_hash, expected_hash);
 			};
 		}

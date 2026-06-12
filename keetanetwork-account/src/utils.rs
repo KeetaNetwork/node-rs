@@ -54,15 +54,9 @@ pub(crate) fn format_public_key_string(key_data: impl AsRef<[u8]>, key_type: u8)
 	Ok(format!("keeta_{pub_key_formatted}"))
 }
 
-/// Parse a formatted public key string or hex format
-/// Returns the public key bytes and optionally the algorithm (None for identifier keys)
-pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<Algorithm>), AccountError> {
-	// Check if it's hex format (0x[type][pubkey])
-	if formatted_key.starts_with("0x") {
-		let (bytes, algorithm) = parse_public_key_hex(formatted_key)?;
-		return Ok((bytes, Some(algorithm)));
-	}
-
+/// Decode a `keeta_` formatted public key string, validating the checksum.
+/// Returns the key type byte and the raw public key bytes.
+pub(crate) fn decode_public_key_string(formatted_key: &str) -> Result<(u8, Vec<u8>), AccountError> {
 	// Remove "keeta_" prefix for base32 format
 	let encoded = formatted_key
 		.strip_prefix("keeta_")
@@ -76,9 +70,31 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<A
 		return Err(AccountError::InvalidPrefix);
 	}
 
-	// Extract key type (could be algorithm or identifier type)
-	let key_type = decoded[0];
+	// Extract public key bytes (everything except first byte and last 5 bytes)
+	let pubkey_end = decoded.len() - 5;
 
+	// Verify checksum
+	let checksum_input = decoded[..pubkey_end].to_vec();
+	let calculated_checksum: [u8; 32] = hash_array(&checksum_input, None)?;
+
+	let provided_checksum = &decoded[pubkey_end..];
+	if provided_checksum != &calculated_checksum[..5] {
+		return Err(AccountError::InvalidPrefix);
+	}
+
+	Ok((decoded[0], decoded[1..pubkey_end].to_vec()))
+}
+
+/// Parse a formatted public key string or hex format
+/// Returns the public key bytes and optionally the algorithm (None for identifier keys)
+pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<Algorithm>), AccountError> {
+	// Check if it's hex format (0x[type][pubkey])
+	if formatted_key.starts_with("0x") {
+		let (bytes, algorithm) = parse_public_key_hex(formatted_key)?;
+		return Ok((bytes, Some(algorithm)));
+	}
+
+	let (key_type, public_key_bytes) = decode_public_key_string(formatted_key)?;
 	// Try to parse as algorithm first, then check if it's a valid identifier type
 	let algorithm = match Algorithm::from_id(key_type) {
 		Ok(alg) => Some(alg),
@@ -90,19 +106,6 @@ pub(crate) fn parse_public_key(formatted_key: &str) -> Result<(Vec<u8>, Option<A
 			}
 		}
 	};
-
-	// Extract public key bytes (everything except first byte and last 5 bytes)
-	let pubkey_end = decoded.len() - 5;
-	let public_key_bytes = decoded[1..pubkey_end].to_vec();
-
-	// Verify checksum
-	let checksum_input = decoded[..pubkey_end].to_vec();
-	let calculated_checksum: [u8; 32] = hash_array(&checksum_input, None)?;
-
-	let provided_checksum = &decoded[pubkey_end..];
-	if provided_checksum != &calculated_checksum[..5] {
-		return Err(AccountError::InvalidPrefix);
-	}
 
 	Ok((public_key_bytes, algorithm))
 }

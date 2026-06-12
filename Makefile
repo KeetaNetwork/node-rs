@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer release
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer release node-harness
 
 # Project name
 PROJ_NAME := node-rs
@@ -75,8 +75,16 @@ test-feat:
 	cargo test -p keetanetwork-crypto -p keetanetwork-x509 --all-features
 	cargo test -p keetanetwork-crypto --no-default-features
 
+# Reference implementation harness (required by compatibility/e2e tests)
+HARNESS_DIR := keetanetwork-utils/node-harness
+
+$(HARNESS_DIR)/node_modules/.package-lock.json: $(HARNESS_DIR)/package-lock.json
+	cd $(HARNESS_DIR) && npm ci
+
+node-harness: $(HARNESS_DIR)/node_modules/.package-lock.json
+
 # Run tests with host system's default target
-test:
+test: node-harness
 	# Use a shell script to unset CARGO_BUILD_TARGET and run tests
 	sh -c 'unset CARGO_BUILD_TARGET; cargo test --all-features --workspace'
 

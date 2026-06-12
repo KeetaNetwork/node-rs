@@ -8,11 +8,32 @@ repository.workspace = true
 homepage.workspace = true
 description = "Block structure and operations for Keetanetwork blockchain"
 
+[features]
+default = []
+x509 = ["dep:keetanetwork-x509"]
+
 [dependencies]
 keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
+keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", optional = true }
 snafu = { workspace = true }
+der = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }
+
+[dependencies.num-bigint]
+version = "0.4.6"
+
+[dependencies.num-traits]
+version = "0.2.19"
 
 [dev-dependencies]
+hex-literal = { workspace = true }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = ["node-harness"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lib]
 name = "keetanetwork_block"

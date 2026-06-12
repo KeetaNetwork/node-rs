@@ -15,7 +15,10 @@ path = "src/lib.rs"
 [dependencies]
 # Build utilities for ASN.1 code generation
 rasn-compiler = { version = "0.14", optional = true }
+serde_json = { workspace = true, optional = true }
+snafu = { workspace = true, optional = true }
 
 [features]
 default = []
 build = ["dep:rasn-compiler"]
+node-harness = ["dep:serde_json", "dep:snafu"]

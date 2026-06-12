@@ -8,3 +8,6 @@ pub mod testing;
 
 #[cfg(feature = "build")]
 pub mod build;
+
+#[cfg(feature = "node-harness")]
+pub mod node_harness;
