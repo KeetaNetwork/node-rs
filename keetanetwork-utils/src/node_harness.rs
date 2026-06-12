@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Output, Stdio};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use snafu::Snafu;
 
 /// Errors raised while resolving or driving the reference implementation.
@@ -59,6 +59,15 @@ pub enum HarnessError {
 		command: String,
 		/// The error message reported by the harness
 		message: String,
+	},
+
+	/// Request parameters were neither a JSON object nor null.
+	#[snafu(display("harness command {command} requires object params, got {params}"))]
+	NonObjectParams {
+		/// The command that was attempted
+		command: String,
+		/// The rejected parameters
+		params: Value,
 	},
 }
 
@@ -186,15 +195,24 @@ impl E2eNode {
 	}
 
 	/// Send a command and return its (successful) JSON response.
+	///
+	/// `params` must be a JSON object (or null for parameter-less commands)
+	/// so the command name can always be attached to the payload.
 	pub fn request(&mut self, command: &str, params: Value) -> Result<Value, HarnessError> {
-		let mut message = params;
-		if let Some(object) = message.as_object_mut() {
-			object.insert("cmd".to_string(), Value::String(command.to_string()));
-		}
+		let mut object = match params {
+			Value::Object(map) => map,
+			Value::Null => Map::new(),
+			other => {
+				return Err(HarnessError::NonObjectParams { command: command.to_string(), params: other });
+			}
+		};
 
+		object.insert("cmd".to_string(), Value::String(command.to_string()));
+
+		let message = Value::Object(object);
 		writeln!(self.stdin, "{message}")?;
-		self.stdin.flush()?;
 
+		self.stdin.flush()?;
 		self.read_response(command)
 	}
 

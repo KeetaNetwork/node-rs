@@ -1,5 +1,5 @@
 //! Live end-to-end round trips against a running reference node.
-//! installation is unavailable.
+//! Requires the Node.js harness (`make node-harness`); fails when it is unavailable.
 
 mod support;
 

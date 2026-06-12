@@ -234,9 +234,16 @@ impl BlockData {
 			let config = config.ok_or(BlockError::UnknownNetwork)?;
 			config.validate_signer_depth(depth)?;
 
-			let Signer::Multisig { signers, .. } = current else {
+			let Signer::Multisig { address, signers } = current else {
 				continue;
 			};
+
+			// The reference implementation only accepts MULTISIG principals
+			// in the signer tree; mirror that here since the enum cannot
+			// make it un-representable.
+			if address.to_keypair_type() != KeyPairType::MULTISIG {
+				return Err(BlockError::MalformedSigner);
+			}
 
 			config.validate_signer_count(signers.len() as u64)?;
 
@@ -500,6 +507,16 @@ mod tests {
 			.with_purpose(BlockPurpose::Fee)
 			.build();
 		assert!(matches!(result, Err(BlockError::V1PurposeInvalid)));
+	}
+
+	#[test]
+	fn test_rejects_multisig_signer_with_non_multisig_address() {
+		let signer = Signer::Multisig {
+			address: generate_ed25519_ref(1),
+			signers: vec![Signer::Single(generate_ed25519_ref(2))],
+		};
+		let result = valid_block_builder().with_signer(signer).build();
+		assert!(matches!(result, Err(BlockError::MalformedSigner)));
 	}
 
 	#[test]
