@@ -1,18 +1,20 @@
 //! Live round-trip compatibility tests against the reference TypeScript
 //! implementation.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+mod support;
 
-use keetanetwork_account::{Account, Accountable, GenericAccount, KeyED25519, KeyPairType, Keyable};
+use std::path::PathBuf;
+
+use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{
-	AccountRef, AdjustMethod, Amount, BaseFlag, Block, BlockBuilder, BlockPurpose, BlockTime, BlockVersion,
-	CertificateDer, CertificateOrHash, CreateIdentifier, Hashable, IntermediateCertificates, ManageCertificate,
-	ModifyPermissions, ModifyPermissionsPrincipal, Permissions, Receive, Send, SetInfo, SetRep, Signer,
-	TokenAdminModifyBalance, TokenAdminSupply, UnsignedBlock,
+	AdjustMethod, Amount, BaseFlag, Block, BlockBuilder, BlockPurpose, BlockTime, BlockVersion, CertificateDer,
+	CertificateOrHash, CreateIdentifier, Hashable, IntermediateCertificates, ManageCertificate, ModifyPermissions,
+	ModifyPermissionsPrincipal, Permissions, Receive, Send, SetInfo, SetRep, Signer, TokenAdminModifyBalance,
+	TokenAdminSupply, UnsignedBlock,
 };
-use keetanetwork_crypto::prelude::IntoSecret;
 use keetanetwork_utils::node_harness::run_node_script;
+
+use support::{generate_ed25519_ref, generate_identifier_ref};
 
 /// The path of a helper script shipped with these tests.
 fn script(name: &str) -> PathBuf {
@@ -48,7 +50,7 @@ fn ts_parse(blocks_hex: &[String]) -> Vec<(String, String)> {
 
 /// Mint a deterministic X.509 certificate for `subject` with the
 /// reference implementation, returning the DER bytes.
-fn ts_mint_certificate(subject: &AccountRef) -> Vec<u8> {
+fn ts_mint_certificate(subject: &keetanetwork_block::AccountRef) -> Vec<u8> {
 	let output = run_node_script(script("ts_mint_cert.cjs"), [subject.to_string()], None)
 		.expect("certificate minting via the reference implementation must succeed");
 
@@ -56,36 +58,17 @@ fn ts_mint_certificate(subject: &AccountRef) -> Vec<u8> {
 	hex::decode(stdout.trim()).expect("minted certificate must be hex")
 }
 
-fn ed25519(seed_byte: u8) -> AccountRef {
-	let seed = [seed_byte; 32].into_secret();
-	let account =
-		Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::ED25519))
-			.expect("test account construction must succeed");
-	Arc::new(GenericAccount::Ed25519(account))
-}
-
-fn identifier(owner: &AccountRef, key_type: KeyPairType, index: u32) -> AccountRef {
-	let GenericAccount::Ed25519(account) = owner.as_ref() else {
-		panic!("test owner must be ed25519");
-	};
-	Arc::new(
-		account
-			.generate_identifier(key_type, None, index)
-			.expect("identifier generation"),
-	)
-}
-
 fn fixed_date() -> BlockTime {
 	BlockTime::from_unix_millis(1_748_781_296_789).expect("fixed test date must be valid")
 }
 
 fn rust_built_blocks() -> Vec<Block> {
-	let alice = ed25519(0x21);
-	let bob = ed25519(0x22);
-	let carol = ed25519(0x23);
-	let token = identifier(&alice, KeyPairType::TOKEN, 0);
-	let multisig_outer = identifier(&alice, KeyPairType::MULTISIG, 1);
-	let multisig_inner = identifier(&alice, KeyPairType::MULTISIG, 2);
+	let alice = generate_ed25519_ref(0x21);
+	let bob = generate_ed25519_ref(0x22);
+	let carol = generate_ed25519_ref(0x23);
+	let token = generate_identifier_ref(&alice, KeyPairType::TOKEN, 0);
+	let multisig_outer = generate_identifier_ref(&alice, KeyPairType::MULTISIG, 1);
+	let multisig_inner = generate_identifier_ref(&alice, KeyPairType::MULTISIG, 2);
 
 	let send = Send {
 		to: bob.clone(),

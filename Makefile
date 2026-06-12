@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer release node-harness
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer node-harness
 
 # Project name
 PROJ_NAME := node-rs
@@ -27,10 +27,6 @@ check:
 # Build the project
 build:
 	cargo build $(release_flag)
-
-# Build for release
-release:
-	$(MAKE) build release=1
 
 # Clean build artifacts
 clean:
@@ -228,7 +224,7 @@ help:
 	@echo "  make help           - Show this help message"
 	@echo "  make developer      - Set up development environment (install Rust, tools, etc.)"
 	@echo "  make build          - Build in debug mode"
-	@echo "  make release        - Build in release mode"
+	@echo "  make build release=1 - Build in release mode"
 	@echo "  make clean          - Clean build artifacts"
 	@echo "  make check          - Check compilation without building"
 	@echo "  make do-docs        - Generate and open documentation"

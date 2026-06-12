@@ -31,15 +31,24 @@ fn fixtures() -> Vec<Fixture> {
 	serde_json::from_str(raw).expect("fixtures must parse")
 }
 
+fn decode_signed(fixture: &Fixture) -> Block {
+	let bytes = hex::decode(&fixture.bytes).expect("fixture bytes must be hex");
+	Block::try_from(bytes.as_slice()).unwrap_or_else(|error| panic!("fixture {} must decode: {error}", fixture.name))
+}
+
+fn decode_unsigned(fixture: &Fixture) -> UnsignedBlock {
+	let bytes = hex::decode(&fixture.unsigned_bytes).expect("fixture bytes must be hex");
+	UnsignedBlock::try_from(bytes.as_slice())
+		.unwrap_or_else(|error| panic!("fixture {} must decode unsigned: {error}", fixture.name))
+}
+
 #[test]
 fn test_fixture_blocks_decode_and_reencode() {
 	let fixtures = fixtures();
 	assert!(!fixtures.is_empty(), "fixture set must not be empty");
 
 	for fixture in &fixtures {
-		let bytes = hex::decode(&fixture.bytes).expect("fixture bytes must be hex");
-		let block = Block::try_from(bytes.as_slice())
-			.unwrap_or_else(|error| panic!("fixture {} must decode: {error}", fixture.name));
+		let block = decode_signed(fixture);
 
 		assert_eq!(
 			hex::encode_upper(block.to_bytes()),
@@ -54,10 +63,7 @@ fn test_fixture_blocks_decode_and_reencode() {
 #[test]
 fn test_fixture_unsigned_blocks_decode_and_reencode() {
 	for fixture in &fixtures() {
-		let bytes = hex::decode(&fixture.unsigned_bytes).expect("fixture bytes must be hex");
-
-		let unsigned = UnsignedBlock::try_from(bytes.as_slice())
-			.unwrap_or_else(|error| panic!("fixture {} must decode unsigned: {error}", fixture.name));
+		let unsigned = decode_unsigned(fixture);
 
 		assert_eq!(
 			hex::encode_upper(unsigned.to_bytes()),
@@ -72,9 +78,7 @@ fn test_fixture_unsigned_blocks_decode_and_reencode() {
 #[test]
 fn test_fixture_fields_match() {
 	for fixture in &fixtures() {
-		let bytes = hex::decode(&fixture.bytes).expect("fixture bytes must be hex");
-		let block = Block::try_from(bytes.as_slice())
-			.unwrap_or_else(|error| panic!("fixture {} must decode: {error}", fixture.name));
+		let block = decode_signed(fixture);
 		let data = block.data();
 
 		let version = match data.version() {

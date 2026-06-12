@@ -759,7 +759,7 @@ impl Operation {
 mod tests {
 	use super::*;
 	use crate::error::InfoField;
-	use crate::test_util::{ed25519, identifier};
+	use crate::test_util::{generate_ed25519_ref, generate_identifier_ref};
 
 	/// A date before the negative-amount cutoff.
 	const PRE_CUTOFF_MS: i64 = 1_700_000_000_000;
@@ -802,136 +802,12 @@ mod tests {
 	}
 
 	fn token(index: u32) -> AccountRef {
-		identifier(1, KeyPairType::TOKEN, index)
+		generate_identifier_ref(1, KeyPairType::TOKEN, index)
 	}
-
-	// --- SEND ---
-
-	#[test]
-	fn test_send_rejects_non_token_token_field() {
-		let harness = Harness::new(ed25519(1));
-		let operation = send(ed25519(2), ed25519(3)).into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::TokenFieldNotToken)));
-	}
-
-	#[test]
-	fn test_send_rejects_token_account_sending_other_token() {
-		let harness = Harness::new(token(0));
-		let operation = send(token(1), ed25519(2)).into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::TokenOperationForbidden)));
-	}
-
-	#[test]
-	fn test_send_rejects_token_destination_mismatch() {
-		let harness = Harness::new(ed25519(1));
-		let operation = send(token(0), token(1)).into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::TokenReceiveDiffers)));
-	}
-
-	#[test]
-	fn test_send_rejects_external_too_long() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = send(token(0), ed25519(2));
-		operation.external = Some("A".repeat(1025));
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::ExternalTooLong { .. })));
-	}
-
-	#[test]
-	fn test_send_rejects_external_invalid_character() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = send(token(0), ed25519(2));
-		operation.external = Some("bad☃".to_string());
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::ExternalInvalid)));
-	}
-
-	#[test]
-	fn test_send_rejects_negative_amount_after_cutoff() {
-		let mut harness = Harness::new(ed25519(1));
-		harness.date_ms = harness.config.numeric_cutoff_epoch_ms;
-		let mut operation = send(token(0), ed25519(2));
-		operation.amount = Amount::from(-1i64);
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::AmountBelowZero)));
-	}
-
-	#[test]
-	fn test_send_accepts_valid_operation() {
-		let harness = Harness::new(ed25519(1));
-		let operation = send(token(0), ed25519(2)).into();
-		assert!(harness.validate(&operation).is_ok());
-	}
-
-	// --- RECEIVE ---
 
 	fn receive(token: AccountRef, from: AccountRef) -> Receive {
 		Receive { amount: Amount::from(1u64), token, from, exact: false, forward: None }
 	}
-
-	#[test]
-	fn test_receive_rejects_forward_to_self() {
-		let account = ed25519(1);
-		let harness = Harness::new(account.clone());
-		let mut operation = receive(token(0), ed25519(2));
-		operation.exact = true;
-		operation.forward = Some(account);
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::ForwardToSelf)));
-	}
-
-	#[test]
-	fn test_receive_rejects_forward_without_exact() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = receive(token(0), ed25519(2));
-		operation.forward = Some(ed25519(3));
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::ForwardRequiresExact)));
-	}
-
-	#[test]
-	fn test_receive_rejects_token_account() {
-		let harness = Harness::new(token(0));
-		let operation = receive(token(0), ed25519(2)).into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::TokenOperationForbidden)));
-	}
-
-	#[test]
-	fn test_receive_rejects_token_forward_mismatch() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = receive(token(0), ed25519(2));
-		operation.exact = true;
-		operation.forward = Some(token(1));
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::TokenReceiveDiffers)));
-	}
-
-	// --- SET_REP ---
-
-	#[test]
-	fn test_set_rep_rejects_token_account() {
-		let harness = Harness::new(token(0));
-		let operation = SetRep { to: ed25519(2) }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::IdentifierDelegationForbidden)));
-	}
-
-	#[test]
-	fn test_set_rep_accepts_storage_account() {
-		let harness = Harness::new(identifier(1, KeyPairType::STORAGE, 0));
-		let operation = SetRep { to: ed25519(2) }.into();
-		assert!(harness.validate(&operation).is_ok());
-	}
-
-	#[test]
-	fn test_set_rep_rejects_identifier_representative() {
-		let harness = Harness::new(ed25519(1));
-		let operation = SetRep { to: token(0) }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::IdentifierDelegationForbidden)));
-	}
-
-	#[test]
-	fn test_set_rep_rejects_multiple_per_block() {
-		let mut harness = Harness::new(ed25519(1));
-		let operation: Operation = SetRep { to: ed25519(2) }.into();
-		harness.operations = vec![operation.clone(), SetRep { to: ed25519(3) }.into()];
-		assert!(matches!(harness.validate(&operation), Err(BlockError::MultipleSetRep)));
-	}
-
-	// --- SET_INFO ---
 
 	fn set_info() -> SetInfo {
 		SetInfo {
@@ -942,213 +818,18 @@ mod tests {
 		}
 	}
 
-	#[test]
-	fn test_set_info_rejects_invalid_name() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = set_info();
-		operation.name = "lower case".to_string();
-		assert!(matches!(
-			harness.validate(&operation.into()),
-			Err(BlockError::InfoFieldInvalid { field: InfoField::Name })
-		));
+	fn permissions(flags: &[BaseFlag], externals: &[u8]) -> Permissions {
+		Permissions::from_flags(flags, externals).expect("test permission construction must succeed")
 	}
-
-	#[test]
-	fn test_set_info_rejects_default_permission_on_keyed_account() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = set_info();
-		operation.default_permission = Some(Permissions::from_flags(&[BaseFlag::Access], &[]).unwrap());
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::IdentifierAccountRequired)));
-	}
-
-	#[test]
-	fn test_set_info_requires_default_permission_on_identifier() {
-		let harness = Harness::new(token(0));
-		let operation = set_info().into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::DefaultPermissionRequired)));
-	}
-
-	#[test]
-	fn test_set_info_rejects_external_default_permission() {
-		let harness = Harness::new(token(0));
-		let mut operation = set_info();
-		operation.default_permission = Some(Permissions::from_flags(&[BaseFlag::Access], &[3]).unwrap());
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::PermissionsExternalDefaultForbidden)));
-	}
-
-	#[test]
-	fn test_set_info_rejects_non_default_flags() {
-		let harness = Harness::new(token(0));
-		let mut operation = set_info();
-		operation.default_permission = Some(Permissions::from_flags(&[BaseFlag::UpdateInfo], &[]).unwrap());
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::PermissionsInvalidDefault)));
-	}
-
-	// --- MODIFY_PERMISSIONS ---
 
 	fn modify_permissions(permissions: Option<Permissions>) -> ModifyPermissions {
 		ModifyPermissions {
-			principal: ModifyPermissionsPrincipal::Account(ed25519(2)),
+			principal: ModifyPermissionsPrincipal::Account(generate_ed25519_ref(2)),
 			method: AdjustMethod::Set,
 			permissions,
 			target: None,
 		}
 	}
-
-	#[test]
-	fn test_modify_permissions_clear_requires_set() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = modify_permissions(None);
-		operation.method = AdjustMethod::Add;
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::PermissionsRequireSet)));
-	}
-
-	#[test]
-	fn test_modify_permissions_rejects_target_for_targetless_flags() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = modify_permissions(Some(Permissions::from_flags(&[BaseFlag::Admin], &[]).unwrap()));
-		operation.target = Some(token(0));
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::PermissionsInvalidTarget)));
-	}
-
-	#[test]
-	fn test_modify_permissions_rejects_delegated_adjust() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation =
-			modify_permissions(Some(Permissions::from_flags(&[BaseFlag::PermissionDelegateAdd], &[]).unwrap()));
-		operation.method = AdjustMethod::Add;
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::DelegationForbidden)));
-	}
-
-	#[test]
-	fn test_modify_permissions_rejects_duplicate_set() {
-		let mut harness = Harness::new(ed25519(1));
-		let operation: Operation =
-			modify_permissions(Some(Permissions::from_flags(&[BaseFlag::Access], &[]).unwrap())).into();
-		harness.operations = vec![operation.clone(), operation.clone()];
-		assert!(matches!(harness.validate(&operation), Err(BlockError::DuplicatePermissionModification)));
-	}
-
-	#[test]
-	fn test_modify_permissions_accepts_valid_set() {
-		let harness = Harness::new(ed25519(1));
-		let operation =
-			modify_permissions(Some(Permissions::from_flags(&[BaseFlag::Access, BaseFlag::UpdateInfo], &[]).unwrap()));
-		assert!(harness.validate(&operation.into()).is_ok());
-	}
-
-	// --- CREATE_IDENTIFIER ---
-
-	#[test]
-	fn test_create_identifier_rejects_keyed_identifier() {
-		let harness = Harness::new(ed25519(1));
-		let operation = CreateIdentifier { identifier: ed25519(2), create_arguments: None }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::IdentifierInvalid)));
-	}
-
-	#[test]
-	fn test_create_identifier_rejects_wrong_derivation() {
-		let harness = Harness::new(ed25519(1));
-		let operation =
-			CreateIdentifier { identifier: identifier(1, KeyPairType::TOKEN, 5), create_arguments: None }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::IdentifierInvalid)));
-	}
-
-	#[test]
-	fn test_create_identifier_rejects_arguments_for_token() {
-		let harness = Harness::new(ed25519(1));
-		let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
-			signers: vec![ed25519(2)],
-			quorum: BigInt::from(1u8),
-		});
-		let operation = CreateIdentifier { identifier: token(0), create_arguments: Some(arguments) }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::InvalidCreateIdentifierArguments)));
-	}
-
-	#[test]
-	fn test_create_identifier_requires_arguments_for_multisig() {
-		let harness = Harness::new(ed25519(1));
-		let operation =
-			CreateIdentifier { identifier: identifier(1, KeyPairType::MULTISIG, 0), create_arguments: None }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::InvalidCreateIdentifierArguments)));
-	}
-
-	#[test]
-	fn test_create_identifier_rejects_zero_quorum() {
-		let harness = Harness::new(ed25519(1));
-		let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
-			signers: vec![ed25519(2), ed25519(3)],
-			quorum: BigInt::ZERO,
-		});
-		let operation =
-			CreateIdentifier { identifier: identifier(1, KeyPairType::MULTISIG, 0), create_arguments: Some(arguments) }
-				.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::MultisigQuorumInvalid)));
-	}
-
-	#[test]
-	fn test_create_identifier_rejects_duplicate_signers() {
-		let harness = Harness::new(ed25519(1));
-		let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
-			signers: vec![ed25519(2), ed25519(2)],
-			quorum: BigInt::from(1u8),
-		});
-		let operation =
-			CreateIdentifier { identifier: identifier(1, KeyPairType::MULTISIG, 0), create_arguments: Some(arguments) }
-				.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::MultisigSignerDuplicate)));
-	}
-
-	#[test]
-	fn test_create_identifier_accepts_matching_derivation() {
-		let harness = Harness::new(ed25519(1));
-		let operation = CreateIdentifier { identifier: token(0), create_arguments: None }.into();
-		assert!(harness.validate(&operation).is_ok());
-	}
-
-	// --- TOKEN_ADMIN_SUPPLY ---
-
-	#[test]
-	fn test_token_admin_supply_rejects_set_method() {
-		let harness = Harness::new(token(0));
-		let operation = TokenAdminSupply { amount: Amount::from(1u64), method: AdjustMethod::Set }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::AdjustMethodSetForbidden)));
-	}
-
-	#[test]
-	fn test_token_admin_supply_requires_token_account() {
-		let harness = Harness::new(ed25519(1));
-		let operation = TokenAdminSupply { amount: Amount::from(1u64), method: AdjustMethod::Add }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::TokenAccountRequired)));
-	}
-
-	#[test]
-	fn test_token_admin_supply_rejects_excess_supply() {
-		let harness = Harness::new(token(0));
-		let over = harness.config.max_supply.clone() + 1;
-		let operation = TokenAdminSupply { amount: Amount::from(over), method: AdjustMethod::Add }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::SupplyInvalid)));
-	}
-
-	// --- TOKEN_ADMIN_MODIFY_BALANCE ---
-
-	#[test]
-	fn test_modify_balance_rejects_non_token_field() {
-		let harness = Harness::new(ed25519(1));
-		let operation =
-			TokenAdminModifyBalance { token: ed25519(2), amount: Amount::from(1u64), method: AdjustMethod::Add }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::TokenFieldNotToken)));
-	}
-
-	#[test]
-	fn test_modify_balance_rejects_token_account() {
-		let harness = Harness::new(token(0));
-		let operation =
-			TokenAdminModifyBalance { token: token(0), amount: Amount::from(1u64), method: AdjustMethod::Add }.into();
-		assert!(matches!(harness.validate(&operation), Err(BlockError::TokenOperationForbidden)));
-	}
-
-	// --- MANAGE_CERTIFICATE ---
 
 	fn manage_certificate_subtract(hash_byte: u8) -> ManageCertificate {
 		ManageCertificate {
@@ -1158,36 +839,344 @@ mod tests {
 		}
 	}
 
-	#[test]
-	fn test_manage_certificate_rejects_set_method() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = manage_certificate_subtract(7);
-		operation.method = AdjustMethod::Set;
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::AdjustMethodSetForbidden)));
+	macro_rules! run_validation_cases {
+		($( $label:literal => ($setup:expr, $check:expr) );* $(;)?) => {{
+			$( {
+				let (harness, operation) = ($setup);
+				assert!(($check)(&harness.validate(&operation)), "case {}", $label);
+			} )*
+		}};
 	}
 
 	#[test]
-	fn test_manage_certificate_rejects_intermediates_on_subtract() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = manage_certificate_subtract(7);
-		operation.intermediate_certificates = Some(IntermediateCertificates::None);
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::IntermediateCertificatesOnlyAdd)));
+	fn test_send_validation() {
+		run_validation_cases! {
+			"rejects_non_token_token_field" => (
+				(Harness::new(generate_ed25519_ref(1)), send(generate_ed25519_ref(2), generate_ed25519_ref(3)).into()),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenFieldNotToken))
+			);
+			"rejects_token_account_sending_other_token" => (
+				(Harness::new(token(0)), send(token(1), generate_ed25519_ref(2)).into()),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenOperationForbidden))
+			);
+			"rejects_token_destination_mismatch" => (
+				(Harness::new(generate_ed25519_ref(1)), send(token(0), token(1)).into()),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenReceiveDiffers))
+			);
+			"rejects_external_too_long" => ({
+				let mut operation = send(token(0), generate_ed25519_ref(2));
+				operation.external = Some("A".repeat(1025));
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::ExternalTooLong { .. })));
+			"rejects_external_invalid_character" => ({
+				let mut operation = send(token(0), generate_ed25519_ref(2));
+				operation.external = Some("bad☃".to_string());
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::ExternalInvalid)));
+			"rejects_negative_amount_after_cutoff" => ({
+				let mut harness = Harness::new(generate_ed25519_ref(1));
+				harness.date_ms = harness.config.numeric_cutoff_epoch_ms;
+				let mut operation = send(token(0), generate_ed25519_ref(2));
+				operation.amount = Amount::from(-1i64);
+				(harness, operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::AmountBelowZero)));
+			"accepts_valid_operation" => (
+				(Harness::new(generate_ed25519_ref(1)), send(token(0), generate_ed25519_ref(2)).into()),
+				|result: &Result<(), BlockError>| result.is_ok()
+			);
+		}
 	}
 
 	#[test]
-	fn test_manage_certificate_rejects_hash_on_add() {
-		let harness = Harness::new(ed25519(1));
-		let mut operation = manage_certificate_subtract(7);
-		operation.method = AdjustMethod::Add;
-		operation.intermediate_certificates = Some(IntermediateCertificates::None);
-		assert!(matches!(harness.validate(&operation.into()), Err(BlockError::InvalidCertificateValue)));
+	fn test_receive_validation() {
+		run_validation_cases! {
+			"rejects_forward_to_self" => ({
+				let account = generate_ed25519_ref(1);
+				let mut operation = receive(token(0), generate_ed25519_ref(2));
+				operation.exact = true;
+				operation.forward = Some(account.clone());
+				(Harness::new(account), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::ForwardToSelf)));
+			"rejects_forward_without_exact" => ({
+				let mut operation = receive(token(0), generate_ed25519_ref(2));
+				operation.forward = Some(generate_ed25519_ref(3));
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::ForwardRequiresExact)));
+			"rejects_token_account" => (
+				(Harness::new(token(0)), receive(token(0), generate_ed25519_ref(2)).into()),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenOperationForbidden))
+			);
+			"rejects_token_forward_mismatch" => ({
+				let mut operation = receive(token(0), generate_ed25519_ref(2));
+				operation.exact = true;
+				operation.forward = Some(token(1));
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenReceiveDiffers)));
+		}
 	}
 
 	#[test]
-	fn test_manage_certificate_rejects_duplicate_certificate() {
-		let mut harness = Harness::new(ed25519(1));
-		let operation: Operation = manage_certificate_subtract(7).into();
-		harness.operations = vec![operation.clone(), operation.clone()];
-		assert!(matches!(harness.validate(&operation), Err(BlockError::DuplicateCertificateOperation)));
+	fn test_set_rep_validation() {
+		run_validation_cases! {
+			"rejects_token_account" => (
+				(Harness::new(token(0)), SetRep { to: generate_ed25519_ref(2) }.into()),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::IdentifierDelegationForbidden))
+			);
+			"accepts_storage_account" => (
+				(
+					Harness::new(generate_identifier_ref(1, KeyPairType::STORAGE, 0)),
+					SetRep { to: generate_ed25519_ref(2) }.into(),
+				),
+				|result: &Result<(), BlockError>| result.is_ok()
+			);
+			"rejects_identifier_representative" => (
+				(Harness::new(generate_ed25519_ref(1)), SetRep { to: token(0) }.into()),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::IdentifierDelegationForbidden))
+			);
+			"rejects_multiple_per_block" => ({
+				let mut harness = Harness::new(generate_ed25519_ref(1));
+				let operation: Operation = SetRep { to: generate_ed25519_ref(2) }.into();
+				harness.operations = vec![operation.clone(), SetRep { to: generate_ed25519_ref(3) }.into()];
+				(harness, operation)
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::MultipleSetRep)));
+		}
+	}
+
+	#[test]
+	fn test_set_info_validation() {
+		run_validation_cases! {
+			"rejects_invalid_name" => ({
+				let mut operation = set_info();
+				operation.name = "lower case".to_string();
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| {
+				matches!(result, Err(error) if matches!(error, BlockError::InfoFieldInvalid { field: InfoField::Name }))
+			});
+			"rejects_default_permission_on_keyed_account" => ({
+				let mut operation = set_info();
+				operation.default_permission = Some(permissions(&[BaseFlag::Access], &[]));
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::IdentifierAccountRequired)));
+			"requires_default_permission_on_identifier" => (
+				(Harness::new(token(0)), set_info().into()),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::DefaultPermissionRequired))
+			);
+			"rejects_external_default_permission" => ({
+				let mut operation = set_info();
+				operation.default_permission = Some(permissions(&[BaseFlag::Access], &[3]));
+				(Harness::new(token(0)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::PermissionsExternalDefaultForbidden)));
+			"rejects_non_default_flags" => ({
+				let mut operation = set_info();
+				operation.default_permission =
+					Some(permissions(&[BaseFlag::UpdateInfo], &[]));
+				(Harness::new(token(0)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::PermissionsInvalidDefault)));
+		}
+	}
+
+	#[test]
+	fn test_modify_permissions_validation() {
+		run_validation_cases! {
+			"clear_requires_set" => ({
+				let mut operation = modify_permissions(None);
+				operation.method = AdjustMethod::Add;
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::PermissionsRequireSet)));
+			"rejects_target_for_targetless_flags" => ({
+				let mut operation =
+					modify_permissions(Some(permissions(&[BaseFlag::Admin], &[])));
+				operation.target = Some(token(0));
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::PermissionsInvalidTarget)));
+			"rejects_delegated_adjust" => ({
+				let mut operation = modify_permissions(Some(permissions(
+					&[BaseFlag::PermissionDelegateAdd],
+					&[],
+				)));
+				operation.method = AdjustMethod::Add;
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::DelegationForbidden)));
+			"rejects_duplicate_set" => ({
+				let mut harness = Harness::new(generate_ed25519_ref(1));
+				let operation: Operation =
+					modify_permissions(Some(permissions(&[BaseFlag::Access], &[]))).into();
+				harness.operations = vec![operation.clone(), operation.clone()];
+				(harness, operation)
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::DuplicatePermissionModification)));
+			"accepts_valid_set" => ({
+				let operation = modify_permissions(Some(permissions(
+					&[BaseFlag::Access, BaseFlag::UpdateInfo],
+					&[],
+				)));
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| result.is_ok());
+		}
+	}
+
+	#[test]
+	fn test_create_identifier_validation() {
+		run_validation_cases! {
+			"rejects_keyed_identifier" => (
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier { identifier: generate_ed25519_ref(2), create_arguments: None }.into(),
+				),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::IdentifierInvalid))
+			);
+			"rejects_wrong_derivation" => (
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier {
+						identifier: generate_identifier_ref(1, KeyPairType::TOKEN, 5),
+						create_arguments: None,
+					}
+					.into(),
+				),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::IdentifierInvalid))
+			);
+			"rejects_arguments_for_token" => ({
+				let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
+					signers: vec![generate_ed25519_ref(2)],
+					quorum: BigInt::from(1u8),
+				});
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier { identifier: token(0), create_arguments: Some(arguments) }.into(),
+				)
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::InvalidCreateIdentifierArguments)));
+			"requires_arguments_for_multisig" => (
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier {
+						identifier: generate_identifier_ref(1, KeyPairType::MULTISIG, 0),
+						create_arguments: None,
+					}
+					.into(),
+				),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::InvalidCreateIdentifierArguments))
+			);
+			"rejects_zero_quorum" => ({
+				let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
+					signers: vec![generate_ed25519_ref(2), generate_ed25519_ref(3)],
+					quorum: BigInt::ZERO,
+				});
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier {
+						identifier: generate_identifier_ref(1, KeyPairType::MULTISIG, 0),
+						create_arguments: Some(arguments),
+					}
+					.into(),
+				)
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::MultisigQuorumInvalid)));
+			"rejects_duplicate_signers" => ({
+				let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
+					signers: vec![generate_ed25519_ref(2), generate_ed25519_ref(2)],
+					quorum: BigInt::from(1u8),
+				});
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier {
+						identifier: generate_identifier_ref(1, KeyPairType::MULTISIG, 0),
+						create_arguments: Some(arguments),
+					}
+					.into(),
+				)
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::MultisigSignerDuplicate)));
+			"accepts_matching_derivation" => (
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier { identifier: token(0), create_arguments: None }.into(),
+				),
+				|result: &Result<(), BlockError>| result.is_ok()
+			);
+		}
+	}
+
+	#[test]
+	fn test_token_admin_supply_validation() {
+		run_validation_cases! {
+			"rejects_set_method" => (
+				(
+					Harness::new(token(0)),
+					TokenAdminSupply { amount: Amount::from(1u64), method: AdjustMethod::Set }.into(),
+				),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::AdjustMethodSetForbidden))
+			);
+			"requires_token_account" => (
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					TokenAdminSupply { amount: Amount::from(1u64), method: AdjustMethod::Add }.into(),
+				),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenAccountRequired))
+			);
+			"rejects_excess_supply" => ({
+				let harness = Harness::new(token(0));
+				let over = harness.config.max_supply.clone() + 1;
+				(
+					harness,
+					TokenAdminSupply { amount: Amount::from(over), method: AdjustMethod::Add }.into(),
+				)
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::SupplyInvalid)));
+		}
+	}
+
+	#[test]
+	fn test_modify_balance_validation() {
+		run_validation_cases! {
+			"rejects_non_token_field" => (
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					TokenAdminModifyBalance {
+						token: generate_ed25519_ref(2),
+						amount: Amount::from(1u64),
+						method: AdjustMethod::Add,
+					}
+					.into(),
+				),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenFieldNotToken))
+			);
+			"rejects_token_account" => (
+				(
+					Harness::new(token(0)),
+					TokenAdminModifyBalance {
+						token: token(0),
+						amount: Amount::from(1u64),
+						method: AdjustMethod::Add,
+					}
+					.into(),
+				),
+				|result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::TokenOperationForbidden))
+			);
+		}
+	}
+
+	#[test]
+	fn test_manage_certificate_validation() {
+		run_validation_cases! {
+			"rejects_set_method" => ({
+				let mut operation = manage_certificate_subtract(7);
+				operation.method = AdjustMethod::Set;
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::AdjustMethodSetForbidden)));
+			"rejects_intermediates_on_subtract" => ({
+				let mut operation = manage_certificate_subtract(7);
+				operation.intermediate_certificates = Some(IntermediateCertificates::None);
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::IntermediateCertificatesOnlyAdd)));
+			"rejects_hash_on_add" => ({
+				let mut operation = manage_certificate_subtract(7);
+				operation.method = AdjustMethod::Add;
+				operation.intermediate_certificates = Some(IntermediateCertificates::None);
+				(Harness::new(generate_ed25519_ref(1)), operation.into())
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::InvalidCertificateValue)));
+			"rejects_duplicate_certificate" => ({
+				let mut harness = Harness::new(generate_ed25519_ref(1));
+				let operation: Operation = manage_certificate_subtract(7).into();
+				harness.operations = vec![operation.clone(), operation.clone()];
+				(harness, operation)
+			}, |result: &Result<(), BlockError>| matches!(result, Err(error) if matches!(error, BlockError::DuplicateCertificateOperation)));
+		}
 	}
 }

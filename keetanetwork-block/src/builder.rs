@@ -155,23 +155,8 @@ impl BlockBuilder {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use keetanetwork_account::KeyPairType;
 
-	use crate::amount::Amount;
-	use crate::operation::Send;
-	use crate::test_util::{ed25519, identifier};
-
-	fn send() -> Send {
-		Send { to: ed25519(2), amount: Amount::from(1u64), token: identifier(1, KeyPairType::TOKEN, 0), external: None }
-	}
-
-	fn valid_builder() -> BlockBuilder {
-		BlockBuilder::default()
-			.with_network(0u8)
-			.with_account(ed25519(1))
-			.as_opening()
-			.with_operation(send())
-	}
+	use crate::test_util::{generate_ed25519_ref, valid_block_builder};
 
 	#[test]
 	fn test_missing_account_rejected() {
@@ -185,7 +170,7 @@ mod tests {
 	#[test]
 	fn test_missing_network_rejected() {
 		let result = BlockBuilder::default()
-			.with_account(ed25519(1))
+			.with_account(generate_ed25519_ref(1))
 			.as_opening()
 			.build();
 		assert!(matches!(result, Err(BlockError::MissingField { field: BlockField::Network })));
@@ -195,25 +180,29 @@ mod tests {
 	fn test_missing_previous_rejected() {
 		let result = BlockBuilder::default()
 			.with_network(0u8)
-			.with_account(ed25519(1))
+			.with_account(generate_ed25519_ref(1))
 			.build();
 		assert!(matches!(result, Err(BlockError::MissingField { field: BlockField::Previous })));
 	}
 
 	#[test]
-	fn test_defaults() {
-		let unsigned = valid_builder().build().unwrap();
+	fn test_defaults() -> Result<(), BlockError> {
+		let unsigned = valid_block_builder().build()?;
 		let data = unsigned.data();
 		assert_eq!(data.version(), BlockVersion::V2);
 		assert_eq!(data.purpose(), BlockPurpose::Generic);
 		assert_eq!(*data.previous(), data.account_opening_hash());
 		assert!(matches!(data.signer(), Signer::Single(signer) if signer.to_string() == data.account().to_string()));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_explicit_previous() {
+	fn test_explicit_previous() -> Result<(), BlockError> {
 		let previous = BlockHash::from([0x11u8; 32]);
-		let unsigned = valid_builder().with_previous(previous).build().unwrap();
+		let unsigned = valid_block_builder().with_previous(previous).build()?;
 		assert_eq!(*unsigned.data().previous(), previous);
+
+		Ok(())
 	}
 }

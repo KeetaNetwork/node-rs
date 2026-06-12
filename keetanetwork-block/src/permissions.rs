@@ -443,24 +443,36 @@ impl Permissions {
 mod tests {
 	use super::*;
 
+	fn base_set(bits: BigInt) -> BaseSet {
+		BaseSet::try_from(bits).expect("test base set must construct")
+	}
+
+	fn make_permissions(flags: &[BaseFlag], externals: &[u8]) -> Permissions {
+		Permissions::from_flags(flags, externals).expect("test permissions must construct")
+	}
+
+	fn base_set_from_flags(flags: &[BaseFlag]) -> BaseSet {
+		BaseSet::from_flags(flags).expect("test base set from flags must construct")
+	}
+
 	#[test]
 	fn test_owner_overrides_other_flags() {
 		let bits = BigInt::from((1 << 1) | (1 << 3));
-		let set = BaseSet::try_from(bits).unwrap();
+		let set = base_set(bits);
 		assert_eq!(set.flags(), &[BaseFlag::Owner, BaseFlag::Access]);
 		assert_eq!(*set.as_bigint(), BigInt::from((1 << 1) | 1));
 	}
 
 	#[test]
 	fn test_access_implied_by_nonempty_set() {
-		let set = BaseSet::try_from(BigInt::from(1 << 3)).unwrap();
+		let set = base_set(BigInt::from(1 << 3));
 		assert!(set.has_flags(&[BaseFlag::Access, BaseFlag::UpdateInfo]));
 	}
 
 	#[test]
 	fn test_unknown_high_bits_preserved() {
 		let bits = BigInt::from(1u64 << 40);
-		let set = BaseSet::try_from(bits.clone()).unwrap();
+		let set = base_set(bits.clone());
 		assert!(set.flags().is_empty());
 		assert_eq!(*set.as_bigint(), bits);
 	}
@@ -475,13 +487,13 @@ mod tests {
 
 	#[test]
 	fn test_has_owner_grants_all() {
-		let permissions = Permissions::from_flags(&[BaseFlag::Owner], &[]).unwrap();
+		let permissions = make_permissions(&[BaseFlag::Owner], &[]);
 		assert!(permissions.has(&[BaseFlag::UpdateInfo], &[5]));
 	}
 
 	#[test]
 	fn test_has_admin_grants_all_but_owner() {
-		let permissions = Permissions::from_flags(&[BaseFlag::Admin], &[]).unwrap();
+		let permissions = make_permissions(&[BaseFlag::Admin], &[]);
 		assert!(permissions.has(&[BaseFlag::UpdateInfo], &[]));
 		assert!(!permissions.has(&[BaseFlag::Owner], &[]));
 	}
@@ -495,34 +507,34 @@ mod tests {
 
 	#[test]
 	fn test_external_offset_validation() {
-		let permissions = Permissions::from_flags(&[], &[31]).unwrap();
+		let permissions = make_permissions(&[], &[31]);
 		assert!(matches!(
 			permissions.validate(32),
 			Err(BlockError::PermissionsExternalOffsetTooLarge { size: 32, max: 32 })
 		));
 
-		let small = Permissions::from_flags(&[], &[30]).unwrap();
+		let small = make_permissions(&[], &[30]);
 		assert!(small.validate(32).is_ok());
 	}
 
 	#[test]
 	fn test_can_use_delegation() {
-		let plain = Permissions::from_flags(&[BaseFlag::UpdateInfo], &[]).unwrap();
+		let plain = make_permissions(&[BaseFlag::UpdateInfo], &[]);
 		assert!(plain.can_use_delegation());
 
-		let admin = Permissions::from_flags(&[BaseFlag::Admin], &[]).unwrap();
+		let admin = make_permissions(&[BaseFlag::Admin], &[]);
 		assert!(!admin.can_use_delegation());
 
-		let delegate = Permissions::from_flags(&[BaseFlag::PermissionDelegateAdd], &[]).unwrap();
+		let delegate = make_permissions(&[BaseFlag::PermissionDelegateAdd], &[]);
 		assert!(!delegate.can_use_delegation());
 	}
 
 	#[test]
 	fn test_is_valid_for_default() {
-		let valid = BaseSet::from_flags(&[BaseFlag::Access]).unwrap();
+		let valid = base_set_from_flags(&[BaseFlag::Access]);
 		assert!(valid.is_valid_for_default());
 
-		let invalid = BaseSet::from_flags(&[BaseFlag::UpdateInfo]).unwrap();
+		let invalid = base_set_from_flags(&[BaseFlag::UpdateInfo]);
 		assert!(!invalid.is_valid_for_default());
 	}
 }

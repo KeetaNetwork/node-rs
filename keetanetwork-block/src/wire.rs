@@ -530,39 +530,50 @@ fn decode_block_v2(content: &[u8]) -> Result<(BlockData, Option<Vec<Signature>>)
 mod tests {
 	use super::*;
 
-	#[test]
-	fn test_wrap_sequence_empty() {
-		assert_eq!(wrap_sequence(&[]).unwrap(), [0x30, 0x00]);
+	fn reader(bytes: &[u8]) -> SliceReader<'_> {
+		SliceReader::new(bytes).expect("test reader must open")
 	}
 
 	#[test]
-	fn test_wrap_context_tag() {
-		let inner = wrap_sequence(&[]).unwrap();
-		let wrapped = wrap_context(V2_TAG, &inner).unwrap();
+	fn test_wrap_sequence_empty() -> Result<(), BlockError> {
+		assert_eq!(wrap_sequence(&[])?, [0x30, 0x00]);
+		Ok(())
+	}
+
+	#[test]
+	fn test_wrap_context_tag() -> Result<(), BlockError> {
+		let inner = wrap_sequence(&[])?;
+		let wrapped = wrap_context(V2_TAG, &inner)?;
 		assert_eq!(wrapped, [0xA1, 0x02, 0x30, 0x00]);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_encode_helpers() {
+	fn test_encode_helpers() -> Result<(), BlockError> {
 		let mut out = Vec::new();
-		encode_bigint(&mut out, &BigInt::from(0x80u32)).unwrap();
-		encode_null(&mut out).unwrap();
-		encode_bool(&mut out, true).unwrap();
-		encode_octet(&mut out, &[0xAB]).unwrap();
+		encode_bigint(&mut out, &BigInt::from(0x80u32))?;
+		encode_null(&mut out)?;
+		encode_bool(&mut out, true)?;
+		encode_octet(&mut out, &[0xAB])?;
 		assert_eq!(out, [0x02, 0x02, 0x00, 0x80, 0x05, 0x00, 0x01, 0x01, 0xFF, 0x04, 0x01, 0xAB]);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_read_helpers_roundtrip() {
+	fn test_read_helpers_roundtrip() -> Result<(), BlockError> {
 		let mut out = Vec::new();
-		encode_bigint(&mut out, &BigInt::from(42u8)).unwrap();
-		encode_utf8(&mut out, "hi").unwrap();
-		encode_bool(&mut out, false).unwrap();
+		encode_bigint(&mut out, &BigInt::from(42u8))?;
+		encode_utf8(&mut out, "hi")?;
+		encode_bool(&mut out, false)?;
 
-		let mut reader = SliceReader::new(&out).unwrap();
-		assert_eq!(read_bigint(&mut reader).unwrap(), BigInt::from(42u8));
-		assert_eq!(read_utf8(&mut reader).unwrap(), "hi");
-		assert!(!read_bool(&mut reader).unwrap());
+		let mut reader = reader(&out);
+		assert_eq!(read_bigint(&mut reader)?, BigInt::from(42u8));
+		assert_eq!(read_utf8(&mut reader)?, "hi");
+		assert!(!read_bool(&mut reader)?);
 		assert!(reader.is_finished());
+
+		Ok(())
 	}
 }

@@ -104,50 +104,65 @@ mod tests {
 	use der::{Decode, Encode};
 
 	fn time_from_str(text: &str) -> BlockTime {
-		BlockTime::from(text.parse::<DateTime<Utc>>().unwrap())
+		BlockTime::from(
+			text.parse::<DateTime<Utc>>()
+				.expect("test datetime string must parse"),
+		)
+	}
+
+	fn hex_bytes(text: &str) -> Vec<u8> {
+		hex::decode(text).expect("test hex literal must decode")
+	}
+
+	fn unix_millis_time(millis: i64) -> BlockTime {
+		BlockTime::from_unix_millis(millis).expect("test unix millis must map to block time")
 	}
 
 	#[test]
-	fn test_encode_without_milliseconds() {
+	fn test_encode_without_milliseconds() -> der::Result<()> {
 		let time = time_from_str("2025-01-02T03:04:05Z");
-		let encoded = time.to_der().unwrap();
-		assert_eq!(encoded, hex::decode("180f32303235303130323033303430355a").unwrap());
+		let encoded = time.to_der()?;
+		assert_eq!(encoded, hex_bytes("180f32303235303130323033303430355a"));
+		Ok(())
 	}
 
 	#[test]
-	fn test_encode_with_milliseconds() {
+	fn test_encode_with_milliseconds() -> der::Result<()> {
 		let time = time_from_str("2025-01-02T03:04:05.678Z");
-		let encoded = time.to_der().unwrap();
-		assert_eq!(encoded, hex::decode("181332303235303130323033303430352e3637385a").unwrap());
+		let encoded = time.to_der()?;
+		assert_eq!(encoded, hex_bytes("181332303235303130323033303430352e3637385a"));
+		Ok(())
 	}
 
 	#[test]
-	fn test_encode_keeps_trailing_fraction_zeros() {
+	fn test_encode_keeps_trailing_fraction_zeros() -> der::Result<()> {
 		let time = time_from_str("2025-01-02T03:04:05.500Z");
-		let encoded = time.to_der().unwrap();
-		assert_eq!(encoded, hex::decode("181332303235303130323033303430352e3530305a").unwrap());
+		let encoded = time.to_der()?;
+		assert_eq!(encoded, hex_bytes("181332303235303130323033303430352e3530305a"));
+		Ok(())
 	}
 
 	#[test]
-	fn test_roundtrip() {
+	fn test_roundtrip() -> der::Result<()> {
 		let cases = ["2025-01-02T03:04:05Z", "2025-01-02T03:04:05.678Z", "2025-01-02T03:04:05.001Z"];
 		for case in cases {
 			let time = time_from_str(case);
-			let encoded = time.to_der().unwrap();
-			let decoded = BlockTime::from_der(&encoded).unwrap();
+			let encoded = time.to_der()?;
+			let decoded = BlockTime::from_der(&encoded)?;
 			assert_eq!(decoded, time);
 		}
+		Ok(())
 	}
 
 	#[test]
 	fn test_decode_invalid_length() {
-		let result = BlockTime::from_der(&hex::decode("18023030").unwrap());
+		let result = BlockTime::from_der(&hex_bytes("18023030"));
 		assert!(result.is_err());
 	}
 
 	#[test]
 	fn test_unix_millis_roundtrip() {
-		let time = BlockTime::from_unix_millis(1735787045678).unwrap();
+		let time = unix_millis_time(1735787045678);
 		assert_eq!(time.unix_millis(), 1735787045678);
 	}
 }

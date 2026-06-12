@@ -46,17 +46,24 @@ mod tests {
 		let seed = [seed_byte; 32].into_secret();
 		let account =
 			Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::ED25519))
-				.unwrap();
+				.expect("test account construction must succeed");
 		GenericAccount::Ed25519(account)
 	}
 
+	fn signed_message(account: &GenericAccount, message: [u8; 32]) -> Vec<u8> {
+		account
+			.sign(message, None)
+			.expect("test signing must succeed")
+	}
+
 	#[test]
-	fn test_account_roundtrip_through_wire_bytes() {
+	fn test_account_roundtrip_through_wire_bytes() -> Result<(), BlockError> {
 		let account = test_account(5);
 		let bytes = account.to_public_key_with_type();
-		let parsed = parse_account_with_type(&bytes).unwrap();
+		let parsed = parse_account_with_type(&bytes)?;
 		assert_eq!(parsed.to_string(), account.to_string());
 		assert!(accounts_equal(&parsed, &account));
+		Ok(())
 	}
 
 	#[test]
@@ -69,7 +76,7 @@ mod tests {
 	fn test_verify_account_roundtrip() {
 		let account = test_account(9);
 		let message = [1u8; 32];
-		let signature = account.sign(message, None).unwrap();
+		let signature = signed_message(&account, message);
 
 		assert!(verify_account(&account, &message, &signature).is_ok());
 		assert!(verify_account(&account, &[2u8; 32], &signature).is_err());

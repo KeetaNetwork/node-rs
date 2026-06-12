@@ -80,44 +80,28 @@ impl From<GenericAccount> for Signer {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use keetanetwork_account::{Account, Accountable, KeyED25519, KeyPairType, Keyable};
-	use keetanetwork_crypto::prelude::IntoSecret;
+	use keetanetwork_account::KeyPairType;
 
-	fn ed25519_account(seed_byte: u8) -> Account<KeyED25519> {
-		let seed = [seed_byte; 32].into_secret();
-		Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::ED25519))
-			.unwrap()
-	}
-
-	fn account(seed_byte: u8) -> AccountRef {
-		Arc::new(GenericAccount::Ed25519(ed25519_account(seed_byte)))
-	}
-
-	fn multisig_address(seed_byte: u8) -> AccountRef {
-		Arc::new(
-			ed25519_account(seed_byte)
-				.generate_identifier(KeyPairType::MULTISIG, None, 0)
-				.unwrap(),
-		)
-	}
+	use crate::test_util::{generate_ed25519_ref, generate_identifier_ref};
 
 	#[test]
 	fn test_single_required_signers() {
-		let signer = Signer::from(account(1));
+		let account = generate_ed25519_ref(1);
+		let signer = Signer::from(account.clone());
 		let required = signer.required_signers();
 		assert_eq!(required.len(), 1);
-		assert_eq!(required[0].to_string(), account(1).to_string());
+		assert_eq!(required[0].to_string(), account.to_string());
 	}
 
 	#[test]
 	fn test_multisig_preorder_flatten() {
 		let nested = Signer::Multisig {
-			address: multisig_address(9),
-			signers: vec![Signer::from(account(3)), Signer::from(account(4))],
+			address: generate_identifier_ref(9, KeyPairType::MULTISIG, 0),
+			signers: vec![Signer::from(generate_ed25519_ref(3)), Signer::from(generate_ed25519_ref(4))],
 		};
 		let signer = Signer::Multisig {
-			address: multisig_address(8),
-			signers: vec![Signer::from(account(1)), nested, Signer::from(account(2))],
+			address: generate_identifier_ref(8, KeyPairType::MULTISIG, 0),
+			signers: vec![Signer::from(generate_ed25519_ref(1)), nested, Signer::from(generate_ed25519_ref(2))],
 		};
 
 		let required: Vec<String> = signer
@@ -127,7 +111,7 @@ mod tests {
 			.collect();
 		let expected: Vec<String> = [1u8, 3, 4, 2]
 			.iter()
-			.map(|seed_byte| account(*seed_byte).to_string())
+			.map(|seed_byte| generate_ed25519_ref(*seed_byte).to_string())
 			.collect();
 		assert_eq!(required, expected);
 	}
@@ -135,12 +119,12 @@ mod tests {
 	#[test]
 	fn test_duplicate_signers_deduplicated() {
 		let signer = Signer::Multisig {
-			address: multisig_address(8),
+			address: generate_identifier_ref(8, KeyPairType::MULTISIG, 0),
 			signers: vec![
-				Signer::from(account(1)),
+				Signer::from(generate_ed25519_ref(1)),
 				Signer::Multisig {
-					address: multisig_address(9),
-					signers: vec![Signer::from(account(1)), Signer::from(account(2))],
+					address: generate_identifier_ref(9, KeyPairType::MULTISIG, 0),
+					signers: vec![Signer::from(generate_ed25519_ref(1)), Signer::from(generate_ed25519_ref(2))],
 				},
 			],
 		};
@@ -151,8 +135,9 @@ mod tests {
 
 	#[test]
 	fn test_principal() {
-		let address = multisig_address(7);
-		let signer = Signer::Multisig { address: address.clone(), signers: vec![Signer::from(account(1))] };
+		let address = generate_identifier_ref(7, KeyPairType::MULTISIG, 0);
+		let signer =
+			Signer::Multisig { address: address.clone(), signers: vec![Signer::from(generate_ed25519_ref(1))] };
 		assert_eq!(signer.principal().to_string(), address.to_string());
 	}
 }

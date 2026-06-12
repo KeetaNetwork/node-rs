@@ -119,35 +119,45 @@ impl<'a> DecodeValue<'a> for Amount {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
 	use der::{Decode, Encode};
+	use num_bigint::ParseBigIntError;
 
-	#[test]
-	fn test_encode_zero() {
-		let encoded = Amount::from(0u64).to_der().unwrap();
-		assert_eq!(encoded, [0x02, 0x01, 0x00]);
-	}
+	use super::*;
 
-	#[test]
-	fn test_encode_high_bit_padding() {
-		let encoded = Amount::from(0x80u64).to_der().unwrap();
-		assert_eq!(encoded, [0x02, 0x02, 0x00, 0x80]);
-	}
-
-	#[test]
-	fn test_encode_negative() {
-		let encoded = Amount::from(-129i64).to_der().unwrap();
-		assert_eq!(encoded, [0x02, 0x02, 0xFF, 0x7F]);
-	}
-
-	#[test]
-	fn test_roundtrip_large() {
-		let large: Amount = "99999999999999999999999999999999999999999999999999"
+	fn large_amount() -> Amount {
+		"99999999999999999999999999999999999999999999999999"
 			.parse()
-			.unwrap();
-		let encoded = large.to_der().unwrap();
-		let decoded = Amount::from_der(&encoded).unwrap();
+			.expect("test decimal parse must succeed")
+	}
+
+	#[test]
+	fn test_encode_zero() -> der::Result<()> {
+		let encoded = Amount::from(0u64).to_der()?;
+		assert_eq!(encoded, [0x02, 0x01, 0x00]);
+		Ok(())
+	}
+
+	#[test]
+	fn test_encode_high_bit_padding() -> der::Result<()> {
+		let encoded = Amount::from(0x80u64).to_der()?;
+		assert_eq!(encoded, [0x02, 0x02, 0x00, 0x80]);
+		Ok(())
+	}
+
+	#[test]
+	fn test_encode_negative() -> der::Result<()> {
+		let encoded = Amount::from(-129i64).to_der()?;
+		assert_eq!(encoded, [0x02, 0x02, 0xFF, 0x7F]);
+		Ok(())
+	}
+
+	#[test]
+	fn test_roundtrip_large() -> der::Result<()> {
+		let large = large_amount();
+		let encoded = large.to_der()?;
+		let decoded = Amount::from_der(&encoded)?;
 		assert_eq!(decoded, large);
+		Ok(())
 	}
 
 	#[test]
@@ -169,12 +179,13 @@ mod tests {
 	}
 
 	#[test]
-	fn test_parse_hex_and_decimal() {
-		let hex_amount: Amount = "0xff".parse().unwrap();
+	fn test_parse_hex_and_decimal() -> Result<(), ParseBigIntError> {
+		let hex_amount: Amount = "0xff".parse()?;
 		assert_eq!(hex_amount, Amount::from(255u64));
 
-		let negative: Amount = "-42".parse().unwrap();
+		let negative: Amount = "-42".parse()?;
 		assert_eq!(negative, Amount::from(-42i64));
 		assert!(negative.is_negative());
+		Ok(())
 	}
 }

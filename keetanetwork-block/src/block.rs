@@ -468,40 +468,26 @@ impl TryFrom<&[u8]> for UnsignedBlock {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::amount::Amount;
-	use crate::builder::BlockBuilder;
-	use crate::operation::{Send, SetRep};
-	use crate::test_util::{ed25519, identifier};
+	use crate::operation::SetRep;
+	use crate::test_util::{generate_ed25519_ref, generate_identifier_ref, valid_block_builder};
 	use num_bigint::BigInt;
-
-	fn send() -> Send {
-		Send { to: ed25519(2), amount: Amount::from(1u64), token: identifier(1, KeyPairType::TOKEN, 0), external: None }
-	}
-
-	fn valid_builder() -> BlockBuilder {
-		BlockBuilder::default()
-			.with_network(0u8)
-			.with_account(ed25519(1))
-			.as_opening()
-			.with_operation(send())
-	}
 
 	#[test]
 	fn test_rejects_negative_network() {
-		let result = valid_builder().with_network(BigInt::from(-1)).build();
+		let result = valid_block_builder().with_network(BigInt::from(-1)).build();
 		assert!(matches!(result, Err(BlockError::NegativeNetwork)));
 	}
 
 	#[test]
 	fn test_rejects_negative_subnet() {
-		let result = valid_builder().with_subnet(BigInt::from(-1)).build();
+		let result = valid_block_builder().with_subnet(BigInt::from(-1)).build();
 		assert!(matches!(result, Err(BlockError::NegativeSubnet)));
 	}
 
 	#[test]
 	fn test_rejects_multisig_account() {
-		let result = valid_builder()
-			.with_account(identifier(1, KeyPairType::MULTISIG, 0))
+		let result = valid_block_builder()
+			.with_account(generate_identifier_ref(1, KeyPairType::MULTISIG, 0))
 			.as_opening()
 			.build();
 		assert!(matches!(result, Err(BlockError::MultisigAccountForbidden)));
@@ -509,7 +495,7 @@ mod tests {
 
 	#[test]
 	fn test_v1_rejects_fee_purpose() {
-		let result = valid_builder()
+		let result = valid_block_builder()
 			.with_version(BlockVersion::V1)
 			.with_purpose(BlockPurpose::Fee)
 			.build();
@@ -519,10 +505,10 @@ mod tests {
 	#[test]
 	fn test_v1_rejects_multisig_signer() {
 		let signer = Signer::Multisig {
-			address: identifier(1, KeyPairType::MULTISIG, 0),
-			signers: vec![Signer::Single(ed25519(2))],
+			address: generate_identifier_ref(1, KeyPairType::MULTISIG, 0),
+			signers: vec![Signer::Single(generate_ed25519_ref(2))],
 		};
-		let result = valid_builder()
+		let result = valid_block_builder()
 			.with_version(BlockVersion::V1)
 			.with_signer(signer)
 			.build();
@@ -531,22 +517,22 @@ mod tests {
 
 	#[test]
 	fn test_fee_purpose_rejects_non_send_operations() {
-		let result = valid_builder()
+		let result = valid_block_builder()
 			.with_purpose(BlockPurpose::Fee)
-			.with_operation(SetRep { to: ed25519(2) })
+			.with_operation(SetRep { to: generate_ed25519_ref(2) })
 			.build();
 		assert!(matches!(result, Err(BlockError::FeePurposeRequiresSend { operation_index: 1 })));
 	}
 
 	#[test]
 	fn test_rejects_idempotent_too_long() {
-		let result = valid_builder().with_idempotent(vec![0u8; 37]).build();
+		let result = valid_block_builder().with_idempotent(vec![0u8; 37]).build();
 		assert!(matches!(result, Err(BlockError::IdempotentTooLong { length: 37, max: 36 })));
 	}
 
 	#[test]
 	fn test_rejects_idempotent_on_unknown_network() {
-		let result = valid_builder()
+		let result = valid_block_builder()
 			.with_network(1234u32)
 			.with_idempotent(vec![0u8; 4])
 			.build();
@@ -554,44 +540,50 @@ mod tests {
 	}
 
 	#[test]
-	fn test_seal_rejects_missing_signatures() {
-		let unsigned = valid_builder().build().unwrap();
+	fn test_seal_rejects_missing_signatures() -> Result<(), BlockError> {
+		let unsigned = valid_block_builder().build()?;
 		assert!(matches!(unsigned.seal(Vec::new()), Err(BlockError::SignatureRequired)));
+		Ok(())
 	}
 
 	#[test]
-	fn test_seal_rejects_signature_count_mismatch() {
-		let unsigned = valid_builder().build().unwrap();
+	fn test_seal_rejects_signature_count_mismatch() -> Result<(), BlockError> {
+		let unsigned = valid_block_builder().build()?;
 		let signature = Signature::from([0u8; 64]);
 		let result = unsigned.seal(vec![signature, signature]);
 		assert!(matches!(result, Err(BlockError::SignatureCountMismatch { expected: 1, actual: 2 })));
+		Ok(())
 	}
 
 	#[test]
-	fn test_seal_rejects_invalid_signature() {
-		let unsigned = valid_builder().build().unwrap();
+	fn test_seal_rejects_invalid_signature() -> Result<(), BlockError> {
+		let unsigned = valid_block_builder().build()?;
 		let result = unsigned.seal(vec![Signature::from([0u8; 64])]);
 		assert!(matches!(result, Err(BlockError::InvalidSignature { index: 0, .. })));
+		Ok(())
 	}
 
 	#[test]
-	fn test_sign_and_decode_roundtrip() {
-		let block = valid_builder().build().unwrap().sign().unwrap();
-		let decoded = Block::try_from(block.to_bytes()).unwrap();
+	fn test_sign_and_decode_roundtrip() -> Result<(), BlockError> {
+		let block = valid_block_builder().build()?.sign()?;
+		let decoded = Block::try_from(block.to_bytes())?;
 		assert_eq!(decoded.hash(), block.hash());
 		assert_eq!(decoded.to_bytes(), block.to_bytes());
+		Ok(())
 	}
 
 	#[test]
-	fn test_unsigned_decode_rejects_signed_bytes() {
-		let block = valid_builder().build().unwrap().sign().unwrap();
+	fn test_unsigned_decode_rejects_signed_bytes() -> Result<(), BlockError> {
+		let block = valid_block_builder().build()?.sign()?;
 		let result = UnsignedBlock::try_from(block.to_bytes());
 		assert!(matches!(result, Err(BlockError::RecalculatedBytesMismatch)));
+		Ok(())
 	}
 
 	#[test]
-	fn test_is_opening() {
-		let unsigned = valid_builder().build().unwrap();
+	fn test_is_opening() -> Result<(), BlockError> {
+		let unsigned = valid_block_builder().build()?;
 		assert!(unsigned.data().is_opening());
+		Ok(())
 	}
 }

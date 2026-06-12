@@ -1,14 +1,17 @@
 //! Live end-to-end round trips against a running reference node.
 //! installation is unavailable.
 
+mod support;
+
 use std::str::FromStr;
 use std::sync::Arc;
 
-use keetanetwork_account::{Account, Accountable, GenericAccount, KeyED25519, KeyPairType, Keyable};
-use keetanetwork_block::{AccountRef, Amount, Block, BlockBuilder, Hashable, Send, SetRep};
-use keetanetwork_crypto::prelude::IntoSecret;
+use keetanetwork_account::GenericAccount;
+use keetanetwork_block::{Amount, Block, BlockBuilder, Hashable, Send, SetRep};
 use keetanetwork_utils::node_harness::E2eNode;
 use serde_json::{json, Value};
+
+use support::generate_ed25519_ref;
 
 /// The seed for the account driven by the Rust side of the test.
 const RUST_SEED_BYTE: u8 = 0x21;
@@ -19,15 +22,7 @@ const FUNDING_AMOUNT: u64 = 4_200;
 /// The amount the Rust account sends back to the faucet.
 const RETURN_AMOUNT: u64 = 1_000;
 
-fn rust_account() -> AccountRef {
-	let seed = [RUST_SEED_BYTE; 32].into_secret();
-	let account =
-		Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::ED25519))
-			.expect("test account construction must succeed");
-	Arc::new(GenericAccount::Ed25519(account))
-}
-
-fn parse_account(value: &Value, field: &str) -> AccountRef {
+fn parse_account(value: &Value, field: &str) -> keetanetwork_block::AccountRef {
 	let text = value[field]
 		.as_str()
 		.expect("account field must be a string");
@@ -63,7 +58,7 @@ fn verify_committed_blocks(context: &str, response: &Value) -> usize {
 	blocks.len()
 }
 
-fn head(node: &mut E2eNode, account: &AccountRef) -> (Option<String>, u64) {
+fn head(node: &mut E2eNode, account: &keetanetwork_block::AccountRef) -> (Option<String>, u64) {
 	let response = node
 		.request("head", json!({ "account": account.to_string() }))
 		.expect("head query must succeed");
@@ -81,7 +76,7 @@ fn head(node: &mut E2eNode, account: &AccountRef) -> (Option<String>, u64) {
 #[test]
 fn test_live_node_round_trips() {
 	let mut node = E2eNode::start().expect("the reference node harness must start");
-	let rust = rust_account();
+	let rust = generate_ed25519_ref(RUST_SEED_BYTE);
 
 	// -- TS -> Rust: every ledger-committed block must round-trip --
 
