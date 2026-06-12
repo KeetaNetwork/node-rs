@@ -44,7 +44,7 @@ do-docs-ci:
 
 # Lint code
 do-lint: do-docs-ci
-	cargo clippy --fix --allow-staged --allow-dirty
+	cargo clippy --fix --allow-staged --allow-dirty --all-targets --all-features -- -D warnings
 	cargo fmt
 
 # Lint code for CI (check only, no fixes)
