@@ -14,7 +14,7 @@ path = "src/lib.rs"
 # X.509 certificate parsing
 [dependencies.x509-cert]
 version = "0.2.5"
-features = ["std", "pem", "sha1"]
+features = ["std", "pem"]
 
 # ASN.1 and DER encoding
 [dependencies.der]

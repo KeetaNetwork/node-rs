@@ -14,8 +14,8 @@ fn test_hash_uniqueness() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_hash = CertificateHash::try_from(&ca_cert)?;
 	let user_hash = CertificateHash::try_from(&user_cert)?;
 	assert_ne!(ca_hash, user_hash);
-	assert_eq!(ca_hash.len(), 20);
-	assert_eq!(user_hash.len(), 20);
+	assert_eq!(ca_hash.len(), 32);
+	assert_eq!(user_hash.len(), 32);
 
 	Ok(())
 }
@@ -42,8 +42,8 @@ fn test_hash_hex_representation() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
 	assert_ne!(ca_hash_hex, user_hash_hex);
-	assert_eq!(ca_hash_hex.len(), 40); // 20 bytes * 2 hex chars
-	assert_eq!(user_hash_hex.len(), 40);
+	assert_eq!(ca_hash_hex.len(), 64); // 32 bytes * 2 hex chars
+	assert_eq!(user_hash_hex.len(), 64);
 
 	Ok(())
 }
