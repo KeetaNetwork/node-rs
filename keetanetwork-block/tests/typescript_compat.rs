@@ -3,8 +3,6 @@
 
 mod support;
 
-use std::path::PathBuf;
-
 use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{
 	AdjustMethod, Amount, BaseFlag, Block, BlockBuilder, BlockPurpose, BlockTime, BlockVersion, CertificateDer,
@@ -12,22 +10,20 @@ use keetanetwork_block::{
 	ModifyPermissionsPrincipal, Permissions, Receive, Send, SetInfo, SetRep, Signer, TokenAdminModifyBalance,
 	TokenAdminSupply, UnsignedBlock,
 };
-use keetanetwork_utils::node_harness::run_node_script;
+use keetanetwork_utils::node_harness::{run_node_script, script_path};
 
 use support::{generate_ed25519_ref, generate_identifier_ref};
 
-/// The path of a helper script shipped with these tests.
-fn script(name: &str) -> PathBuf {
-	PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-		.join("tests")
-		.join(name)
+/// The path of a compiled harness helper script.
+fn script(name: &str) -> std::path::PathBuf {
+	script_path(name).expect("harness scripts must be built (run `make node-harness`)")
 }
 
 /// Parse blocks with the reference implementation, returning `(hash,
 /// re-serialized hex)` per block.
 fn ts_parse(blocks_hex: &[String]) -> Vec<(String, String)> {
 	let stdin = blocks_hex.join("\n") + "\n";
-	let output = run_node_script(script("ts_verify.cjs"), [] as [&str; 0], Some(stdin.as_bytes()))
+	let output = run_node_script(script("ts_verify"), [] as [&str; 0], Some(stdin.as_bytes()))
 		.expect("the reference implementation must parse every Rust-built block");
 
 	let stdout = String::from_utf8(output.stdout).expect("node output must be UTF-8");
@@ -51,7 +47,7 @@ fn ts_parse(blocks_hex: &[String]) -> Vec<(String, String)> {
 /// Mint a deterministic X.509 certificate for `subject` with the
 /// reference implementation, returning the DER bytes.
 fn ts_mint_certificate(subject: &keetanetwork_block::AccountRef) -> Vec<u8> {
-	let output = run_node_script(script("ts_mint_cert.cjs"), [subject.to_string()], None)
+	let output = run_node_script(script("ts_mint_cert"), [subject.to_string()], None)
 		.expect("certificate minting via the reference implementation must succeed");
 
 	let stdout = String::from_utf8(output.stdout).expect("node output must be UTF-8");
@@ -305,7 +301,7 @@ fn test_typescript_blocks_parse_in_rust() {
 	// Re-generate fixtures live so this covers the current reference
 	// implementation, not just the checked-in vectors.
 	let out_file = out_dir.join("blocks.json");
-	run_node_script(script("generate_fixtures.cjs"), [&out_file], None)
+	run_node_script(script("generate_fixtures"), [&out_file], None)
 		.expect("fixture generation against the live reference must succeed");
 
 	let raw = std::fs::read_to_string(&out_file).expect("live fixtures must exist");

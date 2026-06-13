@@ -1,6 +1,6 @@
 /target
-/dist
-/dist-src
+dist/
+dist-src/
 *.lcov
 
 # Generated ASN.1 files

@@ -1,27 +1,21 @@
-#!/usr/bin/env node
-'use strict';
-
 /*
  * Reads hex-encoded block bytes (one per line) on stdin, parses each with
  * the reference TypeScript implementation and writes one JSON line per
  * block: { hash, bytes } where bytes is the re-serialized hex.
  *
- * Usage: node tests/ts_verify.cjs <path-to-node-dist-src>
+ * Usage: node dist/ts_verify.js <path-to-node-dist>
  */
 
-const path = require('path');
+import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/index';
 
-const distSrc = process.argv[2];
-if (!distSrc) {
-	console.error('usage: ts_verify.cjs <path-to-node-dist-src>');
-	process.exit(2);
-}
+import { loadModule, resolveDist } from './dist';
 
-const { Block } = require(path.join(distSrc, 'lib/block/index.js'));
+const dist = resolveDist(process.argv[2], 'usage: ts_verify.js <path-to-node-dist>');
+const { Block } = loadModule<typeof BlockModule>(dist, 'lib/block/index.js');
 
 let input = '';
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', function(chunk) {
+process.stdin.on('data', function(chunk: string) {
 	input += chunk;
 });
 

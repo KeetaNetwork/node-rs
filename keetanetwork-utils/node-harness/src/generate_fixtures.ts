@@ -1,34 +1,43 @@
-#!/usr/bin/env node
-'use strict';
-
 /*
  * Generates the checked-in block wire fixtures from the reference
  * TypeScript implementation.
  *
- * Usage: node tests/generate_fixtures.cjs [path-to-node-dist-src] [output-json]
- *
- * Output: tests/fixtures/blocks.json
+ * Usage: node dist/generate_fixtures.js <path-to-node-dist> <output-json>
  */
 
-const fs = require('fs');
-const path = require('path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const distSrc = process.argv[2] ?? path.join(
-	__dirname, '..', '..', 'keetanetwork-utils', 'node-harness',
-	'node_modules', '@keetanetwork', 'keetanet-node', 'dist'
-);
+import type * as AccountModule from '@keetanetwork/keetanet-node/dist/lib/account';
+import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/index';
+import type * as OperationsModule from '@keetanetwork/keetanet-node/dist/lib/block/operations';
+import type * as PermissionsModule from '@keetanetwork/keetanet-node/dist/lib/permissions';
+import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/utils/certificate';
+import type { Block as BlockInstance } from '@keetanetwork/keetanet-node/dist/lib/block/index';
 
-const { Account, AccountKeyAlgorithm } = require(path.join(distSrc, 'lib/account.js'));
-const BlockModule = require(path.join(distSrc, 'lib/block/index.js'));
-const { UnsignedBlock, Block, BlockHash, BlockPurpose, AdjustMethod } = BlockModule;
-const { Permissions, BasePermissionTypes } = require(path.join(distSrc, 'lib/permissions.js'));
-const { CertificateHash, CertificateBuilder } = require(path.join(distSrc, 'lib/utils/certificate.js'));
-const Operations = require(path.join(distSrc, 'lib/block/operations.js'));
+import { loadModule, resolveDist } from './dist';
+
+const USAGE = 'usage: generate_fixtures.js <path-to-node-dist> <output-json>';
+
+const dist = resolveDist(process.argv[2], USAGE);
+const outFile = process.argv[3];
+if (outFile === undefined) {
+	console.error(USAGE);
+	process.exit(1);
+}
+
+const { Account, AccountKeyAlgorithm } = loadModule<typeof AccountModule>(dist, 'lib/account.js');
+const { UnsignedBlock, BlockHash, BlockPurpose, AdjustMethod } = loadModule<typeof BlockModule>(dist, 'lib/block/index.js');
+const { Permissions } = loadModule<typeof PermissionsModule>(dist, 'lib/permissions.js');
+const { CertificateHash, CertificateBuilder } = loadModule<typeof CertificateModule>(dist, 'lib/utils/certificate.js');
+const Operations = loadModule<typeof OperationsModule>(dist, 'lib/block/operations.js');
 
 const SEED = Buffer.alloc(32, 0x5a).toString('hex');
 
-function account(index, algorithm) {
-	return Account.fromSeed(SEED, index, algorithm ?? AccountKeyAlgorithm.ED25519);
+function account<Z extends AccountModule.AccountKeyAlgorithm>(index: number, algorithm: Z): AccountModule.Account<Z>;
+function account(index: number): AccountModule.Account<AccountModule.AccountKeyAlgorithm.ED25519>;
+function account(index: number, algorithm?: AccountModule.AccountKeyAlgorithm): AccountModule.Account<AccountModule.AccountKeyAlgorithm> {
+	return(Account.fromSeed(SEED, index, algorithm ?? AccountKeyAlgorithm.ED25519));
 }
 
 const DATE_MS = new Date('2025-06-01T12:34:56.789Z');
@@ -36,21 +45,33 @@ const DATE_PLAIN = new Date('2025-06-01T12:34:56.000Z');
 const OLD_DATE = new Date('2024-01-02T03:04:05.500Z');
 const NETWORK = 0n;
 
-async function buildBlock(input) {
-	const unsigned = new UnsignedBlock({
+interface BuiltBlock {
+	block: BlockInstance;
+	unsignedBytes: string;
+}
+
+async function buildBlock(input: BlockModule.BlockJSONIncomplete): Promise<BuiltBlock> {
+	const blockInput: BlockModule.BlockJSONIncomplete = {
 		network: NETWORK,
 		date: DATE_MS,
 		purpose: BlockPurpose.GENERIC,
 		version: 2,
 		...input
-	});
+	};
+
+	/*
+	 * Each case provides the remaining required fields; the constructor
+	 * type only accepts the fully assembled JSON shape.
+	 */
+	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+	const unsigned = new UnsignedBlock(blockInput as BlockModule.BlockJSON);
 
 	const unsignedBytes = Buffer.from(unsigned.toBytes(false)).toString('hex').toUpperCase();
 	const block = await unsigned.seal();
-	return { block, unsignedBytes };
+	return({ block, unsignedBytes });
 }
 
-async function main() {
+async function main(): Promise<void> {
 	const signerA = account(0);
 	const signerB = account(1);
 	const signerC = account(2, AccountKeyAlgorithm.ECDSA_SECP256K1);
@@ -81,14 +102,14 @@ async function main() {
 		3
 	);
 
-	const send = {
+	const send: OperationsModule.BlockJSONOperationSEND = {
 		type: Operations.OperationType.SEND,
 		to: signerB,
 		amount: 1000n,
 		token
 	};
 
-	const cases = [];
+	const cases: [string, BuiltBlock][] = [];
 
 	/* V1: signer == account (account encodes as NULL), subnet absent (NULL) */
 	cases.push(['v1-basic', await buildBlock({
@@ -217,7 +238,7 @@ async function main() {
 			name: 'MY_TOKEN',
 			description: 'A token',
 			metadata: '',
-			defaultPermission: new Permissions([ 'ACCESS' ])
+			defaultPermission: new Permissions(['ACCESS'])
 		}]
 	})]);
 
@@ -230,7 +251,7 @@ async function main() {
 			type: Operations.OperationType.MODIFY_PERMISSIONS,
 			principal: signerB,
 			method: AdjustMethod.SET,
-			permissions: new Permissions([ 'ACCESS', 'UPDATE_INFO' ])
+			permissions: new Permissions(['ACCESS', 'UPDATE_INFO'])
 		}]
 	})]);
 
@@ -260,7 +281,7 @@ async function main() {
 				certificateAccount: signerB
 			},
 			method: AdjustMethod.SET,
-			permissions: new Permissions([ 'ACCESS' ])
+			permissions: new Permissions(['ACCESS'])
 		}]
 	})]);
 
@@ -287,7 +308,7 @@ async function main() {
 			identifier: createdMultisig,
 			createArguments: {
 				type: AccountKeyAlgorithm.MULTISIG,
-				signers: [ signerB, signerC ],
+				signers: [signerB, signerC],
 				quorum: 2n
 			}
 		}]
@@ -354,9 +375,9 @@ async function main() {
 	/* V2: nested multisig signer tree with multiple signatures */
 	cases.push(['v2-multisig-signers', await buildBlock({
 		account: signerA,
-		signer: [ multisigAddr, [
+		signer: [multisigAddr, [
 			signerB,
-			[ multisigNested, [ signerC, signerD ] ],
+			[multisigNested, [signerC, signerD]],
 			signerA
 		]],
 		previous: openingA,
@@ -372,7 +393,17 @@ async function main() {
 	})]);
 
 	const fixtures = cases.map(function([name, { block, unsignedBytes }]) {
-		return {
+		let subnet: string | null = null;
+		if (block.subnet !== undefined) {
+			subnet = block.subnet.toString();
+		}
+
+		let idempotent: string | null = null;
+		if (block.idempotent !== undefined) {
+			idempotent = block.idempotent.toString('hex').toUpperCase();
+		}
+
+		return({
 			name,
 			bytes: Buffer.from(block.toBytes()).toString('hex').toUpperCase(),
 			unsigned_bytes: unsignedBytes,
@@ -380,24 +411,25 @@ async function main() {
 			version: block.version,
 			purpose: block.purpose,
 			network: block.network.toString(),
-			subnet: block.subnet === undefined ? null : block.subnet.toString(),
-			idempotent: block.idempotent === undefined ? null : block.idempotent.toString('hex').toUpperCase(),
+			subnet,
+			idempotent,
 			date_ms: block.date.getTime(),
 			account: block.account.publicKeyString.get(),
 			previous: block.previous.toString(),
 			operation_count: block.operations.length,
 			signature_count: block.signatures.length,
-			signatures: block.signatures.map((s) => s.toString('hex').toUpperCase())
-		};
+			signatures: block.signatures.map(function(signature) {
+				return(signature.toString('hex').toUpperCase());
+			})
+		});
 	});
 
-	const outFile = process.argv[3] ?? path.join(__dirname, 'fixtures', 'blocks.json');
 	fs.mkdirSync(path.dirname(outFile), { recursive: true });
 	fs.writeFileSync(outFile, JSON.stringify(fixtures, null, '\t') + '\n');
 	console.log(`Wrote ${fixtures.length} fixtures to ${outFile}`);
 }
 
-main().catch(function(error) {
+main().catch(function(error: unknown) {
 	console.error(error);
 	process.exit(1);
 });

@@ -17,7 +17,7 @@ use snafu::Snafu;
 pub enum HarnessError {
 	/// The reference implementation distribution could not be located.
 	#[snafu(display(
-		"reference implementation not found at {} (run `npm ci` in keetanetwork-utils/node-harness or set KEETANET_NODE_DIST)",
+		"reference implementation not found at {} (run `make node-harness` or set KEETANET_NODE_DIST)",
 		searched.display()
 	))]
 	DistNotFound {
@@ -86,6 +86,20 @@ impl From<serde_json::Error> for HarnessError {
 /// The `node-harness` directory inside this crate.
 pub fn harness_dir() -> PathBuf {
 	PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("node-harness")
+}
+
+/// Resolve a compiled harness script (`make node-harness` builds them).
+pub fn script_path(name: impl AsRef<Path>) -> Result<PathBuf, HarnessError> {
+	let script = harness_dir()
+		.join("dist")
+		.join(name.as_ref())
+		.with_extension("js");
+
+	if !script.exists() {
+		return Err(HarnessError::DistNotFound { searched: script });
+	}
+
+	Ok(script)
 }
 
 /// Resolve the reference implementation `dist` directory.
@@ -162,7 +176,7 @@ impl E2eNode {
 	/// Spawn the harness script and wait for it to report readiness.
 	pub fn start() -> Result<Self, HarnessError> {
 		let dist = dist_dir()?;
-		let script = harness_dir().join("e2e_node.cjs");
+		let script = script_path("e2e_node")?;
 
 		let mut child = Command::new("node")
 			.arg(&script)

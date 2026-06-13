@@ -44,7 +44,6 @@ features = ["hmac", "parallel", "sha2", "std"]
 
 [dependencies.sha1]
 version = "0.10.6"
-features = ["asm"]
 
 [dependencies.sha2]
 version = "0.10.9"
