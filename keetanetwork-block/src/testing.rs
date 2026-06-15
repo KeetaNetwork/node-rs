@@ -1,6 +1,6 @@
 //! Shared factories for unit tests.
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use keetanetwork_account::{Account, Accountable, GenericAccount, KeyED25519, KeyPairType, Keyable};
 use keetanetwork_crypto::prelude::IntoSecret;

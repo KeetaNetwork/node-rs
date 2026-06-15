@@ -1,7 +1,10 @@
 //! Block operations: the nine supported operation types, their domain
 //! models and validation rules.
 
-use std::collections::{HashMap, HashSet};
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use keetanetwork_account::{GenericAccount, KeyPairType};
 use keetanetwork_crypto::hash::{hash_default, BlockHash};
@@ -577,7 +580,7 @@ impl ModifyPermissions {
 
 		// Disallow a SET after permissions were already updated for the
 		// same principal/target pair.
-		let mut found: HashMap<String, HashMap<String, AdjustMethod>> = HashMap::new();
+		let mut found: BTreeMap<String, BTreeMap<String, AdjustMethod>> = BTreeMap::new();
 		for operation in ctx.operations {
 			let Operation::ModifyPermissions(other) = operation else {
 				continue;
@@ -641,7 +644,7 @@ impl CreateIdentifier {
 			ctx.config()?
 				.validate_signer_count(arguments.signers.len() as u64)?;
 
-			let unique: HashSet<String> = arguments
+			let unique: BTreeSet<String> = arguments
 				.signers
 				.iter()
 				.map(|signer| signer.to_string())
@@ -721,7 +724,7 @@ impl ManageCertificate {
 			}
 		}
 
-		let mut seen: HashSet<[u8; 32]> = HashSet::new();
+		let mut seen: BTreeSet<[u8; 32]> = BTreeSet::new();
 		for operation in ctx.operations {
 			let Operation::ManageCertificate(other) = operation else {
 				continue;

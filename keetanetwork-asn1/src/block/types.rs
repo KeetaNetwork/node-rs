@@ -3,6 +3,9 @@
 //! See `keetanetwork-asn1/asn1/block.asn` for the canonical schema and
 //! [`crate::block::codec`] for the byte-level encode/decode entry points.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use crate::Asn1Time;
 use num_bigint::BigInt;
 

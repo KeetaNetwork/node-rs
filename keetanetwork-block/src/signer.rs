@@ -1,7 +1,9 @@
 //! Block signer field: a single account or a nested multisig tree.
 
-use std::collections::{HashSet, VecDeque};
-use std::sync::Arc;
+use alloc::collections::{BTreeSet, VecDeque};
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use keetanetwork_account::GenericAccount;
 
@@ -43,7 +45,7 @@ impl Signer {
 		let mut queue: VecDeque<&Signer> = VecDeque::new();
 		queue.push_back(self);
 
-		let mut visited: HashSet<String> = HashSet::new();
+		let mut visited: BTreeSet<String> = BTreeSet::new();
 		let mut out: Vec<AccountRef> = Vec::new();
 
 		while let Some(current) = queue.pop_front() {

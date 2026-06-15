@@ -26,19 +26,23 @@ description = "Keetanetwork blockchain implementation in Rust"
 
 [workspace.dependencies.chrono]
 version = "0.4.41"
-features = ["serde", "now"]
+default-features = false
+features = ["serde"]
 
 [workspace.dependencies.base32]
 version = "0.5.1"
+default-features = false
 
 [workspace.dependencies.base64]
 version = "0.22.1"
+default-features = false
 
 [workspace.dependencies.bip39-dict]
 version = "0.1.3"
 
 [workspace.dependencies.hex]
 version = "0.4.3"
+default-features = false
 features = ["serde"]
 
 [workspace.dependencies.hex-literal]
@@ -46,15 +50,16 @@ version = "1.0.0"
 
 [workspace.dependencies.der]
 version = "0.7.10"
-features = ["std", "pem", "zeroize", "bytes", "oid", "derive"]
+default-features = false
+features = ["pem", "zeroize", "bytes", "oid", "derive"]
 
 [workspace.dependencies.rasn]
 version = "0.27.1"
-features = ["std"]
+default-features = false
 
 [workspace.dependencies.const-oid]
 version = "0.9.6"
-features = ["std"]
+default-features = false
 
 [workspace.dependencies.serde]
 version = "1.0.219"
@@ -69,7 +74,7 @@ features = ["serde"]
 
 [workspace.dependencies.snafu]
 version = "0.8.7"
-features = ["std"]
+default-features = false
 
 [workspace.dependencies.strum]
 version = "0.27.2"

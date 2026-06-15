@@ -58,8 +58,8 @@ test-feat:
 	cargo test -p keetanetwork-crypto --no-default-features --features std,signature
 	cargo test -p keetanetwork-crypto --no-default-features --features std,encryption
 	cargo test -p keetanetwork-crypto --no-default-features --features std,der
-	cargo test -p keetanetwork-account --no-default-features --features der
-	cargo test -p keetanetwork-account --no-default-features --features rasn
+	cargo test -p keetanetwork-account --no-default-features --features std,der
+	cargo test -p keetanetwork-account --no-default-features --features std,rasn
 	cargo test -p keetanetwork-crypto --no-default-features --features std
 	cargo check -p keetanetwork-crypto --no-default-features
 	cargo check -p keetanetwork-crypto --no-default-features --features signature
@@ -69,14 +69,25 @@ test-feat:
 	cargo test -p keetanetwork-x509 --no-default-features --features rasn
 	cargo test -p keetanetwork-x509 --no-default-features --features der, serde
 	cargo test -p keetanetwork-x509 --no-default-features --features rasn, serde
-	cargo test -p keetanetwork-asn1 --no-default-features --features der
-	cargo test -p keetanetwork-asn1 --no-default-features --features rasn
-	cargo test -p keetanetwork-asn1 --no-default-features --features der,serde
-	cargo test -p keetanetwork-asn1 --no-default-features --features rasn,serde
-	cargo test -p keetanetwork-block --no-default-features --features der
-	cargo test -p keetanetwork-block --no-default-features --features rasn
-	cargo test -p keetanetwork-block --no-default-features --features der,rasn
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,der
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,rasn
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,der,serde
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,rasn,serde
+	cargo test -p keetanetwork-block --no-default-features --features std,der
+	cargo test -p keetanetwork-block --no-default-features --features std,rasn
+	cargo test -p keetanetwork-block --no-default-features --features std,der,rasn
 	cargo test -p keetanetwork-crypto -p keetanetwork-x509 --all-features
+	# no_std builds (cargo check, since test harness needs std).
+	cargo check -p keetanetwork-error --no-default-features
+	cargo check -p keetanetwork-error --no-default-features --features alloc
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,der
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn,der
+	cargo check -p keetanetwork-account --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-account --no-default-features --features alloc,der
+	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-block --no-default-features --features alloc,der
+	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn,der
 
 # Reference implementation harness (required by compatibility/e2e tests)
 HARNESS_DIR := keetanetwork-utils/node-harness

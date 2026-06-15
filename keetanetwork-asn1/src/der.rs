@@ -2,6 +2,8 @@
 //!
 //! This module provides ASN.1 structures using the der library.
 
+use alloc::string::ToString;
+use alloc::vec::Vec;
 use core::str::FromStr;
 
 #[cfg(feature = "serde")]

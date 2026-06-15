@@ -1,5 +1,7 @@
 //! Error types for block construction, serialization and validation.
 
+use alloc::string::ToString;
+
 use keetanetwork_account::AccountError;
 use keetanetwork_asn1::Asn1Error;
 use keetanetwork_crypto::error::CryptoError;

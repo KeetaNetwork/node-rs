@@ -1,6 +1,9 @@
 //! Block model: shared data, unsigned blocks and sealed (verified) blocks.
 
-use std::collections::HashSet;
+use alloc::collections::BTreeSet;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use keetanetwork_account::account::AccountSigner;
 use keetanetwork_account::KeyPairType;
@@ -247,7 +250,7 @@ impl BlockData {
 
 			config.validate_signer_count(signers.len() as u64)?;
 
-			let mut seen: HashSet<String> = HashSet::new();
+			let mut seen: BTreeSet<String> = BTreeSet::new();
 			for inner in signers {
 				if matches!(inner, Signer::Multisig { .. }) {
 					queue.push((depth + 1, inner));

@@ -1,5 +1,7 @@
 //! Fluent builder for unsigned blocks.
 
+use alloc::vec::Vec;
+
 use keetanetwork_crypto::hash::BlockHash;
 use num_bigint::BigInt;
 
@@ -132,7 +134,10 @@ impl BlockBuilder {
 
 		let date = match self.date {
 			Some(date) => date,
+			#[cfg(feature = "std")]
 			None => BlockTime::now(),
+			#[cfg(not(feature = "std"))]
+			None => return Err(BlockError::MissingField { field: BlockField::Date }),
 		};
 
 		let data = BlockData {

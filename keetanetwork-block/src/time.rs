@@ -8,7 +8,9 @@
 //! [`keetanetwork_asn1::Asn1Time`]; this type adds the millisecond-precision
 //! convenience surface (`now`, `from_unix_millis`, `unix_millis`).
 
-use chrono::{DateTime, SubsecRound, Utc};
+#[cfg(feature = "std")]
+use chrono::SubsecRound;
+use chrono::{DateTime, Utc};
 use keetanetwork_asn1::Asn1Time;
 
 /// A block timestamp with millisecond precision.
@@ -17,6 +19,7 @@ pub struct BlockTime(Asn1Time);
 
 impl BlockTime {
 	/// The current time, truncated to millisecond precision.
+	#[cfg(feature = "std")]
 	pub fn now() -> Self {
 		Self(Asn1Time::new(Utc::now().trunc_subsecs(3)))
 	}

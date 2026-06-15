@@ -1,5 +1,8 @@
 //! `der`-backed encode/decode for the public neutral block types.
 
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use crate::block::types::{
 	Block, BlockV1, BlockV2, BlockV2Body, CertificatePrincipal, CreateIdentifierOp, IntegerOrNull,
 	IntermediateCertificates, ManageCertificateOp, ModifyPermissionsOp, ModifyPermissionsPrincipal, MultisigArguments,

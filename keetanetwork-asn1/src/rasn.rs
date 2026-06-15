@@ -1,6 +1,8 @@
 //! rasn-based ASN.1 implementations
 //!
 //! This module provides ASN.1 structures using the rasn library.
+use alloc::string::ToString;
+use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::str::FromStr;
 

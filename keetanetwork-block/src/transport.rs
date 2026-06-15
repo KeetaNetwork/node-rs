@@ -1,7 +1,9 @@
 //! Conversions between block domain types and the backend-neutral
 //! `keetanetwork_asn1::block` transport types.
 
-use std::sync::Arc;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use keetanetwork_account::KeyPairType;
 use keetanetwork_asn1::block as asn1;

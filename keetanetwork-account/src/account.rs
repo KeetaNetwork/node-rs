@@ -208,6 +208,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::{Debug, Display, Formatter, Result as FmtResult};
 use core::str::FromStr;
 

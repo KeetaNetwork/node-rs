@@ -38,6 +38,10 @@
 //! # Ok::<(), keetanetwork_block::BlockError>(())
 //! ```
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
 mod account_util;
 mod amount;
 mod block;

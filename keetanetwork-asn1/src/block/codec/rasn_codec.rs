@@ -2,6 +2,9 @@
 //! [`super::super::types`] into the rasn-compiler-generated transport types in
 //! `crate::generated` and back.
 
+use alloc::format;
+use alloc::vec::Vec;
+
 use crate::block::types::{
 	Block, BlockV1, BlockV2, BlockV2Body, CertificatePrincipal, CreateIdentifierOp, IntegerOrNull,
 	IntermediateCertificates, ManageCertificateOp, ModifyPermissionsOp, ModifyPermissionsPrincipal, MultisigArguments,

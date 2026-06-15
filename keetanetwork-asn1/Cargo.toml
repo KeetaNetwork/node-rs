@@ -13,7 +13,8 @@ path = "src/lib.rs"
 
 [dependencies.spki]
 version = "0.7.3"
-features = ["std"]
+default-features = false
+features = ["alloc"]
 
 [dependencies.der]
 workspace = true
@@ -21,6 +22,7 @@ workspace = true
 [dependencies.rasn]
 workspace = true
 optional = true
+features = ["bytes"]
 
 [dependencies.const-oid]
 workspace = true
@@ -28,6 +30,7 @@ optional = true
 
 [dependencies.hex]
 workspace = true
+features = ["alloc"]
 
 [dependencies.snafu]
 workspace = true
@@ -42,12 +45,14 @@ optional = true
 
 [dependencies.lazy_static]
 workspace = true
+features = ["spin_no_std"]
 
 [dependencies.num-bigint]
 version = "0.4.6"
+default-features = false
 
 [dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
 
 [build-dependencies]
 serde_json = "1.0"
@@ -60,7 +65,22 @@ keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", featur
 serde_json = { workspace = true }
 
 [features]
-default = ["serde", "rasn"]
+default = ["std", "serde", "rasn"]
+std = [
+	"alloc",
+	"snafu/std",
+	"hex/std",
+	"der/std",
+	"rasn?/std",
+	"const-oid?/std",
+	"spki/std",
+	"chrono?/std",
+	"chrono?/clock",
+	"num-bigint/std",
+	"keetanetwork-utils/std",
+	"serde?/std",
+]
+alloc = ["chrono?/alloc"]
 der = ["dep:const-oid", "chrono"]
 rasn = ["dep:rasn", "chrono"]
 serde = ["dep:serde"]

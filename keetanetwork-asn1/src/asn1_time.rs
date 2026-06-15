@@ -14,6 +14,8 @@
 //! same byte-exact format is produced by the `rasn` and `der` backend impl
 //! so consumers can switch backends without affecting the transport.
 
+use alloc::string::{String, ToString};
+
 use chrono::{DateTime, SubsecRound, Utc};
 
 /// `GeneralizedTime` value with TypeScript-compatible transport encoding.

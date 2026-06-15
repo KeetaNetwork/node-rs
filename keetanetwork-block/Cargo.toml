@@ -11,15 +11,35 @@ description = "Block structure and operations for Keetanetwork blockchain"
 [features]
 # Backend selection mirrors the asn1 crate; the public block API is
 # backend-agnostic, so the choice only affects the on-transport codec.
-default = ["rasn"]
+default = ["std", "rasn"]
+std = [
+	"alloc",
+	"chrono/std",
+	"chrono/clock",
+	"hex/std",
+	"snafu/std",
+	"num-bigint/std",
+	"num-traits/std",
+	"keetanetwork-error/std",
+	"keetanetwork-utils/std",
+	"keetanetwork-asn1/std",
+	"keetanetwork-account/std",
+	"keetanetwork-crypto/std",
+]
+alloc = [
+	"chrono/alloc",
+	"keetanetwork-error/alloc",
+	"keetanetwork-asn1/alloc",
+	"keetanetwork-account/alloc",
+]
 der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der"]
 rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn"]
 x509 = ["dep:keetanetwork-x509"]
 
 [dependencies]
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
 keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
 keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
 keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", optional = true }
@@ -29,9 +49,11 @@ hex = { workspace = true }
 
 [dependencies.num-bigint]
 version = "0.4.6"
+default-features = false
 
 [dependencies.num-traits]
 version = "0.2.19"
+default-features = false
 
 [dev-dependencies]
 hex-literal = { workspace = true }

@@ -366,8 +366,8 @@ fn generate_oids_from_json(path: &str) {
 	// Add imports and header
 	generated_code.push_str(
 		r#"
-use std::borrow::Cow;
-use std::collections::HashMap;
+use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
 use rasn::types::ObjectIdentifier;
 
 "#,
@@ -482,7 +482,7 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push_str("    lazy_static::lazy_static! {\n");
 		generated_code.push_str("        /// OID database for sensitive certificate attributes.\n");
 		generated_code
-			.push_str("        pub static ref SENSITIVE_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
+			.push_str("        pub static ref SENSITIVE_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
 		generated_code.push_str("            [\n");
 		for name in sensitive_attrs.keys() {
 			let const_name = camel_to_snake_upper(name);
@@ -503,7 +503,7 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push_str("lazy_static::lazy_static! {\n");
 		generated_code.push_str("    /// OID database for sensitive attribute algorithms.\n");
 		generated_code
-			.push_str("    pub static ref ALGORITHM_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
+			.push_str("    pub static ref ALGORITHM_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
 		generated_code.push_str("        [\n");
 		for name in algorithms.keys() {
 			let const_name = name.to_uppercase().replace('-', "_");
@@ -521,7 +521,7 @@ use rasn::types::ObjectIdentifier;
 	if let Some(plain_attrs) = oids["plain_attributes"].as_object() {
 		generated_code.push_str("lazy_static::lazy_static! {\n");
 		generated_code.push_str("    /// OID database for plain certificate attributes.\n");
-		generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
+		generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
 		generated_code.push_str("        [\n");
 		for name in plain_attrs.keys() {
 			let const_name = match name.as_str() {

@@ -12,7 +12,7 @@ description = "Node functionality for Keetanetwork blockchain"
 keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
 keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block" }
 keetanetwork-ledger = { version = "0.1.0", path = "../keetanetwork-ledger" }
-snafu = { workspace = true }
+snafu = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 

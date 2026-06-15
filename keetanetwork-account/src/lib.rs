@@ -1,6 +1,11 @@
-/*
- * Import the necessary modules and re-export them for use in the main module.
- */
+//! Account management and cryptographic identities for Keetanetwork.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::vec::Vec;
 
 pub mod account;
 pub mod constants;

@@ -1,5 +1,8 @@
 //! Account permissions: base flags, external offsets and group rules.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use keetanetwork_account::GenericAccount;
 use num_bigint::BigInt;
 use num_traits::Zero;

@@ -1,5 +1,8 @@
 //! Error types for ASN.1 operations.
 
+use alloc::format;
+use alloc::string::String;
+
 use snafu::Snafu;
 
 /// Error type for ASN.1 operations
@@ -7,7 +10,10 @@ use snafu::Snafu;
 pub enum Asn1Error {
 	#[cfg(feature = "der")]
 	#[snafu(display("DER encoding error: {source}"))]
-	DerError { source: der::Error },
+	DerError {
+		#[snafu(source(false))]
+		source: der::Error,
+	},
 
 	#[cfg(feature = "rasn")]
 	#[snafu(display("RASN error: {reason}"))]

@@ -5,14 +5,24 @@
 //!
 //! ## Features
 //!
+//! - `std` - Standard library support (default)
+//! - `alloc` - Heap allocation without std
 //! - `der` - Use the `der` crate for ASN.1 handling
 //! - `rasn` - Use the `rasn` crate for ASN.1 handling
 //! - `serde` - Enable serde serialization support
 //!
 //! Exactly one of `der` or `rasn` must be enabled.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
 #[cfg(not(any(feature = "der", feature = "rasn")))]
 compile_error!("Must enable at least one of 'der' or 'rasn' features.");
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(feature = "rasn")]
+use alloc::vec::Vec;
 
 pub mod error;
 pub mod oids;

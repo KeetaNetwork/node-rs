@@ -11,5 +11,10 @@ description = "Error types for Keetanetwork"
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = ["std"]
+std = ["alloc", "snafu/std"]
+alloc = []
+
 [dependencies]
-snafu.workspace = true
+snafu = { workspace = true }

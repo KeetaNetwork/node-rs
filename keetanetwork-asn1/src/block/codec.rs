@@ -4,6 +4,8 @@
 //! enabled (the canonical schema is the rasn-compiler output for
 //! `block.asn`).
 
+use alloc::vec::Vec;
+
 use super::types::{Block, BlockV1, BlockV2};
 use crate::Asn1Error;
 
