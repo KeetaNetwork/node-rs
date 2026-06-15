@@ -2,6 +2,8 @@
 //!
 //! This module provides AES-CBC encryption.
 
+use alloc::vec::Vec;
+
 use aes::Aes256;
 use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cbc::{Decryptor, Encryptor};

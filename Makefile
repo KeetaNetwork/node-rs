@@ -55,11 +55,16 @@ do-lint-ci: node-harness-lint
 
 # Test crate packages features
 test-feat:
-	cargo test -p keetanetwork-crypto --no-default-features --features signature
-	cargo test -p keetanetwork-crypto --no-default-features --features encryption
-	cargo test -p keetanetwork-crypto --no-default-features --features der
+	cargo test -p keetanetwork-crypto --no-default-features --features std,signature
+	cargo test -p keetanetwork-crypto --no-default-features --features std,encryption
+	cargo test -p keetanetwork-crypto --no-default-features --features std,der
 	cargo test -p keetanetwork-account --no-default-features --features der
 	cargo test -p keetanetwork-account --no-default-features --features rasn
+	cargo test -p keetanetwork-crypto --no-default-features --features std
+	cargo check -p keetanetwork-crypto --no-default-features
+	cargo check -p keetanetwork-crypto --no-default-features --features signature
+	cargo check -p keetanetwork-crypto --no-default-features --features encryption
+	cargo check -p keetanetwork-crypto --no-default-features --features signature,encryption,rasn
 	cargo test -p keetanetwork-x509 --no-default-features --features der
 	cargo test -p keetanetwork-x509 --no-default-features --features rasn
 	cargo test -p keetanetwork-x509 --no-default-features --features der, serde
@@ -72,7 +77,6 @@ test-feat:
 	cargo test -p keetanetwork-block --no-default-features --features rasn
 	cargo test -p keetanetwork-block --no-default-features --features der,rasn
 	cargo test -p keetanetwork-crypto -p keetanetwork-x509 --all-features
-	cargo test -p keetanetwork-crypto --no-default-features
 
 # Reference implementation harness (required by compatibility/e2e tests)
 HARNESS_DIR := keetanetwork-utils/node-harness

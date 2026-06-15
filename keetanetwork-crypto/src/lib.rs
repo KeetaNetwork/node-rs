@@ -5,6 +5,15 @@
 //! - Public key formatting with checksums
 //! - Support for multiple algorithms (secp256k1, Ed25519)
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[macro_use]
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 pub mod algorithms;
 pub mod bigint;
 pub mod constants;

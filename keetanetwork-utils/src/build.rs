@@ -534,6 +534,7 @@ pub fn generate_generated_rs(
 	let relative_path = calculate_relative_path(output_dir, modules_dir_path);
 
 	let mut content = String::new();
+	content.push_str("#![cfg_attr(rustfmt, rustfmt::skip)]\n");
 	content.push_str("//! Generated ASN.1 code\n");
 	content.push_str("//!\n");
 	content.push_str("//! This module contains all the generated ASN.1 structures and re-exports them\n");

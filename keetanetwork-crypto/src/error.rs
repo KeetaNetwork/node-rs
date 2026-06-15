@@ -1,3 +1,7 @@
+use alloc::string::String;
+#[cfg(all(not(feature = "std"), feature = "encryption"))]
+use alloc::string::ToString;
+
 use keetanetwork_utils::impl_variant_error_from;
 use snafu::Snafu;
 

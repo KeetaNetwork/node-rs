@@ -9,7 +9,6 @@ homepage.workspace = true
 description = "ASN.1 definitions and utilities for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies.spki]

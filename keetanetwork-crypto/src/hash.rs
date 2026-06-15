@@ -2,6 +2,7 @@
 //!
 //! This module provides a flexible abstraction over different hash algorithms.
 
+use alloc::vec::Vec;
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use core::str::FromStr;
 

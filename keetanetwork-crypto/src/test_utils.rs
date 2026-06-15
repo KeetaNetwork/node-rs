@@ -73,7 +73,7 @@ macro_rules! test_key_derivation {
 		$seed_suffix:expr
 	) => {
 		#[test]
-		fn test_key_derivation() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_key_derivation() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let public_key = private_key.as_public_key();
@@ -100,7 +100,7 @@ macro_rules! test_key_derivation {
 		}
 
 		#[test]
-		fn test_deterministic() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_deterministic() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED_ALTERNATE;
 			let key1 = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let key2 = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
@@ -115,7 +115,7 @@ macro_rules! test_key_derivation {
 		}
 
 		#[test]
-		fn test_different_seeds() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_different_seeds() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			// Create two different seeds by modifying the constant
 			let mut seed1 = crate::test_utils::TEST_SEED.to_vec();
 			let mut seed2 = crate::test_utils::TEST_SEED.to_vec();
@@ -136,7 +136,7 @@ macro_rules! test_key_derivation {
 		}
 
 		#[test]
-		fn test_serialization_roundtrip() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_serialization_roundtrip() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let public_key = private_key.as_public_key();
@@ -187,7 +187,7 @@ macro_rules! test_crypto_utils {
 		}
 
 		#[test]
-		fn test_debug_formatting() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_debug_formatting() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let mut seed = crate::test_utils::TEST_SEED.to_vec();
 			seed.extend_from_slice(concat!("_", $seed_suffix, "_debug").as_bytes());
 
@@ -214,7 +214,7 @@ macro_rules! test_signatures {
 		const TEST_MESSAGE: &[u8] = b"test message for signing";
 
 		#[test]
-		fn test_signing_operations() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_signing_operations() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let public_key = private_key.as_public_key();
@@ -231,7 +231,7 @@ macro_rules! test_signatures {
 		}
 
 		#[test]
-		fn test_signature_deterministic() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_signature_deterministic() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 
@@ -244,7 +244,7 @@ macro_rules! test_signatures {
 		}
 
 		#[test]
-		fn test_signature_verification_failures() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_signature_verification_failures() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			// Create different seeds for Alice and Bob
 			let mut alice_seed = crate::test_utils::TEST_SEED.to_vec();
 			let mut bob_seed = crate::test_utils::TEST_SEED.to_vec();
@@ -273,7 +273,7 @@ macro_rules! test_signatures {
 		}
 
 		#[test]
-		fn test_crypto_signer_ext_trait() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_crypto_signer_ext_trait() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 
@@ -298,7 +298,7 @@ macro_rules! test_signatures {
 		}
 
 		#[test]
-		fn test_crypto_verifier_ext_trait() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_crypto_verifier_ext_trait() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let public_key = private_key.as_public_key();
@@ -315,7 +315,7 @@ macro_rules! test_signatures {
 		}
 
 		#[test]
-		fn test_crypto_signer_with_options() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_crypto_signer_with_options() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let message = b"test message for signing with options";
@@ -354,7 +354,7 @@ macro_rules! test_signatures {
 		}
 
 		#[test]
-		fn test_crypto_verifier_with_options() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_crypto_verifier_with_options() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let public_key = private_key.as_public_key();
@@ -407,7 +407,7 @@ macro_rules! test_key_exchange {
 		$seed_suffix:expr
 	) => {
 		#[test]
-		fn test_ecdh_operations() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_ecdh_operations() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			// Create two different seeds for Alice and Bob
 			let mut alice_seed = crate::test_utils::TEST_SEED.to_vec();
 			let mut bob_seed = crate::test_utils::TEST_SEED.to_vec();
@@ -429,7 +429,7 @@ macro_rules! test_key_exchange {
 		}
 
 		#[test]
-		fn test_ecdh_consistency() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_ecdh_consistency() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			// Create two different seeds
 			let mut seed1 = crate::test_utils::TEST_SEED.to_vec();
 			let mut seed2 = crate::test_utils::TEST_SEED.to_vec();
@@ -464,7 +464,7 @@ macro_rules! test_ecdh {
 		$seed_suffix:expr
 	) => {
 		#[test]
-		fn test_ecdh_key_exchange_trait() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_ecdh_key_exchange_trait() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			// Create seeds for key exchange testing
 			let mut seed1 = crate::test_utils::TEST_SEED.to_vec();
 			let mut seed2 = crate::test_utils::TEST_SEED_ALTERNATE.to_vec();
@@ -526,7 +526,7 @@ macro_rules! test_der {
 		$seed_suffix:expr
 	) => {
 		#[test]
-		fn test_oid_conversion() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_oid_conversion() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let mut seed = crate::test_utils::TEST_SEED.to_vec();
 			seed.extend_from_slice(concat!("_", $seed_suffix, "_oid").as_bytes());
 
@@ -552,7 +552,7 @@ macro_rules! test_asymmetric_encryption {
 		$seed_suffix:expr
 	) => {
 		#[test]
-		fn test_asymmetric_encryption_trait() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_asymmetric_encryption_trait() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let public_key = private_key.as_public_key();
@@ -585,7 +585,7 @@ macro_rules! test_asymmetric_encryption {
 		}
 
 		#[test]
-		fn test_asymmetric_encryption_round_trip() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_asymmetric_encryption_round_trip() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let seed = crate::test_utils::TEST_SEED;
 			let private_key = <$derivation_type>::derive_from_seed(seed.to_vec().into_secret())?;
 			let plaintext = b"round trip test data with various characters: 123!@#$%^&*()";
@@ -600,7 +600,7 @@ macro_rules! test_asymmetric_encryption {
 		}
 
 		#[test]
-		fn test_asymmetric_encryption_different_keys() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_asymmetric_encryption_different_keys() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			// Create different key pairs
 			let mut seed1 = crate::test_utils::TEST_SEED.to_vec();
 			let mut seed2 = crate::test_utils::TEST_SEED_ALTERNATE.to_vec();
@@ -642,7 +642,7 @@ macro_rules! test_ecies {
 			use crate::operations::encryption::AsymmetricEncryption;
 
 			#[test]
-			fn basic() -> Result<(), Box<dyn core::error::Error>> {
+			fn basic() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED)?;
 				let (private_key, public_key) = $create_keypair_fn(seed, None)?;
 				let plaintext = b"Hello, ECIES world!";
@@ -659,7 +659,7 @@ macro_rules! test_ecies {
 			}
 
 			#[test]
-			fn trait_implementation() -> Result<(), Box<dyn core::error::Error>> {
+			fn trait_implementation() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED)?;
 				let (private_key, public_key) = $create_keypair_fn(seed, None)?;
 				let plaintext = b"Testing AsymmetricEncryption trait";
@@ -672,7 +672,7 @@ macro_rules! test_ecies {
 			}
 
 			#[test]
-			fn different_keys() -> Result<(), Box<dyn core::error::Error>> {
+			fn different_keys() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED)?;
 				let (alice_private, alice_public) = $create_keypair_fn(seed, Some("alice"))?;
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED_ALTERNATE)?;
@@ -705,7 +705,7 @@ macro_rules! test_ecies {
 			}
 
 			#[test]
-			fn ephemeral_keys() -> Result<(), Box<dyn core::error::Error>> {
+			fn ephemeral_keys() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED)?;
 				let (private_key, public_key) = $create_keypair_fn(seed, None)?;
 				let plaintext = b"Same message";
@@ -726,7 +726,7 @@ macro_rules! test_ecies {
 			}
 
 			#[test]
-			fn invalid_ciphertext() -> Result<(), Box<dyn core::error::Error>> {
+			fn invalid_ciphertext() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED)?;
 				let (private_key, _) = $create_keypair_fn(seed, None)?;
 
@@ -738,7 +738,7 @@ macro_rules! test_ecies {
 			}
 
 			#[test]
-			fn public_key_cannot_decrypt() -> Result<(), Box<dyn core::error::Error>> {
+			fn public_key_cannot_decrypt() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED)?;
 				let (_, public_key) = $create_keypair_fn(seed, None)?;
 				let fake_ciphertext = [0u8; 100];
@@ -750,7 +750,7 @@ macro_rules! test_ecies {
 			}
 
 			#[test]
-			fn short_cipher_boundary_condition() -> Result<(), Box<dyn core::error::Error>> {
+			fn short_cipher_boundary_condition() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 				let seed = core::str::from_utf8(crate::test_utils::TEST_SEED)?;
 				let (private_key, _) = $create_keypair_fn(seed, None)?;
 
@@ -788,7 +788,7 @@ macro_rules! test_aes_symmetric {
 		$cipher_name:expr
 	) => {
 		#[test]
-		fn test_basic_encrypt_decrypt() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_basic_encrypt_decrypt() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let cipher = <$cipher_type>::new();
 			let key = vec![0x42u8; $key_size];
 			let plaintext = b"Hello, AES encryption world!";
@@ -829,7 +829,7 @@ macro_rules! test_aes_symmetric {
 		}
 
 		#[test]
-		fn test_random_iv_different_ciphertexts() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_random_iv_different_ciphertexts() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let cipher = <$cipher_type>::new();
 			let key = vec![0x42u8; $key_size];
 			let plaintext = b"Same plaintext for randomness test";
@@ -850,7 +850,7 @@ macro_rules! test_aes_symmetric {
 		}
 
 		#[test]
-		fn test_various_plaintext_sizes() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_various_plaintext_sizes() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let cipher = <$cipher_type>::new();
 			let key = vec![0x42u8; $key_size];
 
@@ -887,7 +887,7 @@ macro_rules! test_aes_symmetric {
 		}
 
 		#[test]
-		fn test_different_keys_different_results() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_different_keys_different_results() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let plaintext = b"Test message for key difference verification";
 
 			// Create two different keys
@@ -926,7 +926,7 @@ macro_rules! test_aes_symmetric {
 		}
 
 		#[test]
-		fn test_deterministic_with_fixed_iv() -> Result<(), Box<dyn core::error::Error>> {
+		fn test_deterministic_with_fixed_iv() -> Result<(), alloc::boxed::Box<dyn core::error::Error>> {
 			let cipher = <$cipher_type>::new();
 			let key = vec![0x42u8; $key_size];
 			let plaintext = b"Test deterministic encryption";

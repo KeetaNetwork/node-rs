@@ -9,7 +9,6 @@ homepage.workspace = true
 description = "Utility functions and build tools for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
@@ -19,6 +18,7 @@ serde_json = { workspace = true, optional = true }
 snafu = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["std"]
+std = []
 build = ["dep:rasn-compiler"]
 node-harness = ["dep:serde_json", "dep:snafu"]

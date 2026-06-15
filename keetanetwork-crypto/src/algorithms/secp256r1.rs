@@ -10,6 +10,8 @@
 // Re-export algorithm-specific signature types
 pub use p256::ecdsa::Signature as Secp256r1Signature;
 
+use alloc::vec::Vec;
+
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 
 use p256::ecdsa::{Signature, SigningKey};
