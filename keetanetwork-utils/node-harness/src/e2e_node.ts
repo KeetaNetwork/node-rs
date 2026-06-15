@@ -11,6 +11,9 @@
  *   { cmd: "manage_cert_add" }                add a freshly minted certificate to the trusted account
  *   { cmd: "head", account }                  head hash + base token balance for an account
  *   { cmd: "transmit", bytes }                publish externally built block bytes to the node
+ *   { cmd: "transmit_staple", bytes }         publish externally built staple bytes to the node
+ *   { cmd: "build_staple", bytes }            assemble a fresh staple around a Rust-built block
+ *   { cmd: "verify_staple", bytes }           parse staple bytes and report hash + element counts
  *   { cmd: "shutdown" }                       stop the node and exit
  */
 
@@ -21,6 +24,8 @@ import type * as AccountModule from '@keetanetwork/keetanet-node/dist/lib/accoun
 import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/index';
 import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/utils/certificate';
 import type * as HelperTestingModule from '@keetanetwork/keetanet-node/dist/lib/utils/helper_testing';
+import type * as VoteModule from '@keetanetwork/keetanet-node/dist/lib/vote';
+import type { Block as BlockInstance } from '@keetanetwork/keetanet-node/dist/lib/block/index';
 
 import { loadModule, resolveDist } from './dist';
 
@@ -31,6 +36,7 @@ const { createTestNode } = loadModule<typeof HelperTestingModule>(dist, 'lib/uti
 const { Account, AccountKeyAlgorithm } = loadModule<typeof AccountModule>(dist, 'lib/account.js');
 const { Block, AdjustMethod } = loadModule<typeof BlockModule>(dist, 'lib/block/index.js');
 const { CertificateBuilder } = loadModule<typeof CertificateModule>(dist, 'lib/utils/certificate.js');
+const { Vote, VoteStaple } = loadModule<typeof VoteModule>(dist, 'lib/vote.js');
 
 /* Deterministic harness accounts; the "rust" side derives its own keys */
 const REP_SEED = Buffer.alloc(32, 0x5a).toString('hex');
@@ -69,6 +75,21 @@ interface TransmitRequest {
 	bytes: string;
 }
 
+interface TransmitStapleRequest {
+	cmd: 'transmit_staple';
+	bytes: string;
+}
+
+interface BuildStapleRequest {
+	cmd: 'build_staple';
+	bytes: string;
+}
+
+interface VerifyStapleRequest {
+	cmd: 'verify_staple';
+	bytes: string;
+}
+
 interface ShutdownRequest {
 	cmd: 'shutdown';
 }
@@ -80,11 +101,15 @@ type HarnessRequest =
 	ManageCertAddRequest |
 	HeadRequest |
 	TransmitRequest |
+	TransmitStapleRequest |
+	BuildStapleRequest |
+	VerifyStapleRequest |
 	ShutdownRequest;
 
 interface DirectResult {
 	voteStaple: {
-		blocks: BlockModule.Block[];
+		blocks: BlockInstance[];
+		toBytes: () => ArrayBuffer;
 	};
 }
 
@@ -106,6 +131,20 @@ function stapleBlocks(result: DirectResult | PublishAidResult): { bytes: string;
 			hash: block.hash.toString()
 		});
 	}));
+}
+
+function stapleBytes(result: DirectResult | PublishAidResult): string | null {
+	if ('voteStaple' in result) {
+		const bytes = result.voteStaple.toBytes();
+		return(Buffer.from(new Uint8Array(bytes)).toString('hex').toUpperCase());
+	}
+
+	return(null);
+}
+
+function hexToArrayBuffer(hex: string): ArrayBuffer {
+	const buffer = Buffer.from(hex, 'hex');
+	return(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
 }
 
 async function main(): Promise<void> {
@@ -185,12 +224,79 @@ async function main(): Promise<void> {
 			}
 
 			case 'transmit': {
-				const buffer = Buffer.from(request.bytes, 'hex');
-				const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-				const block = new Block(arrayBuffer);
+				const block = new Block(hexToArrayBuffer(request.bytes));
 
 				const result = await trustedClient.client.transmit([block]);
-				return({ event: 'transmitted', blocks: stapleBlocks(result), hash: block.hash.toString() });
+				return({
+					event: 'transmitted',
+					blocks: stapleBlocks(result),
+					stapleBytes: stapleBytes(result),
+					hash: block.hash.toString()
+				});
+			}
+
+			case 'transmit_staple': {
+				const staple = new VoteStaple(hexToArrayBuffer(request.bytes));
+
+				const result = await trustedClient.client.transmitStaple(staple);
+				const voteHashes = staple.votes.map(function(vote) {
+					return(vote.hash.toString());
+				});
+				const blockHashes = staple.blocks.map(function(block) {
+					return(block.hash.toString());
+				});
+				return({
+					event: 'staple_transmitted',
+					stapleHash: staple.hash.toString(),
+					blockHashes: blockHashes,
+					voteHashes: voteHashes,
+					blocks: stapleBlocks(result),
+					publish: result.publish
+				});
+			}
+
+			case 'verify_staple': {
+				/* Pure parse + hash; intentionally never calls transmitStaple
+				 * to avoid the "Block Already Exists / Internal error" path
+				 * when callers reuse blocks across scenarios. */
+				const staple = new VoteStaple(hexToArrayBuffer(request.bytes));
+				const voteHashes = staple.votes.map(function(vote) {
+					return(vote.hash.toString());
+				});
+				const blockHashes = staple.blocks.map(function(block) {
+					return(block.hash.toString());
+				});
+				return({
+					event: 'staple_verified',
+					stapleHash: staple.hash.toString(),
+					blockHashes: blockHashes,
+					voteHashes: voteHashes
+				});
+			}
+
+			case 'build_staple': {
+				const block = new Block(hexToArrayBuffer(request.bytes));
+
+				const validFrom = new Date(Date.now() - (60 * 1000));
+				const validTo = new Date(Date.now() + (60 * 60 * 1000));
+
+				/* Two votes from the local rep and trusted accounts ensure the
+				 * resulting staple has the same shape transmit() would produce. */
+				const repBuilder = new Vote.Builder(repKey);
+				repBuilder.addBlocks([block.hash]);
+				const repVote = await repBuilder.seal(1n, validTo, validFrom);
+
+				const trustedBuilder = new Vote.Builder(trustedKey);
+				trustedBuilder.addBlocks([block.hash]);
+				const trustedVote = await trustedBuilder.seal(1n, validTo, validFrom);
+
+				const staple = VoteStaple.fromVotesAndBlocks([repVote, trustedVote], [block]);
+				const stapleBuffer = Buffer.from(staple.toBytes());
+				return({
+					event: 'staple_built',
+					bytes: stapleBuffer.toString('hex').toUpperCase(),
+					stapleHash: staple.hash.toString()
+				});
 			}
 
 			case 'shutdown': {

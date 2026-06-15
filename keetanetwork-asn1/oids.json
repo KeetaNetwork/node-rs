@@ -30,6 +30,26 @@
 			"oid": [ 1, 2, 840, 10045, 4, 3, 2 ],
 			"oid_string": "1.2.840.10045.4.3.2",
 			"description": "ECDSA with SHA-256 signature algorithm"
+		},
+		"ecdsa-with-sha3-256": {
+			"oid": [ 2, 16, 840, 1, 101, 3, 4, 3, 10 ],
+			"oid_string": "2.16.840.1.101.3.4.3.10",
+			"description": "ECDSA with SHA3-256 signature algorithm"
+		},
+		"sha3-256": {
+			"oid": [ 2, 16, 840, 1, 101, 3, 4, 2, 8 ],
+			"oid_string": "2.16.840.1.101.3.4.2.8",
+			"description": "SHA3-256 hash algorithm"
+		},
+		"common-name": {
+			"oid": [ 2, 5, 4, 3 ],
+			"oid_string": "2.5.4.3",
+			"description": "X.520 commonName attribute (RFC 5280)"
+		},
+		"serial-number": {
+			"oid": [ 2, 5, 4, 5 ],
+			"oid_string": "2.5.4.5",
+			"description": "X.520 serialNumber attribute (RFC 5280)"
 		}
 	},
 	"plain_attributes": {
@@ -348,6 +368,14 @@
 			"oid": [ 1, 3, 6, 1, 4, 1, 62675, 0, 0 ],
 			"description": "KYC attributes extension for X.509 certificates",
 			"reference": "https://oid-base.com/get/1.3.6.1.4.1.62675.0.0"
+		},
+		"hashData": {
+			"oid": [ 2, 16, 840, 1, 101, 3, 3, 1, 3 ],
+			"description": "Vote certificate block-hash extension carrier"
+		},
+		"fees": {
+			"oid": [ 1, 3, 6, 1, 4, 1, 62675, 0, 1, 0 ],
+			"description": "Vote certificate fee schedule extension"
 		}
 	}
 }

@@ -59,8 +59,10 @@ pub use der::{
 
 #[cfg(all(feature = "rasn", not(feature = "der")))]
 pub use crate::rasn::{
-	AlgorithmIdentifier, Any, BitString, BitStringExt, Decode, Encode, Ia5String, Integer, ObjectIdentifier,
-	ObjectIdentifierExt, OctetString, SubjectPublicKeyInfo,
+	AlgorithmIdentifier, Any, AttributeTypeAndValue, BitString, BitStringExt, Decode, DistinguishedName, Encode,
+	Extension, Extensions, FeeEntries, FeeEntry, FeesMultiple, FeesMultipleInner, FeesSingle, HashData,
+	HashDataInner, Ia5String, Integer, ObjectIdentifier, ObjectIdentifierExt, OctetString,
+	RelativeDistinguishedName, SubjectPublicKeyInfo, TbsCertificate, Validity, VoteCertificate, VoteStapleBundle,
 };
 
 #[cfg(feature = "chrono")]

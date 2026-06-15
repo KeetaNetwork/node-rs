@@ -35,6 +35,7 @@ alloc = [
 der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der"]
 rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn"]
 x509 = ["dep:keetanetwork-x509"]
+testing = []
 
 [dependencies]
 keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
@@ -64,3 +65,11 @@ serde_json = { workspace = true }
 [lib]
 name = "keetanetwork_block"
 path = "src/lib.rs"
+
+[[test]]
+name = "e2e"
+required-features = ["testing"]
+
+[[test]]
+name = "typescript_compat"
+required-features = ["testing"]

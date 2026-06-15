@@ -1,9 +1,8 @@
 //! Live round-trip compatibility tests against the reference TypeScript
 //! implementation.
 
-mod support;
-
 use keetanetwork_account::KeyPairType;
+use keetanetwork_block::testing::{derive_identifier, generate_ed25519_ref};
 use keetanetwork_block::{
 	AdjustMethod, Amount, BaseFlag, Block, BlockBuilder, BlockPurpose, BlockTime, BlockVersion, CertificateDer,
 	CertificateOrHash, CreateIdentifier, Hashable, IntermediateCertificates, ManageCertificate, ModifyPermissions,
@@ -11,8 +10,6 @@ use keetanetwork_block::{
 	TokenAdminSupply, UnsignedBlock,
 };
 use keetanetwork_utils::node_harness::{run_node_script, script_path};
-
-use support::{generate_ed25519_ref, generate_identifier_ref};
 
 /// The path of a compiled harness helper script.
 fn script(name: &str) -> std::path::PathBuf {
@@ -62,9 +59,9 @@ fn rust_built_blocks() -> Vec<Block> {
 	let alice = generate_ed25519_ref(0x21);
 	let bob = generate_ed25519_ref(0x22);
 	let carol = generate_ed25519_ref(0x23);
-	let token = generate_identifier_ref(&alice, KeyPairType::TOKEN, 0);
-	let multisig_outer = generate_identifier_ref(&alice, KeyPairType::MULTISIG, 1);
-	let multisig_inner = generate_identifier_ref(&alice, KeyPairType::MULTISIG, 2);
+	let token = derive_identifier(&alice, KeyPairType::TOKEN, 0);
+	let multisig_outer = derive_identifier(&alice, KeyPairType::MULTISIG, 1);
+	let multisig_inner = derive_identifier(&alice, KeyPairType::MULTISIG, 2);
 
 	let send = Send {
 		to: bob.clone(),

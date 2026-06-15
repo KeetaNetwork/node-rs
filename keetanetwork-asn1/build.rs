@@ -444,10 +444,7 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push_str("    // Extension OID constants\n");
 		for (name, ext_info) in extensions {
 			if let Some(oid_array) = ext_info["oid"].as_array() {
-				let const_name = match name.as_str() {
-					"kycAttributes" => "KYC_ATTRIBUTES",
-					_ => &name.to_uppercase(),
-				};
+				let const_name = camel_to_snake_upper(name);
 				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
 				generated_code.push_str(&format!(
 					"    pub const {const_name}_EXTENSION: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"

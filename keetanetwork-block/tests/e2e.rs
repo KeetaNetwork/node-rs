@@ -1,17 +1,14 @@
 //! Live end-to-end round trips against a running reference node.
 //! Requires the Node.js harness (`make node-harness`); fails when it is unavailable.
 
-mod support;
-
 use std::str::FromStr;
 use std::sync::Arc;
 
 use keetanetwork_account::GenericAccount;
+use keetanetwork_block::testing::generate_ed25519_ref;
 use keetanetwork_block::{Amount, Block, BlockBuilder, Hashable, Send, SetRep};
 use keetanetwork_utils::node_harness::E2eNode;
 use serde_json::{json, Value};
-
-use support::generate_ed25519_ref;
 
 /// The seed for the account driven by the Rust side of the test.
 const RUST_SEED_BYTE: u8 = 0x21;

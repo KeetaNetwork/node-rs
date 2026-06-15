@@ -54,8 +54,8 @@ mod time;
 mod transport;
 mod validation;
 
-#[cfg(test)]
-mod testing;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use amount::Amount;
 pub use block::{Block, BlockData, BlockPurpose, BlockVersion, Signature, UnsignedBlock};
