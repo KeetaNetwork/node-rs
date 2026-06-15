@@ -27,6 +27,8 @@
 // Re-export algorithm-specific signature types
 pub use ed25519_dalek::Signature as Ed25519Signature;
 
+use alloc::vec::Vec;
+
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::sync::atomic::{fence, Ordering};
 
@@ -612,6 +614,7 @@ impl KeyDerivation for Ed25519Derivation {
 
 #[cfg(test)]
 mod tests {
+	extern crate std;
 	use std::collections::HashMap;
 
 	use super::*;

@@ -9,7 +9,6 @@ homepage.workspace = true
 description = "Utility functions and build tools for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
@@ -17,5 +16,6 @@ path = "src/lib.rs"
 rasn-compiler = { version = "0.14", optional = true }
 
 [features]
-default = []
+default = ["std"]
+std = []
 build = ["dep:rasn-compiler"]

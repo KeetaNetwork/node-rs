@@ -534,6 +534,7 @@ pub fn generate_generated_rs(
 	let relative_path = calculate_relative_path(output_dir, modules_dir_path);
 
 	let mut content = String::new();
+	content.push_str("#![cfg_attr(rustfmt, rustfmt::skip)]\n");
 	content.push_str("//! Generated ASN.1 code\n");
 	content.push_str("//!\n");
 	content.push_str("//! This module contains all the generated ASN.1 structures and re-exports them\n");
@@ -582,14 +583,13 @@ pub fn generate_generated_rs(
 		let generated_file_path = format!("{modules_dir}/{module_name}.rs");
 		if let Ok(generated_content) = std::fs::read_to_string(&generated_file_path) {
 			let exported_types = extract_exported_types(&generated_content);
-			if !exported_types.is_empty() {
+			if exported_types.len() == 1 {
+				content.push_str(&format!("pub use {}::{};\n", module_name, exported_types[0]));
+			} else if exported_types.len() > 1 {
 				content.push_str(&format!("pub use {}::{{{}}};\n", module_name, exported_types.join(", ")));
 			}
 		}
 	}
-
-	// Add EOF line break
-	content.push('\n');
 
 	// Write the generated.rs file
 	std::fs::write(output_path, content)?;

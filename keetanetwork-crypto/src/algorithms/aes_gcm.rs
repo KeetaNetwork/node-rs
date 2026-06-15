@@ -2,6 +2,8 @@
 //!
 //! This module provides AES-GCM AEAD.
 
+use alloc::vec::Vec;
+
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm as AesGcmCipher, Key};
 

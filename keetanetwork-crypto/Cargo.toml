@@ -9,50 +9,55 @@ homepage.workspace = true
 description = "Cryptographic primitives and operations for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
 # Cryptographic libraries
 [dependencies.k256]
 version = "0.13.2"
-features = ["ecdsa", "ecdh"]
+default-features = false
+features = ["ecdsa", "ecdh", "alloc"]
 
 [dependencies.p256]
 version = "0.13.2"
-features = ["ecdsa", "ecdh"]
+default-features = false
+features = ["ecdsa", "ecdh", "alloc"]
 
 [dependencies.ed25519-dalek]
 version = "2.0"
-features = ["std", "rand_core", "zeroize"]
+default-features = false
+features = ["rand_core", "zeroize"]
 
 [dependencies.x25519-dalek]
 version = "2.0"
+default-features = false
 features = ["zeroize"]
 
 [dependencies.curve25519-dalek]
 version = "4.1.3"
+default-features = false
 features = ["zeroize"]
 
 [dependencies.hkdf]
 version = "0.12.4"
-features = ["std"]
+default-features = false
 
 [dependencies.pbkdf2]
 version = "0.12.2"
-features = ["hmac", "parallel", "sha2", "std"]
+default-features = false
+features = ["hmac", "sha2"]
 
 [dependencies.sha1]
 version = "0.10.6"
-features = ["asm"]
+default-features = false
 
 [dependencies.sha2]
 version = "0.10.9"
-features = ["asm", "asm-aarch64", "sha2-asm"]
+default-features = false
 
 [dependencies.sha3]
 version = "0.10.8"
-features = ["asm"]
+default-features = false
 
 [dependencies.zeroize]
 version = "1.8.1"
@@ -60,10 +65,12 @@ features = ["derive"]
 
 [dependencies.rand_core]
 version = "0.9.3"
-features = ["std", "os_rng"]
+default-features = false
+features = ["os_rng"]
 
 [dependencies.snafu]
 workspace = true
+default-features = false
 
 # RustCrypto trait crates
 [dependencies.signature]
@@ -107,7 +114,8 @@ optional = true
 
 [dependencies.aes-gcm]
 version = "0.10.3"
-features = ["std"]
+default-features = false
+features = ["alloc", "aes", "getrandom"]
 
 # Utilities
 [dependencies.bip39-dict]
@@ -115,10 +123,13 @@ version = "0.1.3"
 
 [dependencies.crypto-bigint]
 version = "0.6.1"
+default-features = false
 features = ["serde", "der", "zeroize"]
 
 [dependencies.strum]
-workspace = true
+version = "0.27.2"
+default-features = false
+features = ["derive"]
 
 [dependencies.strum_macros]
 workspace = true
@@ -135,7 +146,9 @@ workspace = true
 version = "0.22"
 
 [dependencies.hex]
-workspace = true
+version = "0.4.3"
+default-features = false
+features = ["serde", "alloc"]
 
 [dependencies.chrono]
 workspace = true
@@ -145,6 +158,7 @@ optional = true
 [dependencies.keetanetwork-error]
 version = "0.1.0"
 path = "../keetanetwork-error"
+optional = true
 
 [dependencies.keetanetwork-asn1]
 version = "0.1.0"
@@ -154,9 +168,34 @@ optional = true
 [dependencies.keetanetwork-utils]
 version = "0.1.0"
 path = "../keetanetwork-utils"
+default-features = false
 
 [features]
-default = ["signature", "encryption", "rasn"]
+default = ["std", "signature", "encryption", "rasn"]
+std = [
+	"alloc",
+	"snafu/std",
+	"ed25519-dalek/std",
+	"hkdf/std",
+	"pbkdf2/std",
+	"pbkdf2/parallel",
+	"rand_core/std",
+	"aes-gcm/std",
+	"strum/std",
+	"hex/std",
+	"sha1/asm",
+	"sha2/asm",
+	"sha2/asm-aarch64",
+	"sha2/sha2-asm",
+	"sha3/asm",
+	"dep:chrono",
+	"dep:keetanetwork-error",
+	"keetanetwork-utils/std",
+	"signature?/std",
+	"aead?/std",
+	"rand?/std",
+]
+alloc = []
 signature = ["dep:signature"]
 encryption = [
 	"dep:aead",

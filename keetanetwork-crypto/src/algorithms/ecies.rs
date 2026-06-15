@@ -2,6 +2,8 @@
 //!
 //! This module provides ECIES encryption.
 
+use alloc::vec::Vec;
+
 use core::sync::atomic::{fence, Ordering};
 
 use hmac::{Hmac, Mac};

@@ -9,7 +9,6 @@ homepage.workspace = true
 description = "Account management and cryptographic identities for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]

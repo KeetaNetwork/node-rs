@@ -3,6 +3,8 @@
 //! This module provides idiomatic traits and types for cryptographic signing
 //! and verification operations, leveraging the RustCrypto ecosystem.
 
+use alloc::vec::Vec;
+
 use crate::algorithms::CryptoAlgorithm;
 
 // Re-export key RustCrypto signature traits for easier use
