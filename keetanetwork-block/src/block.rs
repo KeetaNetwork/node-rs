@@ -12,8 +12,8 @@ use crate::error::BlockError;
 use crate::operation::{Operation, OperationContext, OperationType};
 use crate::signer::{AccountRef, Signer};
 use crate::time::BlockTime;
+use crate::transport;
 use crate::validation::ValidationConfig;
-use crate::wire;
 
 /// Multisig signer tree depth limit enforced during decoding.
 pub(crate) const MAX_PARSE_SIGNER_DEPTH: usize = 3;
@@ -309,7 +309,7 @@ impl TryFrom<BlockData> for UnsignedBlock {
 
 	/// Construct from block data, validating everything except signatures.
 	fn try_from(data: BlockData) -> Result<Self, Self::Error> {
-		let bytes = wire::encode_block(&data, None)?;
+		let bytes = transport::encode_block(&data, None)?;
 		let hash = BlockHash::from(hash_default(&bytes));
 
 		data.validate(&hash)?;
@@ -386,7 +386,7 @@ impl TryFrom<BlockParts> for Block {
 	fn try_from(parts: BlockParts) -> Result<Self, Self::Error> {
 		let BlockParts { data, signatures } = parts;
 
-		let unsigned_bytes = wire::encode_block(&data, None)?;
+		let unsigned_bytes = transport::encode_block(&data, None)?;
 		let hash = BlockHash::from(hash_default(&unsigned_bytes));
 
 		data.validate(&hash)?;
@@ -410,7 +410,7 @@ impl TryFrom<BlockParts> for Block {
 			}
 		}
 
-		let bytes = wire::encode_block(&data, Some(&signatures))?;
+		let bytes = transport::encode_block(&data, Some(&signatures))?;
 		Ok(Self { data, signatures, bytes, hash })
 	}
 }
@@ -442,7 +442,7 @@ impl TryFrom<&[u8]> for Block {
 	type Error = BlockError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let (data, signatures) = wire::decode_block(bytes)?;
+		let (data, signatures) = transport::decode_block(bytes)?;
 		let signatures = signatures.ok_or(BlockError::SignatureRequired)?;
 
 		let block = Self::try_from(BlockParts { data, signatures })?;
@@ -458,7 +458,7 @@ impl TryFrom<&[u8]> for UnsignedBlock {
 	type Error = BlockError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let (data, signatures) = wire::decode_block(bytes)?;
+		let (data, signatures) = transport::decode_block(bytes)?;
 		if signatures.is_some() {
 			return Err(BlockError::RecalculatedBytesMismatch);
 		}
@@ -476,7 +476,7 @@ impl TryFrom<&[u8]> for UnsignedBlock {
 mod tests {
 	use super::*;
 	use crate::operation::SetRep;
-	use crate::test_util::{generate_ed25519_ref, generate_identifier_ref, valid_block_builder};
+	use crate::testing::{generate_ed25519_ref, generate_identifier_ref, valid_block_builder};
 	use num_bigint::BigInt;
 
 	#[test]

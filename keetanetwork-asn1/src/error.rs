@@ -18,6 +18,9 @@ pub enum Asn1Error {
 
 	#[snafu(display("Invalid public key format"))]
 	InvalidPublicKey,
+
+	#[snafu(display("Invalid block version"))]
+	InvalidBlockVersion,
 }
 
 // Use error macros to implement From conversions

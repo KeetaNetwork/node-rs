@@ -10,9 +10,7 @@
 //! - `serde` - Enable serde serialization support
 //!
 //! Exactly one of `der` or `rasn` must be enabled.
-//! If both are enabled, `der` will be used by default.
 
-// Compile-time check to ensure at least one backend is enabled
 #[cfg(not(any(feature = "der", feature = "rasn")))]
 compile_error!("Must enable at least one of 'der' or 'rasn' features.");
 
@@ -20,58 +18,58 @@ pub mod error;
 pub mod oids;
 pub mod utils;
 
-// Generated types (only available with rasn feature when der is not enabled)
-#[cfg(all(feature = "rasn", not(feature = "der")))]
+// `Asn1Time` works with whichever backend is active; it just needs `chrono`
+// for the underlying `DateTime` representation.
+#[cfg(feature = "chrono")]
+mod asn1_time;
+
+// Backend-neutral block transport API. Requires `chrono` for [`Asn1Time`]
+// and at least one codec backend (`der` or `rasn`).
+#[cfg(all(feature = "chrono", any(feature = "rasn", feature = "der")))]
+pub mod block;
+
+#[cfg(feature = "rasn")]
 pub mod generated;
 
-// Backend-specific modules
 #[cfg(feature = "der")]
 pub mod der;
 
-#[cfg(all(feature = "rasn", not(feature = "der")))]
+#[cfg(feature = "rasn")]
 pub mod rasn;
 
-// Re-export error type
 pub use error::Asn1Error;
 
-// Re-export types based on enabled features
+// Unprefixed re-exports: `der` wins when both features are enabled
+// (preserves the legacy surface used by x509 / account / crypto).
 #[cfg(feature = "der")]
 pub use der::{
-	// Re-export commonly used types for convenience
-	AlgorithmIdentifier,
-	Any,
-	BitString,
-	Decode,
-	Encode,
-	Header,
-	Ia5String,
-	ObjectIdentifier,
-	OctetString,
-	Reader,
-	Sequence,
-	SetOfVec,
-	SliceReader,
-	SubjectPublicKeyInfo,
-	Tag,
-	TagNumber,
-	Tagged,
-	Uint,
-	ValueOrd,
+	AlgorithmIdentifier, Any, BitString, Decode, Encode, Header, Ia5String, ObjectIdentifier, OctetString, Reader,
+	Sequence, SetOfVec, SliceReader, SubjectPublicKeyInfo, Tag, TagNumber, Tagged, Uint, ValueOrd,
 };
 
 #[cfg(all(feature = "rasn", not(feature = "der")))]
 pub use crate::rasn::{
-	// Re-export commonly used types for convenience
-	AlgorithmIdentifier,
-	Any,
-	BitString,
-	BitStringExt,
-	Decode,
-	Encode,
-	Ia5String,
-	Integer,
-	ObjectIdentifier,
-	ObjectIdentifierExt,
-	OctetString,
-	SubjectPublicKeyInfo,
+	AlgorithmIdentifier, Any, BitString, BitStringExt, Decode, Encode, Ia5String, Integer, ObjectIdentifier,
+	ObjectIdentifierExt, OctetString, SubjectPublicKeyInfo,
 };
+
+#[cfg(feature = "chrono")]
+pub use crate::asn1_time::Asn1Time;
+
+/// Encode an ASN.1-compatible value as canonical DER bytes.
+///
+/// This is the supported entry point for serializing types defined in
+/// `keetanetwork-asn1` (or any other `rasn::Encode` implementor).
+#[cfg(feature = "rasn")]
+pub fn encode<T: ::rasn::Encode>(value: &T) -> Result<Vec<u8>, Asn1Error> {
+	::rasn::der::encode(value).map_err(Asn1Error::from)
+}
+
+/// Decode canonical DER bytes into an ASN.1-compatible value.
+///
+/// This is the supported entry point for deserializing types defined in
+/// `keetanetwork-asn1` (or any other `rasn::Decode` implementor).
+#[cfg(feature = "rasn")]
+pub fn decode<T: ::rasn::Decode>(bytes: &[u8]) -> Result<T, Asn1Error> {
+	::rasn::der::decode(bytes).map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })
+}

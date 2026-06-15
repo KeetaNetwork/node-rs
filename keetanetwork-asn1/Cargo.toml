@@ -44,6 +44,9 @@ optional = true
 [dependencies.lazy_static]
 workspace = true
 
+[dependencies.num-bigint]
+version = "0.4.6"
+
 [dependencies]
 keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
 
@@ -58,8 +61,8 @@ keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", featur
 serde_json = { workspace = true }
 
 [features]
-default = ["serde", "rasn", "chrono"]
-der = ["dep:const-oid"]
-rasn = ["dep:rasn"]
+default = ["serde", "rasn"]
+der = ["dep:const-oid", "chrono"]
+rasn = ["dep:rasn", "chrono"]
 serde = ["dep:serde"]
 chrono = ["dep:chrono"]

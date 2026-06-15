@@ -82,7 +82,7 @@ mod tests {
 	use super::*;
 	use keetanetwork_account::KeyPairType;
 
-	use crate::test_util::{generate_ed25519_ref, generate_identifier_ref};
+	use crate::testing::{generate_ed25519_ref, generate_identifier_ref};
 
 	#[test]
 	fn test_single_required_signers() {

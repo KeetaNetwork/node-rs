@@ -58,6 +58,6 @@ pub mod typed {
 	pub const ECDSA_WITH_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
 }
 
-// Include the generated OIDs from build.rs for rasn backend
+// Build-script-generated `rasn`-typed OIDs.
 #[cfg(all(feature = "rasn", not(feature = "der")))]
 include!(concat!(env!("OUT_DIR"), "/generated/oids.rs"));

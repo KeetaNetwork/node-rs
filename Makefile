@@ -68,6 +68,9 @@ test-feat:
 	cargo test -p keetanetwork-asn1 --no-default-features --features rasn
 	cargo test -p keetanetwork-asn1 --no-default-features --features der,serde
 	cargo test -p keetanetwork-asn1 --no-default-features --features rasn,serde
+	cargo test -p keetanetwork-block --no-default-features --features der
+	cargo test -p keetanetwork-block --no-default-features --features rasn
+	cargo test -p keetanetwork-block --no-default-features --features der,rasn
 	cargo test -p keetanetwork-crypto -p keetanetwork-x509 --all-features
 	cargo test -p keetanetwork-crypto --no-default-features
 

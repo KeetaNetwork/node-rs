@@ -1,6 +1,7 @@
 //! Error types for block construction, serialization and validation.
 
 use keetanetwork_account::AccountError;
+use keetanetwork_asn1::Asn1Error;
 use keetanetwork_crypto::error::CryptoError;
 use keetanetwork_crypto::hash::BlockHash;
 use keetanetwork_error::KeetaNetError;
@@ -64,11 +65,11 @@ impl core::fmt::Display for InfoField {
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum BlockError {
-	/// DER serialization or deserialization failed
-	#[snafu(display("DER error: {source}"))]
-	Der {
-		/// Underlying DER error
-		source: der::Error,
+	/// ASN.1 serialization or deserialization failed
+	#[snafu(display("ASN.1 codec error: {source}"))]
+	Codec {
+		/// Underlying codec error
+		source: Asn1Error,
 	},
 	/// Account operation failed
 	#[snafu(display("account error: {source}"))]
@@ -329,7 +330,7 @@ pub enum BlockError {
 }
 
 impl_source_error_from!(BlockError, {
-	der::Error => Der,
+	Asn1Error => Codec,
 	AccountError => Account,
 	CryptoError => Crypto,
 });
@@ -431,8 +432,8 @@ mod tests {
 
 	#[test]
 	fn test_source_conversions() {
-		let der_error = der::Error::incomplete(der::Length::ZERO);
-		assert!(matches!(BlockError::from(der_error), BlockError::Der { .. }));
+		let codec_error = Asn1Error::RasnError { reason: "boom".to_string() };
+		assert!(matches!(BlockError::from(codec_error), BlockError::Codec { .. }));
 		assert!(matches!(BlockError::from(AccountError::InvalidKeyType), BlockError::Account { .. }));
 		assert!(matches!(BlockError::from(CryptoError::InvalidInput), BlockError::Crypto { .. }));
 	}

@@ -156,7 +156,7 @@ impl BlockBuilder {
 mod tests {
 	use super::*;
 
-	use crate::test_util::{generate_ed25519_ref, valid_block_builder};
+	use crate::testing::{generate_ed25519_ref, valid_block_builder};
 
 	#[test]
 	fn test_missing_account_rejected() {

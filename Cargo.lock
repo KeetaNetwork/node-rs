@@ -660,6 +660,7 @@ dependencies = [
  "hex",
  "keetanetwork-utils",
  "lazy_static",
+ "num-bigint",
  "rasn",
  "rasn-compiler",
  "serde",
@@ -673,10 +674,10 @@ name = "keetanetwork-block"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "der",
  "hex",
  "hex-literal",
  "keetanetwork-account",
+ "keetanetwork-asn1",
  "keetanetwork-crypto",
  "keetanetwork-error",
  "keetanetwork-utils",

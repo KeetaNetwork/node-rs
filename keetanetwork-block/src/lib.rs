@@ -46,11 +46,12 @@ mod error;
 mod operation;
 mod permissions;
 mod signer;
-#[cfg(test)]
-mod test_util;
 mod time;
+mod transport;
 mod validation;
-mod wire;
+
+#[cfg(test)]
+mod testing;
 
 pub use amount::Amount;
 pub use block::{Block, BlockData, BlockPurpose, BlockVersion, Signature, UnsignedBlock};

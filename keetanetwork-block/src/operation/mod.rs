@@ -1,8 +1,6 @@
 //! Block operations: the nine supported operation types, their domain
 //! models and validation rules.
 
-pub(crate) mod codec;
-
 use std::collections::{HashMap, HashSet};
 
 use keetanetwork_account::{GenericAccount, KeyPairType};
@@ -50,7 +48,7 @@ impl TryFrom<&BigInt> for AdjustMethod {
 	}
 }
 
-/// Operation type discriminants matching the wire context tags.
+/// Operation type discriminants matching the transport context tags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum OperationType {
@@ -76,7 +74,7 @@ pub enum OperationType {
 
 /// DER bytes of an X.509 certificate.
 ///
-/// Stored as raw bytes for wire fidelity; with the `x509` feature the
+/// Stored as raw bytes for transport fidelity; with the `x509` feature the
 /// certificate can be parsed into a typed [`keetanetwork_x509`] certificate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateDer(Vec<u8>);
@@ -759,7 +757,7 @@ impl Operation {
 mod tests {
 	use super::*;
 	use crate::error::InfoField;
-	use crate::test_util::{generate_ed25519_ref, generate_identifier_ref};
+	use crate::testing::{generate_ed25519_ref, generate_identifier_ref};
 
 	/// A date before the negative-amount cutoff.
 	const PRE_CUTOFF_MS: i64 = 1_700_000_000_000;

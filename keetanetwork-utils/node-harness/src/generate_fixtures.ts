@@ -1,5 +1,5 @@
 /*
- * Generates the checked-in block wire fixtures from the reference
+ * Generates the checked-in block transport fixtures from the reference
  * TypeScript implementation.
  *
  * Usage: node dist/generate_fixtures.js <path-to-node-dist> <output-json>

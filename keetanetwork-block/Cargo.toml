@@ -9,17 +9,21 @@ homepage.workspace = true
 description = "Block structure and operations for Keetanetwork blockchain"
 
 [features]
-default = []
+# Backend selection mirrors the asn1 crate; the public block API is
+# backend-agnostic, so the choice only affects the on-transport codec.
+default = ["rasn"]
+der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der"]
+rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn"]
 x509 = ["dep:keetanetwork-x509"]
 
 [dependencies]
 keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
 keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
+keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
 keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", optional = true }
 snafu = { workspace = true }
-der = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 

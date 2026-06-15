@@ -57,7 +57,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_account_roundtrip_through_wire_bytes() -> Result<(), BlockError> {
+	fn test_account_roundtrip_through_transport_bytes() -> Result<(), BlockError> {
 		let account = test_account(5);
 		let bytes = account.to_public_key_with_type();
 		let parsed = parse_account_with_type(&bytes)?;
