@@ -288,6 +288,14 @@ fn compute_flag_group(kind: GroupKind, flags: &[BaseFlag]) -> Result<PermissionG
 	Ok(final_group)
 }
 
+impl TryFrom<&[BaseFlag]> for BaseSet {
+	type Error = BlockError;
+
+	fn try_from(flags: &[BaseFlag]) -> Result<Self, Self::Error> {
+		Self::from_flags(flags)
+	}
+}
+
 impl TryFrom<BigInt> for BaseSet {
 	type Error = BlockError;
 
@@ -442,6 +450,14 @@ impl Permissions {
 	}
 }
 
+impl TryFrom<(BigInt, BigInt)> for Permissions {
+	type Error = BlockError;
+
+	fn try_from((base, external): (BigInt, BigInt)) -> Result<Self, Self::Error> {
+		Self::from_bigints(base, external)
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -530,6 +546,22 @@ mod tests {
 
 		let delegate = make_permissions(&[BaseFlag::PermissionDelegateAdd], &[]);
 		assert!(!delegate.can_use_delegation());
+	}
+
+	#[test]
+	fn test_base_set_try_from_flags() -> Result<(), BlockError> {
+		let from_slice = BaseSet::try_from([BaseFlag::UpdateInfo].as_slice())?;
+		let from_flags = BaseSet::from_flags(&[BaseFlag::UpdateInfo])?;
+		assert_eq!(from_slice, from_flags);
+		Ok(())
+	}
+
+	#[test]
+	fn test_permissions_try_from_bigints() -> Result<(), BlockError> {
+		let tuple = Permissions::try_from((BigInt::from(1), BigInt::ZERO))?;
+		let direct = Permissions::from_bigints(BigInt::from(1), BigInt::ZERO)?;
+		assert_eq!(tuple, direct);
+		Ok(())
 	}
 
 	#[test]

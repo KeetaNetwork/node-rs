@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use keetanetwork_account::account::AccountSigner;
 use keetanetwork_account::KeyPairType;
 use keetanetwork_crypto::hash::{hash_default, BlockHash, Hashable};
+use keetanetwork_crypto::verify::Verifiable;
 use num_bigint::BigInt;
 
 use crate::account_util::verify_account;
@@ -356,7 +357,9 @@ impl UnsignedBlock {
 }
 
 impl Hashable for UnsignedBlock {
-	fn hash(&self) -> BlockHash {
+	type Digest = BlockHash;
+
+	fn hash(&self) -> Self::Digest {
 		self.hash
 	}
 }
@@ -436,7 +439,9 @@ impl Block {
 }
 
 impl Hashable for Block {
-	fn hash(&self) -> BlockHash {
+	type Digest = BlockHash;
+
+	fn hash(&self) -> Self::Digest {
 		self.hash
 	}
 }
@@ -454,6 +459,17 @@ impl TryFrom<&[u8]> for Block {
 		}
 
 		Ok(block)
+	}
+}
+
+impl Verifiable for Block {
+	type Context = ();
+	type Error = BlockError;
+
+	/// Decode signed block bytes and verify their signatures, yielding a
+	/// sealed [`Block`].
+	fn verify(bytes: impl Into<Vec<u8>>, _context: Self::Context) -> Result<Self, Self::Error> {
+		Self::try_from(bytes.into().as_slice())
 	}
 }
 
@@ -589,6 +605,15 @@ mod tests {
 		let decoded = Block::try_from(block.to_bytes())?;
 		assert_eq!(decoded.hash(), block.hash());
 		assert_eq!(decoded.to_bytes(), block.to_bytes());
+		Ok(())
+	}
+
+	#[test]
+	fn test_verifiable_matches_try_from() -> Result<(), BlockError> {
+		let block = valid_block_builder().build()?.sign()?;
+		let verified = Block::verify(block.to_bytes().to_vec(), ())?;
+		assert_eq!(verified.hash(), block.hash());
+		assert_eq!(verified.to_bytes(), block.to_bytes());
 		Ok(())
 	}
 

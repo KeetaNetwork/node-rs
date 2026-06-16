@@ -23,6 +23,7 @@ pub mod kdf;
 pub mod operations;
 pub mod prelude;
 pub mod utils;
+pub mod verify;
 
 // Testing
 #[cfg(test)]

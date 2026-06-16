@@ -209,10 +209,17 @@ impl FromStr for BlockHash {
 	}
 }
 
-/// Types that can be hashed into a [`BlockHash`] using the default algorithm.
+/// Types that can be hashed into a canonical digest.
+///
+/// The digest type is associated so different domains can hash to their own
+/// strongly-typed values (e.g. blocks to [`BlockHash`], votes to a vote hash)
+/// while sharing a single trait.
 pub trait Hashable {
+	/// The digest produced by hashing this value.
+	type Digest;
+
 	/// Compute the hash of this value.
-	fn hash(&self) -> BlockHash;
+	fn hash(&self) -> Self::Digest;
 }
 
 /// Get the hash function name
