@@ -33,7 +33,6 @@ use miniz_oxide::inflate::decompress_to_vec_zlib;
 use keetanetwork_asn1::vote as transport;
 use keetanetwork_block::{Block, BlockHash, BlockTime};
 use keetanetwork_crypto::verify::Verifiable;
-use num_bigint::BigInt;
 
 use crate::error::VoteError;
 use crate::hash::{Hashable, VoteBlockHash, VoteStapleHash};
@@ -110,6 +109,7 @@ impl VoteStaple {
 			.ok_or(VoteError::StapleVotesAtLeastOne)?
 			.blocks()
 			.to_vec();
+
 		assert_block_order(&blocks, &representative_blocks)?;
 		assert_vote_order(&votes)?;
 
@@ -177,19 +177,21 @@ fn validate_vote_invariants(votes: &[Vote], config: ValidationConfig, moment: Bl
 	let representative_permanent = representative.is_permanent_at(moment, config);
 
 	let mut seen_issuers: Vec<Vec<u8>> = Vec::with_capacity(votes.len());
-
 	for vote in votes {
 		if vote.blocks().len() != expected_blocks.len() {
 			return Err(VoteError::StapleBlockCountMismatch);
 		}
+
 		for (left, right) in vote.blocks().iter().zip(expected_blocks) {
 			if left != right {
 				return Err(VoteError::StapleBlockOrderMismatch);
 			}
 		}
+
 		if vote.is_permanent_at(moment, config) != representative_permanent {
 			return Err(VoteError::StaplePermanenceMismatch);
 		}
+
 		let issuer_bytes = vote.issuer().to_public_key_with_type();
 		if seen_issuers
 			.iter()
@@ -197,6 +199,7 @@ fn validate_vote_invariants(votes: &[Vote], config: ValidationConfig, moment: Bl
 		{
 			return Err(VoteError::StapleDuplicateIssuer);
 		}
+
 		seen_issuers.push(issuer_bytes);
 	}
 	Ok(())
@@ -240,11 +243,11 @@ fn assert_block_order(blocks: &[Block], expected: &[BlockHash]) -> Result<(), Vo
 }
 
 fn assert_vote_order(votes: &[Vote]) -> Result<(), VoteError> {
-	let mut prev: Option<BigInt> = None;
+	let mut prev = None;
 	for vote in votes {
-		let current = vote_hash_as_bigint(vote);
-		if let Some(previous) = &prev {
-			if &current < previous {
+		let current = vote.hash();
+		if let Some(previous) = prev {
+			if current < previous {
 				return Err(VoteError::StapleInvalidConstruction);
 			}
 		}
@@ -255,12 +258,10 @@ fn assert_vote_order(votes: &[Vote]) -> Result<(), VoteError> {
 	Ok(())
 }
 
+// A vote hash is a fixed-size 32-byte big-endian digest, so lexicographic
+// byte ordering coincides with its unsigned numeric interpretation.
 fn compare_votes_by_hash(a: &Vote, b: &Vote) -> core::cmp::Ordering {
-	vote_hash_as_bigint(a).cmp(&vote_hash_as_bigint(b))
-}
-
-fn vote_hash_as_bigint(vote: &Vote) -> BigInt {
-	BigInt::from_bytes_be(num_bigint::Sign::Plus, vote.hash().as_bytes())
+	a.hash().cmp(&b.hash())
 }
 
 // ---------------------------------------------------------------------------

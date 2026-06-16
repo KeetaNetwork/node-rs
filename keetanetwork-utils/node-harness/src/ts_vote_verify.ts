@@ -34,22 +34,42 @@ function serializeSingleFee(entry: SerializableFee): unknown {
 	if (entry.token !== undefined) {
 		single['token'] = entry.token.publicKeyString.get();
 	}
+
 	return(single);
 }
 
 function serializeFee(fee: VoteModule.Vote['fee']): unknown {
 	if (Array.isArray(fee)) {
 		return(fee.map(function(entry) {
-			// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-			return(serializeSingleFee(entry as SerializableFee));
+			return(serializeSingleFee(entry));
 		}));
 	}
 	if (fee === undefined) {
 		return(undefined);
 	}
 
-	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-	return(serializeSingleFee(fee as SerializableFee));
+	const serializedFee = serializeSingleFee(fee);
+	return(serializedFee);
+}
+
+/**
+ * `Vote` rejects quote=true certificates and `VoteQuote` rejects quote=false ones.
+ */
+function parseVote(arrayBuffer: ArrayBuffer): VoteModule.Vote | VoteModule.VoteQuote {
+	try {
+		return(new Vote(arrayBuffer));
+	} catch (error) {
+		let code: string | undefined;
+		if (error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+			code = error.code;
+		}
+		if (code !== 'VOTE_MALFORMED_FEES_QUOTE_INVALID') {
+			throw(error);
+		}
+
+		const voteQuote = new VoteQuote(arrayBuffer);
+		return(voteQuote);
+	}
 }
 
 let input = '';
@@ -68,24 +88,7 @@ process.stdin.on('end', function() {
 		const buffer = Buffer.from(hexBytes, 'hex');
 		const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
 
-		/* `Vote` rejects quote=true certificates and `VoteQuote` rejects
-		 * quote=false ones; try the regular shape first and fall back to
-		 * the quote shape so the script handles both kinds without the
-		 * caller having to know which it sent. */
-		let vote: VoteModule.Vote | VoteModule.VoteQuote;
-		try {
-			vote = new Vote(arrayBuffer);
-		} catch (error) {
-			let code: string | undefined;
-			if (error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
-				code = error.code;
-			}
-			if (code !== 'VOTE_MALFORMED_FEES_QUOTE_INVALID') {
-				throw(error);
-			}
-			vote = new VoteQuote(arrayBuffer);
-		}
-
+		const vote = parseVote(arrayBuffer);
 		const blocks: string[] = vote.blocks.map(function(blockHash) {
 			return(blockHash.toString());
 		});

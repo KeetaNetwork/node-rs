@@ -204,13 +204,17 @@ fn entry_to_fee(entry: transport::FeeEntry) -> Result<(bool, Fee), VoteError> {
 	Ok((entry.quote, Fee { amount: Amount::from(entry.amount), pay_to, token }))
 }
 
+#[derive(Clone, Copy)]
 enum AccountKind {
 	PayTo,
 	Token,
 }
 
 fn account_from_octet(bytes: &[u8], kind: AccountKind) -> Result<AccountRef, VoteError> {
-	let account = GenericAccount::from_hex(hex::encode(bytes)).map_err(|_| VoteError::MalformedFeesPayToInvalid)?;
+	let account = GenericAccount::from_hex(hex::encode(bytes)).map_err(|_| match kind {
+		AccountKind::PayTo => VoteError::MalformedFeesPayToInvalid,
+		AccountKind::Token => VoteError::MalformedFeesTokenNotToken,
+	})?;
 	match kind {
 		AccountKind::PayTo => match account.to_keypair_type() {
 			KeyPairType::ECDSASECP256K1 | KeyPairType::ECDSASECP256R1 | KeyPairType::ED25519 | KeyPairType::STORAGE => {

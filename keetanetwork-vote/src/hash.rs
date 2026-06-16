@@ -3,7 +3,7 @@
 //! Three distinct types live here, each over a 32-byte SHA3-256 digest:
 //!
 //! * [`VoteHash`] - hash of a serialized vote (its certificate bytes).
-//! * [`VoteStapleHash`] - hash of the canonical (deflated) vote staple bytes.
+//! * [`VoteStapleHash`] - hash of the canonical (uncompressed) vote staple bytes.
 //! * [`VoteBlockHash`] - hash of the block hashes a vote/staple covers; the
 //!   stable identity of the bundle, independent of which vote subset is
 //!   included.

@@ -66,7 +66,7 @@ impl Validity {
 		let now = moment.unix_millis();
 		let from = self.from.unix_millis();
 		let to = self.to.unix_millis();
-		(now + config.allowed_slop_ms) < from || (now - config.allowed_slop_ms) > to
+		now.saturating_add(config.allowed_slop_ms) < from || now.saturating_sub(config.allowed_slop_ms) > to
 	}
 
 	/// Whether `moment` falls before `validity_from` even after applying the
