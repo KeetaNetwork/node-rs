@@ -10,7 +10,6 @@ pub const ECDSA_WITH_SHA256: &str = "1.2.840.10045.4.3.2";
 pub const ECDSA_WITH_SHA3_256: &str = "2.16.840.1.101.3.4.3.10";
 
 // Hash algorithm identifiers
-pub const SHA1: &str = "1.3.14.3.2.26";
 pub const SHA256: &str = "2.16.840.1.101.3.4.2.1";
 pub const SHA512: &str = "2.16.840.1.101.3.4.2.3";
 pub const SHA3_256: &str = "2.16.840.1.101.3.4.2.8";

@@ -723,36 +723,24 @@ pub struct CertificateHash {
 }
 
 impl CertificateHash {
-	/// Create a new certificate hash with optional algorithm OID (defaults to SHA1)
+	/// Create a new certificate hash with optional algorithm OID (defaults to SHA3-256)
 	pub fn new<T: Into<Vec<u8>>, S: AsRef<str>>(hash: T, algorithm_oid: Option<S>) -> Self {
 		let algorithm_oid = algorithm_oid
 			.map(|s| s.as_ref().to_string())
-			.unwrap_or_else(|| oids::SHA1.to_string());
+			.unwrap_or_else(|| oids::SHA3_256.to_string());
 
 		Self { hash: hash.into(), algorithm_oid }
 	}
 
-	/// Create a standardized certificate hash using SHA-256
-	pub fn sha256<T: AsRef<[u8]>>(data: T) -> Self {
-		let hash_bytes = HashAlgorithm::Sha2_256.hash(data.as_ref());
-		Self::new(hash_bytes, Some(oids::SHA256))
+	/// Create a standardized certificate hash using SHA3-256
+	pub fn sha3_256<T: AsRef<[u8]>>(data: T) -> Self {
+		let hash_bytes = HashAlgorithm::Sha3_256.hash(data.as_ref());
+		Self::new(hash_bytes, Some(oids::SHA3_256))
 	}
 
-	/// Create a certificate hash using SHA-1 (for legacy compatibility)
-	pub fn sha1<T: AsRef<[u8]>>(data: T) -> Self {
-		let hash_bytes = HashAlgorithm::Sha1.hash(data.as_ref());
-		Self::new(hash_bytes, Some(oids::SHA1))
-	}
-
-	/// Create a certificate hash from a certificate's DER bytes
+	/// Create a certificate hash from a certificate's DER bytes (SHA3-256)
 	pub fn from_certificate_der<T: AsRef<[u8]>>(der_bytes: T) -> Self {
-		// Use SHA-1 for certificate hashing (standard for X.509 key identifiers)
-		Self::sha1(der_bytes)
-	}
-
-	/// Create a modernized certificate hash using SHA-256
-	pub fn from_certificate_der_sha256<T: AsRef<[u8]>>(der_bytes: T) -> Self {
-		Self::sha256(der_bytes)
+		Self::sha3_256(der_bytes)
 	}
 
 	/// Get the algorithm OID
@@ -763,7 +751,6 @@ impl CertificateHash {
 	/// Get the hash function name
 	pub fn hash_function_name(&self) -> &str {
 		match self.algorithm_oid.as_str() {
-			oids::SHA1 => "SHA1",
 			oids::SHA256 => "SHA256",
 			oids::SHA512 => "SHA512",
 			oids::SHA3_256 => "SHA3-256",
@@ -785,8 +772,10 @@ impl CertificateHash {
 	pub fn verify_certificate(&self, certificate: &Certificate) -> Result<bool, CertificateError> {
 		let der_bytes = certificate.to_der()?;
 		let computed_hash = match self.algorithm_oid.as_str() {
-			oids::SHA1 => Self::sha1(&der_bytes),
-			oids::SHA256 => Self::sha256(&der_bytes),
+			oids::SHA256 => {
+				let sha256_hash = HashAlgorithm::Sha2_256.hash(&der_bytes);
+				CertificateHash::new(sha256_hash, Some(oids::SHA256))
+			}
 			oids::SHA512 => {
 				let sha512_hash = HashAlgorithm::Sha2_512.hash(&der_bytes);
 				CertificateHash::new(sha512_hash, Some(oids::SHA512))
@@ -1812,20 +1801,12 @@ mod tests {
 	where
 		F: Fn(&HashTestCase, &[u8]),
 	{
-		let test_cases = vec![
-			HashTestCase {
-				hash_fn: |data| CertificateHash::sha1(data),
-				expected_algorithm_oid: crate::oids::SHA1,
-				expected_algorithm_name: "SHA1",
-				expected_length: 20,
-			},
-			HashTestCase {
-				hash_fn: |data| CertificateHash::sha256(data),
-				expected_algorithm_oid: crate::oids::SHA256,
-				expected_algorithm_name: "SHA256",
-				expected_length: 32,
-			},
-		];
+		let test_cases = vec![HashTestCase {
+			hash_fn: |data| CertificateHash::sha3_256(data),
+			expected_algorithm_oid: crate::oids::SHA3_256,
+			expected_algorithm_name: "SHA3-256",
+			expected_length: 32,
+		}];
 
 		let test_data = b"test certificate data for hashing";
 		for test_case in &test_cases {
@@ -2664,10 +2645,11 @@ mod tests {
 				assert_eq!(hash_from_ref, hash_from_der);
 
 				// Test from_certificate_der methods
-				let hash_sha1 = CertificateHash::from_certificate_der(&der_bytes);
-				let hash_sha256 = CertificateHash::from_certificate_der_sha256(&der_bytes);
-				assert_eq!(hash_from_ref, hash_sha1); // Default should be SHA1
-				assert_ne!(hash_sha1, hash_sha256); // Different algorithms should differ
+				let hash_default = CertificateHash::from_certificate_der(&der_bytes);
+				let hash_sha256 =
+					CertificateHash::new(HashAlgorithm::Sha2_256.hash(&der_bytes), Some(crate::oids::SHA256));
+				assert_eq!(hash_from_ref, hash_default); // Default should be SHA3-256
+				assert_ne!(hash_default, hash_sha256); // Different algorithms should differ
 
 				// Test Display trait
 				let hash_string = hash_from_ref.to_string();
@@ -2686,7 +2668,7 @@ mod tests {
 	#[test]
 	fn test_certificate_hash_hex_conversions() -> Result<(), CertificateError> {
 		let test_data = b"test data for hex conversion";
-		let hash = CertificateHash::sha256(test_data);
+		let hash = CertificateHash::sha3_256(test_data);
 		let hex_string = hash.to_string();
 
 		// Test FromStr with String
@@ -2711,12 +2693,6 @@ mod tests {
 				// Test verification with different algorithms
 				let der_bytes = cert.to_der()?;
 
-				// Both should verify against the same certificate
-				let hash_sha1 = CertificateHash::sha1(&der_bytes);
-				let hash_sha256 = CertificateHash::sha256(&der_bytes);
-				assert!(hash_sha1.verify_certificate(cert)?);
-				assert!(hash_sha256.verify_certificate(cert)?);
-
 				// Test SHA-512 and SHA3-256 verification
 				let hash_sha512 =
 					CertificateHash::new(HashAlgorithm::Sha2_512.hash(&der_bytes), Some(crate::oids::SHA512));
@@ -2724,11 +2700,6 @@ mod tests {
 				let hash_sha3_256 =
 					CertificateHash::new(HashAlgorithm::Sha3_256.hash(&der_bytes), Some(crate::oids::SHA3_256));
 				assert!(hash_sha3_256.verify_certificate(cert)?);
-
-				// Test verification fails with different certificate
-				if cert != &bundle.ca_cert {
-					assert!(!hash_sha1.verify_certificate(&bundle.ca_cert)?);
-				}
 			}
 
 			Ok(())
