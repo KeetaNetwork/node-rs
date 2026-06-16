@@ -178,7 +178,6 @@ std = [
 	"aes-gcm/std",
 	"strum/std",
 	"hex/std",
-	"sha1/asm",
 	"sha2/asm",
 	"sha2/asm-aarch64",
 	"sha2/sha2-asm",
