@@ -61,6 +61,29 @@ impl<T> NullOr<T> {
 			NullOr::Value(v) => Some(v),
 		}
 	}
+
+	/// Returns `true` if this is the NULL marker.
+	pub fn is_null(&self) -> bool {
+		matches!(self, NullOr::Null)
+	}
+}
+
+impl<T> From<Option<T>> for NullOr<T> {
+	fn from(value: Option<T>) -> Self {
+		match value {
+			Some(v) => NullOr::Value(v),
+			None => NullOr::Null,
+		}
+	}
+}
+
+impl<T> From<NullOr<T>> for Option<T> {
+	fn from(value: NullOr<T>) -> Self {
+		match value {
+			NullOr::Value(v) => Some(v),
+			NullOr::Null => None,
+		}
+	}
 }
 
 // Implement Decode for NullOr<T>
@@ -175,25 +198,39 @@ pub enum AdjustMethod {
 	Set = 2,
 }
 
-impl<'a> Decode<'a> for AdjustMethod {
-	fn decode<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
-		let value: u8 = reader.decode()?;
+impl From<AdjustMethod> for u8 {
+	fn from(method: AdjustMethod) -> Self {
+		method as u8
+	}
+}
+
+impl TryFrom<u8> for AdjustMethod {
+	type Error = u8;
+
+	fn try_from(value: u8) -> Result<Self, Self::Error> {
 		match value {
 			0 => Ok(AdjustMethod::Add),
 			1 => Ok(AdjustMethod::Subtract),
 			2 => Ok(AdjustMethod::Set),
-			_ => Err(Tag::Integer.value_error()),
+			n => Err(n),
 		}
+	}
+}
+
+impl<'a> Decode<'a> for AdjustMethod {
+	fn decode<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
+		let value: u8 = reader.decode()?;
+		Self::try_from(value).map_err(|_| Tag::Integer.value_error())
 	}
 }
 
 impl Encode for AdjustMethod {
 	fn encoded_len(&self) -> der::Result<Length> {
-		(*self as u8).encoded_len()
+		u8::from(*self).encoded_len()
 	}
 
 	fn encode(&self, writer: &mut impl Writer) -> der::Result<()> {
-		(*self as u8).encode(writer)
+		u8::from(*self).encode(writer)
 	}
 }
 
@@ -205,24 +242,59 @@ pub enum AdjustMethodRelative {
 	Subtract = 1,
 }
 
-impl<'a> Decode<'a> for AdjustMethodRelative {
-	fn decode<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
-		let value: u8 = reader.decode()?;
+impl From<AdjustMethodRelative> for u8 {
+	fn from(method: AdjustMethodRelative) -> Self {
+		method as u8
+	}
+}
+
+impl TryFrom<u8> for AdjustMethodRelative {
+	type Error = u8;
+
+	fn try_from(value: u8) -> Result<Self, Self::Error> {
 		match value {
 			0 => Ok(AdjustMethodRelative::Add),
 			1 => Ok(AdjustMethodRelative::Subtract),
-			_ => Err(Tag::Integer.value_error()),
+			n => Err(n),
 		}
+	}
+}
+
+impl From<AdjustMethodRelative> for AdjustMethod {
+	fn from(method: AdjustMethodRelative) -> Self {
+		match method {
+			AdjustMethodRelative::Add => AdjustMethod::Add,
+			AdjustMethodRelative::Subtract => AdjustMethod::Subtract,
+		}
+	}
+}
+
+impl TryFrom<AdjustMethod> for AdjustMethodRelative {
+	type Error = AdjustMethod;
+
+	fn try_from(method: AdjustMethod) -> Result<Self, Self::Error> {
+		match method {
+			AdjustMethod::Add => Ok(AdjustMethodRelative::Add),
+			AdjustMethod::Subtract => Ok(AdjustMethodRelative::Subtract),
+			AdjustMethod::Set => Err(AdjustMethod::Set),
+		}
+	}
+}
+
+impl<'a> Decode<'a> for AdjustMethodRelative {
+	fn decode<R: Reader<'a>>(reader: &mut R) -> der::Result<Self> {
+		let value: u8 = reader.decode()?;
+		Self::try_from(value).map_err(|_| Tag::Integer.value_error())
 	}
 }
 
 impl Encode for AdjustMethodRelative {
 	fn encoded_len(&self) -> der::Result<Length> {
-		(*self as u8).encoded_len()
+		u8::from(*self).encoded_len()
 	}
 
 	fn encode(&self, writer: &mut impl Writer) -> der::Result<()> {
-		(*self as u8).encode(writer)
+		u8::from(*self).encode(writer)
 	}
 }
 
@@ -405,49 +477,41 @@ impl EncodeValue for MultisigArgs<'_> {
 impl<'a> Sequence<'a> for MultisigArgs<'a> {}
 
 /// Iterator that yields raw signer public key bytes (without DER tag/length).
+///
+/// Construction is infallible. A malformed signers SEQUENCE surfaces as a
+/// single `Err` item on the first call to [`Iterator::next`] rather than being
+/// silently reported as empty.
 #[derive(Debug, Clone)]
 pub struct SignersIter<'a> {
-	content: SliceReader<'a>,
+	state: SignersState<'a>,
+}
+
+/// Parse progress for [`SignersIter`].
+#[derive(Debug, Clone)]
+enum SignersState<'a> {
+	/// Raw SEQUENCE bytes awaiting their first parse.
+	Pending(&'a [u8]),
+	/// Reader positioned at the next OCTET STRING within the SEQUENCE content.
+	Reading(SliceReader<'a>),
+	/// Exhausted or unrecoverable; yields nothing further.
+	Done,
 }
 
 impl<'a> SignersIter<'a> {
-	/// Creates a new iterator from the raw signers SEQUENCE bytes.
+	/// Creates a new iterator over the raw signers SEQUENCE bytes.
 	fn new(signers_sequence: &'a [u8]) -> Self {
-		if signers_sequence.is_empty() {
-			return SignersIter { content: SliceReader::new(&[]).unwrap() };
-		}
+		SignersIter { state: SignersState::Pending(signers_sequence) }
+	}
 
-		// Parse the SEQUENCE header to get the content bytes
-		let outer_reader = match SliceReader::new(signers_sequence) {
-			Ok(r) => r,
-			Err(_) => return SignersIter { content: SliceReader::new(&[]).unwrap() },
-		};
-
-		// Read the SEQUENCE header and get content length
-		let header = match outer_reader.peek_header() {
-			Ok(h) => h,
-			Err(_) => return SignersIter { content: SliceReader::new(&[]).unwrap() },
-		};
-
+	/// Parses the SEQUENCE header and returns a reader over its content.
+	fn content_reader(signers_sequence: &'a [u8]) -> der::Result<SliceReader<'a>> {
+		let mut outer = SliceReader::new(signers_sequence)?;
+		let header = Header::decode(&mut outer)?;
 		if header.tag != Tag::Sequence {
-			return SignersIter { content: SliceReader::new(&[]).unwrap() };
+			return Err(Tag::Sequence.value_error());
 		}
-
-		// Skip the header and create a reader for just the content
-		let header_len = match header.encoded_len() {
-			Ok(len) => len,
-			Err(_) => return SignersIter { content: SliceReader::new(&[]).unwrap() },
-		};
-
-		let content_len: usize = header.length.try_into().unwrap_or(0);
-		let header_bytes: usize = header_len.try_into().unwrap_or(0);
-
-		if signers_sequence.len() < header_bytes + content_len {
-			return SignersIter { content: SliceReader::new(&[]).unwrap() };
-		}
-
-		let content = &signers_sequence[header_bytes..header_bytes + content_len];
-		SignersIter { content: SliceReader::new(content).unwrap() }
+		let content = outer.read_slice(header.length)?;
+		SliceReader::new(content)
 	}
 }
 
@@ -455,14 +519,37 @@ impl<'a> Iterator for SignersIter<'a> {
 	type Item = der::Result<&'a [u8]>;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		if self.content.is_finished() {
-			return None;
-		}
-
-		// Decode the next OCTET STRING
-		match Bytes::decode(&mut self.content) {
-			Ok(octet_string) => Some(Ok(octet_string.as_bytes())),
-			Err(e) => Some(Err(e)),
+		loop {
+			match &mut self.state {
+				SignersState::Done => return None,
+				SignersState::Pending(bytes) => {
+					let bytes = *bytes;
+					if bytes.is_empty() {
+						self.state = SignersState::Done;
+						return None;
+					}
+					match Self::content_reader(bytes) {
+						Ok(reader) => self.state = SignersState::Reading(reader),
+						Err(e) => {
+							self.state = SignersState::Done;
+							return Some(Err(e));
+						}
+					}
+				}
+				SignersState::Reading(reader) => {
+					if reader.is_finished() {
+						self.state = SignersState::Done;
+						return None;
+					}
+					return match Bytes::decode(reader) {
+						Ok(octet_string) => Some(Ok(octet_string.as_bytes())),
+						Err(e) => {
+							self.state = SignersState::Done;
+							Some(Err(e))
+						}
+					};
+				}
+			}
 		}
 	}
 }
@@ -705,34 +792,44 @@ mod tests {
 	// ============================================================================
 
 	#[test]
-	fn nullor_null_roundtrip() {
+	fn nullor_null_roundtrip() -> der::Result<()> {
 		let original: NullOr<Bytes> = NullOr::Null;
-		let encoded = original.to_der().unwrap();
-		let decoded: NullOr<Bytes> = NullOr::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = NullOr::<Bytes>::from_der(&encoded)?;
 		assert_eq!(decoded, NullOr::Null);
+		Ok(())
 	}
 
 	#[test]
-	fn nullor_value_roundtrip() {
+	fn nullor_value_roundtrip() -> der::Result<()> {
 		let data = [1u8, 2, 3, 4];
-		let original: NullOr<Bytes> = NullOr::Value(Bytes::new(&data).unwrap());
-		let encoded = original.to_der().unwrap();
-		let decoded: NullOr<Bytes> = NullOr::from_der(&encoded).unwrap();
-
-		match decoded {
-			NullOr::Value(bytes) => assert_eq!(bytes.as_bytes(), &data),
-			NullOr::Null => panic!("Expected Value, got Null"),
-		}
+		let original: NullOr<Bytes> = NullOr::Value(Bytes::new(&data)?);
+		let encoded = original.to_der()?;
+		let decoded = NullOr::<Bytes>::from_der(&encoded)?;
+		assert_eq!(decoded, NullOr::Value(Bytes::new(&data)?));
+		Ok(())
 	}
 
 	#[test]
-	fn nullor_value_method() {
+	fn nullor_value_method() -> der::Result<()> {
 		let data = [1u8, 2, 3];
 		let null: NullOr<Bytes> = NullOr::Null;
-		let value: NullOr<Bytes> = NullOr::Value(Bytes::new(&data).unwrap());
+		let value: NullOr<Bytes> = NullOr::Value(Bytes::new(&data)?);
 
 		assert!(null.value().is_none());
-		assert_eq!(value.value().unwrap().as_bytes(), &data);
+		assert_eq!(value.value(), Some(&Bytes::new(&data)?));
+		Ok(())
+	}
+
+	#[test]
+	fn nullor_option_conversions() {
+		let from_some: NullOr<u8> = Some(7u8).into();
+		let from_none: NullOr<u8> = None::<u8>.into();
+		assert_eq!(from_some, NullOr::Value(7));
+		assert!(from_none.is_null());
+		assert!(!from_some.is_null());
+		assert_eq!(Option::from(NullOr::Value(9u8)), Some(9));
+		assert_eq!(Option::<u8>::from(NullOr::Null), None);
 	}
 
 	// ============================================================================
@@ -740,21 +837,47 @@ mod tests {
 	// ============================================================================
 
 	#[test]
-	fn adjust_method_roundtrip() {
+	fn adjust_method_roundtrip() -> der::Result<()> {
 		for method in [AdjustMethod::Add, AdjustMethod::Subtract, AdjustMethod::Set] {
-			let encoded = method.to_der().unwrap();
-			let decoded: AdjustMethod = AdjustMethod::from_der(&encoded).unwrap();
+			let encoded = method.to_der()?;
+			let decoded = AdjustMethod::from_der(&encoded)?;
 			assert_eq!(decoded, method);
 		}
+		Ok(())
 	}
 
 	#[test]
-	fn adjust_method_relative_roundtrip() {
+	fn adjust_method_relative_roundtrip() -> der::Result<()> {
 		for method in [AdjustMethodRelative::Add, AdjustMethodRelative::Subtract] {
-			let encoded = method.to_der().unwrap();
-			let decoded: AdjustMethodRelative = AdjustMethodRelative::from_der(&encoded).unwrap();
+			let encoded = method.to_der()?;
+			let decoded = AdjustMethodRelative::from_der(&encoded)?;
 			assert_eq!(decoded, method);
 		}
+		Ok(())
+	}
+
+	#[test]
+	fn adjust_method_conversions() {
+		for (byte, method) in [(0u8, AdjustMethod::Add), (1, AdjustMethod::Subtract), (2, AdjustMethod::Set)] {
+			assert_eq!(AdjustMethod::try_from(byte), Ok(method));
+			assert_eq!(u8::from(method), byte);
+		}
+		assert_eq!(AdjustMethod::try_from(3u8), Err(3));
+
+		for (byte, method) in [(0u8, AdjustMethodRelative::Add), (1, AdjustMethodRelative::Subtract)] {
+			assert_eq!(AdjustMethodRelative::try_from(byte), Ok(method));
+			assert_eq!(u8::from(method), byte);
+		}
+		assert_eq!(AdjustMethodRelative::try_from(2u8), Err(2));
+	}
+
+	#[test]
+	fn adjust_method_widening_narrowing() {
+		assert_eq!(AdjustMethod::from(AdjustMethodRelative::Add), AdjustMethod::Add);
+		assert_eq!(AdjustMethod::from(AdjustMethodRelative::Subtract), AdjustMethod::Subtract);
+		assert_eq!(AdjustMethodRelative::try_from(AdjustMethod::Add), Ok(AdjustMethodRelative::Add));
+		assert_eq!(AdjustMethodRelative::try_from(AdjustMethod::Subtract), Ok(AdjustMethodRelative::Subtract));
+		assert_eq!(AdjustMethodRelative::try_from(AdjustMethod::Set), Err(AdjustMethod::Set));
 	}
 
 	// ============================================================================
@@ -762,98 +885,100 @@ mod tests {
 	// ============================================================================
 
 	#[test]
-	fn permission_roundtrip() {
+	fn permission_roundtrip() -> der::Result<()> {
 		let original = Permission { base: 0x1234, external: 0x5678 };
-		let encoded = original.to_der().unwrap();
-		let decoded: Permission = Permission::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = Permission::from_der(&encoded)?;
 		assert_eq!(decoded.base, original.base);
 		assert_eq!(decoded.external, original.external);
+		Ok(())
 	}
 
 	#[test]
-	fn token_rate_roundtrip() {
+	fn token_rate_roundtrip() -> der::Result<()> {
 		let token = test_token();
 		let rate = [0x64]; // 100 (canonical form)
 
-		let original = TokenRate { token: Bytes::new(&token).unwrap(), rate: Int::new(&rate).unwrap() };
-		let encoded = original.to_der().unwrap();
-		let decoded: TokenRate = TokenRate::from_der(&encoded).unwrap();
+		let original = TokenRate { token: Bytes::new(&token)?, rate: Int::new(&rate)? };
+		let encoded = original.to_der()?;
+		let decoded = TokenRate::from_der(&encoded)?;
 
 		assert_eq!(decoded.token.as_bytes(), &token);
 		assert_eq!(decoded.rate.as_bytes(), &rate);
+		Ok(())
 	}
 
 	#[test]
-	fn fee_rate_with_null_token_roundtrip() {
+	fn fee_rate_with_null_token_roundtrip() -> der::Result<()> {
 		let rate = [0x0A]; // 10
 
-		let original = FeeRate { token: NullOr::Null, rate: Int::new(&rate).unwrap() };
-		let encoded = original.to_der().unwrap();
-		let decoded: FeeRate = FeeRate::from_der(&encoded).unwrap();
+		let original = FeeRate { token: NullOr::Null, rate: Int::new(&rate)? };
+		let encoded = original.to_der()?;
+		let decoded = FeeRate::from_der(&encoded)?;
 
-		assert!(matches!(decoded.token, NullOr::Null));
+		assert!(decoded.token.is_null());
 		assert_eq!(decoded.rate.as_bytes(), &rate);
+		Ok(())
 	}
 
 	#[test]
-	fn fee_rate_with_token_roundtrip() {
+	fn fee_rate_with_token_roundtrip() -> der::Result<()> {
 		let token = test_token();
 		let rate = [0x0A]; // 10
 
-		let original = FeeRate { token: NullOr::Value(Bytes::new(&token).unwrap()), rate: Int::new(&rate).unwrap() };
-		let encoded = original.to_der().unwrap();
-		let decoded: FeeRate = FeeRate::from_der(&encoded).unwrap();
+		let original = FeeRate { token: NullOr::Value(Bytes::new(&token)?), rate: Int::new(&rate)? };
+		let encoded = original.to_der()?;
+		let decoded = FeeRate::from_der(&encoded)?;
 
-		match decoded.token {
-			NullOr::Value(t) => assert_eq!(t.as_bytes(), &token),
-			NullOr::Null => panic!("Expected token, got Null"),
-		}
+		assert_eq!(decoded.token, NullOr::Value(Bytes::new(&token)?));
+		assert_eq!(decoded.rate.as_bytes(), &rate);
+		Ok(())
 	}
 
 	#[test]
-	fn token_value_roundtrip() {
+	fn token_value_roundtrip() -> der::Result<()> {
 		let token = test_token();
 		let value = [0x00, 0xFF]; // 255
 
-		let original = TokenValue { token: Bytes::new(&token).unwrap(), value: Int::new(&value).unwrap() };
-		let encoded = original.to_der().unwrap();
-		let decoded: TokenValue = TokenValue::from_der(&encoded).unwrap();
+		let original = TokenValue { token: Bytes::new(&token)?, value: Int::new(&value)? };
+		let encoded = original.to_der()?;
+		let decoded = TokenValue::from_der(&encoded)?;
 
 		assert_eq!(decoded.token.as_bytes(), &token);
 		assert_eq!(decoded.value.as_bytes(), &value);
+		Ok(())
 	}
 
 	#[test]
-	fn fee_value_roundtrip() {
+	fn fee_value_roundtrip() -> der::Result<()> {
 		let value = [0x64]; // 100
 
-		let original = FeeValue { token: NullOr::Null, value: Int::new(&value).unwrap() };
-		let encoded = original.to_der().unwrap();
-		let decoded: FeeValue = FeeValue::from_der(&encoded).unwrap();
+		let original = FeeValue { token: NullOr::Null, value: Int::new(&value)? };
+		let encoded = original.to_der()?;
+		let decoded = FeeValue::from_der(&encoded)?;
 
-		assert!(matches!(decoded.token, NullOr::Null));
+		assert!(decoded.token.is_null());
 		assert_eq!(decoded.value.as_bytes(), &value);
+		Ok(())
 	}
 
 	#[test]
-	fn fee_value_with_recipient_roundtrip() {
+	fn fee_value_with_recipient_roundtrip() -> der::Result<()> {
 		let token = test_token();
 		let value = [0x64]; // 100
 		let recipient = test_address();
 
 		let original = FeeValueWithRecipient {
-			token: NullOr::Value(Bytes::new(&token).unwrap()),
-			value: Int::new(&value).unwrap(),
-			recipient: Bytes::new(&recipient).unwrap(),
+			token: NullOr::Value(Bytes::new(&token)?),
+			value: Int::new(&value)?,
+			recipient: Bytes::new(&recipient)?,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: FeeValueWithRecipient = FeeValueWithRecipient::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = FeeValueWithRecipient::from_der(&encoded)?;
 
-		match decoded.token {
-			NullOr::Value(t) => assert_eq!(t.as_bytes(), &token),
-			NullOr::Null => panic!("Expected token, got Null"),
-		}
+		assert_eq!(decoded.token, NullOr::Value(Bytes::new(&token)?));
 		assert_eq!(decoded.recipient.as_bytes(), &recipient);
+		Ok(())
 	}
 
 	// ============================================================================
@@ -861,180 +986,182 @@ mod tests {
 	// ============================================================================
 
 	#[test]
-	fn send_op_roundtrip() {
+	fn send_op_roundtrip() -> der::Result<()> {
 		let to = test_address();
 		let amount = [0x10]; // 16 (canonical form - no leading zeros)
 		let token = test_token();
 
-		let original = SendOp {
-			to: Bytes::new(&to).unwrap(),
-			amount: Int::new(&amount).unwrap(),
-			token: Bytes::new(&token).unwrap(),
-			external: None,
-		};
-		let encoded = original.to_der().unwrap();
-		let decoded: SendOp = SendOp::from_der(&encoded).unwrap();
+		let original =
+			SendOp { to: Bytes::new(&to)?, amount: Int::new(&amount)?, token: Bytes::new(&token)?, external: None };
+		let encoded = original.to_der()?;
+		let decoded = SendOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.to.as_bytes(), &to);
 		assert_eq!(decoded.amount.as_bytes(), &amount);
 		assert_eq!(decoded.token.as_bytes(), &token);
 		assert!(decoded.external.is_none());
+		Ok(())
 	}
 
 	#[test]
-	fn send_op_with_external_roundtrip() {
+	fn send_op_with_external_roundtrip() -> der::Result<()> {
 		let to = test_address();
 		let amount = [0x10]; // 16
 		let token = test_token();
 		let external = "ref-123";
 
 		let original = SendOp {
-			to: Bytes::new(&to).unwrap(),
-			amount: Int::new(&amount).unwrap(),
-			token: Bytes::new(&token).unwrap(),
-			external: Some(Str::new(external).unwrap()),
+			to: Bytes::new(&to)?,
+			amount: Int::new(&amount)?,
+			token: Bytes::new(&token)?,
+			external: Some(Str::new(external)?),
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: SendOp = SendOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = SendOp::from_der(&encoded)?;
 
-		assert_eq!(decoded.external.unwrap().as_str(), external);
+		assert_eq!(decoded.external, Some(Str::new(external)?));
+		Ok(())
 	}
 
 	#[test]
-	fn set_rep_op_roundtrip() {
+	fn set_rep_op_roundtrip() -> der::Result<()> {
 		let to = test_address();
 
-		let original = SetRepOp { to: Bytes::new(&to).unwrap() };
-		let encoded = original.to_der().unwrap();
-		let decoded: SetRepOp = SetRepOp::from_der(&encoded).unwrap();
+		let original = SetRepOp { to: Bytes::new(&to)? };
+		let encoded = original.to_der()?;
+		let decoded = SetRepOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.to.as_bytes(), &to);
+		Ok(())
 	}
 
 	#[test]
-	fn set_info_op_roundtrip() {
+	fn set_info_op_roundtrip() -> der::Result<()> {
 		let original = SetInfoOp {
-			name: Str::new("Test Account").unwrap(),
-			description: Str::new("A test account").unwrap(),
-			metadata: Str::new("{}").unwrap(),
+			name: Str::new("Test Account")?,
+			description: Str::new("A test account")?,
+			metadata: Str::new("{}")?,
 			default_permission: None,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: SetInfoOp = SetInfoOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = SetInfoOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.name.as_str(), "Test Account");
 		assert_eq!(decoded.description.as_str(), "A test account");
 		assert_eq!(decoded.metadata.as_str(), "{}");
+		Ok(())
 	}
 
 	#[test]
-	fn set_info_op_with_permission_roundtrip() {
+	fn set_info_op_with_permission_roundtrip() -> der::Result<()> {
 		let original = SetInfoOp {
-			name: Str::new("Test").unwrap(),
-			description: Str::new("Desc").unwrap(),
-			metadata: Str::new("{}").unwrap(),
+			name: Str::new("Test")?,
+			description: Str::new("Desc")?,
+			metadata: Str::new("{}")?,
 			default_permission: Some(Permission { base: 0xFF, external: 0xAA }),
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: SetInfoOp = SetInfoOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = SetInfoOp::from_der(&encoded)?;
 
-		let perm = decoded.default_permission.unwrap();
+		let perm = decoded.default_permission.ok_or_else(|| Tag::Integer.value_error())?;
 		assert_eq!(perm.base, 0xFF);
 		assert_eq!(perm.external, 0xAA);
+		Ok(())
 	}
 
 	#[test]
-	fn modify_permissions_op_roundtrip() {
+	fn modify_permissions_op_roundtrip() -> der::Result<()> {
 		let principal = test_address();
 
 		let original = ModifyPermissionsOp {
-			principal: Bytes::new(&principal).unwrap(),
+			principal: Bytes::new(&principal)?,
 			method: AdjustMethod::Add,
 			permissions: NullOr::Value(Permission { base: 0x10, external: 0x20 }),
 			target: None,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: ModifyPermissionsOp = ModifyPermissionsOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = ModifyPermissionsOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.principal.as_bytes(), &principal);
 		assert_eq!(decoded.method, AdjustMethod::Add);
-		match decoded.permissions {
-			NullOr::Value(p) => {
-				assert_eq!(p.base, 0x10);
-				assert_eq!(p.external, 0x20);
-			}
-			NullOr::Null => panic!("Expected permissions"),
-		}
+		let perm = decoded.permissions.value().ok_or_else(|| Tag::Integer.value_error())?;
+		assert_eq!(perm.base, 0x10);
+		assert_eq!(perm.external, 0x20);
+		Ok(())
 	}
 
 	#[test]
-	fn modify_permissions_op_clear_roundtrip() {
+	fn modify_permissions_op_clear_roundtrip() -> der::Result<()> {
 		let principal = test_address();
 
 		let original = ModifyPermissionsOp {
-			principal: Bytes::new(&principal).unwrap(),
+			principal: Bytes::new(&principal)?,
 			method: AdjustMethod::Set,
 			permissions: NullOr::Null,
 			target: None,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: ModifyPermissionsOp = ModifyPermissionsOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = ModifyPermissionsOp::from_der(&encoded)?;
 
-		assert!(matches!(decoded.permissions, NullOr::Null));
+		assert!(decoded.permissions.is_null());
+		Ok(())
 	}
 
 	#[test]
-	fn token_admin_supply_op_roundtrip() {
+	fn token_admin_supply_op_roundtrip() -> der::Result<()> {
 		let amount = [0x00, 0xFF, 0xFF]; // 65535
 
-		let original = TokenAdminSupplyOp { amount: Int::new(&amount).unwrap(), method: AdjustMethodRelative::Add };
-		let encoded = original.to_der().unwrap();
-		let decoded: TokenAdminSupplyOp = TokenAdminSupplyOp::from_der(&encoded).unwrap();
+		let original = TokenAdminSupplyOp { amount: Int::new(&amount)?, method: AdjustMethodRelative::Add };
+		let encoded = original.to_der()?;
+		let decoded = TokenAdminSupplyOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.amount.as_bytes(), &amount);
 		assert_eq!(decoded.method, AdjustMethodRelative::Add);
+		Ok(())
 	}
 
 	#[test]
-	fn token_admin_modify_balance_op_roundtrip() {
+	fn token_admin_modify_balance_op_roundtrip() -> der::Result<()> {
 		let token = test_token();
 		let amount = [0x64]; // 100
 
 		let original = TokenAdminModifyBalanceOp {
-			token: Bytes::new(&token).unwrap(),
-			amount: Int::new(&amount).unwrap(),
+			token: Bytes::new(&token)?,
+			amount: Int::new(&amount)?,
 			method: AdjustMethod::Subtract,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: TokenAdminModifyBalanceOp = TokenAdminModifyBalanceOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = TokenAdminModifyBalanceOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.token.as_bytes(), &token);
 		assert_eq!(decoded.method, AdjustMethod::Subtract);
+		Ok(())
 	}
 
 	#[test]
-	fn receive_op_roundtrip() {
+	fn receive_op_roundtrip() -> der::Result<()> {
 		let from = test_address();
 		let token = test_token();
 		let amount = [0x10]; // 16
 
 		let original = ReceiveOp {
-			amount: Int::new(&amount).unwrap(),
-			token: Bytes::new(&token).unwrap(),
-			from: Bytes::new(&from).unwrap(),
+			amount: Int::new(&amount)?,
+			token: Bytes::new(&token)?,
+			from: Bytes::new(&from)?,
 			exact: true,
 			forward: None,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: ReceiveOp = ReceiveOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = ReceiveOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.from.as_bytes(), &from);
 		assert!(decoded.exact);
 		assert!(decoded.forward.is_none());
+		Ok(())
 	}
 
 	#[test]
-	fn receive_op_with_forward_roundtrip() {
+	fn receive_op_with_forward_roundtrip() -> der::Result<()> {
 		let from = test_address();
 		let token = test_token();
 		let amount = [0x10];
@@ -1042,21 +1169,22 @@ mod tests {
 		forward[0] = 0x02; // Different address
 
 		let original = ReceiveOp {
-			amount: Int::new(&amount).unwrap(),
-			token: Bytes::new(&token).unwrap(),
-			from: Bytes::new(&from).unwrap(),
+			amount: Int::new(&amount)?,
+			token: Bytes::new(&token)?,
+			from: Bytes::new(&from)?,
 			exact: false,
-			forward: Some(Bytes::new(&forward).unwrap()),
+			forward: Some(Bytes::new(&forward)?),
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: ReceiveOp = ReceiveOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = ReceiveOp::from_der(&encoded)?;
 
 		assert!(!decoded.exact);
-		assert_eq!(decoded.forward.unwrap().as_bytes(), &forward);
+		assert_eq!(decoded.forward, Some(Bytes::new(&forward)?));
+		Ok(())
 	}
 
 	#[test]
-	fn manage_certificate_op_add_roundtrip() {
+	fn manage_certificate_op_add_roundtrip() -> der::Result<()> {
 		// Raw DER: SEQUENCE with some content (mock X.509 certificate)
 		let cert_der = [0x30, 0x03, 0x01, 0x01, 0xFF]; // SEQUENCE { BOOLEAN TRUE }
 		let intermediate_der = [0x30, 0x03, 0x02, 0x01, 0x00]; // SEQUENCE { INTEGER 0 }
@@ -1066,19 +1194,17 @@ mod tests {
 			certificate_or_hash: &cert_der,
 			intermediate_certificates: Some(NullOr::Value(&intermediate_der)),
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: ManageCertificateOp = ManageCertificateOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = ManageCertificateOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.method, AdjustMethodRelative::Add);
 		assert_eq!(decoded.certificate_or_hash, &cert_der);
-		match decoded.intermediate_certificates {
-			Some(NullOr::Value(i)) => assert_eq!(i, &intermediate_der),
-			_ => panic!("Expected intermediate certificates"),
-		}
+		assert_eq!(decoded.intermediate_certificates, Some(NullOr::Value(&intermediate_der[..])));
+		Ok(())
 	}
 
 	#[test]
-	fn manage_certificate_op_add_no_intermediate_roundtrip() {
+	fn manage_certificate_op_add_no_intermediate_roundtrip() -> der::Result<()> {
 		let cert_der = [0x30, 0x03, 0x01, 0x01, 0xFF];
 
 		let original = ManageCertificateOp {
@@ -1086,14 +1212,15 @@ mod tests {
 			certificate_or_hash: &cert_der,
 			intermediate_certificates: Some(NullOr::Null),
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: ManageCertificateOp = ManageCertificateOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = ManageCertificateOp::from_der(&encoded)?;
 
 		assert!(matches!(decoded.intermediate_certificates, Some(NullOr::Null)));
+		Ok(())
 	}
 
 	#[test]
-	fn manage_certificate_op_subtract_roundtrip() {
+	fn manage_certificate_op_subtract_roundtrip() -> der::Result<()> {
 		// OCTET STRING containing 32-byte hash
 		let mut hash_der = [0u8; 34];
 		hash_der[0] = 0x04; // OCTET STRING tag
@@ -1105,48 +1232,51 @@ mod tests {
 			certificate_or_hash: &hash_der,
 			intermediate_certificates: None,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: ManageCertificateOp = ManageCertificateOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = ManageCertificateOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.method, AdjustMethodRelative::Subtract);
 		assert!(decoded.intermediate_certificates.is_none());
+		Ok(())
 	}
 
 	#[test]
-	fn match_swap_op_roundtrip() {
+	fn match_swap_op_roundtrip() -> der::Result<()> {
 		let swap = test_address();
 		let other = test_token();
 		let sell_token = test_token();
 		let buy_token = test_address();
 
 		let original = MatchSwapOp {
-			swap: Bytes::new(&swap).unwrap(),
-			other: Bytes::new(&other).unwrap(),
-			sell: TokenValue { token: Bytes::new(&sell_token).unwrap(), value: Int::new(&[0x64]).unwrap() },
-			buy: TokenValue { token: Bytes::new(&buy_token).unwrap(), value: Int::new(&[0x32]).unwrap() },
+			swap: Bytes::new(&swap)?,
+			other: Bytes::new(&other)?,
+			sell: TokenValue { token: Bytes::new(&sell_token)?, value: Int::new(&[0x64])? },
+			buy: TokenValue { token: Bytes::new(&buy_token)?, value: Int::new(&[0x32])? },
 			fee: NullOr::Null,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: MatchSwapOp = MatchSwapOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = MatchSwapOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.swap.as_bytes(), &swap);
-		assert!(matches!(decoded.fee, NullOr::Null));
+		assert!(decoded.fee.is_null());
+		Ok(())
 	}
 
 	#[test]
-	fn cancel_swap_op_roundtrip() {
+	fn cancel_swap_op_roundtrip() -> der::Result<()> {
 		let swap = test_address();
 		let sell_token = test_token();
 
 		let original = CancelSwapOp {
-			swap: Bytes::new(&swap).unwrap(),
-			sell: TokenValue { token: Bytes::new(&sell_token).unwrap(), value: Int::new(&[0x10]).unwrap() },
+			swap: Bytes::new(&swap)?,
+			sell: TokenValue { token: Bytes::new(&sell_token)?, value: Int::new(&[0x10])? },
 			fee: NullOr::Null,
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: CancelSwapOp = CancelSwapOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = CancelSwapOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.swap.as_bytes(), &swap);
+		Ok(())
 	}
 
 	// ============================================================================
@@ -1154,19 +1284,20 @@ mod tests {
 	// ============================================================================
 
 	#[test]
-	fn create_identifier_token_roundtrip() {
+	fn create_identifier_token_roundtrip() -> der::Result<()> {
 		let identifier = test_token();
 
-		let original = CreateIdentifierOp { identifier: Bytes::new(&identifier).unwrap(), create_arguments: None };
-		let encoded = original.to_der().unwrap();
-		let decoded: CreateIdentifierOp = CreateIdentifierOp::from_der(&encoded).unwrap();
+		let original = CreateIdentifierOp { identifier: Bytes::new(&identifier)?, create_arguments: None };
+		let encoded = original.to_der()?;
+		let decoded = CreateIdentifierOp::from_der(&encoded)?;
 
 		assert_eq!(decoded.identifier.as_bytes(), &identifier);
 		assert!(decoded.create_arguments.is_none());
+		Ok(())
 	}
 
 	#[test]
-	fn create_identifier_multisig_roundtrip() {
+	fn create_identifier_multisig_roundtrip() -> der::Result<()> {
 		let identifier = test_token();
 		// SEQUENCE OF OCTET STRING with 2 signers (each 3 bytes)
 		// SEQUENCE { OCTET STRING (AA BB CC), OCTET STRING (DD EE FF) }
@@ -1177,32 +1308,27 @@ mod tests {
 		];
 
 		let original = CreateIdentifierOp {
-			identifier: Bytes::new(&identifier).unwrap(),
+			identifier: Bytes::new(&identifier)?,
 			create_arguments: Some(CreateIdentifierArgs::Multisig(MultisigArgs { signers: &signers_raw, quorum: 2 })),
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: CreateIdentifierOp = CreateIdentifierOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = CreateIdentifierOp::from_der(&encoded)?;
 
-		match decoded.create_arguments {
-			Some(CreateIdentifierArgs::Multisig(args)) => {
-				assert_eq!(args.signers, &signers_raw);
-				assert_eq!(args.quorum, 2);
+		let args = match decoded.create_arguments {
+			Some(CreateIdentifierArgs::Multisig(args)) => args,
+			_ => return Err(Tag::Integer.value_error()),
+		};
+		assert_eq!(args.signers, &signers_raw);
+		assert_eq!(args.quorum, 2);
 
-				// Test the iterator
-				let signers: Vec<&[u8]> = args.iter_signers().map(|r| r.unwrap()).collect();
-				assert_eq!(signers.len(), 2);
-				assert_eq!(signers[0], &[0xAA, 0xBB, 0xCC]);
-				assert_eq!(signers[1], &[0xDD, 0xEE, 0xFF]);
-
-				// Test signer_count
-				assert_eq!(args.signer_count().unwrap(), 2);
-			}
-			_ => panic!("Expected Multisig args"),
-		}
+		let signers = args.iter_signers().collect::<der::Result<Vec<&[u8]>>>()?;
+		assert_eq!(signers, vec![&[0xAA, 0xBB, 0xCC][..], &[0xDD, 0xEE, 0xFF][..]]);
+		assert_eq!(args.signer_count()?, 2);
+		Ok(())
 	}
 
 	#[test]
-	fn multisig_args_iter_signers() {
+	fn multisig_args_iter_signers() -> der::Result<()> {
 		// Test with realistic 33-byte public keys (Ed25519 prefix + 32 bytes)
 		let signer1 = test_address(); // 33 bytes
 		let signer2 = test_token(); // 33 bytes
@@ -1223,54 +1349,61 @@ mod tests {
 
 		let args = MultisigArgs { signers: &signers_raw, quorum: 2 };
 
-		// Test iteration
-		let collected: Vec<&[u8]> = args.iter_signers().map(|r| r.unwrap()).collect();
-		assert_eq!(collected.len(), 2);
-		assert_eq!(collected[0], &signer1[..]);
-		assert_eq!(collected[1], &signer2[..]);
-
-		// Test signer_count
-		assert_eq!(args.signer_count().unwrap(), 2);
+		let collected = args.iter_signers().collect::<der::Result<Vec<&[u8]>>>()?;
+		assert_eq!(collected, vec![&signer1[..], &signer2[..]]);
+		assert_eq!(args.signer_count()?, 2);
+		Ok(())
 	}
 
 	#[test]
-	fn multisig_args_empty_signers() {
+	fn multisig_args_empty_signers() -> der::Result<()> {
 		// Empty SEQUENCE
 		let signers_raw = [0x30, 0x00]; // SEQUENCE, length 0
 
 		let args = MultisigArgs { signers: &signers_raw, quorum: 0 };
 
-		let collected: Vec<&[u8]> = args.iter_signers().map(|r| r.unwrap()).collect();
-		assert_eq!(collected.len(), 0);
-		assert_eq!(args.signer_count().unwrap(), 0);
+		let collected = args.iter_signers().collect::<der::Result<Vec<&[u8]>>>()?;
+		assert!(collected.is_empty());
+		assert_eq!(args.signer_count()?, 0);
+		Ok(())
 	}
 
 	#[test]
-	fn create_identifier_swap_roundtrip() {
+	fn multisig_args_malformed_surfaces_error() {
+		// Leading byte is OCTET STRING, not SEQUENCE: must surface an error,
+		// not silently report zero signers.
+		let malformed = [0x04, 0x01, 0xAA];
+		let args = MultisigArgs { signers: &malformed, quorum: 1 };
+
+		let mut iter = args.iter_signers();
+		assert!(matches!(iter.next(), Some(Err(_))));
+		assert!(iter.next().is_none());
+		assert!(args.signer_count().is_err());
+	}
+
+	#[test]
+	fn create_identifier_swap_roundtrip() -> der::Result<()> {
 		let identifier = test_token();
 		let sell_token = test_token();
 		let buy_token = test_address();
 
 		let original = CreateIdentifierOp {
-			identifier: Bytes::new(&identifier).unwrap(),
+			identifier: Bytes::new(&identifier)?,
 			create_arguments: Some(CreateIdentifierArgs::Swap(SwapArgs {
-				sell_token_rate: TokenRate {
-					token: Bytes::new(&sell_token).unwrap(),
-					rate: Int::new(&[0x64]).unwrap(),
-				},
-				buy_token_rate: TokenRate { token: Bytes::new(&buy_token).unwrap(), rate: Int::new(&[0x32]).unwrap() },
+				sell_token_rate: TokenRate { token: Bytes::new(&sell_token)?, rate: Int::new(&[0x64])? },
+				buy_token_rate: TokenRate { token: Bytes::new(&buy_token)?, rate: Int::new(&[0x32])? },
 				fee_token_rate: NullOr::Null,
-				quantity: Int::new(&[0x0A]).unwrap(),
+				quantity: Int::new(&[0x0A])?,
 			})),
 		};
-		let encoded = original.to_der().unwrap();
-		let decoded: CreateIdentifierOp = CreateIdentifierOp::from_der(&encoded).unwrap();
+		let encoded = original.to_der()?;
+		let decoded = CreateIdentifierOp::from_der(&encoded)?;
 
-		match decoded.create_arguments {
-			Some(CreateIdentifierArgs::Swap(args)) => {
-				assert!(matches!(args.fee_token_rate, NullOr::Null));
-			}
-			_ => panic!("Expected Swap args"),
-		}
+		let args = match decoded.create_arguments {
+			Some(CreateIdentifierArgs::Swap(args)) => args,
+			_ => return Err(Tag::Integer.value_error()),
+		};
+		assert!(args.fee_token_rate.is_null());
+		Ok(())
 	}
 }

@@ -30,8 +30,24 @@ pub struct DecodedMetadata {
 }
 
 impl DecodedMetadata {
-	/// Create a new empty metadata instance.
-	pub fn new() -> Self {
+	/// Get the asset_id as a string slice, if present.
+	pub fn asset_id_str(&self) -> Option<&str> {
+		field_str(&self.asset_id, self.asset_id_len)
+	}
+
+	/// Get the authority as a string slice, if present.
+	pub fn authority_str(&self) -> Option<&str> {
+		field_str(&self.authority, self.authority_len)
+	}
+
+	/// Get the symbol as a string slice, if present.
+	pub fn symbol_str(&self) -> Option<&str> {
+		field_str(&self.symbol, self.symbol_len)
+	}
+}
+
+impl Default for DecodedMetadata {
+	fn default() -> Self {
 		Self {
 			asset_id: [0u8; MAX_FIELD_LEN],
 			asset_id_len: 0,
@@ -41,42 +57,23 @@ impl DecodedMetadata {
 			symbol_len: 0,
 		}
 	}
-
-	/// Get the asset_id as a string slice, if present.
-	pub fn asset_id_str(&self) -> Option<&str> {
-		if self.asset_id_len > 0 {
-			core::str::from_utf8(&self.asset_id[..self.asset_id_len]).ok()
-		} else {
-			None
-		}
-	}
-
-	/// Get the authority as a string slice, if present.
-	pub fn authority_str(&self) -> Option<&str> {
-		if self.authority_len > 0 {
-			core::str::from_utf8(&self.authority[..self.authority_len]).ok()
-		} else {
-			None
-		}
-	}
-
-	/// Get the symbol as a string slice, if present.
-	pub fn symbol_str(&self) -> Option<&str> {
-		if self.symbol_len > 0 {
-			core::str::from_utf8(&self.symbol[..self.symbol_len]).ok()
-		} else {
-			None
-		}
-	}
 }
 
-impl Default for DecodedMetadata {
-	fn default() -> Self {
-		Self::new()
+/// Returns the populated prefix of `buf` as UTF-8, or `None` when empty/invalid.
+fn field_str(buf: &[u8], len: usize) -> Option<&str> {
+	if len > 0 {
+		core::str::from_utf8(&buf[..len]).ok()
+	} else {
+		None
 	}
 }
 
 /// Result of metadata decoding.
+///
+/// The `Decoded` variant intentionally inlines fixed-size buffers so the type
+/// works without `alloc`; boxing would defeat that, so the size disparity is
+/// accepted.
+#[allow(clippy::large_enum_variant)]
 pub enum MetadataDisplay {
 	/// Successfully decoded metadata with at least one known field.
 	Decoded(DecodedMetadata),
@@ -111,7 +108,7 @@ pub fn decode_metadata(base64_input: &str, decode_buf: &mut [u8]) -> MetadataDis
 		Err(_) => return MetadataDisplay::Invalid,
 	};
 
-	let mut result = DecodedMetadata::new();
+	let mut result = DecodedMetadata::default();
 
 	let copy_field = |value: &str, buf: &mut [u8; MAX_FIELD_LEN]| -> usize {
 		let len = value.len().min(MAX_FIELD_LEN);
@@ -140,6 +137,24 @@ pub fn decode_metadata(base64_input: &str, decode_buf: &mut [u8]) -> MetadataDis
 mod tests {
 	use super::*;
 
+	/// Maps a result to a stable discriminant label for assertions.
+	fn kind(display: &MetadataDisplay) -> &'static str {
+		match display {
+			MetadataDisplay::Decoded(_) => "decoded",
+			MetadataDisplay::Unknown => "unknown",
+			MetadataDisplay::Invalid => "invalid",
+			MetadataDisplay::Empty => "empty",
+		}
+	}
+
+	/// Extracts the decoded metadata, panicking on any other variant.
+	fn expect_decoded(input: &str, buf: &mut [u8]) -> DecodedMetadata {
+		match decode_metadata(input, buf) {
+			MetadataDisplay::Decoded(meta) => meta,
+			other => panic!("expected Decoded, got {}", kind(&other)),
+		}
+	}
+
 	#[test]
 	fn test_decode_metadata_full() {
 		let mut buf = [0u8; 512];
@@ -148,13 +163,9 @@ mod tests {
 			r#"{"asset_id":"asset://1f0ccae9-5666/1","authority":"keeta_abc123def456","signature":"c2lnbmF0dXJl"}"#;
 		let b64 = base64_encode_for_test(json.as_bytes());
 
-		match decode_metadata(&b64, &mut buf) {
-			MetadataDisplay::Decoded(meta) => {
-				assert_eq!(meta.asset_id_str(), Some("asset://1f0ccae9-5666/1"));
-				assert_eq!(meta.authority_str(), Some("keeta_abc123def456"));
-			}
-			_ => panic!("Expected Decoded variant"),
-		}
+		let meta = expect_decoded(&b64, &mut buf);
+		assert_eq!(meta.asset_id_str(), Some("asset://1f0ccae9-5666/1"));
+		assert_eq!(meta.authority_str(), Some("keeta_abc123def456"));
 	}
 
 	#[test]
@@ -164,14 +175,10 @@ mod tests {
 		let json = r#"{"asset_id":"asset://123","symbol":"KEETA"}"#;
 		let b64 = base64_encode_for_test(json.as_bytes());
 
-		match decode_metadata(&b64, &mut buf) {
-			MetadataDisplay::Decoded(meta) => {
-				assert_eq!(meta.asset_id_str(), Some("asset://123"));
-				assert_eq!(meta.symbol_str(), Some("KEETA"));
-				assert_eq!(meta.authority_str(), None);
-			}
-			_ => panic!("Expected Decoded variant"),
-		}
+		let meta = expect_decoded(&b64, &mut buf);
+		assert_eq!(meta.asset_id_str(), Some("asset://123"));
+		assert_eq!(meta.symbol_str(), Some("KEETA"));
+		assert_eq!(meta.authority_str(), None);
 	}
 
 	#[test]
@@ -181,22 +188,16 @@ mod tests {
 		let invalid_json_b64 = base64_encode_for_test(b"not json at all");
 
 		let cases: &[(&str, &str)] = &[
-			("empty", ""),
-			("unknown_fields", &unknown_b64),
-			("invalid_base64", "not-valid-base64!!!"),
-			("invalid_json", &invalid_json_b64),
+			("", "empty"),
+			(&unknown_b64, "unknown"),
+			("not-valid-base64!!!", "invalid"),
+			(&invalid_json_b64, "invalid"),
 		];
 
-		for (name, input) in cases {
+		for (input, expected) in cases {
 			let mut buf = [0u8; 512];
 			let result = decode_metadata(input, &mut buf);
-			match (name, &result) {
-				(&"empty", MetadataDisplay::Empty)
-				| (&"unknown_fields", MetadataDisplay::Unknown)
-				| (&"invalid_base64", MetadataDisplay::Invalid)
-				| (&"invalid_json", MetadataDisplay::Invalid) => {}
-				_ => panic!("Unexpected result for case: {name}"),
-			}
+			assert_eq!(kind(&result), *expected, "case input {input:?}");
 		}
 	}
 
