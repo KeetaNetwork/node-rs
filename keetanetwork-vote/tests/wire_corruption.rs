@@ -2,18 +2,18 @@
 
 mod support;
 
-use std::io::{Read, Write};
+use miniz_oxide::deflate::compress_to_vec_zlib;
+use miniz_oxide::inflate::decompress_to_vec_zlib;
 
-use der::asn1::AnyRef;
-use der::{Encode, Tag};
-use flate2::read::ZlibDecoder;
-use flate2::write::ZlibEncoder;
-use flate2::Compression;
 use keetanetwork_block::testing::generate_ed25519_ref;
 use keetanetwork_block::Hashable;
+use keetanetwork_vote::testing::{now_blocktime, opening_block};
 use keetanetwork_vote::{Vote, VoteBuilder, VoteError, VoteStaple, VoteStapleBuilder};
 
-use support::{baseline_vote_bytes, future_validity, integer_zero_tlv, join_seq, join_with_tag, split_seq, TestResult};
+use support::{
+	baseline_vote_bytes, future_validity, integer_zero_tlv, join_explicit_context, join_seq, octet_string_tlv,
+	split_seq, TestResult,
+};
 
 // --- Vote corruption table --------------------------------------------------
 
@@ -44,7 +44,7 @@ const VOTE_CASES: &[VoteCase] = &[
 	VoteCase {
 		description: "wrapper has only one element",
 		mutate: |_| join_seq([integer_zero_tlv()]),
-		expected: "VOTE_MALFORMED_VOTE_CONTENT",
+		expected: "VOTE_MALFORMED_WRAPPER",
 	},
 	VoteCase {
 		description: "tbs slot is INTEGER, not SEQUENCE",
@@ -53,7 +53,7 @@ const VOTE_CASES: &[VoteCase] = &[
 			wrapper[0] = integer_zero_tlv();
 			join_seq(wrapper)
 		},
-		expected: "VOTE_MALFORMED_VOTE_CONTENT",
+		expected: "VOTE_MALFORMED_VOTE_WRAPPER",
 	},
 	VoteCase {
 		description: "version slot has no [0] EXPLICIT context tag",
@@ -63,10 +63,7 @@ const VOTE_CASES: &[VoteCase] = &[
 	VoteCase {
 		description: "version inside [0] EXPLICIT is INTEGER 0",
 		mutate: |bytes| {
-			let bad_version = join_with_tag(
-				Tag::ContextSpecific { constructed: true, number: der::TagNumber::N0 },
-				[integer_zero_tlv()],
-			);
+			let bad_version = join_explicit_context(0, [integer_zero_tlv()]);
 			replace_tbs_slot(&bytes, 0, bad_version)
 		},
 		expected: "VOTE_INVALID_VERSION",
@@ -74,26 +71,14 @@ const VOTE_CASES: &[VoteCase] = &[
 	VoteCase {
 		description: "version inside [0] EXPLICIT is OCTET STRING",
 		mutate: |bytes| {
-			let bad_version = join_with_tag(
-				Tag::ContextSpecific { constructed: true, number: der::TagNumber::N0 },
-				[AnyRef::new(Tag::OctetString, &[0x00])
-					.expect("octet")
-					.to_der()
-					.expect("der")],
-			);
+			let bad_version = join_explicit_context(0, [octet_string_tlv(&[0x00])]);
 			replace_tbs_slot(&bytes, 0, bad_version)
 		},
 		expected: "VOTE_MALFORMED_VOTE_VERSION",
 	},
 	VoteCase {
 		description: "serial slot is OCTET STRING",
-		mutate: |bytes| {
-			let bad_serial = AnyRef::new(Tag::OctetString, &[0x00])
-				.expect("octet")
-				.to_der()
-				.expect("der");
-			replace_tbs_slot(&bytes, 1, bad_serial)
-		},
+		mutate: |bytes| replace_tbs_slot(&bytes, 1, octet_string_tlv(&[0x00])),
 		expected: "VOTE_MALFORMED_VOTE_SERIAL",
 	},
 	VoteCase {
@@ -164,12 +149,9 @@ const STAPLE_CASES: &[StapleCase] = &[
 		expected: "VOTE_MALFORMED_STAPLE",
 	},
 	StapleCase {
-		// Wrapper holds exactly one inner TLV (an INTEGER instead of the
-		// expected blocks SEQUENCE) - decoder fails on the blocks slot
-		// rather than reaching the votes slot.
 		description: "wrapper has only one inner element (INTEGER)",
 		mutate: |_| deflate_test(&join_seq([integer_zero_tlv()])),
-		expected: "VOTE_MALFORMED_STAPLE_BLOCKS",
+		expected: "VOTE_MALFORMED_STAPLE",
 	},
 	StapleCase {
 		description: "trailing bytes after wrapper",
@@ -247,31 +229,19 @@ fn replace_tbs_slot(bytes: &[u8], index: usize, replacement: Vec<u8>) -> Vec<u8>
 }
 
 fn deflate_test(canonical: &[u8]) -> Vec<u8> {
-	let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-	encoder
-		.write_all(canonical)
-		.expect("zlib write must succeed");
-	encoder.finish().expect("zlib finish must succeed")
+	compress_to_vec_zlib(canonical, 6)
 }
 
 fn inflate_test(compressed: &[u8]) -> Vec<u8> {
-	let mut decoder = ZlibDecoder::new(compressed);
-	let mut out = Vec::new();
-	decoder
-		.read_to_end(&mut out)
-		.expect("zlib decode must succeed");
-	out
-}
-
-fn now_blocktime() -> keetanetwork_block::BlockTime {
-	let millis = chrono::Utc::now().timestamp_millis();
-	keetanetwork_block::BlockTime::from_unix_millis(millis).expect("now must map to BlockTime")
+	decompress_to_vec_zlib(compressed).expect("zlib decode must succeed")
 }
 
 fn baseline_staple_bytes() -> Result<Vec<u8>, VoteError> {
 	let validity = future_validity();
 	let voter = generate_ed25519_ref(0xB0);
-	let block = build_minimal_block();
+	let owner = generate_ed25519_ref(0xB1);
+	let representative = generate_ed25519_ref(0xB2);
+	let block = opening_block(&owner, &representative);
 	let block_hashes = [block.hash()];
 
 	let vote = VoteBuilder::new()
@@ -286,18 +256,4 @@ fn baseline_staple_bytes() -> Result<Vec<u8>, VoteError> {
 		.add_block(block)
 		.build()?;
 	Ok(staple.as_bytes().to_vec())
-}
-
-fn build_minimal_block() -> keetanetwork_block::Block {
-	let owner = generate_ed25519_ref(0xB1);
-	let representative = generate_ed25519_ref(0xB2);
-	keetanetwork_block::BlockBuilder::default()
-		.with_network(0u8)
-		.with_account(owner)
-		.as_opening()
-		.with_operation(keetanetwork_block::SetRep { to: representative })
-		.build()
-		.expect("opening must build")
-		.sign()
-		.expect("opening must sign")
 }

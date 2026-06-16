@@ -5,7 +5,10 @@
 //! [`VoteError::code`] suitable for cross-implementation error matching
 //! and structured logging.
 
+use alloc::string::ToString;
+
 use keetanetwork_account::AccountError;
+use keetanetwork_asn1::Asn1Error;
 use keetanetwork_block::BlockError;
 use keetanetwork_crypto::error::CryptoError;
 use keetanetwork_error::KeetaNetError;
@@ -16,11 +19,11 @@ use snafu::Snafu;
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum VoteError {
-	/// DER serialization or deserialization failed
-	#[snafu(display("DER error: {source}"))]
-	Der {
-		/// Underlying DER error
-		source: der::Error,
+	/// ASN.1 transport (de)serialization failed
+	#[snafu(display("ASN.1 error: {source}"))]
+	Asn1 {
+		/// Underlying ASN.1 error
+		source: Asn1Error,
 	},
 	/// Account operation failed
 	#[snafu(display("account error: {source}"))]
@@ -40,13 +43,6 @@ pub enum VoteError {
 		/// Underlying block error
 		source: BlockError,
 	},
-	/// zlib (de)compression failed for a vote staple wrapper
-	#[snafu(display("staple compression error: {source}"))]
-	Compression {
-		/// Underlying I/O error from `flate2`
-		source: std::io::Error,
-	},
-
 	// ----- Vote-level -----
 	/// Subject DN serial does not match the certificate serial
 	#[snafu(display("vote subject serial does not match certificate serial"))]
@@ -57,6 +53,9 @@ pub enum VoteError {
 	/// Vote could not be constructed from the supplied bytes
 	#[snafu(display("vote bytes are not a recognized construction"))]
 	InvalidConstruction,
+	/// Vote JSON object is missing required fields or is otherwise unusable
+	#[snafu(display("vote JSON is not a valid construction"))]
+	InvalidConstructionJson,
 	/// Vote signature did not verify against the issuer public key
 	#[snafu(display("vote signature did not verify"))]
 	SignatureInvalid,
@@ -69,6 +68,10 @@ pub enum VoteError {
 	/// The check moment lands before `validityFrom` minus the slop
 	#[snafu(display("vote was issued in the future"))]
 	MomentBeforeValidityFrom,
+	/// `no_std` callers must supply a validation moment; the
+	/// `BlockTime::now`-based default is only available with `std`.
+	#[snafu(display("validation moment must be provided in no_std builds"))]
+	MissingMoment,
 
 	// ----- Staple-level -----
 	/// Staple bytes do not contain a valid two-element SEQUENCE
@@ -122,10 +125,13 @@ pub enum VoteError {
 	#[snafu(display("invalid fee supplied to vote builder"))]
 	BuilderInvalidFee,
 
-	// ----- Wire / DER details -----
+	// ----- Transport / DER details -----
 	/// Outer wrapper does not parse as a 3-element SEQUENCE
 	#[snafu(display("malformed vote wrapper"))]
 	MalformedWrapper,
+	/// TBS slot inside the wrapper was not a SEQUENCE
+	#[snafu(display("malformed vote (tbs slot must be a sequence)"))]
+	MalformedVoteWrapper,
 	/// TBS certificate did not parse as expected
 	#[snafu(display("malformed vote certificate body"))]
 	MalformedVoteContent,
@@ -177,6 +183,10 @@ pub enum VoteError {
 	/// Signature algorithm OID is not one we know how to verify
 	#[snafu(display("unsupported vote signature scheme"))]
 	MalformedVoteSignatureUnsupportedScheme,
+	/// ECDSA signature algorithm carried a curve OID that is not
+	/// one of the supported NIST curves
+	#[snafu(display("vote ECDSA curve is not supported"))]
+	MalformedVoteSignatureSchemeEcdsaInvalidCurve,
 	/// SubjectPublicKeyInfo had the wrong shape
 	#[snafu(display("malformed subject public key info"))]
 	MalformedVoteSubjectPublicKeyInformation,
@@ -246,6 +256,13 @@ pub enum VoteError {
 	/// Fees extension `quote` flag did not match the vote variant
 	#[snafu(display("fees extension quote flag does not match vote variant"))]
 	MalformedFeesQuoteInvalid,
+	/// Fee entries within a single fees extension disagree on the
+	/// `quote` flag, or the flag was missing entirely
+	#[snafu(display("fees extension has inconsistent or missing quote flag"))]
+	MalformedFeesInvalidQuoteValue,
+	/// Fees extension was missing both the single and multiple branches
+	#[snafu(display("fees extension is missing its kind discriminator"))]
+	MalformedFeesKindMissing,
 	/// Multi-fee extension was an empty array
 	#[snafu(display("multiple-fee extension array is empty"))]
 	MalformedFeesMultipleFeeEmpty,
@@ -271,35 +288,32 @@ pub enum VoteError {
 	/// Vote bytes did not round-trip through canonical DER encoding
 	#[snafu(display("vote bytes are not canonical DER"))]
 	MalformedNonCanonicalEncoding,
-	/// Tried to construct a [`crate::VoteQuote`] from non-quote bytes
-	#[snafu(display("VoteQuote requires fees with quote=true"))]
-	QuoteFeeRequired,
 }
 
 impl_source_error_from!(VoteError, {
-	der::Error => Der,
+	Asn1Error => Asn1,
 	AccountError => Account,
 	CryptoError => Crypto,
 	BlockError => Block,
-	std::io::Error => Compression,
 });
 
 impl VoteError {
 	/// A stable, programmatic identifier for this error.
 	///
-	/// Returns [`None`] for the wrapped variants ([`VoteError::Der`],
-	/// [`VoteError::Account`], [`VoteError::Crypto`],
-	/// [`VoteError::Block`], [`VoteError::Compression`]) whose underlying
-	/// source error already carries its own code.
+	/// Returns [`None`] for the wrapped variants ([`VoteError::Asn1`],
+	/// [`VoteError::Account`], [`VoteError::Crypto`], [`VoteError::Block`])
+	/// whose underlying source error already carries its own code.
 	pub fn code(&self) -> Option<&'static str> {
 		let code = match self {
 			VoteError::SerialMismatch => "VOTE_SERIAL_MISMATCH",
 			VoteError::InvalidVersion => "VOTE_INVALID_VERSION",
 			VoteError::InvalidConstruction => "VOTE_INVALID_CONSTRUCTION",
+			VoteError::InvalidConstructionJson => "VOTE_INVALID_CONSTRUCTION_JSON",
 			VoteError::SignatureInvalid => "VOTE_SIGNATURE_INVALID",
 			VoteError::Expired => "VOTE_EXPIRED",
 			VoteError::InvalidValidity => "VOTE_INVALID_VALIDITY",
 			VoteError::MomentBeforeValidityFrom => "VOTE_MOMENT_BEFORE_VALIDITY_FROM",
+			VoteError::MissingMoment => "VOTE_MISSING_MOMENT",
 
 			VoteError::StapleInvalidConstruction => "VOTE_STAPLE_INVALID_CONSTRUCTION",
 			VoteError::StapleBlockCountMismatch => "VOTE_STAPLE_ALL_VOTES_MUST_HAVE_SAME_BLOCKS_COUNT",
@@ -315,6 +329,7 @@ impl VoteError {
 			VoteError::BuilderInvalidFee => "VOTE_BUILDER_INVALID_FEE",
 
 			VoteError::MalformedWrapper => "VOTE_MALFORMED_WRAPPER",
+			VoteError::MalformedVoteWrapper => "VOTE_MALFORMED_VOTE_WRAPPER",
 			VoteError::MalformedVoteContent => "VOTE_MALFORMED_VOTE_CONTENT",
 			VoteError::MalformedVoteContentExtraData => "VOTE_MALFORMED_VOTE_CONTENT_EXTRA_DATA",
 			VoteError::MalformedVoteVersion => "VOTE_MALFORMED_VOTE_VERSION",
@@ -336,6 +351,9 @@ impl VoteError {
 				"VOTE_MALFORMED_VOTE_SIGNATURE_SCHEME_DOES_NOT_MATCH_ISSUER"
 			}
 			VoteError::MalformedVoteSignatureUnsupportedScheme => "VOTE_MALFORMED_VOTE_SIGNATURE_UNSUPPORTED_SCHEME",
+			VoteError::MalformedVoteSignatureSchemeEcdsaInvalidCurve => {
+				"VOTE_MALFORMED_VOTE_SIGNATURE_SCHEME_ECDSA_INVALID_CURVE"
+			}
 			VoteError::MalformedVoteSubjectPublicKeyInformation => "VOTE_MALFORMED_VOTE_SUBJECT_PUBLIC_KEY_INFORMATION",
 			VoteError::MalformedVoteSignatureValue => "VOTE_MALFORMED_VOTE_SIGNATURE_VALUE",
 			VoteError::MalformedVoteNoBlocksFound => "VOTE_MALFORMED_VOTE_NO_BLOCKS_FOUND",
@@ -376,6 +394,8 @@ impl VoteError {
 			VoteError::MalformedFeesFromVoteInvalidInput => "VOTE_MALFORMED_FEES_FROM_VOTE_INVALID_INPUT",
 			VoteError::MalformedFeesInPermanentVote => "VOTE_MALFORMED_FEES_IN_PERMANENT_VOTE",
 			VoteError::MalformedFeesQuoteInvalid => "VOTE_MALFORMED_FEES_QUOTE_INVALID",
+			VoteError::MalformedFeesInvalidQuoteValue => "VOTE_MALFORMED_FEES_INVALID_QUOTE_VALUE",
+			VoteError::MalformedFeesKindMissing => "VOTE_MALFORMED_FEES_KIND_MISSING",
 			VoteError::MalformedFeesMultipleFeeEmpty => "VOTE_MALFORMED_FEES_MULTIPLE_FEE_EMPTY",
 			VoteError::MalformedFeesPayToInvalid => "VOTE_MALFORMED_FEES_PAY_TO_INVALID",
 			VoteError::MalformedFeesTokenNotToken => "VOTE_MALFORMED_FEES_TOKEN_NOT_TOKEN",
@@ -430,7 +450,7 @@ mod tests {
 
 	#[test]
 	fn test_source_conversions() {
-		assert!(matches!(VoteError::from(der::Error::incomplete(der::Length::ZERO)), VoteError::Der { .. }));
+		assert!(matches!(VoteError::from(Asn1Error::InvalidVoteVersion), VoteError::Asn1 { .. }));
 		assert!(matches!(VoteError::from(AccountError::InvalidKeyType), VoteError::Account { .. }));
 		assert!(matches!(VoteError::from(CryptoError::InvalidInput), VoteError::Crypto { .. }));
 	}

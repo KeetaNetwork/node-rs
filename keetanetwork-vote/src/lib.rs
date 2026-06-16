@@ -52,19 +52,19 @@
 //! moment.
 
 #![deny(missing_docs)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 mod builder;
 mod cert;
 mod error;
-mod extension;
 mod fee;
 mod hash;
-mod oids;
 mod staple;
 mod validation;
 mod validity;
 mod vote;
-mod wire;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

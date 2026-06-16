@@ -28,7 +28,11 @@ use x509_cert::Version;
 
 #[cfg(feature = "serde")]
 use crate::serde::{deserialize_octet_string, deserialize_oid, serialize_octet_string, serialize_oid};
+// Needed only when `asn1::BitString` resolves to the rasn type; under
+// feature unification `der` may win and make these methods inherent, so
+// the import can appear unused.
 #[cfg(all(feature = "rasn", not(feature = "der")))]
+#[allow(unused_imports)]
 use keetanetwork_asn1::BitStringExt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

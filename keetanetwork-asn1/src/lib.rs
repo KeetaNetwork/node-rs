@@ -38,6 +38,14 @@ mod asn1_time;
 #[cfg(all(feature = "chrono", any(feature = "rasn", feature = "der")))]
 pub mod block;
 
+// Backend-neutral vote / vote-staple transport API.
+#[cfg(all(feature = "chrono", any(feature = "rasn", feature = "der")))]
+pub mod vote;
+
+/// Byte-level ASN.1 surgery helpers for downstream test suites.
+#[cfg(all(feature = "testing", feature = "der"))]
+pub mod testing;
+
 #[cfg(feature = "rasn")]
 pub mod generated;
 
@@ -59,11 +67,16 @@ pub use der::{
 
 #[cfg(all(feature = "rasn", not(feature = "der")))]
 pub use crate::rasn::{
-	AlgorithmIdentifier, Any, AttributeTypeAndValue, BitString, BitStringExt, Decode, DistinguishedName, Encode,
-	Extension, Extensions, FeeEntries, FeeEntry, FeesMultiple, FeesMultipleInner, FeesSingle, HashData,
-	HashDataInner, Ia5String, Integer, ObjectIdentifier, ObjectIdentifierExt, OctetString,
-	RelativeDistinguishedName, SubjectPublicKeyInfo, TbsCertificate, Validity, VoteCertificate, VoteStapleBundle,
+	AlgorithmIdentifier, Any, AttributeTypeAndValue, BitString, Decode, DistinguishedName, Encode, Extension,
+	Extensions, FeeEntries, FeeEntry, FeesMultiple, FeesMultipleInner, FeesSingle, HashData, HashDataInner, Ia5String,
+	Integer, ObjectIdentifier, OctetString, RelativeDistinguishedName, SubjectPublicKeyInfo, TbsCertificate, Validity,
+	VoteCertificate, VoteStapleBundle,
 };
+
+// `BitStringExt` / `ObjectIdentifierExt` extension traits are surfaced
+// whenever `rasn` is enabled.
+#[cfg(feature = "rasn")]
+pub use crate::rasn::{BitStringExt, ObjectIdentifierExt};
 
 #[cfg(feature = "chrono")]
 pub use crate::asn1_time::Asn1Time;

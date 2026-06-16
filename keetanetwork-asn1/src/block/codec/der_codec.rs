@@ -15,7 +15,7 @@ use ::der::asn1::{AnyRef, Null, OctetStringRef, Utf8StringRef};
 use ::der::{Decode, Encode, ErrorKind, Length, Reader, SliceReader, Tag, TagNumber, Tagged};
 use num_bigint::BigInt;
 
-// --- Wire constants ------------------------------------------------------
+// --- Transport constants ------------------------------------------------------
 
 /// Context tag number of the V2 block wrapper.
 const V2_TAG: TagNumber = TagNumber::N1;
@@ -352,7 +352,7 @@ fn decode_signer(reader: &mut SliceReader<'_>) -> Result<Signer, Asn1Error> {
 
 /// Encode a multisig signer tree iteratively (no function recursion).
 ///
-/// Wire form per level: `SEQUENCE { OCTET address, SEQUENCE OF (OCTET account
+/// Transport form per level: `SEQUENCE { OCTET address, SEQUENCE OF (OCTET account
 /// | SEQUENCE nested) }`.
 fn encode_multisig_signer(value: &MultisigSigner) -> Result<Vec<u8>, Asn1Error> {
 	struct Frame<'a> {

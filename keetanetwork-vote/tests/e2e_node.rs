@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use keetanetwork_account::GenericAccount;
 use keetanetwork_block::testing::generate_ed25519_ref;
-use keetanetwork_block::{AccountRef, Block, BlockBuilder, BlockHash, BlockTime, Hashable, SetRep};
+use keetanetwork_block::{AccountRef, Block, BlockHash, Hashable};
 use keetanetwork_utils::node_harness::E2eNode;
+use keetanetwork_vote::testing::{now_blocktime, opening_block};
 use keetanetwork_vote::{ValidationConfig, VoteBuilder, VoteError, VoteStaple, VoteStapleBuilder};
 use serde_json::{json, Value};
 
@@ -28,40 +29,37 @@ fn parse_account(value: &Value, field: &str) -> AccountRef {
 	Arc::new(account)
 }
 
-fn now_blocktime() -> BlockTime {
-	let millis = chrono::Utc::now().timestamp_millis();
-	BlockTime::from_unix_millis(millis).expect("the current time must be representable as BlockTime")
-}
-
 fn fund(node: &mut E2eNode, account: &AccountRef, label: &str) {
 	node.request("send", json!({ "to": account.to_string(), "amount": FUNDING_AMOUNT.to_string(), "external": label }))
 		.unwrap_or_else(|err| panic!("funding send must succeed: {err}"));
 }
 
-fn build_opening(rust: &AccountRef, representative: &AccountRef) -> Block {
-	BlockBuilder::default()
-		.with_network(0u8)
-		.with_account(rust.clone())
-		.as_opening()
-		.with_operation(SetRep { to: representative.clone() })
-		.build()
-		.expect("opening block must build")
-		.sign()
-		.expect("opening block must sign")
-}
-
-/// Boot the harness, mint initial supply, and return `(node,
-/// representative)`.
-fn start_harness() -> (E2eNode, AccountRef) {
+/// Boot the harness, run `body` against `(node, representative)`, then
+/// shut the harness down. Centralises the start/shutdown boilerplate so
+/// every e2e test gets the same cleanup guarantees.
+fn with_harness<F>(body: F) -> TestResult
+where
+	F: FnOnce(&mut E2eNode, AccountRef) -> TestResult,
+{
 	let mut node = E2eNode::start().expect("the reference node harness must start");
 	node.request("init_supply", json!({ "amount": "1000000" }))
 		.expect("network initialization must succeed");
 	let representative = parse_account(&node.info().clone(), "representative");
-	(node, representative)
+	let result = body(&mut node, representative);
+	node.shutdown().expect("the harness must shut down cleanly");
+	result
 }
 
-fn shutdown(node: E2eNode) {
+/// Boot the harness without minting initial supply (used by tests that
+/// only need TS verification of an externally-built staple).
+fn with_bare_harness<F>(body: F) -> TestResult
+where
+	F: FnOnce(&mut E2eNode) -> TestResult,
+{
+	let mut node = E2eNode::start().expect("the reference node harness must start");
+	let result = body(&mut node);
 	node.shutdown().expect("the harness must shut down cleanly");
+	result
 }
 
 /// Wrap `openings` in a Rust-built staple signed by deterministic
@@ -98,81 +96,79 @@ fn build_rust_staple(openings: &[Block]) -> Result<VoteStaple, VoteError> {
 
 #[test]
 fn test_ts_mints_staple_from_rust_block() -> TestResult {
-	let (mut node, representative) = start_harness();
+	with_harness(|node, representative| {
+		let account = generate_ed25519_ref(FORWARD_SEED_BYTE);
+		fund(node, &account, "vote staple e2e forward");
+		let opening = opening_block(&account, &representative);
 
-	let account = generate_ed25519_ref(FORWARD_SEED_BYTE);
-	fund(&mut node, &account, "vote staple e2e forward");
-	let opening = build_opening(&account, &representative);
+		let response = node.request("transmit", json!({ "bytes": hex::encode_upper(opening.to_bytes()) }))?;
+		let bytes_hex = json_str(&response, "stapleBytes");
+		let staple = VoteStaple::verify(hex_decode(&bytes_hex), ValidationConfig::default(), now_blocktime())?;
 
-	let response = node.request("transmit", json!({ "bytes": hex::encode_upper(opening.to_bytes()) }))?;
-	let bytes_hex = json_str(&response, "stapleBytes");
-	let staple = VoteStaple::verify(hex_decode(&bytes_hex), ValidationConfig::default(), now_blocktime())?;
-
-	assert_eq!(hex::encode_upper(staple.as_bytes()), bytes_hex, "the staple must re-encode byte-exactly");
-	assert_eq!(staple.blocks().len(), 1, "the staple must contain exactly the block we transmitted");
-	assert_eq!(
-		staple.blocks()[0].hash().to_string(),
-		opening.hash().to_string(),
-		"the staple must wrap our Rust-built block"
-	);
-	assert!(!staple.votes().is_empty(), "the staple must carry at least one vote");
-
-	shutdown(node);
-	Ok(())
+		assert_eq!(hex::encode_upper(staple.as_bytes()), bytes_hex, "the staple must re-encode byte-exactly");
+		assert_eq!(staple.blocks().len(), 1, "the staple must contain exactly the block we transmitted");
+		assert_eq!(
+			staple.blocks()[0].hash().to_string(),
+			opening.hash().to_string(),
+			"the staple must wrap our Rust-built block"
+		);
+		assert!(!staple.votes().is_empty(), "the staple must carry at least one vote");
+		Ok(())
+	})
 }
 
 #[test]
 fn test_harness_built_staple_verifies_in_rust() -> TestResult {
-	let (mut node, representative) = start_harness();
+	with_harness(|node, representative| {
+		let account = generate_ed25519_ref(REVERSE_SEED_BYTE);
+		fund(node, &account, "vote staple e2e reverse");
+		let opening = opening_block(&account, &representative);
 
-	let account = generate_ed25519_ref(REVERSE_SEED_BYTE);
-	fund(&mut node, &account, "vote staple e2e reverse");
-	let opening = build_opening(&account, &representative);
+		let response = node.request("build_staple", json!({ "bytes": hex::encode_upper(opening.to_bytes()) }))?;
+		let bytes_hex = json_str(&response, "bytes");
+		let reported_hash = json_str(&response, "stapleHash");
+		let staple = VoteStaple::verify(hex_decode(&bytes_hex), ValidationConfig::default(), now_blocktime())?;
 
-	let response = node.request("build_staple", json!({ "bytes": hex::encode_upper(opening.to_bytes()) }))?;
-	let bytes_hex = json_str(&response, "bytes");
-	let reported_hash = json_str(&response, "stapleHash");
-	let staple = VoteStaple::verify(hex_decode(&bytes_hex), ValidationConfig::default(), now_blocktime())?;
-
-	assert_eq!(hex::encode_upper(staple.as_bytes()), bytes_hex, "the harness-built staple must re-encode byte-exactly");
-	assert_eq!(staple.hash().to_string(), reported_hash, "Rust and TS must agree on the staple hash");
-	assert_eq!(staple.blocks().len(), 1, "the harness staple must wrap exactly the block we provided");
-	assert_eq!(
-		staple.blocks()[0].hash().to_string(),
-		opening.hash().to_string(),
-		"the harness staple must wrap our Rust-built block"
-	);
-
-	shutdown(node);
-	Ok(())
+		assert_eq!(
+			hex::encode_upper(staple.as_bytes()),
+			bytes_hex,
+			"the harness-built staple must re-encode byte-exactly"
+		);
+		assert_eq!(staple.hash().to_string(), reported_hash, "Rust and TS must agree on the staple hash");
+		assert_eq!(staple.blocks().len(), 1, "the harness staple must wrap exactly the block we provided");
+		assert_eq!(
+			staple.blocks()[0].hash().to_string(),
+			opening.hash().to_string(),
+			"the harness staple must wrap our Rust-built block"
+		);
+		Ok(())
+	})
 }
 
 #[test]
 fn test_rust_built_staple_verifies_in_typescript() -> TestResult {
 	let representative = generate_ed25519_ref(0xA0);
 	let account = generate_ed25519_ref(RUST_BUILT_SEED_BYTE);
-	let opening = build_opening(&account, &representative);
+	let opening = opening_block(&account, &representative);
 	let staple = build_rust_staple(&[opening])?;
 
-	let mut node = E2eNode::start().expect("the reference node harness must start");
-	let response = node.request("verify_staple", json!({ "bytes": hex::encode_upper(staple.as_bytes()) }))?;
-	assert_ts_staple_matches_rust(&staple, &response);
-
-	shutdown(node);
-	Ok(())
+	with_bare_harness(|node| {
+		let response = node.request("verify_staple", json!({ "bytes": hex::encode_upper(staple.as_bytes()) }))?;
+		assert_ts_staple_matches_rust(&staple, &response);
+		Ok(())
+	})
 }
 
 #[test]
 fn test_rust_built_multi_block_staple_verifies_in_typescript() -> TestResult {
 	let representative = generate_ed25519_ref(0xA0);
-	let opening_a = build_opening(&generate_ed25519_ref(0x60), &representative);
-	let opening_b = build_opening(&generate_ed25519_ref(0x61), &representative);
+	let opening_a = opening_block(&generate_ed25519_ref(0x60), &representative);
+	let opening_b = opening_block(&generate_ed25519_ref(0x61), &representative);
 	let staple = build_rust_staple(&[opening_a, opening_b])?;
 
-	let mut node = E2eNode::start().expect("the reference node harness must start");
-	let response = node.request("verify_staple", json!({ "bytes": hex::encode_upper(staple.as_bytes()) }))?;
-	assert_ts_staple_matches_rust(&staple, &response);
-
-	shutdown(node);
-	Ok(())
+	with_bare_harness(|node| {
+		let response = node.request("verify_staple", json!({ "bytes": hex::encode_upper(staple.as_bytes()) }))?;
+		assert_ts_staple_matches_rust(&staple, &response);
+		Ok(())
+	})
 }

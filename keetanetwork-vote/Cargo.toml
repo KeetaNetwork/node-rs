@@ -9,31 +9,57 @@ homepage.workspace = true
 description = "Vote and VoteStaple model, codec, and signing for Keetanetwork blockchain"
 
 [features]
-default = []
+default = ["std", "der", "rasn"]
+std = [
+	"alloc",
+	"chrono/std",
+	"hex/std",
+	"snafu/std",
+	"num-bigint/std",
+	"num-traits/std",
+	"keetanetwork-error/std",
+	"keetanetwork-utils/std",
+	"keetanetwork-asn1/std",
+	"keetanetwork-account/std",
+	"keetanetwork-crypto/std",
+	"keetanetwork-block/std",
+]
+alloc = [
+	"chrono/alloc",
+	"keetanetwork-error/alloc",
+	"keetanetwork-asn1/alloc",
+	"keetanetwork-account/alloc",
+	"keetanetwork-block/alloc",
+]
+der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der", "keetanetwork-block/der"]
+rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn", "keetanetwork-block/rasn"]
 # Deterministic issuer / validity factories for downstream test suites.
-testing = ["keetanetwork-block/testing"]
+# Requires `std` because the helpers reach for the wall clock.
+testing = ["std", "keetanetwork-block/testing", "keetanetwork-asn1/testing"]
 
 [dependencies]
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
-keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block" }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
+keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false }
 snafu = { workspace = true }
-der = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
 
 [dependencies.num-bigint]
 version = "0.4.6"
+default-features = false
 
 [dependencies.num-traits]
 version = "0.2.19"
-
-[dependencies.flate2]
-version = "1.1"
 default-features = false
-features = ["rust_backend"]
+
+[dependencies.miniz_oxide]
+version = "0.8"
+default-features = false
+features = ["with-alloc"]
 
 [dev-dependencies]
 chrono = { workspace = true }
@@ -42,7 +68,7 @@ keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", featur
 keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = ["node-harness"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 
 [lib]
 name = "keetanetwork_vote"

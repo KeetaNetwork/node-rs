@@ -9,6 +9,8 @@
 //!   applies canonical ordering + staple invariants on
 //!   [`VoteStapleBuilder::build`].
 
+use alloc::vec::Vec;
+
 use keetanetwork_account::cert::CertSigner;
 use keetanetwork_block::{AccountRef, Block, BlockHash, BlockTime};
 use num_bigint::BigInt;
@@ -238,7 +240,10 @@ impl VoteStapleBuilder {
 
 	/// Build the staple, applying canonical ordering and invariants.
 	pub fn build(self) -> Result<VoteStaple, VoteError> {
+		#[cfg(feature = "std")]
 		let moment = self.moment.unwrap_or_else(BlockTime::now);
+		#[cfg(not(feature = "std"))]
+		let moment = self.moment.ok_or(VoteError::MissingMoment)?;
 		VoteStaple::try_new(self.blocks, self.votes, self.config, moment)
 	}
 }
@@ -281,9 +286,7 @@ mod tests {
 
 	#[test]
 	fn test_vote_quote_builder_forces_quote_flag() -> Result<(), VoteError> {
-		use keetanetwork_block::Amount;
-
-		use crate::fee::Fee;
+		use crate::testing::single_fees;
 
 		let issuer = ed25519_issuer(b"alice");
 		let (from, to) = one_minute_validity();
@@ -292,7 +295,7 @@ mod tests {
 			.issuer(issuer.clone())
 			.validity(from, to)
 			.add_block(BlockHash::from([1u8; 32]))
-			.fees(Fees::Single { quote: false, fee: Fee { amount: Amount::from(1u64), pay_to: None, token: None } })
+			.fees(single_fees(1))
 			.build(issuer.as_ref())?;
 		assert!(quote.as_vote().is_quote());
 		Ok(())

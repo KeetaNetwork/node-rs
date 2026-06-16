@@ -10,20 +10,18 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use chrono::{DateTime, FixedOffset};
-use der::asn1::AnyRef;
-use der::{Decode, Encode, Reader, SliceReader, Tag, Tagged};
-use keetanetwork_account::KeyPairType;
-use keetanetwork_block::testing::{derive_identifier, generate_ed25519_ref};
+use keetanetwork_asn1::testing;
 use keetanetwork_block::Hashable;
 use keetanetwork_block::{AccountRef, BlockHash};
 use keetanetwork_utils::node_harness::{run_node_script, script_path};
-use keetanetwork_vote::testing::{
-	ed25519_issuer as ed25519_issuer_raw, future_validity as future_validity_raw,
-	secp256k1_issuer as secp256k1_issuer_raw, secp256r1_issuer as secp256r1_issuer_raw,
-};
-use keetanetwork_vote::{Fee, Fees, UnsignedVote, Validity, Vote, VoteHash, VoteQuote, VoteStaple};
+use keetanetwork_vote::{Fee, Fees, Validity, Vote, VoteHash, VoteQuote, VoteStaple};
 use num_bigint::BigInt;
 use serde_json::{Map, Value};
+
+pub use keetanetwork_vote::testing::{
+	ed25519_issuer as ed25519_issuer_raw, future_validity, secp256k1_issuer as secp256k1_issuer_raw,
+	secp256r1_issuer as secp256r1_issuer_raw, sign_simple_vote, token_account as token_identifier_raw,
+};
 
 pub type TestResult = Result<(), Box<dyn Error>>;
 
@@ -48,16 +46,11 @@ pub fn secp256r1_issuer(seed_hex: &str) -> AccountRef {
 	secp256r1_issuer_raw(decode_seed(seed_hex))
 }
 
-/// A validity range anchored at the current wall clock - sized so
-/// live-node tests stay valid even on slow runners.
-pub fn future_validity() -> Validity {
-	future_validity_raw()
-}
-
-/// A deterministic token identifier suitable for use in fee `token`
-/// fields (must be a valid TOKEN keypair type).
+/// A deterministic TOKEN identifier suitable for use in fee `token`
+/// fields. Mirrors the helper in [`keetanetwork_vote::testing`] but
+/// keyed by a single byte for legibility in test tables.
 pub fn token_identifier(seed_byte: u8) -> AccountRef {
-	derive_identifier(&generate_ed25519_ref(seed_byte), KeyPairType::TOKEN, 0)
+	token_identifier_raw([seed_byte; 32])
 }
 
 // -- json helpers ------------------------------------------------------------
@@ -117,6 +110,9 @@ pub fn ts_vote_mint(spec: &MintSpec) -> Value {
 // -- rust signing helper -----------------------------------------------------
 
 /// Sign a vote with the supplied issuer using only Rust code paths.
+///
+/// Adapter over [`keetanetwork_vote::testing::sign_simple_vote`] that
+/// accepts blocks as a slice (matching the integration-test call sites).
 pub fn rust_sign_vote(
 	issuer: &AccountRef,
 	serial: u64,
@@ -124,11 +120,7 @@ pub fn rust_sign_vote(
 	blocks: &[BlockHash],
 	fees: Option<Fees>,
 ) -> Vote {
-	let unsigned = UnsignedVote::try_new(BigInt::from(serial), issuer.clone(), validity, blocks.to_vec(), fees)
-		.expect("UnsignedVote must build");
-	unsigned
-		.sign(issuer.as_ref())
-		.expect("signing must succeed")
+	sign_simple_vote(issuer, serial, validity, blocks.iter().copied(), fees)
 }
 
 // -- mint spec ---------------------------------------------------------------
@@ -450,21 +442,7 @@ fn assert_fees_match_schedule(vote_fees: Option<&Fees>, schedule: Option<&FeeSch
 /// pieces - i.e. given the bytes of `SEQUENCE { x, y, z }`, return the
 /// bytes of `[x, y, z]`. Each output element is a complete TLV blob.
 pub fn split_seq(bytes: &[u8]) -> Vec<Vec<u8>> {
-	let mut outer = SliceReader::new(bytes).expect("seq must parse");
-	let any = AnyRef::decode(&mut outer).expect("outer must decode");
-	assert_eq!(any.tag(), Tag::Sequence, "split_seq expects a SEQUENCE");
-	collect_tlvs(any.value())
-}
-
-/// Decode every TLV inside `bytes` and return their owned encodings.
-pub fn collect_tlvs(bytes: &[u8]) -> Vec<Vec<u8>> {
-	let mut reader = SliceReader::new(bytes).expect("inner must read");
-	let mut parts = Vec::new();
-	while !reader.is_finished() {
-		let element = AnyRef::decode(&mut reader).expect("element must decode");
-		parts.push(element.to_der().expect("element must re-encode"));
-	}
-	parts
+	testing::split_sequence(bytes).expect("split SEQUENCE")
 }
 
 /// Build a SEQUENCE whose body is the concatenation of the supplied
@@ -474,41 +452,33 @@ where
 	I: IntoIterator<Item = B>,
 	B: AsRef<[u8]>,
 {
-	join_with_tag(Tag::Sequence, parts)
+	testing::sequence_tlv(parts).expect("join SEQUENCE")
 }
 
-/// Build a TLV with `tag` whose body is the concatenation of the supplied
-/// pre-encoded TLV blobs.
-pub fn join_with_tag<I, B>(tag: Tag, parts: I) -> Vec<u8>
+/// Build an `[N] EXPLICIT` constructed TLV whose body is the
+/// concatenation of the supplied pre-encoded TLV blobs.
+pub fn join_explicit_context<I, B>(number: u8, parts: I) -> Vec<u8>
 where
 	I: IntoIterator<Item = B>,
 	B: AsRef<[u8]>,
 {
-	let mut content = Vec::new();
-	for part in parts {
-		content.extend_from_slice(part.as_ref());
-	}
-	AnyRef::new(tag, &content)
-		.expect("tag/content valid")
-		.to_der()
-		.expect("der re-encode")
+	testing::explicit_context_tlv(number, parts).expect("explicit context tlv")
 }
 
 /// Encode an `INTEGER 0` TLV - a convenient "obviously wrong" blob to
 /// substitute for a SEQUENCE / context-tagged slot.
 pub fn integer_zero_tlv() -> Vec<u8> {
-	AnyRef::new(Tag::Integer, &[0x00])
-		.expect("integer 0")
-		.to_der()
-		.expect("der")
+	testing::integer_zero_tlv().expect("integer 0")
 }
 
 /// Encode an `OCTET STRING` TLV with empty content.
 pub fn empty_octet_tlv() -> Vec<u8> {
-	AnyRef::new(Tag::OctetString, &[])
-		.expect("octet")
-		.to_der()
-		.expect("der")
+	testing::empty_octet_string_tlv().expect("empty octet")
+}
+
+/// Encode an `OCTET STRING` TLV with the supplied content.
+pub fn octet_string_tlv(content: &[u8]) -> Vec<u8> {
+	testing::octet_string_tlv(content).expect("octet string tlv")
 }
 
 /// Sign and return the wire bytes of a minimal one-block ed25519 vote

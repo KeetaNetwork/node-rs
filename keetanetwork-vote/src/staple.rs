@@ -23,24 +23,22 @@
 //!
 //! [`VoteStaple::try_new`] reorders the supplied blocks to match the
 //! representative vote's block list and sorts votes by the big-endian
-//! numeric interpretation of their hash. The resulting wire bytes are
-//! deterministic for any input set, so two operators handed the same
-//! `(blocks, votes)` produce byte-identical staples and identical hashes.
+//! numeric interpretation of their hash.
 
-use std::io::{Read, Write};
+use alloc::vec::Vec;
 
-use der::{Reader, SliceReader};
-use flate2::read::ZlibDecoder;
-use flate2::write::ZlibEncoder;
-use flate2::Compression;
-use keetanetwork_block::{Block, BlockHash, BlockTime, Hashable};
+use miniz_oxide::deflate::compress_to_vec_zlib;
+use miniz_oxide::inflate::decompress_to_vec_zlib;
+
+use keetanetwork_asn1::vote as transport;
+use keetanetwork_block::{Block, BlockHash, BlockTime};
+use keetanetwork_crypto::verify::Verifiable;
 use num_bigint::BigInt;
 
 use crate::error::VoteError;
-use crate::hash::{VoteBlockHash, VoteStapleHash};
+use crate::hash::{Hashable, VoteBlockHash, VoteStapleHash};
 use crate::validation::ValidationConfig;
 use crate::vote::Vote;
-use crate::wire::{encode_octet, read_octet, read_sequence, wrap_sequence};
 
 /// A bundle of blocks and the votes endorsing them.
 #[derive(Debug, Clone)]
@@ -152,6 +150,23 @@ impl AsRef<[u8]> for VoteStaple {
 	}
 }
 
+impl Verifiable for VoteStaple {
+	type Context = (ValidationConfig, BlockTime);
+	type Error = VoteError;
+
+	fn verify(bytes: impl Into<Vec<u8>>, (config, moment): Self::Context) -> Result<Self, VoteError> {
+		VoteStaple::verify(bytes, config, moment)
+	}
+}
+
+impl Hashable for VoteStaple {
+	type Digest = VoteStapleHash;
+
+	fn hash(&self) -> Self::Digest {
+		VoteStaple::hash(self)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
@@ -197,12 +212,15 @@ fn reorder_blocks_to_match(blocks: &mut Vec<Block>, expected: &[BlockHash]) -> R
 		if reordered[position].is_some() {
 			return Err(VoteError::StapleMissingBlock);
 		}
+
 		reordered[position] = Some(block);
 	}
+
 	let mut output = Vec::with_capacity(reordered.len());
 	for slot in reordered {
 		output.push(slot.ok_or(VoteError::StapleMissingBlock)?);
 	}
+
 	*blocks = output;
 	Ok(())
 }
@@ -211,11 +229,13 @@ fn assert_block_order(blocks: &[Block], expected: &[BlockHash]) -> Result<(), Vo
 	if blocks.len() != expected.len() {
 		return Err(VoteError::StapleBlockCountMismatch);
 	}
+
 	for (block, hash) in blocks.iter().zip(expected) {
 		if block.hash() != *hash {
 			return Err(VoteError::StapleBlockOrderMismatch);
 		}
 	}
+
 	Ok(())
 }
 
@@ -228,8 +248,10 @@ fn assert_vote_order(votes: &[Vote]) -> Result<(), VoteError> {
 				return Err(VoteError::StapleInvalidConstruction);
 			}
 		}
+
 		prev = Some(current);
 	}
+
 	Ok(())
 }
 
@@ -242,80 +264,68 @@ fn vote_hash_as_bigint(vote: &Vote) -> BigInt {
 }
 
 // ---------------------------------------------------------------------------
-// Wire codec
+// Transport codec
 // ---------------------------------------------------------------------------
 
 fn encode_canonical(blocks: &[Block], votes: &[Vote]) -> Result<Vec<u8>, VoteError> {
-	let mut blocks_content = Vec::new();
-	for block in blocks {
-		encode_octet(&mut blocks_content, block.to_bytes())?;
-	}
-	let blocks_sequence = wrap_sequence(&blocks_content)?;
-
-	let mut votes_content = Vec::new();
-	for vote in votes {
-		encode_octet(&mut votes_content, vote.as_bytes())?;
-	}
-	let votes_sequence = wrap_sequence(&votes_content)?;
-
-	let mut content = Vec::new();
-	content.extend_from_slice(&blocks_sequence);
-	content.extend_from_slice(&votes_sequence);
-	wrap_sequence(&content)
+	let bundle = transport::VoteStapleBundle {
+		blocks: blocks
+			.iter()
+			.map(|block| block.to_bytes().to_vec())
+			.collect(),
+		votes: votes.iter().map(|vote| vote.as_bytes().to_vec()).collect(),
+	};
+	transport::encode_vote_staple(&bundle).map_err(VoteError::from)
 }
 
 fn decode_canonical(bytes: &[u8]) -> Result<(Vec<Block>, Vec<Vote>), VoteError> {
-	let mut outer = SliceReader::new(bytes).map_err(|_| VoteError::MalformedStaple)?;
-	let inner = read_sequence(&mut outer).map_err(|_| VoteError::MalformedStaple)?;
-	if !outer.is_finished() {
-		return Err(VoteError::MalformedStaple);
-	}
-	let mut inner_reader = SliceReader::new(inner).map_err(|_| VoteError::MalformedStaple)?;
-
-	let blocks_inner =
-		read_sequence(&mut inner_reader).map_err(|_| VoteError::MalformedStapleElement { what: "blocks" })?;
-	let mut blocks_reader =
-		SliceReader::new(blocks_inner).map_err(|_| VoteError::MalformedStapleElement { what: "blocks" })?;
-	let mut blocks = Vec::new();
-	while !blocks_reader.is_finished() {
-		let raw = read_octet(&mut blocks_reader).map_err(|_| VoteError::MalformedStapleElement { what: "blocks" })?;
-		let block = Block::try_from(raw)?;
-		blocks.push(block);
+	let bundle = transport::decode_vote_staple(bytes).map_err(staple_decode_error)?;
+	let mut blocks = Vec::with_capacity(bundle.blocks.len());
+	for raw in bundle.blocks {
+		blocks.push(Block::try_from(raw.as_slice())?);
 	}
 
-	let votes_inner =
-		read_sequence(&mut inner_reader).map_err(|_| VoteError::MalformedStapleElement { what: "votes" })?;
-	let mut votes_reader =
-		SliceReader::new(votes_inner).map_err(|_| VoteError::MalformedStapleElement { what: "votes" })?;
-	let mut votes = Vec::new();
-	while !votes_reader.is_finished() {
-		let raw = read_octet(&mut votes_reader).map_err(|_| VoteError::MalformedStapleElement { what: "votes" })?;
-		votes.push(Vote::verify(raw.to_vec())?);
-	}
-
-	if !inner_reader.is_finished() {
-		return Err(VoteError::MalformedStaple);
+	let mut votes = Vec::with_capacity(bundle.votes.len());
+	for raw in bundle.votes {
+		votes.push(Vote::verify(raw)?);
 	}
 
 	Ok((blocks, votes))
 }
 
+fn staple_decode_error(error: keetanetwork_asn1::Asn1Error) -> VoteError {
+	use keetanetwork_asn1::vote::VoteStapleDecodeSlot;
+	use keetanetwork_asn1::Asn1Error;
+	match error {
+		Asn1Error::VoteStapleDecode { slot: VoteStapleDecodeSlot::Blocks } => {
+			VoteError::MalformedStapleElement { what: "blocks" }
+		}
+		Asn1Error::VoteStapleDecode { slot: VoteStapleDecodeSlot::Votes } => {
+			VoteError::MalformedStapleElement { what: "votes" }
+		}
+		_ => VoteError::MalformedStaple,
+	}
+}
+
+// `compress_to_vec_zlib`'s level argument follows the zlib convention
+// (0-10); 6 mirrors `Compression::default()` in flate2's rust backend
+// (see flate2's `Compression::default` inlining `Z_DEFAULT_COMPRESSION`).
+const ZLIB_DEFAULT_LEVEL: u8 = 6;
+
 fn deflate(input: &[u8]) -> Result<Vec<u8>, VoteError> {
-	let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-	encoder.write_all(input)?;
-	Ok(encoder.finish()?)
+	Ok(compress_to_vec_zlib(input, ZLIB_DEFAULT_LEVEL))
 }
 
 fn inflate(input: &[u8]) -> Result<Vec<u8>, VoteError> {
-	let mut decoder = ZlibDecoder::new(input);
-	let mut output = Vec::new();
-	decoder.read_to_end(&mut output)?;
-	Ok(output)
+	// Reference treats failed zlib inflation of a staple as a malformed
+	// staple (with a fallback to raw bytes).
+	decompress_to_vec_zlib(input).map_err(|_| VoteError::MalformedStaple)
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::testing::{block_hash, ed25519_issuer, moment, opening_block, sign_simple_vote, validity_millis};
 
 	#[test]
 	fn test_deflate_inflate_round_trip() -> Result<(), VoteError> {
@@ -330,5 +340,20 @@ mod tests {
 	fn test_inflate_rejects_garbage() {
 		let result = inflate(&[0xFFu8; 16]);
 		assert!(result.is_err());
+	}
+
+	#[test]
+	fn test_verifiable_matches_inherent_verify() -> Result<(), VoteError> {
+		let issuer = ed25519_issuer(b"rep");
+		let block = opening_block(&ed25519_issuer(b"owner"), &ed25519_issuer(b"to"));
+		let validity = validity_millis(0, 60_000);
+		let vote = sign_simple_vote(&issuer, 1, validity, [block_hash(&block)], None);
+		let config = ValidationConfig::default();
+		let at = moment(0);
+
+		let staple = VoteStaple::try_new([block], [vote], config, at)?;
+		let decoded = <VoteStaple as Verifiable>::verify(staple.as_bytes().to_vec(), (config, at))?;
+		assert_eq!(decoded.hash(), staple.hash());
+		Ok(())
 	}
 }

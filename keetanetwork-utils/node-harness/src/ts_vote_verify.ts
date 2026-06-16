@@ -47,7 +47,7 @@ function serializeFee(fee: VoteModule.Vote['fee']): unknown {
 	if (fee === undefined) {
 		return(undefined);
 	}
-	
+
 	// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
 	return(serializeSingleFee(fee as SerializableFee));
 }

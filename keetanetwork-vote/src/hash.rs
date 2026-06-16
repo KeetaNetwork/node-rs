@@ -8,22 +8,15 @@
 //!   stable identity of the bundle, independent of which vote subset is
 //!   included.
 
+use alloc::vec::Vec;
+use core::borrow::Borrow;
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use core::str::FromStr;
-
-use core::borrow::Borrow;
 
 use keetanetwork_crypto::error::CryptoError;
 use keetanetwork_crypto::hash::{hash_default, BlockHash};
 
-/// Types that compute an idiomatic 32-byte SHA3-256 digest.
-pub trait Hashable {
-	/// The digest type produced.
-	type Digest;
-
-	/// Compute the digest of this value.
-	fn hash(&self) -> Self::Digest;
-}
+pub use keetanetwork_crypto::hash::Hashable;
 
 macro_rules! digest_newtype {
 	($(#[$meta:meta])* $name:ident) => {

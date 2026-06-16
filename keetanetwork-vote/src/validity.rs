@@ -89,6 +89,14 @@ impl Validity {
 	}
 }
 
+impl TryFrom<(BlockTime, BlockTime)> for Validity {
+	type Error = VoteError;
+
+	fn try_from((from, to): (BlockTime, BlockTime)) -> Result<Self, Self::Error> {
+		Self::try_new(from, to)
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -139,5 +147,14 @@ mod tests {
 
 		let temp = validity(0, 1_000);
 		assert!(!temp.is_permanent_at(moment(0), config));
+	}
+
+	#[test]
+	fn test_try_from_tuple_matches_try_new() -> Result<(), VoteError> {
+		let from = moment(1_000);
+		let to = moment(2_000);
+		assert_eq!(Validity::try_from((from, to))?, Validity::try_new(from, to)?);
+		assert!(matches!(Validity::try_from((to, from)), Err(VoteError::InvalidValidity)));
+		Ok(())
 	}
 }

@@ -66,16 +66,16 @@ Vote DEFINITIONS ::= BEGIN
     }
 
     -- Decoded contents of the fees extension's extnValue OCTET STRING when
-    -- exactly one fee entry is present: [0] EXPLICIT FeeEntry.
+    -- exactly one fee entry is present: `[0]` EXPLICIT FeeEntry.
     FeesSingle ::= [0] EXPLICIT FeeEntry
 
     FeeEntries ::= SEQUENCE OF FeeEntry
 
-    -- Inner [0] EXPLICIT wrapper around the SEQUENCE OF FeeEntry.
+    -- Inner `[0]` EXPLICIT wrapper around the SEQUENCE OF FeeEntry.
     FeesMultipleInner ::= [0] EXPLICIT FeeEntries
 
     -- Decoded contents of the fees extension's extnValue OCTET STRING when
-    -- two or more fee entries are present: [0] EXPLICIT [0] EXPLICIT
+    -- two or more fee entries are present: `[0]` EXPLICIT `[0]` EXPLICIT
     -- SEQUENCE OF FeeEntry.
     FeesMultiple ::= [0] EXPLICIT FeesMultipleInner
 

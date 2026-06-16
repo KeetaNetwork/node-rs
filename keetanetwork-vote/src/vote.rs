@@ -18,19 +18,22 @@
 //! Encoding and decoding flow through the X.509-shaped wrapper in
 //! [`crate::cert`]. Signing dispatches through the
 //! [`CertSigner`] trait so callers do not need to branch on the issuer's
-//! key algorithm: ECDSA prehashes with SHA3-256 and emits DER signatures,
+//! key algorithm: ECDSA pre-hashes with SHA3-256 and emits DER signatures,
 //! Ed25519 signs the TBS bytes directly and emits the raw 64-byte form.
 
-use std::sync::Arc;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use keetanetwork_account::cert::{CertSigner, CertVerifier};
+use keetanetwork_asn1::vote::TbsCertificate;
 use keetanetwork_block::{AccountRef, BlockHash, BlockTime};
+use keetanetwork_crypto::verify::Verifiable;
 use num_bigint::BigInt;
 
-use crate::cert::{decode_wrapper, encode_tbs, encode_wrapper, DecodedVote, SignatureAlgo};
+use crate::cert::{build_tbs, decode_wrapper, encode_tbs, encode_vote, DecodedVote, SignatureAlgo};
 use crate::error::VoteError;
 use crate::fee::Fees;
-use crate::hash::VoteHash;
+use crate::hash::{Hashable, VoteHash};
 use crate::validation::ValidationConfig;
 use crate::validity::Validity;
 
@@ -61,9 +64,11 @@ impl UnsignedVote {
 	) -> Result<Self, VoteError> {
 		// Confirm the issuer can produce certificate-mode signatures.
 		SignatureAlgo::from_issuer(&issuer)?;
+
 		if blocks.is_empty() {
 			return Err(VoteError::MalformedVoteNoBlocksFound);
 		}
+
 		Ok(Self { serial, issuer, validity, blocks, fees })
 	}
 
@@ -100,7 +105,8 @@ impl UnsignedVote {
 	/// Build the TBS bytes that will be signed.
 	pub fn tbs_bytes(&self) -> Result<Vec<u8>, VoteError> {
 		let algo = SignatureAlgo::from_issuer(&self.issuer)?;
-		encode_tbs(&self.serial, algo, &self.issuer, self.validity, &self.blocks, self.fees.as_ref())
+		let tbs = build_tbs(&self.serial, algo, &self.issuer, self.validity, &self.blocks, self.fees.as_ref())?;
+		encode_tbs(&tbs)
 	}
 
 	/// Sign and serialize this vote using the supplied signer.
@@ -110,9 +116,10 @@ impl UnsignedVote {
 	/// the issuer's public key.
 	pub fn sign(self, signer: &(impl CertSigner + ?Sized)) -> Result<Vote, VoteError> {
 		let algo = SignatureAlgo::from_issuer(&self.issuer)?;
-		let tbs_bytes = encode_tbs(&self.serial, algo, &self.issuer, self.validity, &self.blocks, self.fees.as_ref())?;
+		let tbs = build_tbs(&self.serial, algo, &self.issuer, self.validity, &self.blocks, self.fees.as_ref())?;
+		let tbs_bytes = encode_tbs(&tbs)?;
 		let signature = signer.sign_for_cert(&tbs_bytes).map_err(VoteError::from)?;
-		let serialized = encode_wrapper(&tbs_bytes, algo, &signature)?;
+		let serialized = encode_vote(tbs, algo, signature.clone())?;
 		let decoded = DecodedVote {
 			serial: self.serial,
 			signature_algo: algo,
@@ -123,6 +130,7 @@ impl UnsignedVote {
 			signature,
 			tbs_bytes,
 		};
+
 		Ok(Vote { decoded: Arc::new(decoded), serialized: Arc::new(serialized) })
 	}
 }
@@ -146,10 +154,24 @@ impl Vote {
 		// Reject non-canonical DER: re-encoding the parsed components must
 		// reproduce the input bytes exactly, otherwise the wire form was
 		// not the unique canonical representation of its contents.
-		let canonical = encode_wrapper(&decoded.tbs_bytes, decoded.signature_algo, &decoded.signature)?;
+		let tbs: TbsCertificate = build_tbs(
+			&decoded.serial,
+			decoded.signature_algo,
+			&decoded.issuer,
+			decoded.validity,
+			&decoded.blocks,
+			decoded.fees.as_ref(),
+		)?;
+		let canonical_tbs = encode_tbs(&tbs)?;
+		if canonical_tbs != decoded.tbs_bytes {
+			return Err(VoteError::MalformedNonCanonicalEncoding);
+		}
+
+		let canonical = encode_vote(tbs, decoded.signature_algo, decoded.signature.clone())?;
 		if canonical != bytes {
 			return Err(VoteError::MalformedNonCanonicalEncoding);
 		}
+
 		Ok(Self { decoded: Arc::new(decoded), serialized: Arc::new(bytes) })
 	}
 
@@ -160,6 +182,7 @@ impl Vote {
 			.issuer
 			.verify_for_cert(&vote.decoded.tbs_bytes, &vote.decoded.signature)
 			.map_err(VoteError::from)?;
+
 		Ok(vote)
 	}
 
@@ -225,6 +248,39 @@ impl AsRef<[u8]> for Vote {
 	}
 }
 
+impl Hashable for Vote {
+	type Digest = VoteHash;
+
+	fn hash(&self) -> Self::Digest {
+		Vote::hash(self)
+	}
+}
+
+impl TryFrom<Vec<u8>> for Vote {
+	type Error = VoteError;
+
+	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		Self::from_serialized(bytes)
+	}
+}
+
+impl TryFrom<&[u8]> for Vote {
+	type Error = VoteError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		Self::from_serialized(bytes.to_vec())
+	}
+}
+
+impl Verifiable for Vote {
+	type Context = ();
+	type Error = VoteError;
+
+	fn verify(bytes: impl Into<Vec<u8>>, _context: ()) -> Result<Self, VoteError> {
+		Vote::verify(bytes)
+	}
+}
+
 /// A vote restricted to the quote phase: fees must be present with
 /// `quote = true`.
 #[derive(Debug, Clone)]
@@ -234,9 +290,12 @@ impl VoteQuote {
 	/// Construct from an already-verified [`Vote`], enforcing the quote
 	/// invariant.
 	pub fn try_from_vote(vote: Vote) -> Result<Self, VoteError> {
+		// Reference's `VoteQuote` constructor throws `VOTE_FEE_NOT_QUOTE`
+		// when the certificate's quote flag is missing or false.
 		if !vote.is_quote() {
-			return Err(VoteError::QuoteFeeRequired);
+			return Err(VoteError::FeeNotQuote);
 		}
+
 		Ok(Self(vote))
 	}
 
@@ -264,6 +323,14 @@ impl VoteQuote {
 impl AsRef<Vote> for VoteQuote {
 	fn as_ref(&self) -> &Vote {
 		&self.0
+	}
+}
+
+impl Hashable for VoteQuote {
+	type Digest = VoteHash;
+
+	fn hash(&self) -> Self::Digest {
+		self.0.hash()
 	}
 }
 
@@ -301,52 +368,48 @@ impl AsRef<Vote> for PossiblyExpiredVote {
 	}
 }
 
+impl Hashable for PossiblyExpiredVote {
+	type Digest = VoteHash;
+
+	fn hash(&self) -> Self::Digest {
+		self.0.hash()
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use keetanetwork_block::Amount;
-
-	use crate::fee::Fee;
 	use crate::testing::{
-		ed25519_issuer, find_version_tag, moment, secp256k1_issuer, secp256r1_issuer, validity_seconds,
+		ed25519_issuer, find_version_tag, moment, quote_fees, secp256k1_issuer, secp256r1_issuer, sign_simple_vote,
+		validity_seconds,
 	};
 
-	/// One block, two-byte clone-friendly default for tests that don't
-	/// care about block contents.
+	const DEFAULT_SERIAL: u64 = 11;
+
+	fn alice() -> AccountRef {
+		ed25519_issuer(b"alice")
+	}
+
 	fn default_blocks() -> Vec<BlockHash> {
 		vec![BlockHash::from([7u8; 32])]
 	}
 
-	/// Build an `UnsignedVote` with sensible defaults; callers override only
-	/// the dimensions they care about.
-	fn unsigned_with(issuer: &AccountRef, blocks: Vec<BlockHash>, fees: Option<Fees>) -> UnsignedVote {
-		UnsignedVote::try_new(BigInt::from(11u8), issuer.clone(), validity_seconds(0, 60), blocks, fees)
-			.expect("UnsignedVote must build")
-	}
-
-	/// Sign `unsigned` with `issuer`.
-	fn sign_with(unsigned: UnsignedVote, issuer: &AccountRef) -> Vote {
-		unsigned
-			.sign(issuer.as_ref())
-			.expect("signing must succeed")
+	fn signed_alice_vote(fees: Option<Fees>) -> Vote {
+		sign_simple_vote(&alice(), DEFAULT_SERIAL, validity_seconds(0, 60), default_blocks(), fees)
 	}
 
 	#[test]
 	fn test_unsigned_vote_requires_blocks() {
-		let issuer = ed25519_issuer(b"alice");
-		let result = UnsignedVote::try_new(BigInt::from(1u8), issuer, validity_seconds(0, 60), Vec::new(), None);
+		let result = UnsignedVote::try_new(BigInt::from(1u8), alice(), validity_seconds(0, 60), Vec::new(), None);
 		assert!(matches!(result, Err(VoteError::MalformedVoteNoBlocksFound)));
 	}
 
 	#[test]
 	fn test_sign_verify_round_trip_ed25519() -> Result<(), VoteError> {
-		let issuer = ed25519_issuer(b"alice");
-		let blocks = default_blocks();
-		let vote = sign_with(unsigned_with(&issuer, blocks.clone(), None), &issuer);
-
+		let vote = signed_alice_vote(None);
 		let verified = Vote::verify(vote.as_bytes().to_vec())?;
-		assert_eq!(verified.serial(), &BigInt::from(11u8));
-		assert_eq!(verified.blocks(), blocks.as_slice());
+		assert_eq!(verified.serial(), &BigInt::from(DEFAULT_SERIAL));
+		assert_eq!(verified.blocks(), default_blocks().as_slice());
 		assert_eq!(verified.hash(), vote.hash());
 		Ok(())
 	}
@@ -354,7 +417,7 @@ mod tests {
 	#[test]
 	fn test_sign_verify_round_trip_secp256k1() -> Result<(), VoteError> {
 		let issuer = secp256k1_issuer(b"alice");
-		let vote = sign_with(unsigned_with(&issuer, default_blocks(), None), &issuer);
+		let vote = sign_simple_vote(&issuer, DEFAULT_SERIAL, validity_seconds(0, 60), default_blocks(), None);
 		Vote::verify(vote.as_bytes().to_vec())?;
 		Ok(())
 	}
@@ -362,17 +425,14 @@ mod tests {
 	#[test]
 	fn test_sign_verify_round_trip_secp256r1() -> Result<(), VoteError> {
 		let issuer = secp256r1_issuer(b"alice");
-		let vote = sign_with(unsigned_with(&issuer, default_blocks(), None), &issuer);
+		let vote = sign_simple_vote(&issuer, DEFAULT_SERIAL, validity_seconds(0, 60), default_blocks(), None);
 		Vote::verify(vote.as_bytes().to_vec())?;
 		Ok(())
 	}
 
 	#[test]
 	fn test_corrupted_signature_rejected() {
-		let issuer = ed25519_issuer(b"alice");
-		let vote = sign_with(unsigned_with(&issuer, default_blocks(), None), &issuer);
-
-		let mut tampered = vote.as_bytes().to_vec();
+		let mut tampered = signed_alice_vote(None).as_bytes().to_vec();
 		let last = tampered.len() - 1;
 		tampered[last] ^= 0xFF;
 		assert!(Vote::verify(tampered).is_err());
@@ -380,10 +440,7 @@ mod tests {
 
 	#[test]
 	fn test_corrupted_tbs_rejected() -> Result<(), VoteError> {
-		let issuer = ed25519_issuer(b"alice");
-		let vote = sign_with(unsigned_with(&issuer, default_blocks(), None), &issuer);
-
-		let mut tampered = vote.as_bytes().to_vec();
+		let mut tampered = signed_alice_vote(None).as_bytes().to_vec();
 		let position = find_version_tag(&tampered)?;
 		tampered[position + 4] = 0xff;
 		assert!(Vote::verify(tampered).is_err());
@@ -392,30 +449,21 @@ mod tests {
 
 	#[test]
 	fn test_quote_invariant_enforced() -> Result<(), VoteError> {
-		let issuer = ed25519_issuer(b"alice");
-		let fees = Fees::Single { quote: true, fee: Fee { amount: Amount::from(1u64), pay_to: None, token: None } };
-		let vote = sign_with(unsigned_with(&issuer, default_blocks(), Some(fees)), &issuer);
+		let issuer = alice();
+		let vote =
+			sign_simple_vote(&issuer, DEFAULT_SERIAL, validity_seconds(0, 60), default_blocks(), Some(quote_fees(1)));
 		let quote = VoteQuote::try_from_vote(vote.clone())?;
 		assert!(quote.as_vote().is_quote());
 
-		let unsigned_no_quote = UnsignedVote::try_new(
-			BigInt::from(12u8),
-			vote.issuer().clone(),
-			*vote.validity(),
-			vote.blocks().to_vec(),
-			None,
-		)?;
-		let other_vote = sign_with(unsigned_no_quote, &issuer);
-		assert!(matches!(VoteQuote::try_from_vote(other_vote), Err(VoteError::QuoteFeeRequired)));
+		let other_vote = sign_simple_vote(&issuer, 12, *vote.validity(), vote.blocks().to_vec(), None);
+		assert!(matches!(VoteQuote::try_from_vote(other_vote), Err(VoteError::FeeNotQuote)));
 		Ok(())
 	}
 
 	#[test]
 	fn test_possibly_expired_promotion() -> Result<(), VoteError> {
-		let issuer = ed25519_issuer(b"alice");
-		let unsigned =
-			UnsignedVote::try_new(BigInt::from(11u8), issuer.clone(), validity_seconds(0, 1), default_blocks(), None)?;
-		let vote = sign_with(unsigned, &issuer);
+		let issuer = alice();
+		let vote = sign_simple_vote(&issuer, DEFAULT_SERIAL, validity_seconds(0, 1), default_blocks(), None);
 
 		let possibly = PossiblyExpiredVote::verify(vote.as_bytes().to_vec())?;
 		possibly
@@ -429,11 +477,31 @@ mod tests {
 
 	#[test]
 	fn test_non_canonical_bytes_rejected() {
-		let issuer = ed25519_issuer(b"alice");
-		let vote = sign_with(unsigned_with(&issuer, default_blocks(), None), &issuer);
-
-		let mut tampered = vote.as_bytes().to_vec();
+		let mut tampered = signed_alice_vote(None).as_bytes().to_vec();
 		tampered.push(0x00);
 		assert!(Vote::from_serialized(tampered).is_err());
+	}
+
+	#[test]
+	fn test_hashable_trait_matches_inherent_method() {
+		let vote = signed_alice_vote(None);
+		assert_eq!(<Vote as Hashable>::hash(&vote), vote.hash());
+	}
+
+	#[test]
+	fn test_try_from_bytes_round_trip() -> Result<(), VoteError> {
+		let vote = signed_alice_vote(None);
+		let bytes = vote.as_bytes().to_vec();
+		assert_eq!(Vote::try_from(bytes.clone())?.hash(), vote.hash());
+		assert_eq!(Vote::try_from(bytes.as_slice())?.hash(), vote.hash());
+		Ok(())
+	}
+
+	#[test]
+	fn test_verifiable_matches_inherent_verify() -> Result<(), VoteError> {
+		let vote = signed_alice_vote(None);
+		let decoded = <Vote as Verifiable>::verify(vote.as_bytes().to_vec(), ())?;
+		assert_eq!(decoded.hash(), vote.hash());
+		Ok(())
 	}
 }

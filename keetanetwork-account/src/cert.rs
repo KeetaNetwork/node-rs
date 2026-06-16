@@ -14,6 +14,8 @@
 //! accounts cannot sign or verify certificates and return
 //! [`AccountError::NoIdentifierSign`] / [`AccountError::NoIdentifierVerify`].
 
+use alloc::vec::Vec;
+
 use keetanetwork_crypto::algorithms::ed25519::Ed25519Signature;
 use keetanetwork_crypto::algorithms::secp256k1::Secp256k1Signature;
 use keetanetwork_crypto::algorithms::secp256r1::Secp256r1Signature;
