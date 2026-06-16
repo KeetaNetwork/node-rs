@@ -54,60 +54,54 @@ pub struct ModifyPermissions {
 	pub target: Option<AccountRef>,
 }
 
-impl BlockOperation for ModifyPermissions {
-	const TYPE: OperationType = OperationType::ModifyPermissions;
+impl ModifyPermissions {
+	/// Validate a non-empty permission payload against the issuing account,
+	/// principal, and target.
+	fn validate_payload(&self, ctx: &OperationContext<'_>, permissions: &Permissions) -> Result<(), BlockError> {
+		permissions.validate(ctx.config()?.max_external_offset)?;
 
-	fn validate(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError> {
-		match &self.permissions {
-			None => {
-				if self.method != AdjustMethod::Set {
-					return Err(BlockError::PermissionsRequireSet);
+		if !ctx.account.to_keypair_type().is_identifier() && permissions.has(&[BaseFlag::Owner], &[]) {
+			return Err(BlockError::IdentifierAccountRequired);
+		}
+
+		let base = permissions.base();
+
+		match &self.principal {
+			ModifyPermissionsPrincipal::Account(principal) => {
+				if !base.check_account_matches_group(GroupKind::Principal, Some(principal)) {
+					return Err(BlockError::PermissionsInvalidPrincipal);
 				}
 			}
-			Some(permissions) => {
-				permissions.validate(ctx.config()?.max_external_offset)?;
-
-				if !ctx.account.to_keypair_type().is_identifier() && permissions.has(&[BaseFlag::Owner], &[]) {
-					return Err(BlockError::IdentifierAccountRequired);
-				}
-
-				let base = permissions.base();
-
-				match &self.principal {
-					ModifyPermissionsPrincipal::Account(principal) => {
-						if !base.check_account_matches_group(GroupKind::Principal, Some(principal)) {
-							return Err(BlockError::PermissionsInvalidPrincipal);
-						}
-					}
-					ModifyPermissionsPrincipal::Certificate { .. } => {
-						if !base.is_valid_for_default() {
-							return Err(BlockError::PermissionsInvalidDefault);
-						}
-					}
-				}
-
-				if let Some(target) = &self.target {
-					if !base.check_account_matches_group(GroupKind::Target, Some(target)) {
-						return Err(BlockError::PermissionsInvalidTarget);
-					}
-				}
-
-				if !base.check_account_matches_group(GroupKind::Entity, Some(ctx.account)) {
-					return Err(BlockError::PermissionsInvalidEntity);
-				}
-
-				if self.target.is_some() && permissions.has(&[BaseFlag::Admin], &[]) {
-					return Err(BlockError::AdminWithTarget);
-				}
-
-				if self.method != AdjustMethod::Set && !permissions.can_use_delegation() {
-					return Err(BlockError::DelegationForbidden);
+			ModifyPermissionsPrincipal::Certificate { .. } => {
+				if !base.is_valid_for_default() {
+					return Err(BlockError::PermissionsInvalidDefault);
 				}
 			}
 		}
 
-		// Disallow a SET after permissions were already updated for the
-		// same principal/target pair.
+		if let Some(target) = &self.target {
+			if !base.check_account_matches_group(GroupKind::Target, Some(target)) {
+				return Err(BlockError::PermissionsInvalidTarget);
+			}
+		}
+
+		if !base.check_account_matches_group(GroupKind::Entity, Some(ctx.account)) {
+			return Err(BlockError::PermissionsInvalidEntity);
+		}
+
+		if self.target.is_some() && permissions.has(&[BaseFlag::Admin], &[]) {
+			return Err(BlockError::AdminWithTarget);
+		}
+		if self.method != AdjustMethod::Set && !permissions.can_use_delegation() {
+			return Err(BlockError::DelegationForbidden);
+		}
+
+		Ok(())
+	}
+
+	/// Reject a SET that follows an earlier modification for the same
+	/// principal/target pair within the same block.
+	fn reject_duplicate_set(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError> {
 		let mut found: BTreeMap<String, BTreeMap<String, AdjustMethod>> = BTreeMap::new();
 		for operation in ctx.operations {
 			let Operation::ModifyPermissions(other) = operation else {
@@ -129,6 +123,20 @@ impl BlockOperation for ModifyPermissions {
 		}
 
 		Ok(())
+	}
+}
+
+impl BlockOperation for ModifyPermissions {
+	const TYPE: OperationType = OperationType::ModifyPermissions;
+
+	fn validate(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError> {
+		match &self.permissions {
+			None if self.method != AdjustMethod::Set => return Err(BlockError::PermissionsRequireSet),
+			None => {}
+			Some(permissions) => self.validate_payload(ctx, permissions)?,
+		}
+
+		self.reject_duplicate_set(ctx)
 	}
 }
 

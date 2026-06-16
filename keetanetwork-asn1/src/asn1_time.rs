@@ -75,9 +75,11 @@ impl From<Asn1Time> for DateTime<Utc> {
 
 #[cfg(feature = "rasn")]
 mod rasn_impls {
-	use super::*;
+	use chrono::Utc;
 	use rasn::types::{Constraints, GeneralizedTime, Identifier, Tag};
 	use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
+
+	use super::Asn1Time;
 
 	impl From<GeneralizedTime> for Asn1Time {
 		fn from(value: GeneralizedTime) -> Self {
@@ -125,8 +127,9 @@ mod rasn_impls {
 
 #[cfg(feature = "der")]
 mod der_impls {
-	use super::*;
 	use der::{DecodeValue, EncodeValue, FixedTag, Header, Length, Reader, Tag, Writer};
+
+	use super::{Asn1Time, TRANSPORT_LEN_FRACTIONAL, TRANSPORT_LEN_PLAIN};
 
 	impl FixedTag for Asn1Time {
 		const TAG: Tag = Tag::GeneralizedTime;

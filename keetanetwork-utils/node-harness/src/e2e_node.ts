@@ -21,7 +21,6 @@ import type * as AccountModule from '@keetanetwork/keetanet-node/dist/lib/accoun
 import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/index';
 import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/utils/certificate';
 import type * as HelperTestingModule from '@keetanetwork/keetanet-node/dist/lib/utils/helper_testing';
-import type { Block as BlockInstance } from '@keetanetwork/keetanet-node/dist/lib/block/index';
 
 import { loadModule, resolveDist } from './dist';
 
@@ -85,16 +84,16 @@ type HarnessRequest =
 
 interface DirectResult {
 	voteStaple: {
-		blocks: BlockInstance[];
+		blocks: BlockModule.Block[];
 	};
 }
 
 interface PublishAidResult {
-	blocks: BlockInstance[];
+	blocks: BlockModule.Block[];
 }
 
 function stapleBlocks(result: DirectResult | PublishAidResult): { bytes: string; hash: string }[] {
-	let blocks: BlockInstance[];
+	let blocks: BlockModule.Block[];
 	if ('voteStaple' in result) {
 		blocks = result.voteStaple.blocks;
 	} else {
