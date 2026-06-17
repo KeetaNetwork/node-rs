@@ -50,25 +50,46 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## `no_std`
+//!
+//! The networking client requires `std` (it is built on `reqwest`/`tokio`) and
+//! is gated behind the default-on `std` feature. With `--no-default-features`
+//! the crate compiles as `no_std` and exposes only the transport-free pieces:
+//! [`ClientConfig`] and the pure dispatch primitives in [`math`].
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+#[cfg(feature = "std")]
 mod client;
 mod config;
+#[cfg(feature = "std")]
 mod error;
+pub mod math;
+#[cfg(feature = "std")]
 mod rep;
 
 /// Generated transport client (`Client`, request/response `types`, and the
 /// transport `Error`). Emitted from the OpenAPI document at build time.
+#[cfg(feature = "std")]
 #[allow(clippy::all, dead_code, unused_imports, missing_docs)]
 pub mod generated {
 	include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 }
 
+#[cfg(feature = "std")]
 pub use client::{
 	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, KeetaClient, LedgerChecksum,
 	Representative, TokenBalance, TransactionBuilder,
 };
 pub use config::ClientConfig;
+#[cfg(feature = "std")]
 pub use error::{ApiError, ClientError};
+#[cfg(feature = "std")]
 pub use keetanetwork_error::{KeetaNetError, NodeErrorType};
+#[cfg(feature = "std")]
 pub use rep::RepEndpoint;
+#[cfg(feature = "std")]
 pub use reqwest;

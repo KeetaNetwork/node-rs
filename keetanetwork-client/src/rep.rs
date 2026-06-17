@@ -80,14 +80,14 @@ impl RepState {
 	/// Increase a representative's reliability (AIMD additive increase),
 	/// clamped to `1.0`.
 	pub(crate) fn boost(&mut self, key: &str, increment: f64) {
-		let next = (self.reliability(key) + increment).min(1.0);
+		let next = crate::math::reliability_after_success(self.reliability(key), increment);
 		self.scores.insert(key.to_owned(), next);
 	}
 
 	/// Decrease a representative's reliability (AIMD multiplicative
 	/// decrease), floored to prevent an absorbing state.
 	pub(crate) fn decay(&mut self, key: &str, decay: f64, floor: f64) {
-		let next = (self.reliability(key) * decay).max(floor);
+		let next = crate::math::reliability_after_failure(self.reliability(key), decay, floor);
 		self.scores.insert(key.to_owned(), next);
 	}
 
@@ -155,13 +155,8 @@ impl RepState {
 
 	fn effective_score(&self, rep: &RepHandle) -> f64 {
 		let total = self.total_weight();
-		let weight_fraction = if total == BigInt::from(0u8) {
-			1.0 / self.reps.len() as f64
-		} else {
-			bigint_ratio(&rep.weight, &total)
-		};
-
-		weight_fraction * self.reliability(&rep.key)
+		let weight_fraction = crate::math::weight_fraction(&rep.weight, &total, self.reps.len());
+		crate::math::selection_score(weight_fraction, self.reliability(&rep.key))
 	}
 
 	/// Refresh known representatives' weights from a fetched `(key, weight)`
@@ -173,28 +168,6 @@ impl RepState {
 			}
 		}
 	}
-}
-
-/// Whether `accumulated` voting weight reaches `threshold` of `total`. A zero
-/// total never reaches quorum (callers fall back to collecting every result).
-pub(crate) fn meets_quorum(accumulated: &BigInt, total: &BigInt, threshold: f64) -> bool {
-	bigint_ratio(accumulated, total) >= threshold
-}
-
-/// Compute `numerator / denominator` as an `f64`, scaling large values to
-/// preserve precision.
-fn bigint_ratio(numerator: &BigInt, denominator: &BigInt) -> f64 {
-	if denominator == &BigInt::from(0u8) {
-		return 0.0;
-	}
-
-	let scale = BigInt::from(1_000_000_000u64);
-	let scaled = (numerator * &scale) / denominator;
-	bigint_to_f64(&scaled) / 1_000_000_000.0
-}
-
-fn bigint_to_f64(value: &BigInt) -> f64 {
-	value.to_string().parse::<f64>().unwrap_or(0.0)
 }
 
 #[cfg(test)]
@@ -224,17 +197,6 @@ mod tests {
 
 		state.decay("a", 0.5, 0.4);
 		assert_eq!(state.reliability("a"), 0.4);
-	}
-
-	#[test]
-	fn quorum_reached_at_or_above_threshold() {
-		assert!(meets_quorum(&BigInt::from(7), &BigInt::from(10), 0.7));
-		assert!(!meets_quorum(&BigInt::from(6), &BigInt::from(10), 0.7));
-	}
-
-	#[test]
-	fn quorum_never_reached_with_zero_total() {
-		assert!(!meets_quorum(&BigInt::from(5), &BigInt::from(0), 0.7));
 	}
 
 	#[test]

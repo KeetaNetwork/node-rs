@@ -27,7 +27,8 @@ use tokio::task::JoinHandle;
 use crate::config::ClientConfig;
 use crate::error::{AccountSnafu, AmountSnafu, ApiError, BlockSnafu, ClientError, DecodeSnafu, VoteSnafu};
 use crate::generated::{types, Client as Transport};
-use crate::rep::{meets_quorum, RepEndpoint, RepHandle, RepPick, RepState};
+use crate::math::{meets_quorum, most_common_hash, next_backoff, overlapping_moment};
+use crate::rep::{RepEndpoint, RepHandle, RepPick, RepState};
 
 /// A token balance entry for an account.
 #[derive(Debug, Clone)]
@@ -1827,37 +1828,6 @@ fn staple_moment(votes: &[Vote], fallback: BlockTime) -> BlockTime {
 	}
 }
 
-/// The latest `from` shared by all `(from, to)` validity windows, when their
-/// intersection is non-empty. `None` for an empty input or disjoint windows.
-fn overlapping_moment(windows: impl IntoIterator<Item = (i64, i64)>) -> Option<i64> {
-	let mut latest_from: Option<i64> = None;
-	let mut earliest_to: Option<i64> = None;
-	for (from, to) in windows {
-		latest_from = Some(latest_from.map_or(from, |seen: i64| seen.max(from)));
-		earliest_to = Some(earliest_to.map_or(to, |seen: i64| seen.min(to)));
-	}
-
-	match (latest_from, earliest_to) {
-		(Some(from), Some(to)) if from <= to => Some(from),
-		_ => None,
-	}
-}
-
-/// The hash observed on the most representatives. Ties break to the
-/// lexicographically smallest hash for determinism. `None` for no
-/// observations.
-fn most_common_hash(hashes: &[String]) -> Option<String> {
-	let mut counts: HashMap<&str, usize> = HashMap::new();
-	for hash in hashes {
-		*counts.entry(hash.as_str()).or_insert(0) += 1;
-	}
-
-	counts
-		.into_iter()
-		.max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(left.0)))
-		.map(|(hash, _)| hash.to_owned())
-}
-
 /// Base64-encode a set of votes for a `createVote` request body.
 fn encode_votes(votes: &[Vote]) -> Vec<String> {
 	votes
@@ -1897,12 +1867,6 @@ fn decode_quote_binary(binary: Option<String>) -> Result<VoteQuote, ClientError>
 	let encoded = binary.ok_or(ClientError::MissingQuote)?;
 	let bytes = B64.decode(encoded).context(DecodeSnafu)?;
 	VoteQuote::verify(bytes).context(VoteSnafu)
-}
-
-/// Double the backoff `delay`, capped at `max` (saturating to avoid
-/// overflow).
-fn next_backoff(delay: u64, max: u64) -> u64 {
-	delay.saturating_mul(2).min(max)
 }
 
 /// Whether `error` is a node ledger error carrying the given `code`.
@@ -2239,18 +2203,6 @@ mod tests {
 	}
 
 	#[test]
-	fn backoff_doubles_until_capped() {
-		assert_eq!(next_backoff(1, 500), 2);
-		assert_eq!(next_backoff(2, 500), 4);
-		assert_eq!(next_backoff(256, 500), 500);
-	}
-
-	#[test]
-	fn backoff_saturates_without_overflow() {
-		assert_eq!(next_backoff(u64::MAX, 500), 500);
-	}
-
-	#[test]
 	fn ledger_code_matches_only_exact_code() {
 		use keetanetwork_error::{NodeErrorParts, NodeErrorType};
 
@@ -2274,38 +2226,6 @@ mod tests {
 			.validity(from, to)
 			.add_block(BlockHash::from([7u8; 32]))
 			.build_signed(issuer.as_ref())?)
-	}
-
-	#[test]
-	fn most_common_hash_picks_the_majority() {
-		let hashes = vec!["a".to_owned(), "b".to_owned(), "a".to_owned()];
-		assert_eq!(most_common_hash(&hashes).as_deref(), Some("a"));
-	}
-
-	#[test]
-	fn most_common_hash_breaks_ties_lexicographically() {
-		let hashes = vec!["b".to_owned(), "a".to_owned()];
-		assert_eq!(most_common_hash(&hashes).as_deref(), Some("a"));
-	}
-
-	#[test]
-	fn most_common_hash_is_none_without_observations() {
-		assert_eq!(most_common_hash(&[]), None);
-	}
-
-	#[test]
-	fn overlapping_moment_picks_latest_from() {
-		assert_eq!(overlapping_moment([(0, 100), (50, 200), (30, 80)]), Some(50));
-	}
-
-	#[test]
-	fn overlapping_moment_is_none_when_disjoint() {
-		assert_eq!(overlapping_moment([(0, 40), (50, 100)]), None);
-	}
-
-	#[test]
-	fn overlapping_moment_is_none_when_empty() {
-		assert_eq!(overlapping_moment(core::iter::empty::<(i64, i64)>()), None);
 	}
 
 	#[test]

@@ -88,6 +88,7 @@ test-feat:
 	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn
 	cargo check -p keetanetwork-block --no-default-features --features alloc,der
 	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn,der
+	cargo check -p keetanetwork-client --no-default-features
 
 # Reference implementation harness (required by compatibility/e2e tests)
 HARNESS_DIR := keetanetwork-utils/node-harness

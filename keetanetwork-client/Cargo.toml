@@ -9,47 +9,77 @@ homepage.workspace = true
 description = "Async REST client for transmitting vote staples to a KeetaNet node"
 
 [features]
+default = ["std"]
+# The networking client is built on `reqwest`/`tokio` and therefore requires
+# `std`. Without this feature the crate compiles as `no_std` and exposes only
+# the transport-free pieces (`ClientConfig` and the `math` primitives).
+std = [
+	"dep:reqwest",
+	"dep:tokio",
+	"dep:parking_lot",
+	"dep:progenitor-client",
+	"dep:futures",
+	"dep:futures-core",
+	"dep:bytes",
+	"dep:serde_urlencoded",
+	"dep:rand",
+	"dep:serde",
+	"dep:serde_json",
+	"dep:base64",
+	"dep:snafu",
+	"num-bigint/std",
+	"dep:keetanetwork-block",
+	"dep:keetanetwork-vote",
+	"dep:keetanetwork-error",
+	"dep:keetanetwork-account",
+]
 # Gates the reference-backed e2e test binary; matches the block/vote
 # convention so a `--all-features` run picks it up after `make node-harness`.
 testing = []
 
 [dependencies]
-keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block" }
-keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote" }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", optional = true }
+keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote", optional = true }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", optional = true }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", optional = true }
 
-progenitor-client = "0.14.0"
-futures-core = "0.3"
-futures = "0.3"
-bytes = "1.9"
-serde_urlencoded = "0.7"
+progenitor-client = { version = "0.14.0", optional = true }
+futures-core = { version = "0.3", optional = true }
+futures = { version = "0.3", optional = true }
+bytes = { version = "1.9", optional = true }
+serde_urlencoded = { version = "0.7", optional = true }
 num-bigint = { version = "0.4.6", default-features = false }
-rand = "0.8"
-parking_lot = "0.12"
+rand = { version = "0.8", optional = true }
+parking_lot = { version = "0.12", optional = true }
 
 [dependencies.tokio]
 version = "1"
 features = ["rt", "time"]
+optional = true
 
 [dependencies.reqwest]
 version = "0.13.4"
 default-features = false
 features = ["json", "query", "stream", "rustls"]
+optional = true
 
 [dependencies.serde]
 workspace = true
+optional = true
 
 [dependencies.serde_json]
 workspace = true
+optional = true
 
 [dependencies.base64]
 workspace = true
 features = ["std"]
+optional = true
 
 [dependencies.snafu]
 workspace = true
 features = ["std"]
+optional = true
 
 [build-dependencies]
 progenitor = "0.14.0"
