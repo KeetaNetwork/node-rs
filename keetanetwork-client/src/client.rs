@@ -153,7 +153,8 @@ struct Inner {
 	network: RwLock<Option<BigInt>>,
 	subnet: RwLock<Option<BigInt>>,
 	/// `true` for the single anonymous-rep client built by [`KeetaClient::new`];
-	/// disables weight refresh (no rep accounts to match) and quorum gating.
+	/// disables weight refresh (no rep accounts to match) and the
+	/// permanent-round issuer filter (its lone rep is always contacted).
 	single_rep: bool,
 	refresh: Mutex<RefreshState>,
 }
@@ -527,11 +528,11 @@ impl KeetaClient {
 		let mut last_error: Option<ClientError> = None;
 		while let Some((key, result)) = requests.next().await {
 			match result {
-				Ok(response) => {
+				// Match the reference: a fulfilled publish response counts as
+				// success regardless of the returned `publish` flag.
+				Ok(_response) => {
 					self.boost(&key);
-					if response.into_inner().publish.unwrap_or(false) {
-						accepted = true;
-					}
+					accepted = true;
 				}
 				Err(api) => {
 					self.decay(&key);
@@ -584,7 +585,6 @@ impl KeetaClient {
 			return Err(ClientError::NoRepresentatives);
 		}
 
-		let total_weight: BigInt = picks.iter().map(|pick| pick.weight.clone()).sum();
 		let blocks_encoded = encode_blocks(blocks);
 		let prior_encoded = encode_votes(prior_votes);
 		let quotes_by_issuer = encode_quotes_by_issuer(quotes);
@@ -599,7 +599,6 @@ impl KeetaClient {
 		}
 
 		let mut votes = Vec::new();
-		let mut accumulated = BigInt::from(0u8);
 		let mut highest_error: Option<(BigInt, ClientError)> = None;
 		while let Some((key, weight, result)) = requests.next().await {
 			let outcome = match result {
@@ -609,7 +608,6 @@ impl KeetaClient {
 			match outcome {
 				Ok(vote) => {
 					self.boost(&key);
-					accumulated += weight;
 					votes.push(vote);
 				}
 				Err(error) => {
@@ -624,9 +622,12 @@ impl KeetaClient {
 			}
 		}
 
-		// Surface the highest-weight failure when the responding reps fall
-		// short of quorum.
-		if !meets_quorum(&accumulated, &total_weight, self.inner.config.quorum_threshold) {
+		// Keep every vote the reps returned and let the node enforce voting
+		// weight (`transmit` retries on the node's insufficient-weight error).
+		// A client-side quorum gate here would fail fast on a heuristic that is
+		// not the node's actual consensus threshold, so surface the
+		// highest-weight failure only when no rep produced a vote at all.
+		if votes.is_empty() {
 			return Err(highest_error
 				.map(|(_, error)| error)
 				.unwrap_or(ClientError::QuorumNotReached));
@@ -995,11 +996,13 @@ impl KeetaClient {
 		Ok(votes)
 	}
 
-	/// Publish a staple to one specific representative.
+	/// Publish a staple to one specific representative. A fulfilled response
+	/// counts as success regardless of the returned `publish` flag, matching
+	/// [`transmit_staple`](Self::transmit_staple) and the reference.
 	async fn transmit_staple_on(&self, transport: &Transport, staple: &VoteStaple) -> Result<bool, ClientError> {
 		let body = types::PublishVoteStapleBody { votes_and_blocks: B64.encode(staple.as_bytes()) };
-		let response = transport.publish_vote_staple(&body).await?;
-		Ok(response.into_inner().publish.unwrap_or(false))
+		transport.publish_vote_staple(&body).await?;
+		Ok(true)
 	}
 
 	/// Assemble the staple covering `block_hash` from one rep's main-ledger
