@@ -56,6 +56,35 @@ struct RepPick {
 	transport: Arc<dyn NodeTransport>,
 }
 
+/// Representatives' own votes for a pending successor block, sorted into
+/// permanent and temporary buckets plus the representatives that returned no
+/// vote, as gathered during account recovery.
+#[derive(Default)]
+struct RecoveredVotes {
+	perm_votes: Vec<Vote>,
+	temp_votes: Vec<Vote>,
+	perm_keys: Vec<String>,
+	missing: Vec<RepPick>,
+}
+
+impl RecoveredVotes {
+	/// The hashes of the blocks covered by a sample vote (permanent first,
+	/// then temporary), or `None` when nothing was recovered.
+	fn block_hashes(&self) -> Option<Vec<String>> {
+		let sample = self
+			.perm_votes
+			.first()
+			.or_else(|| self.temp_votes.first())?;
+		Some(
+			sample
+				.blocks()
+				.iter()
+				.map(|hash| hash.to_string())
+				.collect(),
+		)
+	}
+}
+
 /// Shared client state behind an [`Arc`], so [`KeetaClient`] is cheap to
 /// clone while all clones observe the same representative set, scores, and
 /// background refresh task.
@@ -797,99 +826,136 @@ impl KeetaClient {
 		let successor_hash = successor.hash().to_string();
 		let moment = self.now_moment();
 		let config = ValidationConfig::default();
+		let mut votes = self
+			.collect_recover_votes(&picks, &successor_hash, moment, config)
+			.await;
 
-		let mut perm_votes: Vec<Vote> = Vec::new();
-		let mut temp_votes: Vec<Vote> = Vec::new();
-		let mut perm_keys: Vec<String> = Vec::new();
-		let mut missing: Vec<RepPick> = Vec::new();
-
-		for pick in &picks {
-			let best = self.rep_recover_vote(pick, &successor_hash).await;
-			match best {
-				Some(vote) if vote.validity().is_permanent_at(moment, config) => {
-					perm_votes.push(vote);
-					perm_keys.push(pick.key.clone());
-				}
-				Some(vote) => temp_votes.push(vote),
-				None => missing.push(pick.clone()),
-			}
-		}
-
-		let block_hashes: Vec<String> = {
-			let Some(sample) = perm_votes.first().or_else(|| temp_votes.first()) else {
-				return Ok(None);
-			};
-			sample
-				.blocks()
-				.iter()
-				.map(|hash| hash.to_string())
-				.collect()
+		let block_hashes = match votes.block_hashes() {
+			Some(hashes) => hashes,
+			None => return Ok(None),
 		};
 
-		let mut blocks: Vec<Block> = Vec::with_capacity(block_hashes.len());
-		for hash in &block_hashes {
-			let mut found = None;
-			for pick in &picks {
-				if let Some(block) = pick.transport.block(hash, Some(LedgerSide::Both)).await? {
-					found = Some(block);
-					break;
-				}
-			}
+		let mut blocks = self.fetch_recover_blocks(&picks, &block_hashes).await?;
 
-			match found {
-				Some(block) => blocks.push(block),
-				None => return Err(ClientError::RecoverFailed),
-			}
+		if votes.perm_votes.len() != picks.len() {
+			self.top_up_recover_votes(&picks, &mut votes, &mut blocks, moment, &options)
+				.await?;
 		}
 
-		if perm_votes.len() != picks.len() {
-			if temp_votes.len() != picks.len() {
-				let prior = if perm_votes.is_empty() {
-					Vec::new()
-				} else {
-					perm_votes.clone()
-				};
-				if let Ok(mut more) = self.request_votes_on(&missing, &blocks, &prior).await {
-					temp_votes.append(&mut more);
-				}
-			}
-
-			if perm_votes.is_empty() && fees_required(&temp_votes) {
-				let signer = options
-					.fee_signer
-					.as_ref()
-					.ok_or(ClientError::FeeRequired)?;
-				let fee_block = self
-					.build_fee_block(signer, &blocks, &temp_votes, moment, &options.fee_token_priority)
-					.await?;
-				blocks.push(fee_block);
-			}
-
-			let missing_perm: Vec<RepPick> = picks
-				.iter()
-				.filter(|pick| !perm_keys.contains(&pick.key))
-				.cloned()
-				.collect();
-			let mut prior = temp_votes.clone();
-
-			prior.extend(perm_votes.iter().cloned());
-
-			if let Ok(mut more) = self.request_votes_on(&missing_perm, &blocks, &prior).await {
-				perm_votes.append(&mut more);
-			}
-		}
-
-		if perm_votes.is_empty() {
+		if votes.perm_votes.is_empty() {
 			return Err(ClientError::RecoverFailed);
 		}
 
-		let staple_at = staple_moment(&perm_votes, moment);
-		let staple = VoteStaple::try_new(blocks, perm_votes.clone(), config, staple_at).context(VoteSnafu)?;
+		let staple_at = staple_moment(&votes.perm_votes, moment);
+		let staple = VoteStaple::try_new(blocks, votes.perm_votes, config, staple_at).context(VoteSnafu)?;
 		if publish {
 			self.transmit_staple(&staple).await?;
 		}
 
 		Ok(Some(staple))
+	}
+
+	/// Gather each representative's own vote for `successor_hash`, sorting
+	/// them into permanent, temporary, and missing buckets.
+	async fn collect_recover_votes(
+		&self,
+		picks: &[RepPick],
+		successor_hash: &str,
+		moment: BlockTime,
+		config: ValidationConfig,
+	) -> RecoveredVotes {
+		let mut votes = RecoveredVotes::default();
+		for pick in picks {
+			match self.rep_recover_vote(pick, successor_hash).await {
+				Some(vote) if vote.validity().is_permanent_at(moment, config) => {
+					votes.perm_votes.push(vote);
+					votes.perm_keys.push(pick.key.clone());
+				}
+				Some(vote) => votes.temp_votes.push(vote),
+				None => votes.missing.push(pick.clone()),
+			}
+		}
+
+		votes
+	}
+
+	/// Fetch every voted-on block, trying each representative in turn and
+	/// failing when no representative holds a required block.
+	async fn fetch_recover_blocks(
+		&self,
+		picks: &[RepPick],
+		block_hashes: &[String],
+	) -> Result<Vec<Block>, ClientError> {
+		let mut blocks = Vec::with_capacity(block_hashes.len());
+		for hash in block_hashes {
+			let block = self
+				.first_block_on(picks, hash)
+				.await?
+				.ok_or(ClientError::RecoverFailed)?;
+			blocks.push(block);
+		}
+
+		Ok(blocks)
+	}
+
+	/// The first representative that holds `hash` on either ledger side.
+	async fn first_block_on(&self, picks: &[RepPick], hash: &str) -> Result<Option<Block>, ClientError> {
+		for pick in picks {
+			if let Some(block) = pick.transport.block(hash, Some(LedgerSide::Both)).await? {
+				return Ok(Some(block));
+			}
+		}
+
+		Ok(None)
+	}
+
+	/// Top up the recovered votes toward a full permanent quorum: request the
+	/// missing temporary votes, originate a fee block when fees are required
+	/// and no permanent votes exist, then request the missing permanent votes.
+	async fn top_up_recover_votes(
+		&self,
+		picks: &[RepPick],
+		votes: &mut RecoveredVotes,
+		blocks: &mut Vec<Block>,
+		moment: BlockTime,
+		options: &TransmitOptions,
+	) -> Result<(), ClientError> {
+		if votes.temp_votes.len() != picks.len() {
+			let prior = if votes.perm_votes.is_empty() {
+				Vec::new()
+			} else {
+				votes.perm_votes.clone()
+			};
+			if let Ok(mut more) = self.request_votes_on(&votes.missing, blocks, &prior).await {
+				votes.temp_votes.append(&mut more);
+			}
+		}
+
+		if votes.perm_votes.is_empty() && fees_required(&votes.temp_votes) {
+			let signer = options
+				.fee_signer
+				.as_ref()
+				.ok_or(ClientError::FeeRequired)?;
+			let fee_block = self
+				.build_fee_block(signer, blocks, &votes.temp_votes, moment, &options.fee_token_priority)
+				.await?;
+			blocks.push(fee_block);
+		}
+
+		let missing_perm: Vec<RepPick> = picks
+			.iter()
+			.filter(|pick| !votes.perm_keys.contains(&pick.key))
+			.cloned()
+			.collect();
+
+		let mut prior = votes.temp_votes.clone();
+		prior.extend(votes.perm_votes.iter().cloned());
+
+		if let Ok(mut more) = self.request_votes_on(&missing_perm, blocks, &prior).await {
+			votes.perm_votes.append(&mut more);
+		}
+
+		Ok(())
 	}
 
 	/// Fetch a representative's own vote for `hash`, preferring the main

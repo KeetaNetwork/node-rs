@@ -291,259 +291,274 @@ async function main(): Promise<void> {
 	});
 	const trustedClient = clients[0];
 
-	async function handleRequest(request: HarnessRequest): Promise<{ [key: string]: unknown }> {
-		switch (request.cmd) {
-			case 'init_supply': {
-				const result = await trustedClient.initializeNetwork({
-					addSupplyAmount: BigInt(request.amount)
-				});
-				return({ event: 'initialized', blocks: stapleBlocks(result) });
+	async function handleInitSupply(request: InitSupplyRequest): Promise<{ [key: string]: unknown }> {
+		const result = await trustedClient.initializeNetwork({
+			addSupplyAmount: BigInt(request.amount)
+		});
+		return({ event: 'initialized', blocks: stapleBlocks(result) });
+	}
+
+	async function handleSend(request: SendRequest): Promise<{ [key: string]: unknown }> {
+		const to = Account.fromPublicKeyString(request.to);
+		const result = await trustedClient.send(to, BigInt(request.amount), node.baseToken, request.external);
+		return({ event: 'sent', blocks: stapleBlocks(result) });
+	}
+
+	async function handleBuildSend(request: BuildSendRequest): Promise<{ [key: string]: unknown }> {
+		const to = Account.fromPublicKeyString(request.to);
+
+		/*
+		 * Build and sign the send block without publishing it so the
+		 * Rust client owns the transmit (vote + staple + publish).
+		 */
+		const builder = trustedClient.initBuilder();
+		builder.send(to, BigInt(request.amount), node.baseToken);
+
+		const result = await builder.computeBlocks();
+		return({ event: 'send_built', blocks: stapleBlocks(result) });
+	}
+
+	async function handleSetInfo(request: SetInfoRequest): Promise<{ [key: string]: unknown }> {
+		const result = await trustedClient.setInfo({
+			name: request.name,
+			description: request.description,
+			metadata: request.metadata
+		});
+		return({ event: 'info_set', blocks: stapleBlocks(result) });
+	}
+
+	async function handleManageCertAdd(): Promise<{ [key: string]: unknown }> {
+		const certificate = await new CertificateBuilder({
+			issuer: trustedKey,
+			validFrom: new Date(Date.now() - (60 * 60 * 1000)),
+			validTo: new Date(Date.now() + (365 * 24 * 60 * 60 * 1000))
+		}).build({
+			serial: 7,
+			subjectPublicKey: trustedKey
+		});
+
+		const result = await trustedClient.modifyCertificate(AdjustMethod.ADD, certificate, null);
+		return({ event: 'certificate_added', blocks: stapleBlocks(result) });
+	}
+
+	async function handleHead(request: HeadRequest): Promise<{ [key: string]: unknown }> {
+		const account = Account.fromPublicKeyString(request.account);
+		const head = await trustedClient.client.getHeadBlock(account);
+		const balance = await trustedClient.client.getBalance(account, node.baseToken);
+
+		let headHash: string | null = null;
+		if (head !== null) {
+			headHash = head.hash.toString();
+		}
+
+		return({ event: 'head', head: headHash, balance: balance.toString() });
+	}
+
+	async function handleHeadAll(request: HeadAllRequest): Promise<{ [key: string]: unknown }> {
+		const account = Account.fromPublicKeyString(request.account);
+		const heads: (string | null)[] = [];
+		for (let index = 0; index < clients.length; index++) {
+			if (stopped.has(index)) {
+				continue;
 			}
 
-			case 'send': {
-				const to = Account.fromPublicKeyString(request.to);
-				const result = await trustedClient.send(to, BigInt(request.amount), node.baseToken, request.external);
-				return({ event: 'sent', blocks: stapleBlocks(result) });
+			const head = await clients[index].client.getHeadBlock(account);
+			if (head === null) {
+				heads.push(null);
+			} else {
+				heads.push(head.hash.toString());
 			}
+		}
 
-			case 'build_send': {
-				const to = Account.fromPublicKeyString(request.to);
+		return({ event: 'head_all', heads: heads });
+	}
 
-				/*
-				 * Build and sign the send block without publishing it so the
-				 * Rust client owns the transmit (vote + staple + publish).
-				 */
-				const builder = trustedClient.initBuilder();
-				builder.send(to, BigInt(request.amount), node.baseToken);
-				const result = await builder.computeBlocks();
+	function requireLiveNode(index: number, label: string): void {
+		if (!Number.isInteger(index) || index < 0 || index >= nodes.length || stopped.has(index)) {
+			throw(new Error(`${label} node out of range: ${String(index)}`));
+		}
+	}
 
-				return({ event: 'send_built', blocks: stapleBlocks(result) });
-			}
+	async function handleStopRep(request: StopRepRequest): Promise<{ [key: string]: unknown }> {
+		const index = request.index;
+		if (!Number.isInteger(index) || index < 0 || index >= nodes.length) {
+			throw(new Error(`stop_rep index out of range: ${String(index)}`));
+		}
 
-			case 'set_info': {
-				const result = await trustedClient.setInfo({
-					name: request.name,
-					description: request.description,
-					metadata: request.metadata
-				});
-				return({ event: 'info_set', blocks: stapleBlocks(result) });
-			}
+		stopped.add(index);
+		try {
+			await clients[index].client.destroy();
+			await clients[index].destroy();
+		} catch {
+			/*
+			 * The client may already be torn down; stopping the node is what matters.
+			 */
+		}
 
-			case 'manage_cert_add': {
-				const certificate = await new CertificateBuilder({
-					issuer: trustedKey,
-					validFrom: new Date(Date.now() - (60 * 60 * 1000)),
-					validTo: new Date(Date.now() + (365 * 24 * 60 * 60 * 1000))
-				}).build({
-					serial: 7,
-					subjectPublicKey: trustedKey
-				});
+		await nodes[index].stop();
 
-				const result = await trustedClient.modifyCertificate(AdjustMethod.ADD, certificate, null);
-				return({ event: 'certificate_added', blocks: stapleBlocks(result) });
-			}
+		return({ event: 'rep_stopped', index: index });
+	}
 
-			case 'head': {
-				const account = Account.fromPublicKeyString(request.account);
-				const head = await trustedClient.client.getHeadBlock(account);
-				const balance = await trustedClient.client.getBalance(account, node.baseToken);
+	async function handleSideVote(request: SideVoteRequest): Promise<{ [key: string]: unknown }> {
+		const index = request.node;
+		requireLiveNode(index, 'side_vote');
 
-				let headHash: string | null = null;
-				if (head !== null) {
-					headHash = head.hash.toString();
-				}
+		const block = new Block(hexToArrayBuffer(request.block));
+		const prior = request.prior ?? [];
+		const priorVotes = prior.map(function(hex) {
+			return(new Vote(hexToArrayBuffer(hex)));
+		});
 
-				return({ event: 'head', head: headHash, balance: balance.toString() });
-			}
+		/* A vote with no priors is temporary (side ledger); a vote
+		 * carrying the temporary votes escalates to permanent. */
+		let vote;
+		if (priorVotes.length > 0) {
+			vote = await nodes[index].ledger.vote([block], priorVotes);
+		} else {
+			vote = await nodes[index].ledger.vote([block]);
+		}
 
-			case 'head_all': {
-				const account = Account.fromPublicKeyString(request.account);
-				const heads: (string | null)[] = [];
+		return({
+			event: 'side_voted',
+			vote: Buffer.from(new Uint8Array(vote.toBytes())).toString('hex').toUpperCase()
+		});
+	}
+
+	async function handleLedgerAdd(request: LedgerAddRequest): Promise<{ [key: string]: unknown }> {
+		const index = request.node;
+		requireLiveNode(index, 'ledger_add');
+
+		const block = new Block(hexToArrayBuffer(request.block));
+		const votes = request.votes.map(function(hex) {
+			return(new Vote(hexToArrayBuffer(hex)));
+		});
+
+		const staple = VoteStaple.fromVotesAndBlocks(votes, [block]);
+		const result = await nodes[index].ledger.add(staple);
+
+		return({ event: 'ledger_added', blocksHash: result[0].blocksHash.toString() });
+	}
+
+	async function handleTransmit(request: TransmitRequest): Promise<{ [key: string]: unknown }> {
+		const block = new Block(hexToArrayBuffer(request.bytes));
+
+		const result = await trustedClient.client.transmit([block]);
+		return({
+			event: 'transmitted',
+			blocks: stapleBlocks(result),
+			stapleBytes: stapleBytes(result),
+			hash: block.hash.toString()
+		});
+	}
+
+	async function handleTransmitStaple(request: TransmitStapleRequest): Promise<{ [key: string]: unknown }> {
+		const staple = new VoteStaple(hexToArrayBuffer(request.bytes));
+
+		const result = await trustedClient.client.transmitStaple(staple);
+		const voteHashes = staple.votes.map(function(vote) {
+			return(vote.hash.toString());
+		});
+		const blockHashes = staple.blocks.map(function(block) {
+			return(block.hash.toString());
+		});
+		return({
+			event: 'staple_transmitted',
+			stapleHash: staple.hash.toString(),
+			blockHashes: blockHashes,
+			voteHashes: voteHashes,
+			blocks: stapleBlocks(result),
+			publish: result.publish
+		});
+	}
+
+	async function handleVerifyStaple(request: VerifyStapleRequest): Promise<{ [key: string]: unknown }> {
+		/* Pure parse + hash; intentionally never calls transmitStaple
+		 * to avoid the "Block Already Exists / Internal error" path
+		 * when callers reuse blocks across scenarios. */
+		const staple = new VoteStaple(hexToArrayBuffer(request.bytes));
+		const voteHashes = staple.votes.map(function(vote) {
+			return(vote.hash.toString());
+		});
+		const blockHashes = staple.blocks.map(function(block) {
+			return(block.hash.toString());
+		});
+		return({
+			event: 'staple_verified',
+			stapleHash: staple.hash.toString(),
+			blockHashes: blockHashes,
+			voteHashes: voteHashes
+		});
+	}
+
+	async function handleBuildStaple(request: BuildStapleRequest): Promise<{ [key: string]: unknown }> {
+		const block = new Block(hexToArrayBuffer(request.bytes));
+
+		const validFrom = new Date(Date.now() - (60 * 1000));
+		const validTo = new Date(Date.now() + (60 * 60 * 1000));
+
+		/* Two votes from the local rep and trusted accounts ensure the
+		 * resulting staple has the same shape transmit() would produce. */
+		const repBuilder = new Vote.Builder(repKey);
+		repBuilder.addBlocks([block.hash]);
+		const repVote = await repBuilder.seal(1n, validTo, validFrom);
+
+		const trustedBuilder = new Vote.Builder(trustedKey);
+		trustedBuilder.addBlocks([block.hash]);
+		const trustedVote = await trustedBuilder.seal(1n, validTo, validFrom);
+
+		const staple = VoteStaple.fromVotesAndBlocks([repVote, trustedVote], [block]);
+		const stapleBuffer = Buffer.from(staple.toBytes());
+		return({
+			event: 'staple_built',
+			bytes: stapleBuffer.toString('hex').toUpperCase(),
+			stapleHash: staple.hash.toString()
+		});
+	}
+
+	function handleShutdown(): { [key: string]: unknown } {
+		setImmediate(async function() {
+			try {
 				for (let index = 0; index < clients.length; index++) {
 					if (stopped.has(index)) {
 						continue;
 					}
 
-					const head = await clients[index].client.getHeadBlock(account);
-					if (head === null) {
-						heads.push(null);
-					} else {
-						heads.push(head.hash.toString());
-					}
-				}
-
-				return({ event: 'head_all', heads: heads });
-			}
-
-			case 'stop_rep': {
-				const index = request.index;
-				if (!Number.isInteger(index) || index < 0 || index >= nodes.length) {
-					throw(new Error(`stop_rep index out of range: ${String(index)}`));
-				}
-
-				stopped.add(index);
-				try {
-					await clients[index].client.destroy();
-					await clients[index].destroy();
-				} catch {
-					/*
-					 * The client may already be torn down; stopping the node is what matters.
-					 */
-				}
-
-				await nodes[index].stop();
-
-				return({ event: 'rep_stopped', index: index });
-			}
-
-			case 'side_vote': {
-				const index = request.node;
-				if (!Number.isInteger(index) || index < 0 || index >= nodes.length || stopped.has(index)) {
-					throw(new Error(`side_vote node out of range: ${String(index)}`));
-				}
-
-				const block = new Block(hexToArrayBuffer(request.block));
-				const prior = request.prior ?? [];
-				const priorVotes = prior.map(function(hex) {
-					return(new Vote(hexToArrayBuffer(hex)));
-				});
-
-				/* A vote with no priors is temporary (side ledger); a vote
-				 * carrying the temporary votes escalates to permanent. */
-				let vote;
-				if (priorVotes.length > 0) {
-					vote = await nodes[index].ledger.vote([block], priorVotes);
-				} else {
-					vote = await nodes[index].ledger.vote([block]);
-				}
-
-				return({
-					event: 'side_voted',
-					vote: Buffer.from(new Uint8Array(vote.toBytes())).toString('hex').toUpperCase()
-				});
-			}
-
-			case 'ledger_add': {
-				const index = request.node;
-				if (!Number.isInteger(index) || index < 0 || index >= nodes.length || stopped.has(index)) {
-					throw(new Error(`ledger_add node out of range: ${String(index)}`));
-				}
-
-				const block = new Block(hexToArrayBuffer(request.block));
-				const votes = request.votes.map(function(hex) {
-					return(new Vote(hexToArrayBuffer(hex)));
-				});
-
-				const staple = VoteStaple.fromVotesAndBlocks(votes, [block]);
-				const result = await nodes[index].ledger.add(staple);
-
-				return({ event: 'ledger_added', blocksHash: result[0].blocksHash.toString() });
-			}
-
-			case 'transmit': {
-				const block = new Block(hexToArrayBuffer(request.bytes));
-
-				const result = await trustedClient.client.transmit([block]);
-				return({
-					event: 'transmitted',
-					blocks: stapleBlocks(result),
-					stapleBytes: stapleBytes(result),
-					hash: block.hash.toString()
-				});
-			}
-
-			case 'transmit_staple': {
-				const staple = new VoteStaple(hexToArrayBuffer(request.bytes));
-
-				const result = await trustedClient.client.transmitStaple(staple);
-				const voteHashes = staple.votes.map(function(vote) {
-					return(vote.hash.toString());
-				});
-				const blockHashes = staple.blocks.map(function(block) {
-					return(block.hash.toString());
-				});
-				return({
-					event: 'staple_transmitted',
-					stapleHash: staple.hash.toString(),
-					blockHashes: blockHashes,
-					voteHashes: voteHashes,
-					blocks: stapleBlocks(result),
-					publish: result.publish
-				});
-			}
-
-			case 'verify_staple': {
-				/* Pure parse + hash; intentionally never calls transmitStaple
-				 * to avoid the "Block Already Exists / Internal error" path
-				 * when callers reuse blocks across scenarios. */
-				const staple = new VoteStaple(hexToArrayBuffer(request.bytes));
-				const voteHashes = staple.votes.map(function(vote) {
-					return(vote.hash.toString());
-				});
-				const blockHashes = staple.blocks.map(function(block) {
-					return(block.hash.toString());
-				});
-				return({
-					event: 'staple_verified',
-					stapleHash: staple.hash.toString(),
-					blockHashes: blockHashes,
-					voteHashes: voteHashes
-				});
-			}
-
-			case 'build_staple': {
-				const block = new Block(hexToArrayBuffer(request.bytes));
-
-				const validFrom = new Date(Date.now() - (60 * 1000));
-				const validTo = new Date(Date.now() + (60 * 60 * 1000));
-
-				/* Two votes from the local rep and trusted accounts ensure the
-				 * resulting staple has the same shape transmit() would produce. */
-				const repBuilder = new Vote.Builder(repKey);
-				repBuilder.addBlocks([block.hash]);
-				const repVote = await repBuilder.seal(1n, validTo, validFrom);
-
-				const trustedBuilder = new Vote.Builder(trustedKey);
-				trustedBuilder.addBlocks([block.hash]);
-				const trustedVote = await trustedBuilder.seal(1n, validTo, validFrom);
-
-				const staple = VoteStaple.fromVotesAndBlocks([repVote, trustedVote], [block]);
-				const stapleBuffer = Buffer.from(staple.toBytes());
-				return({
-					event: 'staple_built',
-					bytes: stapleBuffer.toString('hex').toUpperCase(),
-					stapleHash: staple.hash.toString()
-				});
-			}
-
-			case 'shutdown': {
-				setImmediate(async function() {
 					try {
-						for (let index = 0; index < clients.length; index++) {
-							if (stopped.has(index)) {
-								continue;
-							}
-
-							try {
-								await clients[index].client.destroy();
-								await clients[index].destroy();
-								await nodes[index].stop();
-							} catch {
-								/*
-								 * Best-effort teardown; the process exit below reaps everything.
-								 */
-							}
-						}
-					} finally {
-						process.exit(0);
+						await clients[index].client.destroy();
+						await clients[index].destroy();
+						await nodes[index].stop();
+					} catch {
+						/*
+						 * Best-effort teardown; the process exit below reaps everything.
+						 */
 					}
-				});
-				return({ event: 'shutdown' });
+				}
+			} finally {
+				process.exit(0);
 			}
+		});
+		return({ event: 'shutdown' });
+	}
 
-			default: {
-				throw(new Error(`Unknown command: ${JSON.stringify(request)}`));
-			}
+	function handleRequest(request: HarnessRequest): Promise<{ [key: string]: unknown }> {
+		switch (request.cmd) {
+			case 'init_supply': return(handleInitSupply(request));
+			case 'send': return(handleSend(request));
+			case 'build_send': return(handleBuildSend(request));
+			case 'set_info': return(handleSetInfo(request));
+			case 'manage_cert_add': return(handleManageCertAdd());
+			case 'head': return(handleHead(request));
+			case 'head_all': return(handleHeadAll(request));
+			case 'stop_rep': return(handleStopRep(request));
+			case 'side_vote': return(handleSideVote(request));
+			case 'ledger_add': return(handleLedgerAdd(request));
+			case 'transmit': return(handleTransmit(request));
+			case 'transmit_staple': return(handleTransmitStaple(request));
+			case 'verify_staple': return(handleVerifyStaple(request));
+			case 'build_staple': return(handleBuildStaple(request));
+			case 'shutdown': return(Promise.resolve(handleShutdown()));
+			default: throw(new Error(`Unknown command: ${JSON.stringify(request)}`));
 		}
 	}
 
