@@ -1,21 +1,18 @@
 [package]
-name = "keetanetwork-block"
+name = "keetanetwork-vote"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Block structure and operations for Keetanetwork blockchain"
+description = "Vote and VoteStaple model, codec, and signing for Keetanetwork blockchain"
 
 [features]
-# Backend selection mirrors the asn1 crate; the public block API is
-# backend-agnostic, so the choice only affects the on-transport codec.
-default = ["std", "rasn"]
+default = ["std", "der", "rasn"]
 std = [
 	"alloc",
 	"chrono/std",
-	"chrono/clock",
 	"hex/std",
 	"snafu/std",
 	"num-bigint/std",
@@ -25,17 +22,20 @@ std = [
 	"keetanetwork-asn1/std",
 	"keetanetwork-account/std",
 	"keetanetwork-crypto/std",
+	"keetanetwork-block/std",
 ]
 alloc = [
 	"chrono/alloc",
 	"keetanetwork-error/alloc",
 	"keetanetwork-asn1/alloc",
 	"keetanetwork-account/alloc",
+	"keetanetwork-block/alloc",
 ]
-der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der"]
-rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn"]
-x509 = ["dep:keetanetwork-x509"]
-testing = []
+der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der", "keetanetwork-block/der"]
+rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn", "keetanetwork-block/rasn"]
+# Deterministic issuer / validity factories for downstream test suites.
+# Requires `std` because the helpers reach for the wall clock.
+testing = ["std", "keetanetwork-block/testing", "keetanetwork-asn1/testing"]
 
 [dependencies]
 keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
@@ -43,7 +43,7 @@ keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", defaul
 keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
 keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
 keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
-keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", optional = true }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false }
 snafu = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
@@ -56,20 +56,32 @@ default-features = false
 version = "0.2.19"
 default-features = false
 
+[dependencies.miniz_oxide]
+version = "0.8"
+default-features = false
+features = ["with-alloc"]
+
 [dev-dependencies]
+chrono = { workspace = true }
 hex-literal = { workspace = true }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", features = ["testing"] }
 keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = ["node-harness"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 
 [lib]
-name = "keetanetwork_block"
+name = "keetanetwork_vote"
 path = "src/lib.rs"
 
 [[test]]
-name = "e2e"
+name = "typescript_compat"
 required-features = ["testing"]
 
 [[test]]
-name = "typescript_compat"
+name = "e2e_node"
+required-features = ["testing"]
+
+[[test]]
+name = "wire_corruption"
 required-features = ["testing"]

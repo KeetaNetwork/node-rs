@@ -12,7 +12,11 @@ use der::{DecodeValue, EncodeValue, Header, Length, Reader, Writer};
 use crate::error::Asn1Error;
 
 // Re-export generated types
-pub use crate::generated::{AlgorithmIdentifier, SubjectPublicKeyInfo};
+pub use crate::generated::{
+	AlgorithmIdentifier, AttributeTypeAndValue, DistinguishedName, Extension, Extensions, FeeEntries, FeeEntry,
+	FeesMultiple, FeesMultipleInner, FeesSingle, HashData, HashDataInner, RelativeDistinguishedName,
+	SubjectPublicKeyInfo, TbsCertificate, Validity, VoteCertificate, VoteStapleBundle,
+};
 
 // Re-export rasn types for convenience
 pub use rasn::prelude::*;
@@ -132,6 +136,13 @@ macro_rules! impl_try_from_rasn_decode {
 
 impl_try_from_rasn_decode!(AlgorithmIdentifier);
 impl_try_from_rasn_decode!(SubjectPublicKeyInfo);
+impl_try_from_rasn_decode!(VoteCertificate);
+impl_try_from_rasn_decode!(TbsCertificate);
+impl_try_from_rasn_decode!(VoteStapleBundle);
+impl_try_from_rasn_decode!(HashData);
+impl_try_from_rasn_decode!(FeesSingle);
+impl_try_from_rasn_decode!(FeesMultiple);
+impl_try_from_rasn_decode!(Extension);
 
 /// Macro to implement TryFrom for DER encoding of ASN.1 types using rasn
 macro_rules! impl_try_from_rasn_encode {
@@ -148,6 +159,13 @@ macro_rules! impl_try_from_rasn_encode {
 
 impl_try_from_rasn_encode!(AlgorithmIdentifier);
 impl_try_from_rasn_encode!(SubjectPublicKeyInfo);
+impl_try_from_rasn_encode!(VoteCertificate);
+impl_try_from_rasn_encode!(TbsCertificate);
+impl_try_from_rasn_encode!(VoteStapleBundle);
+impl_try_from_rasn_encode!(HashData);
+impl_try_from_rasn_encode!(FeesSingle);
+impl_try_from_rasn_encode!(FeesMultiple);
+impl_try_from_rasn_encode!(Extension);
 
 // Implement der traits for AlgorithmIdentifier to make it compatible with x509 certificate structures
 impl<'a> DecodeValue<'a> for AlgorithmIdentifier {
@@ -373,7 +391,6 @@ mod tests {
 			// Create a dummy Any parameter (NULL in this case)
 			let null_param = create_null_any();
 			let alg_id = AlgorithmIdentifier::new_with_params(oid, null_param.clone())?;
-
 			assert_eq!(alg_id.algorithm.to_string(), oid);
 			assert!(alg_id.parameters.is_some());
 			assert_eq!(alg_id.parameters, Some(null_param));
@@ -430,11 +447,143 @@ mod tests {
 		let oid_str = oids::ED25519;
 		let oid1 = ObjectIdentifier::from_str(oid_str)?;
 		let oid_string = oid_str.to_string();
+
 		let oid2 = ObjectIdentifier::from_str(&oid_string)?;
 		let oid3 = ObjectIdentifier::from_str(&oid_string)?;
 		assert_eq!(oid1, oid2);
 		assert_eq!(oid2, oid3);
 		assert_eq!(oid1.to_string(), oid_str);
+		Ok(())
+	}
+
+	#[test]
+	fn test_rasn_generalized_time_wire_format() {
+		use chrono::{DateTime, Utc};
+		let cases = [
+			("2025-01-02T03:04:05Z", "180f32303235303130323033303430355a"),
+			("2025-01-02T03:04:05.678Z", "181332303235303130323033303430352e3637385a"),
+			("2025-01-02T03:04:05.500Z", "181332303235303130323033303430352e3530305a"),
+		];
+		for (input, expected_hex) in cases {
+			let dt: DateTime<Utc> = input.parse().expect("test datetime parses");
+			let gt: rasn::types::GeneralizedTime = dt.fixed_offset();
+			let der = rasn::der::encode(&gt).expect("rasn encodes GeneralizedTime");
+			let actual_hex = hex::encode(&der);
+			println!("{input}: rasn={actual_hex}, expected={expected_hex}");
+		}
+	}
+
+	#[test]
+	fn test_vote_staple_bundle_transport_format() -> Result<(), Asn1Error> {
+		let bundle =
+			VoteStapleBundle::new(vec![OctetString::from(vec![1u8, 2, 3])], vec![OctetString::from(vec![4u8, 5, 6])]);
+
+		let der = rasn::der::encode(&bundle)?;
+		let expected =
+			vec![0x30, 0x0e, 0x30, 0x05, 0x04, 0x03, 0x01, 0x02, 0x03, 0x30, 0x05, 0x04, 0x03, 0x04, 0x05, 0x06];
+		assert_eq!(der, expected, "VoteStapleBundle transport bytes must match hand-rolled DER output");
+
+		let round_trip = rasn::der::decode::<VoteStapleBundle>(&der)?;
+		assert_eq!(round_trip, bundle, "VoteStapleBundle round-trip");
+		Ok(())
+	}
+
+	#[test]
+	fn test_extension_critical_true_encodes_boolean() -> Result<(), Asn1Error> {
+		let oid = ObjectIdentifier::from_str("2.5.29.19")?;
+		let ext = Extension::new(oid, true, OctetString::from(vec![0xAA]));
+
+		let der = rasn::der::encode(&ext)?;
+		assert!(der.windows(3).any(|w| w == [0x01, 0x01, 0xFF]), "BOOLEAN TRUE must be encoded");
+		Ok(())
+	}
+
+	#[test]
+	fn test_extension_critical_false_omits_boolean() -> Result<(), Asn1Error> {
+		let oid = ObjectIdentifier::from_str("2.5.29.19")?;
+		let ext = Extension::new(oid, false, OctetString::from(vec![0xAA]));
+
+		let der = rasn::der::encode(&ext)?;
+		assert!(!der.windows(3).any(|w| w == [0x01, 0x01, 0x00]), "BOOLEAN FALSE must be omitted (DEFAULT FALSE)");
+		Ok(())
+	}
+
+	#[test]
+	fn test_hash_data_outer_explicit_zero() -> Result<(), Asn1Error> {
+		let oid = ObjectIdentifier::from_str("2.16.840.1.101.3.4.2.8")?;
+		let inner = HashDataInner::new(oid, vec![OctetString::from(vec![0u8; 32])]);
+		let hash_data = HashData(inner);
+
+		let der = rasn::der::encode(&hash_data)?;
+		assert_eq!(der[0], 0xA0, "HashData outer tag must be [0] EXPLICIT constructed (0xA0)");
+		assert_eq!(der[2], 0x30, "HashData inner must be SEQUENCE (0x30)");
+		Ok(())
+	}
+
+	#[test]
+	fn test_fees_single_wire_shape() -> Result<(), Asn1Error> {
+		let entry = FeeEntry::new(false, Integer::from(100), None, None);
+		let single = FeesSingle(entry);
+
+		let der = rasn::der::encode(&single)?;
+		assert_eq!(der[0], 0xA0, "FeesSingle outer tag must be [0] EXPLICIT constructed (0xA0)");
+		assert_eq!(der[2], 0x30, "FeesSingle inner must be SEQUENCE (0x30)");
+		Ok(())
+	}
+
+	#[test]
+	fn test_fees_multiple_wire_shape() -> Result<(), Asn1Error> {
+		let entry = FeeEntry::new(false, Integer::from(100), None, None);
+		let entries = FeeEntries(vec![entry]);
+		let inner = FeesMultipleInner(entries);
+		let multiple = FeesMultiple(inner);
+
+		let der = rasn::der::encode(&multiple)?;
+		assert_eq!(der[0], 0xA0, "FeesMultiple outer tag must be [0] EXPLICIT constructed (0xA0)");
+		assert_eq!(der[2], 0xA0, "FeesMultiple inner must be [0] EXPLICIT (0xA0)");
+		assert_eq!(der[4], 0x30, "FeesMultiple SEQUENCE OF must be SEQUENCE (0x30)");
+		Ok(())
+	}
+
+	#[test]
+	fn test_fee_entry_pay_to_implicit_primitive_tag() -> Result<(), Asn1Error> {
+		let entry = FeeEntry::new(false, Integer::from(0), Some(OctetString::from(vec![0x01, 0x02, 0x03])), None);
+		let der = rasn::der::encode(&entry)?;
+		assert!(der.contains(&0x80), "payTo IMPLICIT [0] OCTET STRING must use primitive tag 0x80");
+		assert!(
+			!der.windows(2).any(|w| w[0] == 0x80 && w[1] == 0x04),
+			"payTo must not include inner OCTET STRING tag 0x04"
+		);
+		Ok(())
+	}
+
+	#[test]
+	fn test_tbs_version_explicit_zero() -> Result<(), Asn1Error> {
+		let alg = AlgorithmIdentifier::new(oids::ED25519)?;
+		let spki = SubjectPublicKeyInfo::new(alg.clone(), [0u8; 32])?;
+		let now = chrono::Utc::now().fixed_offset();
+		let tbs = TbsCertificate::new(
+			Integer::from(2),
+			Integer::from(1),
+			alg.clone(),
+			DistinguishedName(vec![]),
+			Validity::new(now.into(), now.into()),
+			DistinguishedName(vec![]),
+			spki,
+			Extensions(vec![]),
+		);
+
+		let der = rasn::der::encode(&tbs)?;
+		assert_eq!(der[0], 0x30, "TbsCertificate outer must be SEQUENCE");
+
+		let length_byte_count = if der[1] >= 0x80 {
+			usize::from(der[1] & 0x7f)
+		} else {
+			0
+		};
+
+		let inner_start = 2 + length_byte_count;
+		assert_eq!(der[inner_start], 0xA0, "version field must be [0] EXPLICIT (0xA0)");
 		Ok(())
 	}
 

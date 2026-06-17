@@ -8,6 +8,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 pub mod account;
+pub mod cert;
 pub mod constants;
 #[doc(hidden)]
 pub mod doc_utils;
@@ -19,6 +20,7 @@ pub use account::{
 	Account, Accountable, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyMULTISIG, KeyNETWORK,
 	KeyPair, KeyPairType, KeySTORAGE, KeyTOKEN, Keyable, PublicKeyStorage,
 };
+pub use cert::{CertSigner, CertVerifier};
 pub use error::AccountError;
 
 use keetanetwork_crypto::prelude::SecretBox;

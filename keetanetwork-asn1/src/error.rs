@@ -5,6 +5,9 @@ use alloc::string::String;
 
 use snafu::Snafu;
 
+#[cfg(all(feature = "chrono", any(feature = "rasn", feature = "der")))]
+use crate::vote::types::{VoteDecodeSlot, VoteStapleDecodeSlot};
+
 /// Error type for ASN.1 operations
 #[derive(Debug, Clone, PartialEq, Eq, Snafu)]
 pub enum Asn1Error {
@@ -27,6 +30,19 @@ pub enum Asn1Error {
 
 	#[snafu(display("Invalid block version"))]
 	InvalidBlockVersion,
+
+	#[snafu(display("Invalid vote version"))]
+	InvalidVoteVersion,
+
+	/// Vote certificate decode failed at a specific structural slot.
+	#[cfg(all(feature = "chrono", any(feature = "rasn", feature = "der")))]
+	#[snafu(display("Vote decode error at {slot:?}"))]
+	VoteDecode { slot: VoteDecodeSlot },
+
+	/// Vote staple decode failed at a specific structural slot.
+	#[cfg(all(feature = "chrono", any(feature = "rasn", feature = "der")))]
+	#[snafu(display("Vote staple decode error at {slot:?}"))]
+	VoteStapleDecode { slot: VoteStapleDecodeSlot },
 }
 
 // Use error macros to implement From conversions

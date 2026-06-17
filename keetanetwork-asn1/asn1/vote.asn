@@ -1,0 +1,89 @@
+Vote DEFINITIONS ::= BEGIN
+
+    IMPORTS AlgorithmIdentifier FROM AlgorithmIdentifierDefinitions
+            SubjectPublicKeyInfo FROM SubjectPublicKeyInfoDefinitions;
+
+    -- Vote certificate validity window.
+    Validity ::= SEQUENCE {
+        notBefore GeneralizedTime,
+        notAfter  GeneralizedTime
+    }
+
+    -- A single attribute (type/value pair) inside an RDN.
+    AttributeTypeAndValue ::= SEQUENCE {
+        type  OBJECT IDENTIFIER,
+        value UTF8String
+    }
+
+    -- One RDN in a distinguished name.
+    RelativeDistinguishedName ::= SET OF AttributeTypeAndValue
+
+    -- X.509-shaped Name (RFC 5280, restricted to UTF8String values).
+    DistinguishedName ::= SEQUENCE OF RelativeDistinguishedName
+
+    -- An X.509 v3 certificate Extension TLV.
+    Extension ::= SEQUENCE {
+        extnId    OBJECT IDENTIFIER,
+        critical  BOOLEAN DEFAULT FALSE,
+        extnValue OCTET STRING
+    }
+
+    Extensions ::= SEQUENCE OF Extension
+
+    -- Vote certificate to-be-signed body.
+    TbsCertificate ::= SEQUENCE {
+        version              [0] EXPLICIT INTEGER,
+        serialNumber         INTEGER,
+        signature            AlgorithmIdentifier,
+        issuer               DistinguishedName,
+        validity             Validity,
+        subject              DistinguishedName,
+        subjectPublicKeyInfo SubjectPublicKeyInfo,
+        extensions           [3] EXPLICIT Extensions
+    }
+
+    -- Outer vote certificate (the wire form of a Vote).
+    VoteCertificate ::= SEQUENCE {
+        tbsCertificate     TbsCertificate,
+        signatureAlgorithm AlgorithmIdentifier,
+        signatureValue     BIT STRING
+    }
+
+    -- Decoded contents of the hashData extension's extnValue OCTET STRING.
+    HashDataInner ::= SEQUENCE {
+        algorithm OBJECT IDENTIFIER,
+        hashes    SEQUENCE OF OCTET STRING
+    }
+
+    HashData ::= [0] EXPLICIT HashDataInner
+
+    -- One entry in a fees extension.
+    FeeEntry ::= SEQUENCE {
+        quote   BOOLEAN,
+        amount  INTEGER,
+        payTo  [0] IMPLICIT OCTET STRING OPTIONAL,
+        token  [1] IMPLICIT OCTET STRING OPTIONAL
+    }
+
+    -- Decoded contents of the fees extension's extnValue OCTET STRING when
+    -- exactly one fee entry is present: `[0]` EXPLICIT FeeEntry.
+    FeesSingle ::= [0] EXPLICIT FeeEntry
+
+    FeeEntries ::= SEQUENCE OF FeeEntry
+
+    -- Inner `[0]` EXPLICIT wrapper around the SEQUENCE OF FeeEntry.
+    FeesMultipleInner ::= [0] EXPLICIT FeeEntries
+
+    -- Decoded contents of the fees extension's extnValue OCTET STRING when
+    -- two or more fee entries are present: `[0]` EXPLICIT `[0]` EXPLICIT
+    -- SEQUENCE OF FeeEntry.
+    FeesMultiple ::= [0] EXPLICIT FeesMultipleInner
+
+    -- Uncompressed contents of a VoteStaple (deflated to produce the
+    -- on-the-wire artifact).
+    VoteStapleBundle ::= SEQUENCE {
+        blocks SEQUENCE OF OCTET STRING,
+        votes  SEQUENCE OF OCTET STRING
+    }
+
+END

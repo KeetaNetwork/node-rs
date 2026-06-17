@@ -35,17 +35,18 @@ fn main() {
 		panic!("Failed to compile ASN.1 files: {e}");
 	}
 
-	// Substitute the canonical-DER `GeneralizedTime` type in block.rs with
-	// `Asn1Time`, which preserves trailing zeros to match the reference
-	// TypeScript transport format.
-	rewrite_block_generalized_time(generated_dir_str);
+	// Substitute the canonical-DER `GeneralizedTime` type in block.rs and
+	// vote.rs with `Asn1Time`, which preserves trailing zeros to match
+	// the reference TypeScript transport format.
+	rewrite_generalized_time(generated_dir_str, "block.rs");
+	rewrite_generalized_time(generated_dir_str, "vote.rs");
 
 	// Generate From implementations for wrapper types
 	generate_from_implementations(generated_dir_str);
 }
 
-fn rewrite_block_generalized_time(generated_dir: &str) {
-	let path = Path::new(generated_dir).join("block.rs");
+fn rewrite_generalized_time(generated_dir: &str, file_name: &str) {
+	let path = Path::new(generated_dir).join(file_name);
 	let Ok(original) = fs::read_to_string(&path) else {
 		return;
 	};
@@ -53,7 +54,7 @@ fn rewrite_block_generalized_time(generated_dir: &str) {
 	let imports_replacement = "use rasn::prelude::*;\nuse crate::Asn1Time as GeneralizedTime;";
 	let rewritten = original.replace("use rasn::prelude::*;", imports_replacement);
 	if rewritten != original {
-		fs::write(&path, rewritten).expect("post-process block.rs must succeed");
+		fs::write(&path, rewritten).expect("post-process generated module must succeed");
 	}
 }
 
@@ -444,10 +445,7 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push_str("    // Extension OID constants\n");
 		for (name, ext_info) in extensions {
 			if let Some(oid_array) = ext_info["oid"].as_array() {
-				let const_name = match name.as_str() {
-					"kycAttributes" => "KYC_ATTRIBUTES",
-					_ => &name.to_uppercase(),
-				};
+				let const_name = camel_to_snake_upper(name);
 				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
 				generated_code.push_str(&format!(
 					"    pub const {const_name}_EXTENSION: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"

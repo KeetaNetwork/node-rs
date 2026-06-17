@@ -69,7 +69,11 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use chrono::{DateTime, Duration, Utc};
 use der::asn1::ObjectIdentifier;
 use der::Encode;
+// Needed only when `asn1::BitString` resolves to the rasn type; under
+// feature unification `der` may win and make these methods inherent, so
+// the import can appear unused.
 #[cfg(all(feature = "rasn", not(feature = "der")))]
+#[allow(unused_imports)]
 use keetanetwork_asn1::BitStringExt;
 use keetanetwork_asn1::SubjectPublicKeyInfo;
 use keetanetwork_crypto::prelude::{Algorithm, CryptoSignerWithOptions, SignatureEncoding, SigningOptions};
@@ -2409,7 +2413,6 @@ impl CertificateBuilder {
 
 #[cfg(test)]
 mod tests {
-	#[cfg(feature = "der")]
 	use core::str::FromStr;
 
 	use chrono::Utc;
