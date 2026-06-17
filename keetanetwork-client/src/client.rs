@@ -166,6 +166,29 @@ impl Drop for Inner {
 	}
 }
 
+/// Optional inputs to [`KeetaClient::transmit`].
+///
+/// Constructed with [`Default`] and overridden field-by-field:
+///
+/// ```
+/// use keetanetwork_client::TransmitOptions;
+///
+/// let options = TransmitOptions::default();
+/// assert!(options.fee_signer.is_none());
+/// assert!(options.quotes.is_empty());
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct TransmitOptions {
+	/// Account that originates and signs a [`BlockPurpose::Fee`] block when the
+	/// representatives' votes require a fee. Absent, a required fee fails with
+	/// [`ClientError::FeeRequired`].
+	pub fee_signer: Option<AccountRef>,
+	/// Pre-fetched vote quotes to attach to the temporary round. Each quote is
+	/// routed to the representative that issued it; quotes for unknown reps are
+	/// ignored.
+	pub quotes: Vec<VoteQuote>,
+}
+
 /// Async, durable client for a KeetaNet network.
 ///
 /// Talks to a set of representatives: reads pick one rep (power-of-two
@@ -531,7 +554,7 @@ impl KeetaClient {
 	/// Fans out to every representative and returns the first vote received;
 	/// use the two-round [`transmit`](Self::transmit) for full quorum voting.
 	pub async fn request_vote(&self, blocks: &[Block]) -> Result<Vote, ClientError> {
-		let votes = self.request_votes(blocks, &[]).await?;
+		let votes = self.request_votes(blocks, &[], &[]).await?;
 		votes.into_iter().next().ok_or(ClientError::MissingVote)
 	}
 
@@ -539,7 +562,12 @@ impl KeetaClient {
 	/// attaching `prior_votes` so reps escalate temporary votes into
 	/// permanent ones (the second voting round). Returns every successful
 	/// vote; errors only when no representative produced one.
-	async fn request_votes(&self, blocks: &[Block], prior_votes: &[Vote]) -> Result<Vec<Vote>, ClientError> {
+	async fn request_votes(
+		&self,
+		blocks: &[Block],
+		prior_votes: &[Vote],
+		quotes: &[VoteQuote],
+	) -> Result<Vec<Vote>, ClientError> {
 		self.ensure_refresh();
 		// In the permanent round, contact only the reps that issued a prior
 		// (temporary) vote: the node refuses a permanent vote from a rep that
@@ -559,12 +587,14 @@ impl KeetaClient {
 		let total_weight: BigInt = picks.iter().map(|pick| pick.weight.clone()).sum();
 		let blocks_encoded = encode_blocks(blocks);
 		let prior_encoded = encode_votes(prior_votes);
+		let quotes_by_issuer = encode_quotes_by_issuer(quotes);
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
 			// Every contacted rep receives the full prior-vote set, including
-			// its own temporary vote, which the node requires to escalate.
-			let body =
-				types::CreateVoteBody { blocks: blocks_encoded.clone(), votes: prior_encoded.clone(), quote: None };
+			// its own temporary vote, which the node requires to escalate, plus
+			// its own quote when the caller supplied one.
+			let quote = quotes_by_issuer.get(&pick.key).cloned();
+			let body = types::CreateVoteBody { blocks: blocks_encoded.clone(), votes: prior_encoded.clone(), quote };
 			requests.push(async move { (pick.key, pick.weight, pick.transport.create_vote(&body).await) });
 		}
 
@@ -664,15 +694,15 @@ impl KeetaClient {
 		Ok(quotes)
 	}
 
-	/// Request permanent votes for `blocks`, assemble a canonical staple at
-	/// `moment`, and publish it.
-	pub async fn transmit(
-		&self,
-		blocks: &[Block],
-		config: ValidationConfig,
-		moment: BlockTime,
-	) -> Result<bool, ClientError> {
-		self.transmit_with_optional_fee(blocks, None, config, moment)
+	/// Request permanent votes for `blocks`, assemble a canonical staple, and
+	/// publish it.
+	///
+	/// The staple is validated as of the transmit moment with the default
+	/// [`ValidationConfig`]; the votes are freshly minted in this call, so
+	/// surfacing a moment to the caller would be both unknowable in advance and
+	/// inert on the staple bytes.
+	pub async fn transmit(&self, blocks: &[Block], options: TransmitOptions) -> Result<bool, ClientError> {
+		self.transmit_with_optional_fee(blocks, options.fee_signer.as_ref(), &options.quotes)
 			.await
 	}
 
@@ -689,16 +719,12 @@ impl KeetaClient {
 		&self,
 		blocks: &[Block],
 		fee_signer: Option<&AccountRef>,
-		config: ValidationConfig,
-		moment: BlockTime,
+		quotes: &[VoteQuote],
 	) -> Result<bool, ClientError> {
 		let mut attempt = 0u32;
 		let mut delay = 1u64;
 		loop {
-			match self
-				.transmit_round(blocks, fee_signer, config, moment)
-				.await
-			{
+			match self.transmit_round(blocks, fee_signer, quotes).await {
 				Ok(accepted) => return Ok(accepted),
 				Err(error) => {
 					let retryable = is_ledger_code(&error, "LEDGER_INSUFFICIENT_VOTING_WEIGHT");
@@ -715,15 +741,16 @@ impl KeetaClient {
 	}
 
 	/// One temporary-then-permanent voting round, building a fee block when
-	/// required, and publishing the assembled staple.
+	/// required, and publishing the assembled staple. Quotes attach only to the
+	/// temporary round, matching the reference flow.
 	async fn transmit_round(
 		&self,
 		blocks: &[Block],
 		fee_signer: Option<&AccountRef>,
-		config: ValidationConfig,
-		moment: BlockTime,
+		quotes: &[VoteQuote],
 	) -> Result<bool, ClientError> {
-		let temporary = self.request_votes(blocks, &[]).await?;
+		let moment = BlockTime::now();
+		let temporary = self.request_votes(blocks, &[], quotes).await?;
 
 		let mut all = blocks.to_vec();
 		if fees_required(&temporary) {
@@ -734,8 +761,9 @@ impl KeetaClient {
 			all.push(fee_block);
 		}
 
-		let permanent = self.request_votes(&all, &temporary).await?;
-		let staple = VoteStaple::try_new(all.iter().cloned(), permanent, config, moment).context(VoteSnafu)?;
+		let permanent = self.request_votes(&all, &temporary, &[]).await?;
+		let staple = VoteStaple::try_new(all.iter().cloned(), permanent, ValidationConfig::default(), moment)
+			.context(VoteSnafu)?;
 
 		self.transmit_staple(&staple).await
 	}
@@ -1120,12 +1148,7 @@ impl KeetaClient {
 		let mut attempt = 0u32;
 		loop {
 			let result = self
-				.transmit_with_optional_fee(
-					core::slice::from_ref(&block),
-					Some(signer),
-					ValidationConfig::default(),
-					BlockTime::now(),
-				)
+				.transmit_with_optional_fee(core::slice::from_ref(&block), Some(signer), &[])
 				.await;
 
 			match result {
@@ -1833,6 +1856,15 @@ fn encode_votes(votes: &[Vote]) -> Vec<String> {
 	votes
 		.iter()
 		.map(|vote| B64.encode(vote.as_bytes()))
+		.collect()
+}
+
+/// Index caller-supplied quotes by issuing-representative key, base64-encoded
+/// for the `createVote` body. Each rep receives only the quote it issued.
+fn encode_quotes_by_issuer(quotes: &[VoteQuote]) -> HashMap<String, String> {
+	quotes
+		.iter()
+		.map(|quote| (quote.as_vote().issuer().to_string(), B64.encode(quote.as_vote().as_bytes())))
 		.collect()
 }
 

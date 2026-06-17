@@ -82,13 +82,15 @@ pub mod generated {
 #[cfg(feature = "std")]
 pub use client::{
 	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, KeetaClient, LedgerChecksum,
-	Representative, TokenBalance, TransactionBuilder,
+	Representative, TokenBalance, TransactionBuilder, TransmitOptions,
 };
 pub use config::ClientConfig;
 #[cfg(feature = "std")]
 pub use error::{ApiError, ClientError};
 #[cfg(feature = "std")]
 pub use keetanetwork_error::{KeetaNetError, NodeErrorType};
+#[cfg(feature = "std")]
+pub use keetanetwork_vote::VoteQuote;
 #[cfg(feature = "std")]
 pub use rep::RepEndpoint;
 #[cfg(feature = "std")]

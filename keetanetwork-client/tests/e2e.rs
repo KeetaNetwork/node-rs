@@ -11,10 +11,11 @@ use std::sync::Arc;
 
 use keetanetwork_account::GenericAccount;
 use keetanetwork_block::testing::generate_ed25519_ref;
-use keetanetwork_block::{AccountRef, Amount, Block, BlockTime, Hashable};
-use keetanetwork_client::{ClientConfig, ClientError, KeetaClient, KeetaNetError, NodeErrorType, RepEndpoint};
+use keetanetwork_block::{AccountRef, Amount, Block, Hashable};
+use keetanetwork_client::{
+	ClientConfig, ClientError, KeetaClient, KeetaNetError, NodeErrorType, RepEndpoint, TransmitOptions,
+};
 use keetanetwork_utils::node_harness::E2eNode;
-use keetanetwork_vote::ValidationConfig;
 use num_bigint::BigInt;
 use serde_json::{json, Value};
 
@@ -184,7 +185,7 @@ async fn published() -> Published {
 
 	let accepted = fixture
 		.client
-		.transmit(&fixture.blocks, ValidationConfig::default(), BlockTime::now())
+		.transmit(&fixture.blocks, TransmitOptions::default())
 		.await
 		.expect("the transmit path must publish the staple");
 	assert!(accepted, "the node must accept the published staple");
@@ -479,9 +480,7 @@ async fn test_transmit_without_signer_when_fee_required_errors() -> Result<(), B
 		.build()
 		.await?;
 
-	let result = client
-		.transmit(&[block], ValidationConfig::default(), BlockTime::now())
-		.await;
+	let result = client.transmit(&[block], TransmitOptions::default()).await;
 	assert!(
 		matches!(result, Err(ClientError::FeeRequired)),
 		"a fee-required transmit without a signer must surface ClientError::FeeRequired, got {result:?}"
@@ -680,7 +679,7 @@ async fn test_multi_rep_quorum_publish_and_convergence() -> Result<(), Box<dyn c
 
 	let accepted = fixture
 		.client
-		.transmit(&[block], ValidationConfig::default(), BlockTime::now())
+		.transmit(&[block], TransmitOptions::default())
 		.await?;
 	assert!(accepted, "the cluster must accept the quorum-voted staple");
 	fixture.converge().await?;
@@ -762,7 +761,7 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 
 	let accepted = fixture
 		.client
-		.transmit(&[distribute, set_rep2, set_rep3], ValidationConfig::default(), BlockTime::now())
+		.transmit(&[distribute, set_rep2, set_rep3], TransmitOptions::default())
 		.await?;
 	assert!(accepted, "the cluster must accept the weight-distribution staple");
 	fixture.converge().await?;
@@ -794,7 +793,7 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 		.await?;
 	let accepted = fixture
 		.client
-		.transmit(&[send], ValidationConfig::default(), BlockTime::now())
+		.transmit(&[send], TransmitOptions::default())
 		.await?;
 	assert!(accepted, "the cluster must accept a staple that needed votes from more than one rep");
 	fixture.converge().await?;
@@ -826,7 +825,7 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 		.await?;
 	let accepted = fixture
 		.client
-		.transmit(&[degraded], ValidationConfig::default(), BlockTime::now())
+		.transmit(&[degraded], TransmitOptions::default())
 		.await?;
 	assert!(accepted, "the cluster must reach a degraded quorum with one rep down");
 	fixture.converge().await?;
