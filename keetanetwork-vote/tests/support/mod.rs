@@ -179,8 +179,7 @@ impl FeeEntry {
 	}
 }
 
-/// Either a single fee or a list of fees, mirroring the wire shape
-/// accepted by the harness mint script and the certificate itself.
+/// Either a single fee or a list of fees
 #[derive(Clone, Debug)]
 pub enum FeeSchedule {
 	Single(FeeEntry),

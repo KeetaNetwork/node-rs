@@ -1,0 +1,75 @@
+[package]
+name = "keetanetwork-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Async REST client for transmitting vote staples to a KeetaNet node"
+
+[features]
+# Gates the reference-backed e2e test binary; matches the block/vote
+# convention so a `--all-features` run picks it up after `make node-harness`.
+testing = []
+
+[dependencies]
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block" }
+keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote" }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
+
+progenitor-client = "0.14.0"
+futures-core = "0.3"
+futures = "0.3"
+bytes = "1.9"
+serde_urlencoded = "0.7"
+num-bigint = { version = "0.4.6", default-features = false }
+rand = "0.8"
+parking_lot = "0.12"
+
+[dependencies.tokio]
+version = "1"
+features = ["rt", "time"]
+
+[dependencies.reqwest]
+version = "0.13.4"
+default-features = false
+features = ["json", "query", "stream", "rustls"]
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.base64]
+workspace = true
+features = ["std"]
+
+[dependencies.snafu]
+workspace = true
+features = ["std"]
+
+[build-dependencies]
+progenitor = "0.14.0"
+serde_yaml = "0.9"
+serde_json.workspace = true
+prettyplease = "0.2"
+syn = "2.0"
+
+[dev-dependencies]
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = ["node-harness"] }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", features = ["testing"] }
+hex = { workspace = true }
+
+[dev-dependencies.serde_json]
+workspace = true
+
+[dev-dependencies.tokio]
+version = "1"
+features = ["rt", "rt-multi-thread", "macros", "time"]
+
+[[test]]
+name = "e2e"
+required-features = ["testing"]

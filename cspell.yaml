@@ -9,9 +9,12 @@ ignorePaths:
   - "**/*.json"
 words:
   - Accountable
+  - aimd
   - ascii
   - base32
   - BASEPOINT
+  - blockhash
+  - blocktime
   - bip39
   - chrono
   - ciphertext

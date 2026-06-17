@@ -308,9 +308,7 @@ fn staple_decode_error(error: keetanetwork_asn1::Asn1Error) -> VoteError {
 	}
 }
 
-// `compress_to_vec_zlib`'s level argument follows the zlib convention
-// (0-10); 6 mirrors `Compression::default()` in flate2's rust backend
-// (see flate2's `Compression::default` inlining `Z_DEFAULT_COMPRESSION`).
+// `compress_to_vec_zlib`'s level argument follows the zlib convention (0-10)
 const ZLIB_DEFAULT_LEVEL: u8 = 6;
 
 fn deflate(input: &[u8]) -> Result<Vec<u8>, VoteError> {

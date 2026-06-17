@@ -175,12 +175,33 @@ pub struct E2eNode {
 impl E2eNode {
 	/// Spawn the harness script and wait for it to report readiness.
 	pub fn start() -> Result<Self, HarnessError> {
+		Self::start_with_args(&[])
+	}
+
+	/// Spawn a fee-enforcing harness node that charges `amount` base tokens
+	/// (paid to the representative) on every transaction, so the fee block
+	/// origination path can be exercised end to end.
+	pub fn start_with_fee(amount: u64) -> Result<Self, HarnessError> {
+		Self::start_with_args(&[&format!("--fee={amount}")])
+	}
+
+	/// Spawn a peered cluster of `reps` representative nodes (P2P enabled)
+	/// sharing one trusted/genesis account, so the multi-representative
+	/// fan-out, quorum, and convergence paths can be exercised end to end.
+	pub fn start_cluster(reps: usize) -> Result<Self, HarnessError> {
+		let arg = format!("--reps={reps}");
+		Self::start_with_args(&[arg.as_str()])
+	}
+
+	/// Spawn the harness script with extra argv, waiting for readiness.
+	fn start_with_args(extra: &[&str]) -> Result<Self, HarnessError> {
 		let dist = dist_dir()?;
 		let script = script_path("e2e_node")?;
 
 		let mut child = Command::new("node")
 			.arg(&script)
 			.arg(&dist)
+			.args(extra)
 			.stdin(Stdio::piped())
 			.stdout(Stdio::piped())
 			.stderr(Stdio::inherit())

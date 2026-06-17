@@ -9,8 +9,6 @@ homepage.workspace = true
 description = "Block structure and operations for Keetanetwork blockchain"
 
 [features]
-# Backend selection mirrors the asn1 crate; the public block API is
-# backend-agnostic, so the choice only affects the on-transport codec.
 default = ["std", "rasn"]
 std = [
 	"alloc",
