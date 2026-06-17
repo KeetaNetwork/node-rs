@@ -235,6 +235,14 @@ async fn test_read_only_queries() {
 				.find(|entry| entry.token == fx.base_token);
 			require(base.is_some_and(|entry| entry.balance == Amount::from(MINTED_SUPPLY)), "base balance mismatch")
 		}),
+		case!("base token reports its minted supply", |fx| {
+			let supply = fx.client.token_supply(&fx.base_token).await?;
+			require(supply == Some(Amount::from(MINTED_SUPPLY)), format!("got {supply:?}"))
+		}),
+		case!("non-token account reports no supply", |fx| {
+			let supply = fx.client.token_supply(&fx.trusted).await?;
+			require(supply.is_none(), format!("unexpected supply {supply:?} for a non-token account"))
+		}),
 		case!("node stats is an object", |fx| {
 			let stats = fx.client.node_stats().await?;
 			require(stats.is_object(), "stats not an object")
@@ -364,6 +372,31 @@ async fn test_post_transmit_queries() {
 				.await?
 				.ok_or("head block not retrievable by hash")?;
 			require(fetched.to_bytes() == ctx.head.to_bytes(), "block bytes mismatch")
+		}),
+		case!("account head info reports the head block and a nonzero height", |ctx| {
+			let (block, height) = ctx
+				.fixture
+				.client
+				.account_head_info(&ctx.fixture.trusted)
+				.await?
+				.ok_or("account head info must be present once the send is published")?;
+			require(block.hash().to_string() == ctx.head_hash, "head info block mismatch")?;
+			require(*height.as_bigint() > BigInt::from(0u8), format!("unexpected height {height:?}"))
+		}),
+		case!("vote staple round-trips by head hash", |ctx| {
+			let staple = ctx
+				.fixture
+				.client
+				.vote_staple(&ctx.head_hash)
+				.await?
+				.ok_or("a vote staple must be retrievable for the published head")?;
+			require(
+				staple
+					.blocks()
+					.iter()
+					.any(|block| block.hash().to_string() == ctx.head_hash),
+				"the vote staple must contain the head block",
+			)
 		}),
 		case!("head block has no successor", |ctx| {
 			let successor = ctx.fixture.client.successor_block(&ctx.head_hash).await?;

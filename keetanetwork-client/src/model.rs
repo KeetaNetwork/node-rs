@@ -109,6 +109,8 @@ pub struct AccountState {
 	pub head: Option<String>,
 	/// Head block height, if known.
 	pub height: Option<Amount>,
+	/// Total token supply, present only for token accounts.
+	pub supply: Option<Amount>,
 	/// Per-token balances held by the account.
 	pub balances: Vec<TokenBalance>,
 }

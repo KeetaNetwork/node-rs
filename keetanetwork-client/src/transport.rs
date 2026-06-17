@@ -49,6 +49,8 @@ pub trait NodeTransport: core::fmt::Debug + Send + Sync {
 	async fn account_states(&self, accounts: &str) -> Result<Vec<AccountState>, ClientError>;
 	/// The head block of `account`, if any.
 	async fn head_block(&self, account: &str) -> Result<Option<Block>, ClientError>;
+	/// The head block of `account` paired with its height, if any.
+	async fn account_head_info(&self, account: &str) -> Result<Option<(Block, Amount)>, ClientError>;
 	/// The next pending (unreceived) block for `account`, if any.
 	async fn pending_block(&self, account: &str) -> Result<Option<Block>, ClientError>;
 	/// The block identified by `hash` on the given `side`, if present.
@@ -264,6 +266,7 @@ mod backend {
 				state.representative,
 				state.current_head_block,
 				state.current_head_block_height,
+				state.info.and_then(|info| info.supply),
 				state.balances,
 			)
 		}
@@ -279,6 +282,7 @@ mod backend {
 						item.representative,
 						item.current_head_block,
 						item.current_head_block_height,
+						item.info.and_then(|info| info.supply),
 						item.balances,
 					)
 				})
@@ -288,6 +292,18 @@ mod backend {
 		async fn head_block(&self, account: &str) -> Result<Option<Block>, ClientError> {
 			let response = self.client.get_account_head(account).await?;
 			decode_block(response.into_inner().block)
+		}
+
+		async fn account_head_info(&self, account: &str) -> Result<Option<(Block, Amount)>, ClientError> {
+			let response = self.client.get_account_head(account).await?.into_inner();
+			let Some(block) = decode_block(response.block)? else {
+				return Ok(None);
+			};
+			let Some(height) = response.height else {
+				return Ok(None);
+			};
+
+			Ok(Some((block, decode_amount(Some(height))?)))
 		}
 
 		async fn pending_block(&self, account: &str) -> Result<Option<Block>, ClientError> {
@@ -588,6 +604,7 @@ mod backend {
 		representative: Option<String>,
 		head: Option<String>,
 		height: Option<String>,
+		supply: Option<String>,
 		balances: Vec<types::BalanceEntry>,
 	) -> Result<AccountState, ClientError> {
 		Ok(AccountState {
@@ -595,6 +612,9 @@ mod backend {
 			head,
 			height: height
 				.map(|height| decode_amount(Some(height)))
+				.transpose()?,
+			supply: supply
+				.map(|supply| decode_amount(Some(supply)))
 				.transpose()?,
 			balances: decode_balances(balances)?,
 		})

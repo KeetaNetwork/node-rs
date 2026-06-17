@@ -1221,12 +1221,29 @@ impl KeetaClient {
 		.await
 	}
 
+	/// The total supply of `token`, or `None` when the account reports no
+	/// supply (it is not a token account).
+	pub async fn token_supply(&self, token: impl AsRef<str>) -> Result<Option<Amount>, ClientError> {
+		Ok(self.state(token).await?.supply)
+	}
+
 	/// The head block of `account`, or `None` when the account has no blocks.
 	pub async fn head_block(&self, account: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
 		let account = account.as_ref().to_owned();
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.head_block(&account).await }
+		})
+		.await
+	}
+
+	/// The head block of `account` paired with its height, or `None` when the
+	/// account has no blocks.
+	pub async fn account_head_info(&self, account: impl AsRef<str>) -> Result<Option<(Block, Amount)>, ClientError> {
+		let account = account.as_ref().to_owned();
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.account_head_info(&account).await }
 		})
 		.await
 	}
@@ -1281,6 +1298,38 @@ impl KeetaClient {
 				Some(error) => Err(error),
 				None => Ok(None),
 			},
+		}
+	}
+
+	/// The vote staple covering `blockhash` on the main ledger, assembled from
+	/// the first representative that holds votes for it, or `None` when no
+	/// representative has the staple.
+	pub async fn vote_staple(&self, blockhash: impl AsRef<str>) -> Result<Option<VoteStaple>, ClientError> {
+		self.ensure_refresh();
+		let blockhash = blockhash.as_ref();
+		let picks = self.snapshot_picks();
+		if picks.is_empty() {
+			return Err(ClientError::NoRepresentatives);
+		}
+
+		let mut last_error: Option<ClientError> = None;
+		for pick in &picks {
+			match self.compose_staple_on(&pick.transport, blockhash).await {
+				Ok(Some(staple)) => {
+					self.boost(&pick.key);
+					return Ok(Some(staple));
+				}
+				Ok(None) => self.boost(&pick.key),
+				Err(error) => {
+					self.decay(&pick.key);
+					last_error = Some(error);
+				}
+			}
+		}
+
+		match last_error {
+			Some(error) => Err(error),
+			None => Ok(None),
 		}
 	}
 

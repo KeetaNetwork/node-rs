@@ -158,6 +158,24 @@ components:
           type: string
           description: P2P WebSocket URL
 
+    AccountInfo:
+      type: object
+      description: On-chain account info; `supply` is present only for token accounts.
+      properties:
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        metadata:
+          type: string
+          nullable: true
+        supply:
+          type: string
+          nullable: true
+          description: Total token supply as a 0x-prefixed hexadecimal BigInt (token accounts only)
+
     BalanceEntry:
       type: object
       properties:
@@ -358,6 +376,8 @@ paths:
                     description: Head block height as a 0x-prefixed hexadecimal BigInt
                   representative:
                     type: string
+                  info:
+                    $ref: '#/components/schemas/AccountInfo'
                   balances:
                     type: array
                     items:
@@ -472,6 +492,10 @@ paths:
                     type: string
                   block:
                     $ref: '#/components/schemas/Block'
+                  height:
+                    type: string
+                    nullable: true
+                    description: Head block height as a 0x-prefixed hexadecimal BigInt
         '500':
           description: Server error
           content:
@@ -1060,6 +1084,8 @@ paths:
                       type: string
                     representative:
                       type: string
+                    info:
+                      $ref: '#/components/schemas/AccountInfo'
                     balances:
                       type: array
                       items:
