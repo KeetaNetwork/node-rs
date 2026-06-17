@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(feature = "std"), allow(dead_code))]
 
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -121,7 +122,7 @@ impl RepState {
 	/// Select one representative using Power of Two Choices: pick two random
 	/// indices and return the one with the higher effective score
 	/// (`weight_fraction * reliability`). Equal indices return that rep
-	/// directly, guaranteeing every rep a `1/n` baseline.
+	/// directly, guaranteeing every rep a `1/n^2` baseline.
 	fn pick(&self, rng: &mut impl RngCore) -> Option<RepRef> {
 		let count = self.reps.len();
 		if count == 0 {
@@ -131,9 +132,10 @@ impl RepState {
 		let chosen = if count == 1 {
 			&self.reps[0]
 		} else {
+			let total = self.total_weight();
 			let index_a = (rng.next_u32() as usize) % count;
 			let index_b = (rng.next_u32() as usize) % count;
-			if self.effective_score(&self.reps[index_a]) >= self.effective_score(&self.reps[index_b]) {
+			if self.effective_score(&self.reps[index_a], &total) >= self.effective_score(&self.reps[index_b], &total) {
 				&self.reps[index_a]
 			} else {
 				&self.reps[index_b]
@@ -143,18 +145,21 @@ impl RepState {
 		Some(RepRef { key: chosen.key.clone(), weight: chosen.weight.clone() })
 	}
 
-	fn effective_score(&self, rep: &RepRecord) -> f64 {
-		let total = self.total_weight();
-		let fraction = weight_fraction(&rep.weight, &total, self.reps.len());
+	fn effective_score(&self, rep: &RepRecord, total: &BigInt) -> f64 {
+		let fraction = weight_fraction(&rep.weight, total, self.reps.len());
 		selection_score(fraction, self.reliability(&rep.key))
 	}
 
 	/// Refresh known representatives' weights from a fetched `(key, weight)`
 	/// set, matching by key.
 	fn update_weights(&mut self, fetched: &[(String, BigInt)]) {
+		let indexed: BTreeMap<&str, &BigInt> = fetched
+			.iter()
+			.map(|(key, weight)| (key.as_str(), weight))
+			.collect();
 		for rep in &mut self.reps {
-			if let Some((_, weight)) = fetched.iter().find(|(key, _)| key == &rep.key) {
-				rep.weight = weight.clone();
+			if let Some(weight) = indexed.get(rep.key.as_str()) {
+				rep.weight = (*weight).clone();
 			}
 		}
 	}
