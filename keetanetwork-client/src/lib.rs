@@ -51,23 +51,25 @@
 //!
 //! ## `no_std`
 //!
-//! The networking client requires `std` (it is built on `reqwest`/`tokio`) and
-//! is gated behind the default-on `std` feature. With `--no-default-features`
-//! the crate compiles as `no_std` and exposes only the transport-free pieces:
-//! [`ClientConfig`] and the pure dispatch primitives in [`math`].
+//! The orchestrator ([`KeetaClient`]) is `no_std`+`alloc`: it is written
+//! against the [`Runtime`] and [`NodeTransport`]/[`TransportFactory`] interfaces
+//! and constructed with [`KeetaClient::with_parts`], so a `no_std` consumer
+//! supplies its own executor and HTTP backend.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 
-#[cfg(feature = "std")]
+mod builder;
 mod client;
 mod config;
-#[cfg(feature = "std")]
 mod error;
 pub mod math;
-#[cfg(feature = "std")]
+mod model;
 mod rep;
+mod runtime;
+mod sync;
+mod transport;
 
 /// Generated transport client (`Client`, request/response `types`, and the
 /// transport `Error`). Emitted from the OpenAPI document at build time.
@@ -77,19 +79,24 @@ pub mod generated {
 	include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 }
 
-#[cfg(feature = "std")]
-pub use client::{
-	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, KeetaClient, LedgerChecksum,
-	Representative, TokenBalance, TransactionBuilder, TransmitOptions,
-};
+pub use builder::TransactionBuilder;
+pub use client::KeetaClient;
 pub use config::ClientConfig;
-#[cfg(feature = "std")]
-pub use error::{ApiError, ClientError};
-#[cfg(feature = "std")]
+pub use error::ClientError;
 pub use keetanetwork_error::{KeetaNetError, NodeErrorType};
-#[cfg(feature = "std")]
 pub use keetanetwork_vote::VoteQuote;
+pub use model::{
+	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
+	TokenBalance, TransmitOptions,
+};
+pub use runtime::{BoxFuture, Runtime, TaskHandle};
+pub use transport::{LedgerSide, NodeTransport, TransportFactory};
+
 #[cfg(feature = "std")]
 pub use rep::RepEndpoint;
 #[cfg(feature = "std")]
 pub use reqwest;
+#[cfg(feature = "std")]
+pub use runtime::TokioRuntime;
+#[cfg(feature = "std")]
+pub use transport::{ApiError, GeneratedTransport, GeneratedTransportFactory};

@@ -8,10 +8,11 @@
 //! [`keetanetwork_asn1::Asn1Time`]; this type adds the millisecond-precision
 //! convenience surface (`now`, `from_unix_millis`, `unix_millis`).
 
-#[cfg(feature = "std")]
-use chrono::SubsecRound;
 use chrono::{DateTime, Utc};
 use keetanetwork_asn1::Asn1Time;
+
+#[cfg(feature = "std")]
+use chrono::SubsecRound;
 
 /// A block timestamp with millisecond precision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -32,6 +33,14 @@ impl BlockTime {
 	/// The Unix timestamp in milliseconds.
 	pub fn unix_millis(&self) -> i64 {
 		self.0.as_datetime().timestamp_millis()
+	}
+}
+
+impl Default for BlockTime {
+	/// The Unix epoch, used as a panic-free fallback moment in `no_std`
+	/// contexts that lack a wall clock.
+	fn default() -> Self {
+		Self::from(DateTime::<Utc>::UNIX_EPOCH)
 	}
 }
 

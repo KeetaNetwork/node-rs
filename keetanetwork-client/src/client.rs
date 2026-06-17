@@ -1,145 +1,64 @@
 //! Ergonomic, domain-typed wrapper over the generated transport client.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::future::Future;
-use core::str::FromStr;
+use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock};
-use std::time::Instant;
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
+use futures::future::{select, Either};
+use futures::pin_mut;
 use futures::stream::{FuturesUnordered, StreamExt};
 use keetanetwork_account::{Account, GenericAccount, KeyNETWORK, KeyPairType};
-use keetanetwork_block::{
-	AccountRef, AdjustMethod, Amount, Block, BlockBuilder, BlockHash, BlockPurpose, BlockTime, CreateIdentifier,
-	Hashable, IdentifierCreateArguments, ManageCertificate, ModifyPermissions, Operation, Receive, Send, SetInfo,
-	SetRep, TokenAdminModifyBalance, TokenAdminSupply,
-};
+use keetanetwork_block::{AccountRef, Amount, Block, BlockBuilder, BlockPurpose, BlockTime, Hashable, Send};
 use keetanetwork_error::KeetaNetError;
 use keetanetwork_vote::{Fee, ValidationConfig, Vote, VoteQuote, VoteStaple};
 use num_bigint::BigInt;
-use parking_lot::{Mutex, RwLock};
-use progenitor_client::ResponseValue;
 use snafu::ResultExt;
-use tokio::task::JoinHandle;
 
+use crate::builder::TransactionBuilder;
 use crate::config::ClientConfig;
-use crate::error::{AccountSnafu, AmountSnafu, ApiError, BlockSnafu, ClientError, DecodeSnafu, VoteSnafu};
-use crate::generated::{types, Client as Transport};
+use crate::error::{AccountSnafu, ClientError, VoteSnafu};
 use crate::math::{meets_quorum, most_common_hash, next_backoff, overlapping_moment};
-use crate::rep::{RepEndpoint, RepHandle, RepPick, RepState};
+use crate::model::{
+	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
+	TokenBalance, TransmitOptions,
+};
+use crate::rep::{RepBook, RepRecord, RepRef, SmallRng};
+use crate::runtime::{Runtime, TaskHandle};
+use crate::sync::{Mutex, RwLock};
+use crate::transport::{LedgerSide, NodeTransport, TransportFactory};
 
-/// A token balance entry for an account.
-#[derive(Debug, Clone)]
-pub struct TokenBalance {
-	/// Token account address.
-	pub token: String,
-	/// Settled balance.
-	pub balance: Amount,
-	/// Pending (unreceived) balance.
-	pub pending: Amount,
-}
-
-/// A representative and its voting weight.
-#[derive(Debug, Clone)]
-pub struct Representative {
-	/// Representative account address.
-	pub account: String,
-	/// Voting weight.
-	pub weight: Amount,
-	/// REST API base URL the representative can be reached at, when the node
-	/// advertises it (the plural `representatives` endpoint includes this; the
-	/// singular lookup does not).
-	pub api_url: Option<String>,
-}
-
-/// A point-in-time ledger checksum.
-#[derive(Debug, Clone)]
-pub struct LedgerChecksum {
-	/// XOR checksum of the ledger.
-	pub checksum: Amount,
-	/// Approximate moment the checksum was taken (ISO 8601).
-	pub moment: Option<String>,
-	/// Half the measurement window, in milliseconds.
-	pub moment_range: Option<f64>,
-}
-
-/// A history entry: a verified vote staple with its id and timestamp.
-#[derive(Debug, Clone)]
-pub struct HistoryEntry {
-	/// The verified vote staple.
-	pub staple: VoteStaple,
-	/// Hexadecimal vote staple id.
-	pub id: Option<String>,
-	/// ISO 8601 timestamp.
-	pub timestamp: Option<String>,
-}
-
-/// An access-control entry granting a principal permissions over a target.
-#[derive(Debug, Clone)]
-pub struct Acl {
-	/// Principal the permissions are granted to.
-	pub principal: Option<String>,
-	/// Entity the ACL is keyed under.
-	pub entity: Option<String>,
-	/// Target the permissions apply to.
-	pub target: Option<String>,
-	/// Permission bitmaps as `0x`-prefixed hexadecimal values.
-	pub permissions: Vec<String>,
-}
-
-/// A certificate and its intermediate chain.
-#[derive(Debug, Clone)]
-pub struct Certificate {
-	/// PEM-encoded certificate.
-	pub certificate: String,
-	/// PEM-encoded intermediate certificates.
-	pub intermediates: Vec<String>,
-}
-
-/// Pagination/range bounds for [`KeetaClient::chain_page`].
-///
-/// `start`/`end` are block-hash cursors; `limit` caps the page size (the node
-/// enforces its own maximum).
-#[derive(Debug, Clone, Default)]
-pub struct ChainQuery {
-	/// Start cursor (block hash) to page from.
-	pub start: Option<String>,
-	/// End cursor (block hash) to stop at.
-	pub end: Option<String>,
-	/// Maximum entries to return in the page.
-	pub limit: Option<i64>,
-}
-
-/// Pagination/range bounds for [`KeetaClient::history_page`] and
-/// [`KeetaClient::global_history_page`].
-#[derive(Debug, Clone, Default)]
-pub struct HistoryQuery {
-	/// Start cursor (block hash) to page from.
-	pub start: Option<String>,
-	/// Maximum entries to return in the page.
-	pub limit: Option<i64>,
-}
-
-/// A snapshot of an account's ledger state.
-#[derive(Debug, Clone)]
-pub struct AccountState {
-	/// Representative account address, if one is set.
-	pub representative: Option<String>,
-	/// Head block hash (hex), if the account has any blocks.
-	pub head: Option<String>,
-	/// Head block height, if known.
-	pub height: Option<Amount>,
-	/// Per-token balances held by the account.
-	pub balances: Vec<TokenBalance>,
-}
+#[cfg(feature = "std")]
+use crate::generated::Client as Transport;
+#[cfg(feature = "std")]
+use crate::rep::RepEndpoint;
+#[cfg(feature = "std")]
+use crate::runtime::TokioRuntime;
+#[cfg(feature = "std")]
+use crate::transport::GeneratedTransportFactory;
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
 
 /// Bookkeeping for the background representative-refresh task.
 #[derive(Debug, Default)]
 struct RefreshState {
 	started: bool,
-	handle: Option<JoinHandle<()>>,
+	handle: Option<Box<dyn TaskHandle>>,
+}
+
+/// A selection target bound to its live transport: the scoring core yields a
+/// [`RepRef`] (key + weight) which the client joins against its transport
+/// registry to produce this.
+#[derive(Clone, Debug)]
+struct RepPick {
+	key: String,
+	weight: BigInt,
+	transport: Arc<dyn NodeTransport>,
 }
 
 /// Shared client state behind an [`Arc`], so [`KeetaClient`] is cheap to
@@ -147,9 +66,19 @@ struct RefreshState {
 /// background refresh task.
 #[derive(Debug)]
 struct Inner {
-	state: RwLock<RepState>,
+	/// Reliability scoring + selection core (`no_std`, internally locked).
+	reps: RepBook,
+	/// Live per-representative transports, keyed by the same key the scoring
+	/// core uses. Read on every fan-out, written only on rep discovery.
+	transports: RwLock<BTreeMap<String, Arc<dyn NodeTransport>>>,
 	config: ClientConfig,
-	http: reqwest::Client,
+	/// Builds a transport for a representative discovered at runtime, keeping
+	/// discovery transport-agnostic.
+	factory: Arc<dyn TransportFactory>,
+	runtime: Arc<dyn Runtime>,
+	/// Per-pick counter mixed with the runtime clock to seed selection's
+	/// [`SmallRng`] so successive picks differ.
+	rng_counter: AtomicU64,
 	network: RwLock<Option<BigInt>>,
 	subnet: RwLock<Option<BigInt>>,
 	/// `true` for the single anonymous-rep client built by [`KeetaClient::new`];
@@ -167,29 +96,6 @@ impl Drop for Inner {
 	}
 }
 
-/// Optional inputs to [`KeetaClient::transmit`].
-///
-/// Constructed with [`Default`] and overridden field-by-field:
-///
-/// ```
-/// use keetanetwork_client::TransmitOptions;
-///
-/// let options = TransmitOptions::default();
-/// assert!(options.fee_signer.is_none());
-/// assert!(options.quotes.is_empty());
-/// ```
-#[derive(Clone, Debug, Default)]
-pub struct TransmitOptions {
-	/// Account that originates and signs a [`BlockPurpose::Fee`] block when the
-	/// representatives' votes require a fee. Absent, a required fee fails with
-	/// [`ClientError::FeeRequired`].
-	pub fee_signer: Option<AccountRef>,
-	/// Pre-fetched vote quotes to attach to the temporary round. Each quote is
-	/// routed to the representative that issued it; quotes for unknown reps are
-	/// ignored.
-	pub quotes: Vec<VoteQuote>,
-}
-
 /// Async, durable client for a KeetaNet network.
 ///
 /// Talks to a set of representatives: reads pick one rep (power-of-two
@@ -203,8 +109,9 @@ pub struct KeetaClient {
 }
 
 impl KeetaClient {
-	/// Create a single-representative client targeting `base_url`, e.g.
-	/// `http://localhost:8080/api`. Uses [`ClientConfig::default`].
+	/// Create a single-representative client targeting `base_url`.
+	/// Uses [`ClientConfig::default`].
+	#[cfg(feature = "std")]
 	pub fn new(base_url: impl AsRef<str>) -> Self {
 		let http = reqwest::Client::new();
 		Self::single(base_url.as_ref(), http, ClientConfig::default())
@@ -212,6 +119,7 @@ impl KeetaClient {
 
 	/// Create a single-representative client over a pre-configured
 	/// [`reqwest::Client`], allowing custom timeouts, TLS, or proxy settings.
+	#[cfg(feature = "std")]
 	pub fn with_client(base_url: impl AsRef<str>, http: reqwest::Client) -> Self {
 		Self::single(base_url.as_ref(), http, ClientConfig::default())
 	}
@@ -219,42 +127,89 @@ impl KeetaClient {
 	/// Create a multi-representative client over `reps`, fanning votes and
 	/// publishes across them and selecting reps for reads by weighted
 	/// reliability.
+	#[cfg(feature = "std")]
 	pub fn with_representatives(reps: impl IntoIterator<Item = RepEndpoint>, config: ClientConfig) -> Self {
 		let http = reqwest::Client::new();
-		let handles = reps
+		let factory = Arc::new(GeneratedTransportFactory::new(http));
+		let parts = reps
 			.into_iter()
-			.map(|rep| RepHandle {
-				key: rep.account().to_string(),
-				weight: rep.weight().clone(),
-				transport: Transport::new_with_client(rep.api_url(), http.clone()),
-			})
-			.collect();
+			.map(|rep| (rep.account().to_string(), rep.api_url().to_owned(), rep.weight().clone()));
 
-		Self::from_parts(handles, http, config, false)
+		Self::with_parts(parts, factory, Arc::new(TokioRuntime), config, false)
 	}
 
+	#[cfg(feature = "std")]
 	fn single(base_url: &str, http: reqwest::Client, config: ClientConfig) -> Self {
-		let handle = RepHandle {
-			key: base_url.to_owned(),
-			weight: BigInt::from(1u8),
-			transport: Transport::new_with_client(base_url, http.clone()),
-		};
+		let factory = Arc::new(GeneratedTransportFactory::new(http));
+		let parts = [(base_url.to_owned(), base_url.to_owned(), BigInt::from(1u8))];
 
-		Self::from_parts(vec![handle], http, config, true)
+		Self::with_parts(parts, factory, Arc::new(TokioRuntime), config, true)
 	}
 
-	fn from_parts(reps: Vec<RepHandle>, http: reqwest::Client, config: ClientConfig, single_rep: bool) -> Self {
+	/// Construct a client from explicit `(key, url, weight)` representatives,
+	/// an injected [`TransportFactory`] (used to bind each rep and any later
+	/// discovered ones), and a [`Runtime`].
+	pub fn with_parts(
+		reps: impl IntoIterator<Item = (String, String, BigInt)>,
+		factory: Arc<dyn TransportFactory>,
+		runtime: Arc<dyn Runtime>,
+		config: ClientConfig,
+		single_rep: bool,
+	) -> Self {
+		let mut records = Vec::new();
+		let mut transports = BTreeMap::new();
+		for (key, url, weight) in reps {
+			let transport = factory.create(&url);
+			records.push(RepRecord::new(key.clone(), url, weight));
+			transports.insert(key, transport);
+		}
+
 		Self {
 			inner: Arc::new(Inner {
-				state: RwLock::new(RepState::new(reps)),
+				reps: RepBook::new(records),
+				transports: RwLock::new(transports),
 				config,
-				http,
+				factory,
+				runtime,
+				rng_counter: AtomicU64::new(0),
 				network: RwLock::new(None),
 				subnet: RwLock::new(None),
 				single_rep,
 				refresh: Mutex::new(RefreshState::default()),
 			}),
 		}
+	}
+
+	/// Join scoring [`RepRef`]s against the transport registry, producing
+	/// fan-out targets. A ref whose transport is missing is skipped.
+	fn bind_transports(&self, refs: Vec<RepRef>) -> Vec<RepPick> {
+		let transports = self.inner.transports.read();
+		refs.into_iter()
+			.filter_map(|rep| {
+				transports.get(&rep.key).map(|transport| RepPick {
+					key: rep.key,
+					weight: rep.weight,
+					transport: Arc::clone(transport),
+				})
+			})
+			.collect()
+	}
+
+	/// Every representative as a fan-out target.
+	fn snapshot_picks(&self) -> Vec<RepPick> {
+		self.bind_transports(self.inner.reps.snapshot())
+	}
+
+	/// Select one representative bound to its transport.
+	fn pick_target(&self) -> Option<RepPick> {
+		let seed = self.inner.runtime.now_millis() ^ self.inner.rng_counter.fetch_add(1, Ordering::Relaxed);
+		let chosen = self.inner.reps.pick(&mut SmallRng::seed_from_u64(seed))?;
+		let transports = self.inner.transports.read();
+		transports.get(&chosen.key).map(|transport| RepPick {
+			key: chosen.key,
+			weight: chosen.weight,
+			transport: Arc::clone(transport),
+		})
 	}
 
 	/// Set the network identifier stamped onto blocks this client
@@ -280,14 +235,19 @@ impl KeetaClient {
 		self.inner.subnet.read().clone()
 	}
 
-	/// Clone the first representative's generated transport for endpoints not
-	/// covered by this wrapper.
+	/// The current wall-clock moment from the runtime, falling back to the
+	/// epoch if the clock is out of [`BlockTime`]'s representable range.
+	fn now_moment(&self) -> BlockTime {
+		BlockTime::from_unix_millis(self.inner.runtime.unix_millis()).unwrap_or_default()
+	}
+
+	/// Build a generated transport for the first representative, for endpoints
+	/// not covered by this wrapper. Uses a fresh HTTP client (this escape hatch
+	/// does not share the orchestrator's connection pool).
+	#[cfg(feature = "std")]
 	pub fn transport(&self) -> Transport {
-		self.inner
-			.state
-			.read()
-			.first_transport()
-			.unwrap_or_else(|| Transport::new_with_client("", self.inner.http.clone()))
+		let url = self.inner.reps.first_url().unwrap_or_default();
+		Transport::new_with_client(&url, reqwest::Client::new())
 	}
 
 	/// Abort the background representative-refresh task. Safe to call more
@@ -313,19 +273,22 @@ impl KeetaClient {
 		refresh.started = true;
 
 		let weak = Arc::downgrade(&self.inner);
-		let interval_ms = self.inner.config.update_reps_interval_ms;
-		let handle = tokio::spawn(async move {
-			let mut ticker = tokio::time::interval(Duration::from_millis(interval_ms.max(1)));
+		let interval = Duration::from_millis(self.inner.config.update_reps_interval_ms.max(1));
+		let runtime = Arc::clone(&self.inner.runtime);
+		let handle = self.inner.runtime.spawn(Box::pin(async move {
 			loop {
-				ticker.tick().await;
-				let Some(inner) = weak.upgrade() else {
-					break;
-				};
+				// Scope the strong reference so it is dropped before sleeping
+				{
+					let Some(inner) = weak.upgrade() else {
+						break;
+					};
+					let client = KeetaClient { inner };
+					let _ = client.update_reps().await;
+				}
 
-				let client = KeetaClient { inner };
-				let _ = client.update_reps().await;
+				runtime.sleep(interval).await;
 			}
-		});
+		}));
 
 		refresh.handle = Some(handle);
 	}
@@ -333,14 +296,14 @@ impl KeetaClient {
 	/// Refresh known representatives' voting weights from
 	/// `GET /representatives`, matching by account.
 	async fn update_reps(&self) -> Result<(), ClientError> {
-		let signature = self.inner.state.read().sorted_keys().join(",");
+		let signature = self.inner.reps.sorted_keys().join(",");
 		let ttl = Duration::from_millis(self.inner.config.reps_cache_ttl_ms);
 
-		let fetched = match cached_representatives(&signature, ttl) {
+		let fetched = match cached_representatives(&self.inner.runtime, &signature, ttl) {
 			Some(cached) => cached,
 			None => {
 				let entries = self.fetch_rep_entries().await?;
-				store_representatives(&signature, &entries);
+				store_representatives(&self.inner.runtime, &signature, &entries);
 				entries
 			}
 		};
@@ -350,8 +313,7 @@ impl KeetaClient {
 	}
 
 	/// Refresh weights *and* add any newly advertised representatives,
-	/// bypassing the cache. Mirrors the reference `updateReps(addNewReps =
-	/// true)`: existing reps are never removed, only added.
+	/// bypassing the cache.
 	pub async fn discover_representatives(&self) -> Result<(), ClientError> {
 		let entries = self.fetch_rep_entries().await?;
 		self.apply_reps(&entries, true);
@@ -372,13 +334,11 @@ impl KeetaClient {
 	/// weights of known reps and, when `discover` is set, add reps that
 	/// advertise an API URL and are not yet in the set.
 	fn apply_reps(&self, fetched: &[RepEntry], discover: bool) {
-		let mut state = self.inner.state.write();
-
 		let weights: Vec<(String, BigInt)> = fetched
 			.iter()
 			.map(|(key, weight, _)| (key.clone(), weight.clone()))
 			.collect();
-		state.update_weights(&weights);
+		self.inner.reps.update_weights(&weights);
 
 		if !discover {
 			return;
@@ -388,22 +348,24 @@ impl KeetaClient {
 			let Some(api) = api_url else {
 				continue;
 			};
-			if !state.contains(key) {
-				state.add_rep(RepHandle {
-					key: key.clone(),
-					weight: weight.clone(),
-					transport: Transport::new_with_client(api, self.inner.http.clone()),
-				});
+			if !self.inner.reps.contains(key) {
+				self.inner
+					.reps
+					.add(RepRecord::new(key.clone(), api.clone(), weight.clone()));
+				self.inner
+					.transports
+					.write()
+					.insert(key.clone(), self.inner.factory.create(api));
 			}
 		}
 	}
 
 	/// Dispatch a single-representative call with weighted reliability
 	/// selection, retry, exponential backoff, and per-request timeout.
-	async fn dispatch_any<T, F, Fut>(&self, call: F) -> Result<ResponseValue<T>, ClientError>
+	async fn dispatch_any<T, F, Fut>(&self, call: F) -> Result<T, ClientError>
 	where
-		F: Fn(Transport) -> Fut,
-		Fut: Future<Output = Result<ResponseValue<T>, ApiError>>,
+		F: Fn(Arc<dyn NodeTransport>) -> Fut,
+		Fut: Future<Output = Result<T, ClientError>>,
 	{
 		self.ensure_refresh();
 
@@ -413,8 +375,7 @@ impl KeetaClient {
 		let mut attempt = 0u32;
 
 		loop {
-			let pick = self.inner.state.read().pick();
-			let Some(pick) = pick else {
+			let Some(pick) = self.pick_target() else {
 				return Err(ClientError::NoRepresentatives);
 			};
 
@@ -423,8 +384,7 @@ impl KeetaClient {
 					self.boost(&pick.key);
 					return Ok(response);
 				}
-				Ok(Err(api)) => {
-					let error = ClientError::from(api);
+				Ok(Err(error)) => {
 					if self.try_recover_on_error(&error).await {
 						continue;
 					}
@@ -442,7 +402,7 @@ impl KeetaClient {
 			}
 
 			attempt += 1;
-			tokio::time::sleep(Duration::from_millis(delay)).await;
+			self.inner.runtime.sleep(Duration::from_millis(delay)).await;
 			delay = next_backoff(delay, max_backoff);
 		}
 	}
@@ -451,23 +411,26 @@ impl KeetaClient {
 	/// (`Err(())` on timeout); an unset timeout awaits indefinitely.
 	async fn run_call<T>(
 		&self,
-		future: impl Future<Output = Result<ResponseValue<T>, ApiError>>,
-	) -> Result<Result<ResponseValue<T>, ApiError>, ()> {
+		future: impl Future<Output = Result<T, ClientError>>,
+	) -> Result<Result<T, ClientError>, ()> {
 		let timeout_ms = self.inner.config.request_timeout_ms;
 		if timeout_ms == 0 {
 			return Ok(future.await);
 		}
 
-		tokio::time::timeout(Duration::from_millis(timeout_ms), future)
-			.await
-			.map_err(|_| ())
+		let timer = self.inner.runtime.sleep(Duration::from_millis(timeout_ms));
+		pin_mut!(future);
+		pin_mut!(timer);
+
+		match select(future, timer).await {
+			Either::Left((result, _)) => Ok(result),
+			Either::Right(((), _)) => Err(()),
+		}
 	}
 
 	/// Auto-sync path for dispatched reads/calls: on a ledger-vote conflict
 	/// (`LEDGER_NOT_SUCCESSOR`/`LEDGER_NOT_OPENING`), attempt to
-	/// [`sync_account`](Self::sync_account) each contended account. Returns
-	/// whether any account synced (the caller then retries without consuming
-	/// a retry budget).
+	/// [`sync_account`](Self::sync_account) each contended account.
 	async fn try_recover_on_error(&self, error: &ClientError) -> bool {
 		let accounts = match error {
 			ClientError::Node { source } => match source.as_ref() {
@@ -495,8 +458,7 @@ impl KeetaClient {
 	/// Reward a representative for a successful response (AIMD increase).
 	fn boost(&self, key: &str) {
 		self.inner
-			.state
-			.write()
+			.reps
 			.boost(key, self.inner.config.reliability_increment);
 	}
 
@@ -504,39 +466,36 @@ impl KeetaClient {
 	fn decay(&self, key: &str) {
 		let config = &self.inner.config;
 		self.inner
-			.state
-			.write()
+			.reps
 			.decay(key, config.reliability_decay, config.reliability_floor);
 	}
 
 	/// Publish an assembled vote staple to the node.
 	pub async fn transmit_staple(&self, staple: &VoteStaple) -> Result<bool, ClientError> {
 		self.ensure_refresh();
-		let body = types::PublishVoteStapleBody { votes_and_blocks: B64.encode(staple.as_bytes()) };
-		let picks = self.inner.state.read().snapshot();
+		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
 		}
 
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
-			let body = body.clone();
-			requests.push(async move { (pick.key, pick.transport.publish_vote_staple(&body).await) });
+			requests.push(async move { (pick.key, pick.transport.publish_staple(staple).await) });
 		}
 
 		let mut accepted = false;
 		let mut last_error: Option<ClientError> = None;
 		while let Some((key, result)) = requests.next().await {
 			match result {
-				// Match the reference: a fulfilled publish response counts as
-				// success regardless of the returned `publish` flag.
-				Ok(_response) => {
+				// A fulfilled publish response counts as success regardless of
+				// the returned `publish` flag, matching the reference.
+				Ok(_) => {
 					self.boost(&key);
 					accepted = true;
 				}
-				Err(api) => {
+				Err(error) => {
 					self.decay(&key);
-					last_error = Some(ClientError::from(api));
+					last_error = Some(error);
 				}
 			}
 		}
@@ -575,7 +534,7 @@ impl KeetaClient {
 		// has no temporary vote of its own (`LEDGER_NO_PERM_WITHOUT_SELF_TEMP`).
 		// A single-rep client keys its rep by URL rather than account, so it
 		// always contacts its lone rep.
-		let snapshot = self.inner.state.read().snapshot();
+		let snapshot = self.snapshot_picks();
 		let picks = if self.inner.single_rep {
 			snapshot
 		} else {
@@ -585,27 +544,26 @@ impl KeetaClient {
 			return Err(ClientError::NoRepresentatives);
 		}
 
-		let blocks_encoded = encode_blocks(blocks);
-		let prior_encoded = encode_votes(prior_votes);
-		let quotes_by_issuer = encode_quotes_by_issuer(quotes);
+		let quotes_by_issuer = quotes_by_issuer(quotes);
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
 			// Every contacted rep receives the full prior-vote set, including
 			// its own temporary vote, which the node requires to escalate, plus
 			// its own quote when the caller supplied one.
 			let quote = quotes_by_issuer.get(&pick.key).cloned();
-			let body = types::CreateVoteBody { blocks: blocks_encoded.clone(), votes: prior_encoded.clone(), quote };
-			requests.push(async move { (pick.key, pick.weight, pick.transport.create_vote(&body).await) });
+			requests.push(async move {
+				let vote = pick
+					.transport
+					.create_vote(blocks, prior_votes, quote.as_ref())
+					.await;
+				(pick.key, pick.weight, vote)
+			});
 		}
 
 		let mut votes = Vec::new();
 		let mut highest_error: Option<(BigInt, ClientError)> = None;
 		while let Some((key, weight, result)) = requests.next().await {
-			let outcome = match result {
-				Ok(response) => decode_vote_binary(response.into_inner().vote.and_then(|vote| vote.binary)),
-				Err(api) => Err(ClientError::from(api)),
-			};
-			match outcome {
+			match result {
 				Ok(vote) => {
 					self.boost(&key);
 					votes.push(vote);
@@ -624,9 +582,6 @@ impl KeetaClient {
 
 		// Keep every vote the reps returned and let the node enforce voting
 		// weight (`transmit` retries on the node's insufficient-weight error).
-		// A client-side quorum gate here would fail fast on a heuristic that is
-		// not the node's actual consensus threshold, so surface the
-		// highest-weight failure only when no rep produced a vote at all.
 		if votes.is_empty() {
 			return Err(highest_error
 				.map(|(_, error)| error)
@@ -648,11 +603,8 @@ impl KeetaClient {
 	/// quotes do not process blocks.
 	async fn request_quotes(&self, blocks: &[Block]) -> Result<Vec<VoteQuote>, ClientError> {
 		self.ensure_refresh();
-		let body = types::CreateVoteQuoteBody { blocks: encode_blocks(blocks) };
-		let (picks, total_weight) = {
-			let state = self.inner.state.read();
-			(state.snapshot(), state.total_weight())
-		};
+		let (refs, total_weight) = self.inner.reps.snapshot_with_total();
+		let picks = self.bind_transports(refs);
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
 		}
@@ -660,19 +612,17 @@ impl KeetaClient {
 		let threshold = self.inner.config.quorum_threshold;
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
-			let body = body.clone();
-			requests.push(async move { (pick.key, pick.weight, pick.transport.create_vote_quote(&body).await) });
+			requests.push(async move {
+				let quote = pick.transport.create_vote_quote(blocks).await;
+				(pick.key, pick.weight, quote)
+			});
 		}
 
 		let mut quotes = Vec::new();
 		let mut accumulated = BigInt::from(0u8);
 		let mut last_error: Option<ClientError> = None;
 		while let Some((key, weight, result)) = requests.next().await {
-			let outcome = match result {
-				Ok(response) => decode_quote_binary(response.into_inner().quote.and_then(|quote| quote.binary)),
-				Err(api) => Err(ClientError::from(api)),
-			};
-			match outcome {
+			match result {
 				Ok(quote) => {
 					self.boost(&key);
 					accumulated += weight;
@@ -703,29 +653,24 @@ impl KeetaClient {
 	/// surfacing a moment to the caller would be both unknowable in advance and
 	/// inert on the staple bytes.
 	pub async fn transmit(&self, blocks: &[Block], options: TransmitOptions) -> Result<bool, ClientError> {
-		self.transmit_with_optional_fee(blocks, options.fee_signer.as_ref(), &options.quotes)
-			.await
+		self.transmit_with_optional_fee(blocks, &options).await
 	}
 
 	/// The two-round transmit flow, optionally originating a fee block,
 	/// retried on insufficient voting weight.
 	///
 	/// After the temporary round, if the votes require a fee (a non-zero fee
-	/// with no zero-amount option), `fee_signer` originates a
+	/// with no zero-amount option), `options.fee_signer` originates a
 	/// [`BlockPurpose::Fee`] block that joins the permanent round and staple.
-	/// When a fee is required but no signer is available, this fails with
-	/// [`ClientError::FeeRequired`]. `LEDGER_INSUFFICIENT_VOTING_WEIGHT` is
-	/// retried with backoff up to [`ClientConfig::max_retries`].
 	async fn transmit_with_optional_fee(
 		&self,
 		blocks: &[Block],
-		fee_signer: Option<&AccountRef>,
-		quotes: &[VoteQuote],
+		options: &TransmitOptions,
 	) -> Result<bool, ClientError> {
 		let mut attempt = 0u32;
 		let mut delay = 1u64;
 		loop {
-			match self.transmit_round(blocks, fee_signer, quotes).await {
+			match self.transmit_round(blocks, options).await {
 				Ok(accepted) => return Ok(accepted),
 				Err(error) => {
 					let retryable = is_ledger_code(&error, "LEDGER_INSUFFICIENT_VOTING_WEIGHT");
@@ -734,7 +679,7 @@ impl KeetaClient {
 					}
 
 					attempt += 1;
-					tokio::time::sleep(Duration::from_millis(delay)).await;
+					self.inner.runtime.sleep(Duration::from_millis(delay)).await;
 					delay = next_backoff(delay, self.inner.config.max_backoff_ms);
 				}
 			}
@@ -744,18 +689,16 @@ impl KeetaClient {
 	/// One temporary-then-permanent voting round, building a fee block when
 	/// required, and publishing the assembled staple. Quotes attach only to the
 	/// temporary round, matching the reference flow.
-	async fn transmit_round(
-		&self,
-		blocks: &[Block],
-		fee_signer: Option<&AccountRef>,
-		quotes: &[VoteQuote],
-	) -> Result<bool, ClientError> {
-		let moment = BlockTime::now();
-		let temporary = self.request_votes(blocks, &[], quotes).await?;
+	async fn transmit_round(&self, blocks: &[Block], options: &TransmitOptions) -> Result<bool, ClientError> {
+		let moment = self.now_moment();
+		let temporary = self.request_votes(blocks, &[], &options.quotes).await?;
 
 		let mut all = blocks.to_vec();
 		if fees_required(&temporary) {
-			let signer = fee_signer.ok_or(ClientError::FeeRequired)?;
+			let signer = options
+				.fee_signer
+				.as_ref()
+				.ok_or(ClientError::FeeRequired)?;
 			let fee_block = self
 				.build_fee_block(signer, blocks, &temporary, moment)
 				.await?;
@@ -773,7 +716,7 @@ impl KeetaClient {
 	/// representatives: pull the missing successor staple from the highest
 	/// rep and publish it to the lagging reps.
 	pub async fn sync_account(&self, account: &AccountRef, publish: bool) -> Result<Option<VoteStaple>, ClientError> {
-		let picks = self.inner.state.read().snapshot();
+		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
 		}
@@ -782,9 +725,7 @@ impl KeetaClient {
 
 		let mut infos: Vec<(RepPick, Option<(String, Amount)>)> = Vec::with_capacity(picks.len());
 		for pick in picks {
-			let info = head_info_on(&pick.transport, &account_key)
-				.await
-				.unwrap_or(None);
+			let info = head_info(&pick.transport, &account_key).await;
 			infos.push((pick, info));
 		}
 
@@ -801,7 +742,12 @@ impl KeetaClient {
 			None => account.to_opening_hash().to_string(),
 		};
 
-		let successor = match successor_on(&infos[highest_index].0.transport, &lowest_head).await? {
+		let successor = match infos[highest_index]
+			.0
+			.transport
+			.successor_block(&lowest_head)
+			.await?
+		{
 			Some(block) => block,
 			None => return Ok(None),
 		};
@@ -818,13 +764,11 @@ impl KeetaClient {
 				if height_value(info) == lowest_height {
 					// Publish serially to every lagging rep; ignore conflicts
 					// (e.g. LEDGER_BLOCK_ALREADY_EXISTS) and verify by height.
-					let _ = self.transmit_staple_on(&pick.transport, &staple).await;
+					let _ = pick.transport.publish_staple(&staple).await;
 				}
 			}
 
-			let updated = head_info_on(&infos[0].0.transport, &account_key)
-				.await
-				.unwrap_or(None);
+			let updated = head_info(&infos[0].0.transport, &account_key).await;
 			if height_value(&updated) == lowest_height {
 				return Err(ClientError::SyncPublishFailed);
 			}
@@ -837,28 +781,28 @@ impl KeetaClient {
 	/// pending successor block from the votes scattered across reps, fetching
 	/// the voted-on blocks, topping up votes, and republishing.
 	///
-	/// `fee_signer` originates a fee block if the recovered votes require a
-	/// fee and no permanent votes exist yet. Returns the recovered staple, or
-	/// `None` when there is nothing pending to recover.
+	/// `options.fee_signer` originates a fee block if the recovered votes
+	/// require a fee and no permanent votes exist yet. Returns the recovered
+	/// staple, or `None` when there is nothing pending to recover.
 	pub async fn recover_account(
 		&self,
 		account: &AccountRef,
 		publish: bool,
-		fee_signer: Option<&AccountRef>,
+		options: TransmitOptions,
 	) -> Result<Option<VoteStaple>, ClientError> {
 		self.ensure_refresh();
 		let successor = match self.pending_block(account.to_string()).await? {
 			Some(block) => block,
 			None => return Ok(None),
 		};
-		let successor_hash = successor.hash().to_string();
 
-		let picks = self.inner.state.read().snapshot();
+		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
 		}
 
-		let moment = BlockTime::now();
+		let successor_hash = successor.hash().to_string();
+		let moment = self.now_moment();
 		let config = ValidationConfig::default();
 
 		let mut perm_votes: Vec<Vote> = Vec::new();
@@ -867,7 +811,11 @@ impl KeetaClient {
 		let mut missing: Vec<RepPick> = Vec::new();
 
 		for pick in &picks {
-			let best = match votes_on(&pick.transport, &successor_hash, types::GetBlockVotesSide::Side).await {
+			let best = match pick
+				.transport
+				.block_votes(&successor_hash, LedgerSide::Side)
+				.await
+			{
 				Ok(Some(list)) if !list.is_empty() => pick_best_vote(list),
 				_ => None,
 			};
@@ -896,7 +844,7 @@ impl KeetaClient {
 		for hash in &block_hashes {
 			let mut found = None;
 			for pick in &picks {
-				if let Some(block) = block_on(&pick.transport, hash, types::GetBlockSide::Both).await? {
+				if let Some(block) = pick.transport.block(hash, Some(LedgerSide::Both)).await? {
 					found = Some(block);
 					break;
 				}
@@ -920,7 +868,10 @@ impl KeetaClient {
 			}
 
 			if perm_votes.is_empty() && fees_required(&temp_votes) {
-				let signer = fee_signer.ok_or(ClientError::FeeRequired)?;
+				let signer = options
+					.fee_signer
+					.as_ref()
+					.ok_or(ClientError::FeeRequired)?;
 				let fee_block = self
 					.build_fee_block(signer, &blocks, &temp_votes, moment)
 					.await?;
@@ -967,24 +918,19 @@ impl KeetaClient {
 			return Ok(Vec::new());
 		}
 
-		let blocks_encoded = encode_blocks(blocks);
-		let prior_encoded = encode_votes(prior_votes);
 		let mut requests = FuturesUnordered::new();
 		for pick in reps {
-			let body =
-				types::CreateVoteBody { blocks: blocks_encoded.clone(), votes: prior_encoded.clone(), quote: None };
 			let key = pick.key.clone();
-			let transport = pick.transport.clone();
-			requests.push(async move { (key, transport.create_vote(&body).await) });
+			let transport = Arc::clone(&pick.transport);
+			requests.push(async move {
+				let vote = transport.create_vote(blocks, prior_votes, None).await;
+				(key, vote)
+			});
 		}
 
 		let mut votes = Vec::new();
 		while let Some((key, result)) = requests.next().await {
-			let outcome = match result {
-				Ok(response) => decode_vote_binary(response.into_inner().vote.and_then(|vote| vote.binary)),
-				Err(api) => Err(ClientError::from(api)),
-			};
-			match outcome {
+			match result {
 				Ok(vote) => {
 					self.boost(&key);
 					votes.push(vote);
@@ -996,46 +942,36 @@ impl KeetaClient {
 		Ok(votes)
 	}
 
-	/// Publish a staple to one specific representative. A fulfilled response
-	/// counts as success regardless of the returned `publish` flag, matching
-	/// [`transmit_staple`](Self::transmit_staple) and the reference.
-	async fn transmit_staple_on(&self, transport: &Transport, staple: &VoteStaple) -> Result<bool, ClientError> {
-		let body = types::PublishVoteStapleBody { votes_and_blocks: B64.encode(staple.as_bytes()) };
-		transport.publish_vote_staple(&body).await?;
-		Ok(true)
-	}
-
 	/// Assemble the staple covering `block_hash` from one rep's main-ledger
 	/// votes and the blocks they cover.
 	async fn compose_staple_on(
 		&self,
-		transport: &Transport,
+		transport: &Arc<dyn NodeTransport>,
 		block_hash: &str,
 	) -> Result<Option<VoteStaple>, ClientError> {
-		let votes = match votes_on(transport, block_hash, types::GetBlockVotesSide::Main).await? {
+		let votes = match transport.block_votes(block_hash, LedgerSide::Main).await? {
 			Some(list) if !list.is_empty() => list,
 			_ => return Ok(None),
 		};
 
 		let mut blocks = Vec::new();
 		for hash in votes[0].blocks() {
-			match block_on(transport, &hash.to_string(), types::GetBlockSide::Main).await? {
+			match transport
+				.block(&hash.to_string(), Some(LedgerSide::Main))
+				.await?
+			{
 				Some(block) => blocks.push(block),
 				None => return Ok(None),
 			}
 		}
 
-		let moment = staple_moment(&votes, BlockTime::now());
+		let moment = staple_moment(&votes, self.now_moment());
 		let staple = VoteStaple::try_new(blocks, votes, ValidationConfig::default(), moment).context(VoteSnafu)?;
 		Ok(Some(staple))
 	}
 
 	/// Build and sign a [`BlockPurpose::Fee`] block paying the fees declared
 	/// by `votes`, chained after `signer`'s block in `blocks`.
-	///
-	/// Each fee-bearing vote contributes one `SEND`: the selected fee's
-	/// amount to `pay_to` (defaulting to the vote issuer) in `token`
-	/// (defaulting to the network base token).
 	async fn build_fee_block(
 		&self,
 		signer: &AccountRef,
@@ -1063,7 +999,7 @@ impl KeetaClient {
 	}
 
 	/// Apply the configured network and subnet to `builder`, if set.
-	fn apply_network(&self, mut builder: BlockBuilder) -> BlockBuilder {
+	pub(crate) fn apply_network(&self, mut builder: BlockBuilder) -> BlockBuilder {
 		if let Some(network) = self.network() {
 			builder = builder.with_network(network);
 		}
@@ -1134,24 +1070,20 @@ impl KeetaClient {
 	/// block context (`previous` from the ledger head, network/subnet from
 	/// this client) and seals the block.
 	pub fn builder(&self, account: &AccountRef) -> TransactionBuilder<'_> {
-		TransactionBuilder {
-			client: self,
-			account: Arc::clone(account),
-			operations: Vec::new(),
-			previous: None,
-			purpose: None,
-			date: None,
-		}
+		TransactionBuilder::new(self, Arc::clone(account))
 	}
 
-	/// Publish a single block built via [`builder`](Self::builder), paying a
-	/// fee with `signer` when the node requires one.
-	pub async fn publish(&self, block: Block, signer: &AccountRef) -> Result<bool, ClientError> {
+	/// Publish a single block built via [`builder`](Self::builder).
+	///
+	/// `options.fee_signer` pays a fee when the node requires one (absent, a
+	/// required fee fails with [`ClientError::FeeRequired`]) and drives
+	/// recovery on a `LEDGER_SUCCESSOR_VOTE_EXISTS` conflict.
+	pub async fn publish(&self, block: Block, options: TransmitOptions) -> Result<bool, ClientError> {
 		let account = Arc::clone(block.data().account());
 		let mut attempt = 0u32;
 		loop {
 			let result = self
-				.transmit_with_optional_fee(core::slice::from_ref(&block), Some(signer), &[])
+				.transmit_with_optional_fee(core::slice::from_ref(&block), &options)
 				.await;
 
 			match result {
@@ -1162,14 +1094,14 @@ impl KeetaClient {
 						return Err(error);
 					}
 					attempt += 1;
-					let _ = self.recover_account(&account, true, Some(signer)).await;
+					let _ = self.recover_account(&account, true, options.clone()).await;
 				}
 			}
 		}
 	}
 
 	/// Build, sign, and [`publish`](Self::publish) a SEND of `amount` of
-	/// `token` from `from` to `to`.
+	/// `token` from `from` to `to`, paying any required fee with `from`.
 	///
 	/// Returns whether the node accepted the resulting staple.
 	pub async fn send(
@@ -1180,86 +1112,65 @@ impl KeetaClient {
 		amount: Amount,
 	) -> Result<bool, ClientError> {
 		let block = self.builder(from).send(to, token, amount).build().await?;
-		self.publish(block, from).await
+		let options = TransmitOptions { fee_signer: Some(Arc::clone(from)), ..Default::default() };
+		self.publish(block, options).await
 	}
 
 	/// The node software version string.
 	pub async fn node_version(&self) -> Result<String, ClientError> {
-		let response = self
-			.dispatch_any(|t| async move { t.get_node_version().await })
-			.await?;
-
-		response
-			.into_inner()
-			.node
-			.ok_or(ClientError::MissingVersion)
+		self.dispatch_any(|t| async move { t.node_version().await })
+			.await
 	}
 
 	/// The settled balance of `token` held by `account`.
 	pub async fn balance(&self, account: impl AsRef<str>, token: impl AsRef<str>) -> Result<Amount, ClientError> {
 		let account = account.as_ref().to_owned();
 		let token = token.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				let token = token.clone();
-				async move { t.get_account_balance(&account, &token).await }
-			})
-			.await?;
 
-		decode_amount(response.into_inner().balance)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			let token = token.clone();
+			async move { t.balance(&account, &token).await }
+		})
+		.await
 	}
 
 	/// Every token balance held by `account`.
 	pub async fn balances(&self, account: impl AsRef<str>) -> Result<Vec<TokenBalance>, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				async move { t.get_account_balances(&account).await }
-			})
-			.await?;
-
-		decode_balances(response.into_inner().balances)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.balances(&account).await }
+		})
+		.await
 	}
 
 	/// The full ledger state of `account`: representative, head, height, and
 	/// balances.
 	pub async fn state(&self, account: impl AsRef<str>) -> Result<AccountState, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				async move { t.get_account_state(&account).await }
-			})
-			.await?;
-		let state = response.into_inner();
-
-		decode_account_state(
-			state.representative,
-			state.current_head_block,
-			state.current_head_block_height,
-			state.balances,
-		)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.account_state(&account).await }
+		})
+		.await
 	}
 
 	/// The head block of `account`, or `None` when the account has no blocks.
 	pub async fn head_block(&self, account: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				async move { t.get_account_head(&account).await }
-			})
-			.await?;
-		decode_block(response.into_inner().block)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.head_block(&account).await }
+		})
+		.await
 	}
 
 	/// The next pending (unreceived) block for `account`, if any.
 	pub async fn pending_block(&self, account: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
 		self.ensure_refresh();
 		let account = account.as_ref().to_owned();
-		let picks = self.inner.state.read().snapshot();
+		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
 		}
@@ -1267,33 +1178,33 @@ impl KeetaClient {
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
 			let account = account.clone();
-			requests.push(async move { (pick.key, pick.transport.get_pending_block(&account).await) });
+			requests.push(async move { (pick.key, pick.transport.pending_block(&account).await) });
 		}
 
 		// Tally candidate blocks by hash so the block seen on the most reps
 		// wins, matching the reference's majority selection.
-		let mut blocks_by_hash: HashMap<String, Block> = HashMap::new();
+		let mut blocks_by_hash: BTreeMap<String, Block> = BTreeMap::new();
 		let mut observed: Vec<String> = Vec::new();
 		let mut any_success = false;
 		let mut last_error: Option<ClientError> = None;
 		while let Some((key, result)) = requests.next().await {
 			match result {
-				Ok(response) => {
+				Ok(Some(block)) => {
+					self.boost(&key);
+
+					any_success = true;
+
+					let hash = block.hash().to_string();
+					blocks_by_hash.entry(hash.clone()).or_insert(block);
+					observed.push(hash);
+				}
+				Ok(None) => {
 					self.boost(&key);
 					any_success = true;
-					match decode_block(response.into_inner().block) {
-						Ok(Some(block)) => {
-							let hash = block.hash().to_string();
-							blocks_by_hash.entry(hash.clone()).or_insert(block);
-							observed.push(hash);
-						}
-						Ok(None) => {}
-						Err(error) => last_error = Some(error),
-					}
 				}
-				Err(api) => {
+				Err(error) => {
 					self.decay(&key);
-					last_error = Some(ClientError::from(api));
+					last_error = Some(error);
 				}
 			}
 		}
@@ -1311,26 +1222,21 @@ impl KeetaClient {
 	/// The block identified by `blockhash`, if the node has it.
 	pub async fn block(&self, blockhash: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
 		let blockhash = blockhash.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let blockhash = blockhash.clone();
-				async move { t.get_block(&blockhash, None).await }
-			})
-			.await?;
-		decode_block(response.into_inner().block)
+		self.dispatch_any(move |t| {
+			let blockhash = blockhash.clone();
+			async move { t.block(&blockhash, None).await }
+		})
+		.await
 	}
 
 	/// The block following `blockhash`, if one exists.
 	pub async fn successor_block(&self, blockhash: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
 		let blockhash = blockhash.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let blockhash = blockhash.clone();
-				async move { t.get_successor_block(&blockhash).await }
-			})
-			.await?;
-
-		decode_block(response.into_inner().successor_block)
+		self.dispatch_any(move |t| {
+			let blockhash = blockhash.clone();
+			async move { t.successor_block(&blockhash).await }
+		})
+		.await
 	}
 
 	/// The block produced by `account` for the given idempotent `key`, if any.
@@ -1341,15 +1247,12 @@ impl KeetaClient {
 	) -> Result<Option<Block>, ClientError> {
 		let account = account.as_ref().to_owned();
 		let key = key.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				let key = key.clone();
-				async move { t.get_block_from_idempotent(&account, &key).await }
-			})
-			.await?;
-
-		decode_block(response.into_inner().block)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			let key = key.clone();
+			async move { t.block_by_idempotent(&account, &key).await }
+		})
+		.await
 	}
 
 	/// A prefix of `account`'s block chain, most recent first.
@@ -1361,23 +1264,12 @@ impl KeetaClient {
 	/// by `query`.
 	pub async fn chain_page(&self, account: impl AsRef<str>, query: ChainQuery) -> Result<Vec<Block>, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				let query = query.clone();
-				async move {
-					t.get_account_chain(&account, query.end.as_deref(), query.limit, query.start.as_deref())
-						.await
-				}
-			})
-			.await?;
-
-		response
-			.into_inner()
-			.blocks
-			.into_iter()
-			.filter_map(|entry| decode_block(entry.block).transpose())
-			.collect()
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			let query = query.clone();
+			async move { t.chain_page(&account, &query).await }
+		})
+		.await
 	}
 
 	/// Every block in `account`'s chain (most recent first), fetched by
@@ -1423,18 +1315,13 @@ impl KeetaClient {
 		query: HistoryQuery,
 	) -> Result<Vec<HistoryEntry>, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				let query = query.clone();
-				async move {
-					t.get_account_history(&account, query.limit, query.start.as_deref())
-						.await
-				}
-			})
-			.await?;
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			let query = query.clone();
 
-		decode_history(response.into_inner().history)
+			async move { t.history_page(&account, &query).await }
+		})
+		.await
 	}
 
 	/// The node's global transaction history as verified vote staples.
@@ -1444,17 +1331,11 @@ impl KeetaClient {
 
 	/// A single page of the node's global history, bounded by `query`.
 	pub async fn global_history_page(&self, query: HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
-		let response = self
-			.dispatch_any(move |t| {
-				let query = query.clone();
-				async move {
-					t.get_global_history(query.limit, query.start.as_deref())
-						.await
-				}
-			})
-			.await?;
-
-		decode_history(response.into_inner().history)
+		self.dispatch_any(move |t| {
+			let query = query.clone();
+			async move { t.global_history_page(&query).await }
+		})
+		.await
 	}
 
 	/// Vote staples committed at or after the ISO 8601 `start` moment.
@@ -1470,137 +1351,84 @@ impl KeetaClient {
 		limit: Option<i64>,
 	) -> Result<Vec<VoteStaple>, ClientError> {
 		let start = start.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let start = start.clone();
-				async move { t.get_vote_staples_after(limit, &start).await }
-			})
-			.await?;
-
-		decode_staples(response.into_inner().vote_staples)
+		self.dispatch_any(move |t| {
+			let start = start.clone();
+			async move { t.vote_staples_after(&start, limit).await }
+		})
+		.await
 	}
 
 	/// The node's own representative and its weight.
 	pub async fn node_representative(&self) -> Result<Representative, ClientError> {
-		let response = self
-			.dispatch_any(|t| async move { t.get_node_representative().await })
-			.await?;
-		decode_representative(response.into_inner())
+		self.dispatch_any(|t| async move { t.node_representative().await })
+			.await
 	}
 
 	/// The weight of representative `rep`.
 	pub async fn representative(&self, rep: impl AsRef<str>) -> Result<Representative, ClientError> {
 		let rep = rep.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let rep = rep.clone();
-				async move { t.get_representative(&rep).await }
-			})
-			.await?;
-		decode_representative(response.into_inner())
+		self.dispatch_any(move |t| {
+			let rep = rep.clone();
+			async move { t.representative(&rep).await }
+		})
+		.await
 	}
 
 	/// Every known representative and its weight.
 	pub async fn representatives(&self) -> Result<Vec<Representative>, ClientError> {
-		let response = self
-			.dispatch_any(|t| async move { t.get_all_representatives().await })
-			.await?;
-		response
-			.into_inner()
-			.representatives
-			.into_iter()
-			.map(decode_representative)
-			.collect()
+		self.dispatch_any(|t| async move { t.representatives().await })
+			.await
 	}
 
 	/// The current ledger checksum.
 	pub async fn ledger_checksum(&self) -> Result<LedgerChecksum, ClientError> {
-		let response = self
-			.dispatch_any(|t| async move { t.get_ledger_checksum().await })
-			.await?;
-		let checksum = response.into_inner();
-
-		Ok(LedgerChecksum {
-			checksum: decode_amount(checksum.checksum)?,
-			moment: checksum.moment,
-			moment_range: checksum.moment_range,
-		})
+		self.dispatch_any(|t| async move { t.ledger_checksum().await })
+			.await
 	}
 
 	/// ACL entries where `account` is the principal (grantee).
 	pub async fn acls_by_principal(&self, account: impl AsRef<str>) -> Result<Vec<Acl>, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				async move { t.list_acls_by_principal(&account).await }
-			})
-			.await?;
-
-		let acls = response
-			.into_inner()
-			.permissions
-			.into_iter()
-			.map(decode_acl)
-			.collect();
-
-		Ok(acls)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.acls_by_principal(&account).await }
+		})
+		.await
 	}
 
 	/// ACL entries granted to `account` as an entity.
 	pub async fn acls_by_entity(&self, account: impl AsRef<str>) -> Result<Vec<Acl>, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				async move { t.list_acls_by_entity(&account).await }
-			})
-			.await?;
-
-		let acls = response
-			.into_inner()
-			.permissions
-			.into_iter()
-			.map(decode_acl)
-			.collect();
-
-		Ok(acls)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.acls_by_entity(&account).await }
+		})
+		.await
 	}
 
-	/// The aggregate ACL-with-info view for principal `account` (opaque).
+	/// The aggregate ACL-with-info view for principal `account` (opaque JSON;
+	/// std-only).
+	#[cfg(feature = "std")]
 	pub async fn acls_by_principal_with_info(
 		&self,
 		account: impl AsRef<str>,
 	) -> Result<serde_json::Value, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				async move { t.list_acls_additional(&account).await }
-			})
-			.await?;
-
-		Ok(serde_json::Value::Object(response.into_inner()))
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.acls_by_principal_with_info(&account).await }
+		})
+		.await
 	}
 
 	/// Every certificate held by `account`.
 	pub async fn certificates(&self, account: impl AsRef<str>) -> Result<Vec<Certificate>, ClientError> {
 		let account = account.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				async move { t.get_account_certificates(&account).await }
-			})
-			.await?;
-
-		let certificates = response
-			.into_inner()
-			.certificates
-			.into_iter()
-			.filter_map(decode_certificate)
-			.collect();
-
-		Ok(certificates)
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			async move { t.certificates(&account).await }
+		})
+		.await
 	}
 
 	/// The certificate of `account` identified by `hash`, if present.
@@ -1611,203 +1439,36 @@ impl KeetaClient {
 	) -> Result<Option<Certificate>, ClientError> {
 		let account = account.as_ref().to_owned();
 		let hash = hash.as_ref().to_owned();
-		let response = self
-			.dispatch_any(move |t| {
-				let account = account.clone();
-				let hash = hash.clone();
-				async move { t.get_certificate_by_hash(&account, &hash).await }
-			})
-			.await?;
-
-		let found = response.into_inner();
-
-		Ok(decode_certificate(types::Certificate {
-			certificate: found.certificate,
-			intermediates: found.intermediates,
-		}))
+		self.dispatch_any(move |t| {
+			let account = account.clone();
+			let hash = hash.clone();
+			async move { t.certificate(&account, &hash).await }
+		})
+		.await
 	}
 
-	/// Node statistics (opaque ledger + switch metrics).
+	/// Node statistics (opaque ledger + switch metrics; std-only).
+	#[cfg(feature = "std")]
 	pub async fn node_stats(&self) -> Result<serde_json::Value, ClientError> {
-		let response = self
-			.dispatch_any(|t| async move { t.get_node_stats().await })
-			.await?;
-		Ok(serde_json::Value::Object(response.into_inner()))
+		self.dispatch_any(|t| async move { t.node_stats().await })
+			.await
 	}
 
-	/// Connected peers (opaque).
+	/// Connected peers (opaque JSON; std-only).
+	#[cfg(feature = "std")]
 	pub async fn node_peers(&self) -> Result<serde_json::Value, ClientError> {
-		let response = self
-			.dispatch_any(|t| async move { t.get_peers().await })
-			.await?;
-		Ok(serde_json::Value::Object(response.into_inner()))
+		self.dispatch_any(|t| async move { t.node_peers().await })
+			.await
 	}
 
 	/// Ledger state for several `accounts` in one call.
 	pub async fn states(&self, accounts: &[&str]) -> Result<Vec<AccountState>, ClientError> {
 		let accounts = accounts.join(",");
-		let response = self
-			.dispatch_any(move |t| {
-				let accounts = accounts.clone();
-				async move { t.get_account_states(&accounts).await }
-			})
-			.await?;
-
-		response
-			.into_inner()
-			.into_iter()
-			.map(|item| {
-				decode_account_state(
-					item.representative,
-					item.current_head_block,
-					item.current_head_block_height,
-					item.balances,
-				)
-			})
-			.collect()
-	}
-}
-
-/// Fluent builder for a single account's block.
-///
-/// Operations are accumulated synchronously against one originating account;
-/// [`build`](Self::build) then resolves the block context and seals the block.
-/// Each operation has a convenience method covering its common shape, plus a
-/// typed `*_op` variant (where the operation carries rarely-used optional
-/// fields) and the generic [`with_operation`](Self::with_operation) escape
-/// hatch.
-///
-/// Create one with [`KeetaClient::builder`].
-#[must_use = "a TransactionBuilder does nothing until `build` is called"]
-pub struct TransactionBuilder<'a> {
-	client: &'a KeetaClient,
-	account: AccountRef,
-	operations: Vec<Operation>,
-	previous: Option<BlockHash>,
-	purpose: Option<BlockPurpose>,
-	date: Option<BlockTime>,
-}
-
-impl TransactionBuilder<'_> {
-	/// Append a SEND of `amount` of `token` to `to`.
-	///
-	/// For external reference data, pass a [`Send`] to
-	/// [`with_operation`](Self::with_operation).
-	pub fn send(self, to: &AccountRef, token: &AccountRef, amount: Amount) -> Self {
-		self.with_operation(Send { to: Arc::clone(to), amount, token: Arc::clone(token), external: None })
-	}
-
-	/// Append a RECEIVE claiming `amount` of `token` sent by `from`.
-	///
-	/// For exact-match or forwarding, pass a [`Receive`] to
-	/// [`with_operation`](Self::with_operation).
-	pub fn receive(self, from: &AccountRef, token: &AccountRef, amount: Amount) -> Self {
-		self.with_operation(Receive {
-			amount,
-			token: Arc::clone(token),
-			from: Arc::clone(from),
-			exact: false,
-			forward: None,
+		self.dispatch_any(move |t| {
+			let accounts = accounts.clone();
+			async move { t.account_states(&accounts).await }
 		})
-	}
-
-	/// Append a block setting the originator's representative to `to`.
-	pub fn set_rep(self, to: &AccountRef) -> Self {
-		self.with_operation(SetRep { to: Arc::clone(to) })
-	}
-
-	/// Append a block setting the originator's on-chain info.
-	pub fn set_info(self, info: SetInfo) -> Self {
-		self.with_operation(info)
-	}
-
-	/// Append a block modifying the permissions granted by the originator.
-	pub fn modify_permissions(self, permissions: ModifyPermissions) -> Self {
-		self.with_operation(permissions)
-	}
-
-	/// Append a block creating `identifier` under the originator.
-	pub fn create_identifier(
-		self,
-		identifier: &AccountRef,
-		create_arguments: Option<IdentifierCreateArguments>,
-	) -> Self {
-		self.with_operation(CreateIdentifier { identifier: Arc::clone(identifier), create_arguments })
-	}
-
-	/// Append a block adjusting the supply of the originating token.
-	pub fn modify_token_supply(self, amount: Amount, method: AdjustMethod) -> Self {
-		self.with_operation(TokenAdminSupply { amount, method })
-	}
-
-	/// Append a block adjusting the originator's balance of `token`.
-	pub fn modify_token_balance(self, token: &AccountRef, amount: Amount, method: AdjustMethod) -> Self {
-		self.with_operation(TokenAdminModifyBalance { token: Arc::clone(token), amount, method })
-	}
-
-	/// Append a block adding or removing a certificate on the originator.
-	pub fn manage_certificate(self, certificate: ManageCertificate) -> Self {
-		self.with_operation(certificate)
-	}
-
-	/// Append an arbitrary operation. Escape hatch for operations without a
-	/// dedicated convenience method.
-	pub fn with_operation(mut self, operation: impl Into<Operation>) -> Self {
-		self.operations.push(operation.into());
-		self
-	}
-
-	/// Override the resolved `previous` hash, skipping the ledger head lookup.
-	///
-	/// Useful when chaining a block after another not-yet-published block.
-	pub fn with_previous(mut self, previous: BlockHash) -> Self {
-		self.previous = Some(previous);
-		self
-	}
-
-	/// Override the block purpose (defaults to the [`BlockPurpose`] default).
-	pub fn with_purpose(mut self, purpose: BlockPurpose) -> Self {
-		self.purpose = Some(purpose);
-		self
-	}
-
-	/// Override the block timestamp (defaults to the moment of [`build`](Self::build)).
-	pub fn with_date(mut self, date: BlockTime) -> Self {
-		self.date = Some(date);
-		self
-	}
-
-	/// Resolve the block context and seal the block.
-	///
-	/// `previous` is the override from [`with_previous`](Self::with_previous)
-	/// when set, otherwise the originator's current head (the account opening
-	/// hash when it has no blocks yet); network/subnet come from the client
-	/// configuration. The originator's key seals the block, which is then
-	/// ready to [`transmit`](KeetaClient::transmit).
-	pub async fn build(self) -> Result<Block, ClientError> {
-		let mut builder = self
-			.client
-			.apply_network(BlockBuilder::default())
-			.with_account(Arc::clone(&self.account))
-			.with_operations(self.operations);
-
-		if let Some(purpose) = self.purpose {
-			builder = builder.with_purpose(purpose);
-		}
-		if let Some(date) = self.date {
-			builder = builder.with_date(date);
-		}
-
-		match self.previous {
-			Some(previous) => builder = builder.with_previous(previous),
-			None => match self.client.head_block(self.account.to_string()).await? {
-				Some(head) => builder = builder.with_previous(head.hash()),
-				None => builder = builder.as_opening(),
-			},
-		}
-
-		let unsigned = builder.build().context(BlockSnafu)?;
-		unsigned.sign().context(BlockSnafu)
+		.await
 	}
 }
 
@@ -1816,31 +1477,47 @@ impl TransactionBuilder<'_> {
 type RepEntry = (String, BigInt, Option<String>);
 
 /// Process-shared representative cache, keyed by rep-set signature, so
-/// concurrent clients/clones over the same reps refresh from one fetch.
-type RepsCache = HashMap<String, (Instant, Vec<RepEntry>)>;
+/// concurrent clients/clones over the same reps refresh from one fetch. The
+/// timestamp is the runtime's monotonic millisecond tick at storage time.
+#[cfg(feature = "std")]
+type RepsCache = BTreeMap<String, (u64, Vec<RepEntry>)>;
 
+#[cfg(feature = "std")]
 fn reps_cache() -> &'static Mutex<RepsCache> {
 	static CACHE: OnceLock<Mutex<RepsCache>> = OnceLock::new();
-	CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+	CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-/// A still-fresh cached rep set for `signature`, if one exists.
-fn cached_representatives(signature: &str, ttl: Duration) -> Option<Vec<RepEntry>> {
+/// A still-fresh cached rep set for `signature`, if one exists, measured
+/// against the runtime clock.
+#[cfg(feature = "std")]
+fn cached_representatives(runtime: &Arc<dyn Runtime>, signature: &str, ttl: Duration) -> Option<Vec<RepEntry>> {
 	let cache = reps_cache().lock();
 	let (stored_at, reps) = cache.get(signature)?;
-	if stored_at.elapsed() < ttl {
+	if runtime.now_millis().saturating_sub(*stored_at) < ttl.as_millis() as u64 {
 		return Some(reps.clone());
 	}
 
 	None
 }
 
-/// Store a freshly fetched rep set for `signature`.
-fn store_representatives(signature: &str, reps: &[RepEntry]) {
+/// No-op cache lookup for `no_std`: every refresh fetches.
+#[cfg(not(feature = "std"))]
+fn cached_representatives(_runtime: &Arc<dyn Runtime>, _signature: &str, _ttl: Duration) -> Option<Vec<RepEntry>> {
+	None
+}
+
+/// Store a freshly fetched rep set for `signature`, stamped with the runtime
+/// clock.
+#[cfg(feature = "std")]
+fn store_representatives(runtime: &Arc<dyn Runtime>, signature: &str, reps: &[RepEntry]) {
 	reps_cache()
 		.lock()
-		.insert(signature.to_owned(), (Instant::now(), reps.to_vec()));
+		.insert(signature.to_owned(), (runtime.now_millis(), reps.to_vec()));
 }
+
+#[cfg(not(feature = "std"))]
+fn store_representatives(_runtime: &Arc<dyn Runtime>, _signature: &str, _reps: &[RepEntry]) {}
 
 /// Choose a moment that lies within every vote's validity window so a
 /// reconstructed staple validates without rejecting near-expired votes.
@@ -1854,20 +1531,12 @@ fn staple_moment(votes: &[Vote], fallback: BlockTime) -> BlockTime {
 	}
 }
 
-/// Base64-encode a set of votes for a `createVote` request body.
-fn encode_votes(votes: &[Vote]) -> Vec<String> {
-	votes
-		.iter()
-		.map(|vote| B64.encode(vote.as_bytes()))
-		.collect()
-}
-
-/// Index caller-supplied quotes by issuing-representative key, base64-encoded
-/// for the `createVote` body. Each rep receives only the quote it issued.
-fn encode_quotes_by_issuer(quotes: &[VoteQuote]) -> HashMap<String, String> {
+/// Index caller-supplied quotes by issuing-representative key, so each rep
+/// receives only the quote it issued.
+fn quotes_by_issuer(quotes: &[VoteQuote]) -> BTreeMap<String, VoteQuote> {
 	quotes
 		.iter()
-		.map(|quote| (quote.as_vote().issuer().to_string(), B64.encode(quote.as_vote().as_bytes())))
+		.map(|quote| (quote.as_vote().issuer().to_string(), quote.clone()))
 		.collect()
 }
 
@@ -1878,7 +1547,7 @@ fn contacts_for(picks: Vec<RepPick>, prior_votes: &[Vote]) -> Vec<RepPick> {
 		return picks;
 	}
 
-	let issuers: HashSet<String> = prior_votes
+	let issuers: BTreeSet<String> = prior_votes
 		.iter()
 		.map(|vote| vote.issuer().to_string())
 		.collect();
@@ -1888,70 +1557,20 @@ fn contacts_for(picks: Vec<RepPick>, prior_votes: &[Vote]) -> Vec<RepPick> {
 		.collect()
 }
 
-/// Decode and signature-verify a base64 vote from a node response, treating
-/// an absent field as [`ClientError::MissingVote`].
-fn decode_vote_binary(binary: Option<String>) -> Result<Vote, ClientError> {
-	let encoded = binary.ok_or(ClientError::MissingVote)?;
-	let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-	Vote::verify(bytes).context(VoteSnafu)
-}
-
-/// Decode and signature-verify a base64 vote quote from a node response,
-/// treating an absent field as [`ClientError::MissingQuote`].
-fn decode_quote_binary(binary: Option<String>) -> Result<VoteQuote, ClientError> {
-	let encoded = binary.ok_or(ClientError::MissingQuote)?;
-	let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-	VoteQuote::verify(bytes).context(VoteSnafu)
-}
-
 /// Whether `error` is a node ledger error carrying the given `code`.
 fn is_ledger_code(error: &ClientError, code: &str) -> bool {
 	matches!(error, ClientError::Node { source } if source.code() == Some(code))
 }
 
-/// Fetch and verify the votes a specific representative holds for `block_hash`
-/// on the given ledger side. `None` means the rep holds no such votes.
-async fn votes_on(
-	transport: &Transport,
-	block_hash: &str,
-	side: types::GetBlockVotesSide,
-) -> Result<Option<Vec<Vote>>, ClientError> {
-	let response = transport.get_block_votes(block_hash, Some(side)).await?;
-	let Some(list) = response.into_inner().votes else {
-		return Ok(None);
+/// A specific rep's head block hash and height for `account`, treating any
+/// error or absent head as "no head" so divergence detection can sort it low.
+async fn head_info(transport: &Arc<dyn NodeTransport>, account: &str) -> Option<(String, Amount)> {
+	let Ok(state) = transport.account_state(account).await else {
+		return None;
 	};
-
-	let mut votes = Vec::with_capacity(list.len());
-	for entry in list {
-		votes.push(decode_vote_binary(entry.binary)?);
-	}
-
-	Ok(Some(votes))
-}
-
-/// Fetch and decode a block from a specific representative on the given side.
-async fn block_on(
-	transport: &Transport,
-	block_hash: &str,
-	side: types::GetBlockSide,
-) -> Result<Option<Block>, ClientError> {
-	let response = transport.get_block(block_hash, Some(side)).await?;
-	decode_block(response.into_inner().block)
-}
-
-/// Fetch and decode the successor of `block_hash` from a specific rep.
-async fn successor_on(transport: &Transport, block_hash: &str) -> Result<Option<Block>, ClientError> {
-	let response = transport.get_successor_block(block_hash).await?;
-	decode_block(response.into_inner().successor_block)
-}
-
-/// Fetch a specific rep's head block hash and height for `account`.
-async fn head_info_on(transport: &Transport, account: &str) -> Result<Option<(String, Amount)>, ClientError> {
-	let response = transport.get_account_state(account).await?;
-	let state = response.into_inner();
-	match (state.current_head_block, state.current_head_block_height) {
-		(Some(head), Some(height)) => Ok(Some((head, decode_amount(Some(height))?))),
-		_ => Ok(None),
+	match (state.head, state.height) {
+		(Some(head), Some(height)) => Some((head, height)),
+		_ => None,
 	}
 }
 
@@ -1995,126 +1614,15 @@ fn fees_required(votes: &[Vote]) -> bool {
 	})
 }
 
-/// Base64-encode each block's canonical bytes.
-fn encode_blocks(blocks: &[Block]) -> Vec<String> {
-	blocks
-		.iter()
-		.map(|block| B64.encode(block.to_bytes()))
-		.collect()
-}
-
-/// Decode an optional transport block into a domain block.
-fn decode_block(block: Option<types::Block>) -> Result<Option<Block>, ClientError> {
-	let Some(encoded) = block.and_then(|block| block.binary) else {
-		return Ok(None);
-	};
-
-	let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-	let decoded = Block::try_from(bytes.as_slice()).context(BlockSnafu)?;
-
-	Ok(Some(decoded))
-}
-
-/// Decode and verify an optional transport vote staple.
-fn decode_staple(staple: Option<types::VoteStaple>) -> Result<Option<VoteStaple>, ClientError> {
-	let Some(encoded) = staple.and_then(|staple| staple.binary) else {
-		return Ok(None);
-	};
-
-	let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-	let staple = VoteStaple::verify(bytes, ValidationConfig::default(), BlockTime::now()).context(VoteSnafu)?;
-
-	Ok(Some(staple))
-}
-
-/// Decode and verify a list of transport vote staples.
-fn decode_staples(staples: Vec<types::VoteStaple>) -> Result<Vec<VoteStaple>, ClientError> {
-	staples
-		.into_iter()
-		.filter_map(|staple| decode_staple(Some(staple)).transpose())
-		.collect()
-}
-
-/// Decode transport history entries into verified domain entries.
-fn decode_history(entries: Vec<types::HistoryEntry>) -> Result<Vec<HistoryEntry>, ClientError> {
-	entries
-		.into_iter()
-		.filter_map(|entry| match decode_staple(entry.vote_staple) {
-			Ok(None) => None,
-			Ok(Some(staple)) => Some(Ok(HistoryEntry { staple, id: entry.id, timestamp: entry.timestamp })),
-			Err(error) => Some(Err(error)),
-		})
-		.collect()
-}
-
-/// Decode a transport representative entry.
-fn decode_representative(rep: types::Representative) -> Result<Representative, ClientError> {
-	Ok(Representative {
-		account: rep.representative.unwrap_or_default(),
-		weight: decode_amount(rep.weight)?,
-		api_url: rep.endpoints.and_then(|endpoints| endpoints.api),
-	})
-}
-
-/// Map a transport ACL row into a domain [`Acl`].
-fn decode_acl(row: types::AclRow) -> Acl {
-	Acl { principal: row.principal, entity: row.entity, target: row.target, permissions: row.permissions }
-}
-
-/// Map a transport certificate into a domain [`Certificate`], dropping entries
-/// with no certificate body (the "not found" shape).
-fn decode_certificate(cert: types::Certificate) -> Option<Certificate> {
-	let certificate = cert.certificate?;
-	Some(Certificate { certificate, intermediates: cert.intermediates.unwrap_or_default() })
-}
-
-/// Map transport balance entries into domain [`TokenBalance`]s.
-fn decode_balances(entries: Vec<types::BalanceEntry>) -> Result<Vec<TokenBalance>, ClientError> {
-	entries
-		.into_iter()
-		.map(|entry| {
-			Ok(TokenBalance {
-				token: entry.token.unwrap_or_default(),
-				balance: decode_amount(entry.balance)?,
-				pending: decode_amount(entry.pending)?,
-			})
-		})
-		.collect()
-}
-
-/// Assemble an [`AccountState`] from the transport fields shared by the
-/// single- and batch-account state endpoints.
-fn decode_account_state(
-	representative: Option<String>,
-	head: Option<String>,
-	height: Option<String>,
-	balances: Vec<types::BalanceEntry>,
-) -> Result<AccountState, ClientError> {
-	Ok(AccountState {
-		representative,
-		head,
-		height: height
-			.map(|height| decode_amount(Some(height)))
-			.transpose()?,
-		balances: decode_balances(balances)?,
-	})
-}
-
-/// Parse an optional `0x`-hex balance string into an [`Amount`], treating an
-/// absent field as zero.
-fn decode_amount(balance: Option<String>) -> Result<Amount, ClientError> {
-	match balance {
-		None => Ok(Amount::default()),
-		Some(value) => Amount::from_str(&value).context(AmountSnafu),
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
 
 	use keetanetwork_block::testing::{generate_ed25519_ref, generate_identifier_ref, validity_blocktime};
+	use keetanetwork_block::BlockHash;
 	use keetanetwork_vote::{Fees, VoteBuilder};
+
+	use crate::transport::GeneratedTransport;
 
 	const ISSUER_SEED: u8 = 0xA1;
 	const TEST_NETWORK: u64 = 1;
@@ -2276,7 +1784,11 @@ mod tests {
 	}
 
 	fn pick(key: &str) -> RepPick {
-		RepPick { key: key.to_owned(), weight: BigInt::from(1u8), transport: Transport::new("http://localhost") }
+		RepPick {
+			key: key.to_owned(),
+			weight: BigInt::from(1u8),
+			transport: Arc::new(GeneratedTransport::new("http://localhost", reqwest::Client::new())),
+		}
 	}
 
 	#[test]

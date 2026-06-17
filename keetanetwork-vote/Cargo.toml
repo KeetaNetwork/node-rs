@@ -49,8 +49,7 @@ chrono = { workspace = true }
 hex = { workspace = true }
 
 [dependencies.num-bigint]
-version = "0.4.6"
-default-features = false
+workspace = true
 
 [dependencies.num-traits]
 version = "0.2.19"

@@ -391,7 +391,7 @@ async fn test_post_transmit_queries() {
 				.await?;
 			require(!chain.is_empty(), "empty auto-paged chain")
 		}),
-		case!("sync is a no-op when the only rep is in sync", |ctx| {
+		case!("sync is a ignored when the only rep is in sync", |ctx| {
 			let account: AccountRef = Arc::new(GenericAccount::from_str(&ctx.fixture.trusted)?);
 			let synced = ctx.fixture.client.sync_account(&account, false).await?;
 			require(synced.is_none(), "single in-sync rep should not produce a sync staple")
@@ -654,7 +654,7 @@ impl Drop for ClusterFixture {
 }
 
 /// A peered multi-rep cluster must vote to quorum, publish across every rep,
-/// replicate over P2P, and report a no-op sync once in agreement.
+/// and replicate over P2P.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multi_rep_quorum_publish_and_convergence() -> Result<(), Box<dyn core::error::Error>> {
 	let mut fixture = ClusterFixture::start(CLUSTER_REPS).await?;
@@ -719,10 +719,7 @@ fn rep_weight(reps: &[keetanetwork_client::Representative], account: &str) -> Op
 		.map(|rep| rep.weight.clone())
 }
 
-/// A full multi-node exercise: split voting weight across three peered reps so
-/// no rep meets quorum alone, then prove the client aggregates votes to
-/// quorum, replicates over P2P, reports a no-op sync, and survives a rep
-/// failure by voting to a degraded quorum and dispatching past the dead rep.
+/// A full multi-node exercise
 #[tokio::test(flavor = "multi_thread")]
 async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn core::error::Error>> {
 	let mut fixture = ClusterFixture::start(WEIGHTED_REPS).await?;
@@ -884,7 +881,7 @@ async fn test_multi_rep_recover_publishes_pending_side_block() -> Result<(), Box
 	// Recovery rebuilds the staple from the side votes and republishes it.
 	let recovered = fixture
 		.client
-		.recover_account(&accounts.trusted, true, None)
+		.recover_account(&accounts.trusted, true, TransmitOptions::default())
 		.await?;
 	assert!(recovered.is_some(), "recovery must produce a staple for the pending block");
 	fixture.converge().await?;

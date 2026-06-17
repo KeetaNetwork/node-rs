@@ -10,56 +10,47 @@ description = "Async REST client for transmitting vote staples to a KeetaNet nod
 
 [features]
 default = ["std"]
-# The networking client is built on `reqwest`/`tokio` and therefore requires
-# `std`. Without this feature the crate compiles as `no_std` and exposes only
-# the transport-free pieces (`ClientConfig` and the `math` primitives).
+# `std` adds the networking backends (reqwest/tokio transport + runtime) and
+# enables `std` on the core/domain crates. With `--no-default-features` the
+# crate is `no_std`+`alloc`: the orchestrator, traits, scoring, error, and
+# model compile, awaiting a `no_std` transport/runtime backend.
 std = [
 	"dep:reqwest",
 	"dep:tokio",
-	"dep:parking_lot",
 	"dep:progenitor-client",
-	"dep:futures",
-	"dep:futures-core",
-	"dep:bytes",
-	"dep:serde_urlencoded",
-	"dep:rand",
 	"dep:serde",
 	"dep:serde_json",
-	"dep:base64",
-	"dep:snafu",
+	"futures/std",
+	"base64/std",
+	"snafu/std",
 	"num-bigint/std",
-	"dep:keetanetwork-block",
-	"dep:keetanetwork-vote",
-	"dep:keetanetwork-error",
-	"dep:keetanetwork-account",
+	"keetanetwork-block/std",
+	"keetanetwork-vote/std",
+	"keetanetwork-error/std",
+	"keetanetwork-account/std",
 ]
-# Gates the reference-backed e2e test binary; matches the block/vote
-# convention so a `--all-features` run picks it up after `make node-harness`.
 testing = []
 
 [dependencies]
-keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", optional = true }
-keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote", optional = true }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", optional = true }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", optional = true }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote", default-features = false, features = ["alloc", "der", "rasn"] }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false, features = ["alloc"] }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false, features = ["alloc", "rasn"] }
 
-progenitor-client = { version = "0.14.0", optional = true }
-futures-core = { version = "0.3", optional = true }
-futures = { version = "0.3", optional = true }
-bytes = { version = "1.9", optional = true }
-serde_urlencoded = { version = "0.7", optional = true }
-num-bigint = { version = "0.4.6", default-features = false }
-rand = { version = "0.8", optional = true }
-parking_lot = { version = "0.12", optional = true }
+progenitor-client = { workspace = true, optional = true }
+num-bigint = { workspace = true }
+rand_core = { workspace = true }
+spin = { workspace = true, features = ["mutex", "spin_mutex", "rwlock"] }
+async-trait = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
 
 [dependencies.tokio]
-version = "1"
+workspace = true
 features = ["rt", "time"]
 optional = true
 
 [dependencies.reqwest]
-version = "0.13.4"
-default-features = false
+workspace = true
 features = ["json", "query", "stream", "rustls"]
 optional = true
 
@@ -73,16 +64,13 @@ optional = true
 
 [dependencies.base64]
 workspace = true
-features = ["std"]
-optional = true
+features = ["alloc"]
 
 [dependencies.snafu]
 workspace = true
-features = ["std"]
-optional = true
 
 [build-dependencies]
-progenitor = "0.14.0"
+progenitor = { workspace = true }
 serde_yaml = "0.9"
 serde_json.workspace = true
 prettyplease = "0.2"
@@ -97,7 +85,7 @@ hex = { workspace = true }
 workspace = true
 
 [dev-dependencies.tokio]
-version = "1"
+workspace = true
 features = ["rt", "rt-multi-thread", "macros", "time"]
 
 [[test]]

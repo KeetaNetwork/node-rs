@@ -48,8 +48,7 @@ workspace = true
 features = ["spin_no_std"]
 
 [dependencies.num-bigint]
-version = "0.4.6"
-default-features = false
+workspace = true
 
 [dependencies]
 keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
