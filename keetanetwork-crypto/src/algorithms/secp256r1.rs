@@ -341,6 +341,13 @@ impl CryptoVerifierWithOptions<Signature> for Secp256r1PublicKey {
 		let message = message.as_ref();
 		let verifying_key = VerifyingKey::from(&self.inner);
 
+		// Always enforce low-S signatures (BIP-62 compliance)
+		// Use normalize_low_s() to convert high-S signatures before verification
+		let sig_bytes: [u8; 64] = signature.to_bytes().into();
+		if !crate::utils::is_low_s(&sig_bytes, Algorithm::Secp256r1) {
+			return Err(::signature::Error::new());
+		}
+
 		if options.raw {
 			// For raw verification, treat the message as a pre-computed hash
 			// and use prehash verification to avoid double hashing
