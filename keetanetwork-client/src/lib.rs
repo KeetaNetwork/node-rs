@@ -16,21 +16,19 @@
 //! use keetanetwork_block::AccountRef;
 //! use keetanetwork_client::KeetaClient;
 //!
-//! # fn main() -> Result<(), keetanetwork_client::ClientError> {
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), keetanetwork_client::ClientError> {
 //! let client = KeetaClient::new("http://localhost:8080/api").with_network(0u8);
 //!
 //! let (_, _, signer) = create_ed25519_test_keys(None);
 //! let account: AccountRef = Arc::new(GenericAccount::Ed25519(signer));
 //!
-//! let block = tokio::runtime::Runtime::new()
-//!     .expect("doc runtime")
-//!     .block_on(
-//!         client
-//!             .builder(&account)
-//!             .with_previous(account.to_opening_hash())
-//!             .set_rep(&account)
-//!             .build(),
-//!     )?;
+//! let block = client
+//!     .builder(&account)
+//!     .with_previous(account.to_opening_hash())
+//!     .set_rep(&account)
+//!     .build()
+//!     .await?;
 //!
 //! assert_eq!(block.data().account().to_string(), account.to_string());
 //! # Ok(())
