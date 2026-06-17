@@ -1,6 +1,12 @@
 //! Utilities for working with ASN.1 types
 
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
+#[cfg(feature = "serde")]
+use alloc::string::String;
 
 use crate::error::Asn1Error;
 
@@ -127,7 +133,7 @@ where
 }
 
 /// Get an OID string by algorithm name from an OID database
-pub fn get_oid(name: &str, oid_db: &HashMap<&str, &str>) -> Result<ObjectIdentifier, Asn1Error> {
+pub fn get_oid(name: &str, oid_db: &BTreeMap<&str, &str>) -> Result<ObjectIdentifier, Asn1Error> {
 	let oid_str = oid_db
 		.get(name)
 		.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Unknown algorithm: {name}") })?;
@@ -154,7 +160,7 @@ pub fn get_oid(name: &str, oid_db: &HashMap<&str, &str>) -> Result<ObjectIdentif
 }
 
 /// Look up an algorithm name by OID from an OID database.
-pub fn lookup_by_oid<'a>(oid: &str, oid_db: &'a HashMap<&'a str, &'a str>) -> Result<&'a str, Asn1Error> {
+pub fn lookup_by_oid<'a>(oid: &str, oid_db: &'a BTreeMap<&'a str, &'a str>) -> Result<&'a str, Asn1Error> {
 	oid_db
 		.iter()
 		.find(|(_, &o)| o == oid)
@@ -165,7 +171,7 @@ pub fn lookup_by_oid<'a>(oid: &str, oid_db: &'a HashMap<&'a str, &'a str>) -> Re
 /// Look up an algorithm name by ObjectIdentifier from an OID database.
 pub fn lookup_by_object_identifier<'a>(
 	oid: &ObjectIdentifier,
-	oid_db: &'a HashMap<&'a str, &'a str>,
+	oid_db: &'a BTreeMap<&'a str, &'a str>,
 ) -> Result<&'a str, Asn1Error> {
 	let oid_str = oid.to_string();
 	lookup_by_oid(&oid_str, oid_db)
@@ -424,7 +430,7 @@ mod tests {
 		("ECDSA_P256", oids::SECP256R1),
 	];
 
-	fn get_test_oid_db() -> HashMap<&'static str, &'static str> {
+	fn get_test_oid_db() -> BTreeMap<&'static str, &'static str> {
 		TEST_OID_DB.iter().cloned().collect()
 	}
 
@@ -606,7 +612,7 @@ mod tests {
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
 
 		// Test invalid OID format in database
-		let mut invalid_oid_db = HashMap::new();
+		let mut invalid_oid_db = BTreeMap::new();
 		invalid_oid_db.insert("InvalidOID", "invalid.oid.format");
 		let result = get_oid("InvalidOID", &invalid_oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));

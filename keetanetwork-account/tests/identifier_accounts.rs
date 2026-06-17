@@ -2,6 +2,7 @@
 
 use keetanetwork_account::{Account, AccountError, GenericAccount, KeyPair, KeyPairType, KeyTOKEN};
 use keetanetwork_account::{Accountable, KeyECDSASECP256K1, KeyNETWORK, KeySTORAGE, Keyable};
+use keetanetwork_crypto::hash::BlockHash;
 use keetanetwork_crypto::IntoSecret;
 
 mod common;
@@ -96,7 +97,7 @@ fn test_base_token_identifier_generation() -> Result<(), AccountError> {
 		let network_address = Account::<KeyNETWORK>::generate_network_address(*network_id)?;
 		verify_network_account_properties(&network_address);
 
-		// Generate base token identifier (using None for previous hash like Block.NO_PREVIOUS)
+		// Generate base token identifier (None previous means opening semantics)
 		let base_token_result = network_address.generate_identifier(KeyPairType::TOKEN, None, 0);
 		assert!(base_token_result.is_ok(), "Failed to generate base token identifier for {description}");
 
@@ -131,10 +132,9 @@ fn test_token_identifier_restrictions() -> Result<(), AccountError> {
 fn test_network_identifier_restrictions() -> Result<(), AccountError> {
 	let network_address = Account::<KeyNETWORK>::generate_network_address(NETWORK_VERIFICATION_CASES[0].0)?;
 	// Network addresses should not be able to generate token identifiers with some previous hash
-	// (only base tokens with None/NO_PREVIOUS should work)
-	let fake_previous_hash = "fake_hash";
-	let token_with_previous_result =
-		network_address.generate_identifier(KeyPairType::TOKEN, Some(fake_previous_hash), 0);
+	// (only base tokens with an opening `None` previous should work)
+	let previous_hash = BlockHash::from([0x11u8; 32]);
+	let token_with_previous_result = network_address.generate_identifier(KeyPairType::TOKEN, Some(&previous_hash), 0);
 
 	// This should fail
 	assert!(

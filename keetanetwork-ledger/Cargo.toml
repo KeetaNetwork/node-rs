@@ -11,7 +11,7 @@ description = "Ledger functionality for Keetanetwork blockchain"
 [dependencies]
 keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
 keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block" }
-snafu = { workspace = true }
+snafu = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 

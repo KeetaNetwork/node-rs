@@ -1,0 +1,181 @@
+Block DEFINITIONS ::= BEGIN
+
+	-- Transport-format types for keetanetwork blocks.
+	--
+	-- The reference implementation defines two on-transport shapes:
+	-- BlockV1 (legacy SEQUENCE) and BlockV2 (context-tag-1 EXPLICIT SEQUENCE).
+	-- Both share the operation, permissions and signer schemas defined
+	-- in this module.
+
+	-- A pair of base/external permission bitmasks.
+	Permissions ::= SEQUENCE {
+		base       INTEGER,
+		external   INTEGER
+	}
+
+	-- Permissions slot in MODIFY_PERMISSIONS operations.
+	-- Either an explicit Permissions value or NULL when clearing.
+	PermissionsOrNull ::= CHOICE {
+		permissions Permissions,
+		none        NULL
+	}
+
+	-- Principal of a permission grant: either a plain account or a
+	-- certificate-bound account.
+	ModifyPermissionsPrincipal ::= CHOICE {
+		account     OCTET STRING,
+		certificate [1] EXPLICIT CertificatePrincipal
+	}
+
+	CertificatePrincipal ::= SEQUENCE {
+		hash    OCTET STRING,
+		account OCTET STRING
+	}
+
+	-- Multisig arguments carried inside a CREATE_IDENTIFIER operation.
+	MultisigArguments ::= SEQUENCE {
+		signers SEQUENCE OF OCTET STRING,
+		quorum  INTEGER
+	}
+
+	-- Intermediate-certificate slot in MANAGE_CERTIFICATE operations.
+	IntermediateCertificates ::= CHOICE {
+		none   NULL,
+		bundle SEQUENCE OF OCTET STRING
+	}
+
+	-- Operation field bodies. Each appears as the inner SEQUENCE
+	-- of `[N] EXPLICIT SEQUENCE { fields }` in the transport format.
+	SendOp ::= SEQUENCE {
+		to       OCTET STRING,
+		amount   INTEGER,
+		token    OCTET STRING,
+		external UTF8String OPTIONAL
+	}
+
+	SetRepOp ::= SEQUENCE {
+		to OCTET STRING
+	}
+
+	SetInfoOp ::= SEQUENCE {
+		name              UTF8String,
+		description       UTF8String,
+		metadata          UTF8String,
+		defaultPermission Permissions OPTIONAL
+	}
+
+	ModifyPermissionsOp ::= SEQUENCE {
+		principal   ModifyPermissionsPrincipal,
+		method      INTEGER,
+		permissions PermissionsOrNull,
+		target      OCTET STRING OPTIONAL
+	}
+
+	CreateIdentifierOp ::= SEQUENCE {
+		identifier OCTET STRING,
+		multisig   [7] EXPLICIT MultisigArguments OPTIONAL
+	}
+
+	TokenAdminSupplyOp ::= SEQUENCE {
+		amount INTEGER,
+		method INTEGER
+	}
+
+	TokenAdminModifyBalanceOp ::= SEQUENCE {
+		token  OCTET STRING,
+		amount INTEGER,
+		method INTEGER
+	}
+
+	ReceiveOp ::= SEQUENCE {
+		amount  INTEGER,
+		token   OCTET STRING,
+		from    OCTET STRING,
+		exact   BOOLEAN,
+		forward OCTET STRING OPTIONAL
+	}
+
+	ManageCertificateOp ::= SEQUENCE {
+		method                  INTEGER,
+		certificateOrHash       OCTET STRING,
+		intermediateCertificates IntermediateCertificates OPTIONAL
+	}
+
+	-- Operation discriminated by context tag 0-8.
+	Operation ::= CHOICE {
+		send                    [0] EXPLICIT SendOp,
+		setRep                  [1] EXPLICIT SetRepOp,
+		setInfo                 [2] EXPLICIT SetInfoOp,
+		modifyPermissions       [3] EXPLICIT ModifyPermissionsOp,
+		createIdentifier        [4] EXPLICIT CreateIdentifierOp,
+		tokenAdminSupply        [5] EXPLICIT TokenAdminSupplyOp,
+		tokenAdminModifyBalance [6] EXPLICIT TokenAdminModifyBalanceOp,
+		receive                 [7] EXPLICIT ReceiveOp,
+		manageCertificate       [8] EXPLICIT ManageCertificateOp
+	}
+
+	-- A multisig signer tree node. The recursion lives in
+	-- `MultisigSigner.signers` referencing `Signer` again.
+	MultisigSigner ::= SEQUENCE {
+		address OCTET STRING,
+		signers SEQUENCE OF Signer
+	}
+
+	-- Block signer: empty (NULL), a single account, or a multisig tree.
+	Signer ::= CHOICE {
+		empty    NULL,
+		single   OCTET STRING,
+		multisig MultisigSigner
+	}
+
+	-- Block signature(s): single account signature or multisig set.
+	Signatures ::= CHOICE {
+		single   OCTET STRING,
+		multiple SEQUENCE OF OCTET STRING
+	}
+
+	-- Optional-or-NULL wrappers used by V1 fields that always appear
+	-- on the transport as either an explicit value or NULL.
+	IntegerOrNull ::= CHOICE {
+		value INTEGER,
+		none  NULL
+	}
+
+	OctetStringOrNull ::= CHOICE {
+		value OCTET STRING,
+		none  NULL
+	}
+
+	-- V1 block envelope (legacy single-signer transport format).
+	-- Field ordering and tag-distinctness of OPTIONALs follow the
+	-- reference TS implementation byte-for-byte.
+	BlockV1 ::= SEQUENCE {
+		version    INTEGER,
+		network    INTEGER,
+		subnet     IntegerOrNull,
+		idempotent OCTET STRING OPTIONAL,
+		date       GeneralizedTime,
+		signer     OCTET STRING,
+		account    OctetStringOrNull,
+		previous   OCTET STRING,
+		operations SEQUENCE OF Operation,
+		signature  OCTET STRING OPTIONAL
+	}
+
+	-- V2 block envelope wrapped in `[1] EXPLICIT`.
+	BlockV2Body ::= SEQUENCE {
+		network    INTEGER,
+		subnet     INTEGER OPTIONAL,
+		idempotent OCTET STRING OPTIONAL,
+		date       GeneralizedTime,
+		purpose    INTEGER,
+		account    OCTET STRING,
+		signer     Signer,
+		previous   OCTET STRING,
+		operations SEQUENCE OF Operation,
+		signatures Signatures OPTIONAL
+	}
+
+	BlockV2 ::= [1] EXPLICIT BlockV2Body
+
+END

@@ -15,10 +15,15 @@ pub mod iso20022 {
 	include!(concat!(env!("OUT_DIR"), "/generated/iso20022.rs"));
 }
 #[allow(unused_imports, unused_variables, dead_code, non_camel_case_types, clippy::too_many_arguments)]
+mod block {
+	include!(concat!(env!("OUT_DIR"), "/generated/block.rs"));
+}
+#[allow(unused_imports, unused_variables, dead_code, non_camel_case_types, clippy::too_many_arguments)]
 mod subject_public_key_info_definitions {
 	include!(concat!(env!("OUT_DIR"), "/generated/subject_public_key_info_definitions.rs"));
 }
 
 // Re-export all types from the generated modules
 pub use algorithm_identifier_definitions::AlgorithmIdentifier;
+pub use block::{BlockV1, BlockV2, BlockV2Body, CertificatePrincipal, CreateIdentifierOp, IntegerOrNull, IntermediateCertificates, ManageCertificateOp, ModifyPermissionsOp, ModifyPermissionsPrincipal, MultisigArguments, MultisigSigner, OctetStringOrNull, Operation, Permissions, PermissionsOrNull, ReceiveOp, SendOp, SetInfoOp, SetRepOp, Signatures, Signer, TokenAdminModifyBalanceOp, TokenAdminSupplyOp};
 pub use subject_public_key_info_definitions::SubjectPublicKeyInfo;

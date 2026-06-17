@@ -14,31 +14,37 @@ path = "src/lib.rs"
 # X.509 certificate parsing
 [dependencies.x509-cert]
 version = "0.2.5"
-features = ["std", "pem", "sha1"]
+features = ["std", "pem"]
 
 # ASN.1 and DER encoding
 [dependencies.der]
 workspace = true
+features = ["std"]
 
 [dependencies.rasn]
 workspace = true
 optional = true
+features = ["std", "bytes"]
 
 # Date/time handling
 [dependencies.chrono]
 workspace = true
+features = ["now", "std"]
 
 # Error handling
 [dependencies.snafu]
 workspace = true
+features = ["std"]
 
 # Encoding utilities
 [dependencies.base64]
 workspace = true
+features = ["std"]
 
 # Hex encoding/decoding
 [dependencies.hex]
 workspace = true
+features = ["std"]
 
 # Serialization (optional)
 [dependencies.serde]

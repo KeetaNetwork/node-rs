@@ -13,11 +13,14 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dsherret/rust-toolchain-file@v1
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -37,17 +40,39 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@keetanetwork'
+
+      - name: Install reference implementation harness
+        run: make node-harness
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run all tests
         run: make test-all
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dsherret/rust-toolchain-file@v1
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@keetanetwork'
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -69,6 +94,8 @@ jobs:
 
       - name: Check formatting and linting
         run: make do-lint-ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check documentation
         run: make do-docs-ci
@@ -82,7 +109,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dsherret/rust-toolchain-file@v1
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
@@ -99,10 +126,10 @@ jobs:
           fetch-depth: 0 # Shallow clones should be disabled for better analysis
 
       - name: Install Rust
-        uses: dsherret/rust-toolchain-file@v1
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@a44ad39dbe1df4610bc607819a1eb0328a4cb0a0 # cargo-llvm-cov
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -122,11 +149,23 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@keetanetwork'
+
+      - name: Install reference implementation harness
+        run: make node-harness
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run tests and generate coverage
         run: make coverage-ci
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+        uses: SonarSource/sonarcloud-github-action@ba3875ecf642b2129de2b589510c81a8b53dbf4e # master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

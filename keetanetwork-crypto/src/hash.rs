@@ -3,8 +3,9 @@
 //! This module provides a flexible abstraction over different hash algorithms.
 
 use alloc::vec::Vec;
+use core::fmt::{Display, Formatter, Result as FmtResult};
+use core::str::FromStr;
 
-use sha1::Sha1;
 use sha2::{Sha256, Sha512};
 use sha3::{Digest, Sha3_256};
 
@@ -20,10 +21,6 @@ pub enum HashAlgorithm {
 	Sha2_256,
 	/// SHA2-512
 	Sha2_512,
-	/// SHA-1
-	/// For X.509 Subject Key Identifier per RFC 5280
-	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.2>
-	Sha1,
 }
 
 impl HashAlgorithm {
@@ -33,7 +30,6 @@ impl HashAlgorithm {
 			HashAlgorithm::Sha3_256 => "sha3-256",
 			HashAlgorithm::Sha2_256 => "sha2-256",
 			HashAlgorithm::Sha2_512 => "sha2-512",
-			HashAlgorithm::Sha1 => "sha1",
 		}
 	}
 
@@ -43,7 +39,6 @@ impl HashAlgorithm {
 			HashAlgorithm::Sha3_256 => 32,
 			HashAlgorithm::Sha2_256 => 32,
 			HashAlgorithm::Sha2_512 => 64,
-			HashAlgorithm::Sha1 => 20,
 		}
 	}
 
@@ -63,11 +58,6 @@ impl HashAlgorithm {
 			}
 			HashAlgorithm::Sha2_512 => {
 				let mut hasher = Sha512::new();
-				hasher.update(data);
-				hasher.finalize().to_vec()
-			}
-			HashAlgorithm::Sha1 => {
-				let mut hasher = Sha1::new();
 				hasher.update(data);
 				hasher.finalize().to_vec()
 			}
@@ -144,6 +134,82 @@ pub fn hash_array<const N: usize>(
 	algo.hash_array::<N>(data)
 }
 
+/// A 32-byte block hash produced by the default hash algorithm (SHA3-256).
+///
+/// This is the canonical hash type for blocks and block-derived values such
+/// as account opening hashes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlockHash([u8; HASH_FUNCTION_LENGTH]);
+
+impl BlockHash {
+	/// Compute the account opening hash from a raw public key
+	/// (without the key type prefix byte).
+	pub fn opening(raw_public_key: impl AsRef<[u8]>) -> Self {
+		Self(hash_default(raw_public_key))
+	}
+
+	/// Borrow the hash as a fixed-size byte array.
+	pub fn as_bytes(&self) -> &[u8; HASH_FUNCTION_LENGTH] {
+		&self.0
+	}
+}
+
+impl From<[u8; HASH_FUNCTION_LENGTH]> for BlockHash {
+	fn from(bytes: [u8; HASH_FUNCTION_LENGTH]) -> Self {
+		Self(bytes)
+	}
+}
+
+impl From<BlockHash> for [u8; HASH_FUNCTION_LENGTH] {
+	fn from(hash: BlockHash) -> Self {
+		hash.0
+	}
+}
+
+impl AsRef<[u8]> for BlockHash {
+	fn as_ref(&self) -> &[u8] {
+		&self.0
+	}
+}
+
+impl TryFrom<&[u8]> for BlockHash {
+	type Error = CryptoError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		let array: [u8; HASH_FUNCTION_LENGTH] = bytes.try_into()?;
+		Ok(Self(array))
+	}
+}
+
+impl Display for BlockHash {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+		write!(f, "{}", hex::encode_upper(self.0))
+	}
+}
+
+impl FromStr for BlockHash {
+	type Err = CryptoError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		let mut bytes = [0u8; HASH_FUNCTION_LENGTH];
+		hex::decode_to_slice(s, &mut bytes)?;
+		Ok(Self(bytes))
+	}
+}
+
+/// Types that can be hashed into a canonical digest.
+///
+/// The digest type is associated so different domains can hash to their own
+/// strongly-typed values (e.g. blocks to [`BlockHash`], votes to a vote hash)
+/// while sharing a single trait.
+pub trait Hashable {
+	/// The digest produced by hashing this value.
+	type Digest;
+
+	/// Compute the hash of this value.
+	fn hash(&self) -> Self::Digest;
+}
+
 /// Get the hash function name
 pub fn default_hash_algorithm() -> &'static str {
 	HASH_FUNCTION_NAME
@@ -192,14 +258,6 @@ mod tests {
 			expected_hello_world: "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
 			expected_empty: "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
 			expected_test_data: "0e1e21ecf105ec853d24d728867ad70613c21663a4693074b2a3619c1bd39d66b588c33723bb466c72424e80e3ca63c249078ab347bab9428500e7ee43059d0d",
-		},
-		HashTestCase {
-			algorithm: HashAlgorithm::Sha1,
-			name: "sha1",
-			length: 20,
-			expected_hello_world: "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
-			expected_empty: "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-			expected_test_data: "f48dd853820860816c75d54d0f584dc863327a7c",
 		},
 	];
 
@@ -452,6 +510,38 @@ mod tests {
 		assert_eq!(hash_result, hash_array_result);
 
 		Ok(())
+	}
+
+	#[test]
+	fn test_block_hash_roundtrip() {
+		let hash = BlockHash::from(hash_default(b"test data"));
+		let text = hash.to_string();
+		let parsed: BlockHash = text.parse().unwrap();
+		assert_eq!(parsed, hash);
+		assert_eq!(text, text.to_uppercase());
+		assert_eq!(hash.as_ref().len(), 32);
+		assert_eq!(<[u8; 32]>::from(hash), *hash.as_bytes());
+	}
+
+	#[test]
+	fn test_block_hash_parse_lowercase() {
+		let hash = BlockHash::from(hash_default(b"abc"));
+		let parsed: BlockHash = hash.to_string().to_lowercase().parse().unwrap();
+		assert_eq!(parsed, hash);
+	}
+
+	#[test]
+	fn test_block_hash_parse_invalid() {
+		assert!(matches!("zz".parse::<BlockHash>(), Err(CryptoError::InvalidInput)));
+		assert!(matches!("aabb".parse::<BlockHash>(), Err(CryptoError::InvalidInput)));
+		assert!(matches!(BlockHash::try_from([0u8; 16].as_slice()), Err(CryptoError::InvalidKeySize)));
+	}
+
+	#[test]
+	fn test_block_hash_opening() {
+		let raw_key = [7u8; 32];
+		let opening = BlockHash::opening(raw_key);
+		assert_eq!(*opening.as_bytes(), hash_default(raw_key));
 	}
 
 	#[test]

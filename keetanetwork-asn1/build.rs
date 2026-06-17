@@ -35,8 +35,26 @@ fn main() {
 		panic!("Failed to compile ASN.1 files: {e}");
 	}
 
+	// Substitute the canonical-DER `GeneralizedTime` type in block.rs with
+	// `Asn1Time`, which preserves trailing zeros to match the reference
+	// TypeScript transport format.
+	rewrite_block_generalized_time(generated_dir_str);
+
 	// Generate From implementations for wrapper types
 	generate_from_implementations(generated_dir_str);
+}
+
+fn rewrite_block_generalized_time(generated_dir: &str) {
+	let path = Path::new(generated_dir).join("block.rs");
+	let Ok(original) = fs::read_to_string(&path) else {
+		return;
+	};
+
+	let imports_replacement = "use rasn::prelude::*;\nuse crate::Asn1Time as GeneralizedTime;";
+	let rewritten = original.replace("use rasn::prelude::*;", imports_replacement);
+	if rewritten != original {
+		fs::write(&path, rewritten).expect("post-process block.rs must succeed");
+	}
 }
 
 fn generate_sequence_fields_with_context_tags(
@@ -348,8 +366,8 @@ fn generate_oids_from_json(path: &str) {
 	// Add imports and header
 	generated_code.push_str(
 		r#"
-use std::borrow::Cow;
-use std::collections::HashMap;
+use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
 use rasn::types::ObjectIdentifier;
 
 "#,
@@ -464,7 +482,7 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push_str("    lazy_static::lazy_static! {\n");
 		generated_code.push_str("        /// OID database for sensitive certificate attributes.\n");
 		generated_code
-			.push_str("        pub static ref SENSITIVE_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
+			.push_str("        pub static ref SENSITIVE_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
 		generated_code.push_str("            [\n");
 		for name in sensitive_attrs.keys() {
 			let const_name = camel_to_snake_upper(name);
@@ -485,7 +503,7 @@ use rasn::types::ObjectIdentifier;
 		generated_code.push_str("lazy_static::lazy_static! {\n");
 		generated_code.push_str("    /// OID database for sensitive attribute algorithms.\n");
 		generated_code
-			.push_str("    pub static ref ALGORITHM_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
+			.push_str("    pub static ref ALGORITHM_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
 		generated_code.push_str("        [\n");
 		for name in algorithms.keys() {
 			let const_name = name.to_uppercase().replace('-', "_");
@@ -503,7 +521,7 @@ use rasn::types::ObjectIdentifier;
 	if let Some(plain_attrs) = oids["plain_attributes"].as_object() {
 		generated_code.push_str("lazy_static::lazy_static! {\n");
 		generated_code.push_str("    /// OID database for plain certificate attributes.\n");
-		generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
+		generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
 		generated_code.push_str("        [\n");
 		for name in plain_attrs.keys() {
 			let const_name = match name.as_str() {

@@ -4,6 +4,11 @@
 //! documentation generation. These helpers reduce code duplication in
 //! documentation examples and provide consistent test data.
 
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+
 use keetanetwork_crypto::algorithms::ed25519::{Ed25519Derivation, Ed25519PrivateKey, Ed25519PublicKey};
 use keetanetwork_crypto::algorithms::secp256k1::{Secp256k1Derivation, Secp256k1PrivateKey, Secp256k1PublicKey};
 use keetanetwork_crypto::algorithms::secp256r1::{Secp256r1Derivation, Secp256r1PrivateKey, Secp256r1PublicKey};

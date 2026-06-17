@@ -583,10 +583,12 @@ pub fn generate_generated_rs(
 		let generated_file_path = format!("{modules_dir}/{module_name}.rs");
 		if let Ok(generated_content) = std::fs::read_to_string(&generated_file_path) {
 			let exported_types = extract_exported_types(&generated_content);
-			if exported_types.len() == 1 {
-				content.push_str(&format!("pub use {}::{};\n", module_name, exported_types[0]));
-			} else if exported_types.len() > 1 {
-				content.push_str(&format!("pub use {}::{{{}}};\n", module_name, exported_types.join(", ")));
+			// Emit rustfmt-canonical re-exports so the generated file is
+			// byte-stable under `cargo fmt --check`.
+			match exported_types.as_slice() {
+				[] => {}
+				[single] => content.push_str(&format!("pub use {module_name}::{single};\n")),
+				types => content.push_str(&format!("pub use {}::{{{}}};\n", module_name, types.join(", "))),
 			}
 		}
 	}

@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer release
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer node-harness node-harness-lint
 
 # Project name
 PROJ_NAME := node-rs
@@ -28,10 +28,6 @@ check:
 build:
 	cargo build $(release_flag)
 
-# Build for release
-release:
-	$(MAKE) build release=1
-
 # Clean build artifacts
 clean:
 	cargo clean
@@ -47,12 +43,12 @@ do-docs-ci:
 	cargo doc --no-deps --document-private-items --all-features
 
 # Lint code
-do-lint: do-docs-ci
-	cargo clippy --fix --allow-staged --allow-dirty
+do-lint: do-docs-ci node-harness-lint
+	cargo clippy --fix --allow-staged --allow-dirty --all-targets --all-features -- -D warnings
 	cargo fmt
 
 # Lint code for CI (check only, no fixes)
-do-lint-ci:
+do-lint-ci: node-harness-lint
 	cargo check --all-targets --all-features
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --all-features -- -D warnings
@@ -62,8 +58,8 @@ test-feat:
 	cargo test -p keetanetwork-crypto --no-default-features --features std,signature
 	cargo test -p keetanetwork-crypto --no-default-features --features std,encryption
 	cargo test -p keetanetwork-crypto --no-default-features --features std,der
-	cargo test -p keetanetwork-account --no-default-features --features der
-	cargo test -p keetanetwork-account --no-default-features --features rasn
+	cargo test -p keetanetwork-account --no-default-features --features std,der
+	cargo test -p keetanetwork-account --no-default-features --features std,rasn
 	cargo test -p keetanetwork-crypto --no-default-features --features std
 	cargo check -p keetanetwork-crypto --no-default-features
 	cargo check -p keetanetwork-crypto --no-default-features --features signature
@@ -73,14 +69,43 @@ test-feat:
 	cargo test -p keetanetwork-x509 --no-default-features --features rasn
 	cargo test -p keetanetwork-x509 --no-default-features --features der, serde
 	cargo test -p keetanetwork-x509 --no-default-features --features rasn, serde
-	cargo test -p keetanetwork-asn1 --no-default-features --features der
-	cargo test -p keetanetwork-asn1 --no-default-features --features rasn
-	cargo test -p keetanetwork-asn1 --no-default-features --features der,serde
-	cargo test -p keetanetwork-asn1 --no-default-features --features rasn,serde
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,der
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,rasn
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,der,serde
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,rasn,serde
+	cargo test -p keetanetwork-block --no-default-features --features std,der
+	cargo test -p keetanetwork-block --no-default-features --features std,rasn
+	cargo test -p keetanetwork-block --no-default-features --features std,der,rasn
 	cargo test -p keetanetwork-crypto -p keetanetwork-x509 --all-features
+	# no_std builds (cargo check, since test harness needs std).
+	cargo check -p keetanetwork-error --no-default-features
+	cargo check -p keetanetwork-error --no-default-features --features alloc
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,der
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn,der
+	cargo check -p keetanetwork-account --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-account --no-default-features --features alloc,der
+	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-block --no-default-features --features alloc,der
+	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn,der
+
+# Reference implementation harness (required by compatibility/e2e tests)
+HARNESS_DIR := keetanetwork-utils/node-harness
+HARNESS_SOURCES := $(wildcard $(HARNESS_DIR)/src/*.ts) $(HARNESS_DIR)/tsconfig.json
+
+$(HARNESS_DIR)/node_modules/.package-lock.json: $(HARNESS_DIR)/package-lock.json
+	cd $(HARNESS_DIR) && npm ci
+
+$(HARNESS_DIR)/dist/e2e_node.js: $(HARNESS_DIR)/node_modules/.package-lock.json $(HARNESS_SOURCES)
+	cd $(HARNESS_DIR) && npm run build
+
+node-harness: $(HARNESS_DIR)/dist/e2e_node.js
+
+node-harness-lint: node-harness
+	cd $(HARNESS_DIR) && npm run lint
 
 # Run tests with host system's default target
-test:
+test: node-harness
 	# Use a shell script to unset CARGO_BUILD_TARGET and run tests
 	sh -c 'unset CARGO_BUILD_TARGET; cargo test --all-features --workspace'
 
@@ -224,7 +249,7 @@ help:
 	@echo "  make help           - Show this help message"
 	@echo "  make developer      - Set up development environment (install Rust, tools, etc.)"
 	@echo "  make build          - Build in debug mode"
-	@echo "  make release        - Build in release mode"
+	@echo "  make build release=1 - Build in release mode"
 	@echo "  make clean          - Clean build artifacts"
 	@echo "  make check          - Check compilation without building"
 	@echo "  make do-docs        - Generate and open documentation"
