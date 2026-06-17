@@ -906,6 +906,90 @@ async fn test_multi_rep_recover_publishes_pending_side_block() -> Result<(), Box
 	Ok(())
 }
 
+/// A rep that already promoted the successor to its main ledger holds its vote
+/// there, not on the side ledger. Recovery must read that main-ledger vote
+/// (main-first), fold it in with the peers' still-pending side votes, and
+/// republish so the lagging reps catch up.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multi_rep_recover_reads_main_promoted_vote() -> Result<(), Box<dyn core::error::Error>> {
+	let mut fixture = ClusterFixture::start(WEIGHTED_REPS).await?;
+	let trusted = fixture.trusted.clone();
+	let base_token = fixture.base_token.clone();
+	let accounts = fixture.accounts()?;
+
+	let block = fixture
+		.client
+		.builder(&accounts.trusted)
+		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
+		.build()
+		.await?;
+	let block_bytes = block_hex(&block);
+
+	// Stage temporary side votes on every rep, then escalate the primary to a
+	// permanent vote built over that quorum.
+	let mut temporary = Vec::with_capacity(WEIGHTED_REPS);
+	for index in 0..WEIGHTED_REPS {
+		temporary.push(side_vote(&mut fixture.node, index, &block_bytes, &[])?);
+	}
+	let permanent = side_vote(&mut fixture.node, 0, &block_bytes, &temporary)?;
+
+	// Promote the staple onto the primary's main ledger only: its head now
+	// holds the successor while the peers stay pending on their side ledgers.
+	ledger_add(&mut fixture.node, 0, &[permanent], &block_bytes)?;
+
+	let heads = head_hashes(&mut fixture.node, &trusted)?;
+	assert_eq!(
+		heads[0],
+		block.hash().to_string(),
+		"the primary rep must have promoted the successor to its main ledger"
+	);
+	assert!(
+		heads[1..].iter().all(|head| *head != heads[0]),
+		"the peer reps must still lag on their side ledgers before recovery"
+	);
+
+	// The divergent head must not hide the pending successor: the majority of
+	// reps still report it, so it remains recoverable.
+	let pending = fixture
+		.client
+		.pending_block(&trusted)
+		.await?
+		.ok_or("the half-published successor must surface despite the primary's advanced head")?;
+	assert_eq!(
+		pending.hash().to_string(),
+		block.hash().to_string(),
+		"the majority of reps must agree on the pending successor"
+	);
+
+	// Recovery reads the primary's main-ledger vote, combines it with the
+	// peers' side votes, and republishes to converge the cluster.
+	let recovered = fixture
+		.client
+		.recover_account(&accounts.trusted, true, TransmitOptions::default())
+		.await?;
+	assert!(recovered.is_some(), "recovery must rebuild the staple from the main-promoted vote and the side votes");
+	fixture.converge().await?;
+
+	let head = fixture
+		.client
+		.head_block(&trusted)
+		.await?
+		.ok_or("the trusted account must have a head once recovery publishes")?;
+	assert_eq!(
+		head.hash().to_string(),
+		block.hash().to_string(),
+		"the recovered block must become the cluster-wide head"
+	);
+	let balance = fixture.client.balance(&trusted, &base_token).await?;
+	assert_eq!(
+		balance,
+		Amount::from(MINTED_SUPPLY - SEND_AMOUNT),
+		"the recovered send must debit the trusted account across the cluster"
+	);
+
+	Ok(())
+}
+
 /// When one rep's main ledger has advanced past its peers, the client must
 /// detect the head-height divergence and publish the missing staple to the
 /// lagging reps so the whole cluster converges.

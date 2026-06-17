@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use snafu::prelude::*;
 
 /// The category of a node-emitted error, taken from the `type` field of the
-/// error envelope. Mirrors the reference error taxonomy.
+/// error envelope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NodeErrorType {
 	Account,

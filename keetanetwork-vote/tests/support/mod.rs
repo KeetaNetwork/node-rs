@@ -47,7 +47,7 @@ pub fn secp256r1_issuer(seed_hex: &str) -> AccountRef {
 }
 
 /// A deterministic TOKEN identifier suitable for use in fee `token`
-/// fields. Mirrors the helper in [`keetanetwork_vote::testing`] but
+/// fields. Equivalent to the helper in [`keetanetwork_vote::testing`] but
 /// keyed by a single byte for legibility in test tables.
 pub fn token_identifier(seed_byte: u8) -> AccountRef {
 	token_identifier_raw([seed_byte; 32])

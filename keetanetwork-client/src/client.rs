@@ -16,7 +16,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use keetanetwork_account::{Account, GenericAccount, KeyNETWORK, KeyPairType};
 use keetanetwork_block::{AccountRef, Amount, Block, BlockBuilder, BlockPurpose, BlockTime, Hashable, Send};
 use keetanetwork_error::KeetaNetError;
-use keetanetwork_vote::{Fee, ValidationConfig, Vote, VoteQuote, VoteStaple};
+use keetanetwork_vote::{Fee, Fees, ValidationConfig, Vote, VoteQuote, VoteStaple};
 use num_bigint::BigInt;
 use snafu::ResultExt;
 
@@ -34,15 +34,10 @@ use crate::sync::{Mutex, RwLock};
 use crate::transport::{LedgerSide, NodeTransport, TransportFactory};
 
 #[cfg(feature = "std")]
-use crate::generated::Client as Transport;
-#[cfg(feature = "std")]
-use crate::rep::RepEndpoint;
-#[cfg(feature = "std")]
-use crate::runtime::TokioRuntime;
-#[cfg(feature = "std")]
-use crate::transport::GeneratedTransportFactory;
-#[cfg(feature = "std")]
-use std::sync::OnceLock;
+use {
+	crate::generated::Client as Transport, crate::rep::RepEndpoint, crate::runtime::TokioRuntime,
+	crate::transport::GeneratedTransportFactory, std::sync::OnceLock,
+};
 
 /// Bookkeeping for the background representative-refresh task.
 #[derive(Debug, Default)]
@@ -101,8 +96,6 @@ impl Drop for Inner {
 /// Talks to a set of representatives: reads pick one rep (power-of-two
 /// choices, weighted by reliability) with retry, backoff, and timeout; votes,
 /// quotes, and publishes fan out to every rep and aggregate by quorum weight.
-/// Exposes the publish flow in domain types ([`Block`], [`Vote`],
-/// [`VoteStaple`]) rather than base64 strings.
 #[derive(Clone, Debug)]
 pub struct KeetaClient {
 	inner: Arc<Inner>,
@@ -700,7 +693,7 @@ impl KeetaClient {
 				.as_ref()
 				.ok_or(ClientError::FeeRequired)?;
 			let fee_block = self
-				.build_fee_block(signer, blocks, &temporary, moment)
+				.build_fee_block(signer, blocks, &temporary, moment, &options.fee_token_priority)
 				.await?;
 			all.push(fee_block);
 		}
@@ -811,14 +804,7 @@ impl KeetaClient {
 		let mut missing: Vec<RepPick> = Vec::new();
 
 		for pick in &picks {
-			let best = match pick
-				.transport
-				.block_votes(&successor_hash, LedgerSide::Side)
-				.await
-			{
-				Ok(Some(list)) if !list.is_empty() => pick_best_vote(list),
-				_ => None,
-			};
+			let best = self.rep_recover_vote(pick, &successor_hash).await;
 			match best {
 				Some(vote) if vote.validity().is_permanent_at(moment, config) => {
 					perm_votes.push(vote);
@@ -849,6 +835,7 @@ impl KeetaClient {
 					break;
 				}
 			}
+
 			match found {
 				Some(block) => blocks.push(block),
 				None => return Err(ClientError::RecoverFailed),
@@ -873,7 +860,7 @@ impl KeetaClient {
 					.as_ref()
 					.ok_or(ClientError::FeeRequired)?;
 				let fee_block = self
-					.build_fee_block(signer, &blocks, &temp_votes, moment)
+					.build_fee_block(signer, &blocks, &temp_votes, moment, &options.fee_token_priority)
 					.await?;
 				blocks.push(fee_block);
 			}
@@ -903,6 +890,23 @@ impl KeetaClient {
 		}
 
 		Ok(Some(staple))
+	}
+
+	/// Fetch a representative's own vote for `hash`, preferring the main
+	/// ledger (the rep already promoted the staple) and falling back to the
+	/// side ledger (the staple is still pending).
+	async fn rep_recover_vote(&self, pick: &RepPick, hash: &str) -> Option<Vote> {
+		for side in [LedgerSide::Main, LedgerSide::Side] {
+			let list = match pick.transport.block_votes(hash, side).await {
+				Ok(Some(list)) if !list.is_empty() => list,
+				_ => continue,
+			};
+			if let Some(vote) = rep_vote(list, &pick.key, self.inner.single_rep) {
+				return Some(vote);
+			}
+		}
+
+		None
 	}
 
 	/// Request votes from a specific subset of representatives, attaching
@@ -978,6 +982,7 @@ impl KeetaClient {
 		blocks: &[Block],
 		votes: &[Vote],
 		moment: BlockTime,
+		priority: &[AccountRef],
 	) -> Result<Block, ClientError> {
 		let previous = blocks
 			.iter()
@@ -991,7 +996,7 @@ impl KeetaClient {
 			.with_purpose(BlockPurpose::Fee)
 			.with_previous(previous)
 			.with_date(moment);
-		for operation in self.fee_operations(votes)? {
+		for operation in self.fee_operations(votes, priority)? {
 			builder = builder.with_operation(operation);
 		}
 
@@ -1013,7 +1018,7 @@ impl KeetaClient {
 	/// Translate the fee schedule carried by `votes` into the `SEND`
 	/// operations of a fee block, skipping votes that offer a zero-amount
 	/// (optional) fee.
-	fn fee_operations(&self, votes: &[Vote]) -> Result<Vec<Send>, ClientError> {
+	fn fee_operations(&self, votes: &[Vote], priority: &[AccountRef]) -> Result<Vec<Send>, ClientError> {
 		let base_token = self.base_token()?;
 		let mut operations = Vec::new();
 
@@ -1025,13 +1030,7 @@ impl KeetaClient {
 				continue;
 			}
 
-			// Prefer an entry payable in the base token (implicit `None` or an
-			// explicit match); otherwise fall back to the first entry.
-			let Some(selected) = fees
-				.entries()
-				.find(|&fee| fee_pays_base_token(fee, &base_token))
-				.or_else(|| fees.entries().next())
-			else {
+			let Some(selected) = select_fee(fees, &base_token, priority) else {
 				continue;
 			};
 
@@ -1585,6 +1584,19 @@ fn height_value(info: &Option<(String, Amount)>) -> BigInt {
 
 /// Choose the vote with the latest validity end, favouring permanent votes
 /// when a rep returns both a permanent and a short vote.
+fn rep_vote(votes: Vec<Vote>, rep_key: &str, single_rep: bool) -> Option<Vote> {
+	let own: Vec<Vote> = votes
+		.iter()
+		.filter(|vote| vote.issuer().to_string() == rep_key)
+		.cloned()
+		.collect();
+
+	match (own.is_empty(), single_rep) {
+		(true, true) => pick_best_vote(votes),
+		_ => pick_best_vote(own),
+	}
+}
+
 fn pick_best_vote(mut votes: Vec<Vote>) -> Option<Vote> {
 	votes.sort_by(|left, right| {
 		right
@@ -1603,6 +1615,33 @@ fn fee_pays_base_token(fee: &Fee, base_token: &AccountRef) -> bool {
 		None => true,
 		Some(token) => token.to_string() == base_token.to_string(),
 	}
+}
+
+/// The token a fee entry is paid in, treating an implicit (`None`) token as
+/// the network base token.
+fn fee_token(fee: &Fee, base_token: &AccountRef) -> String {
+	match &fee.token {
+		Some(token) => token.to_string(),
+		None => base_token.to_string(),
+	}
+}
+
+/// Choose which fee entry to pay: the highest-ranked `priority` token wins
+/// (an implicit `None` token counts as the base token); otherwise prefer the
+/// base-token entry, then fall back to the first entry.
+fn select_fee<'a>(fees: &'a Fees, base_token: &AccountRef, priority: &[AccountRef]) -> Option<&'a Fee> {
+	for wanted in priority {
+		let matched = fees
+			.entries()
+			.find(|fee| fee_token(fee, base_token) == wanted.to_string());
+		if matched.is_some() {
+			return matched;
+		}
+	}
+
+	fees.entries()
+		.find(|&fee| fee_pays_base_token(fee, base_token))
+		.or_else(|| fees.entries().next())
 }
 
 /// Whether any vote requires a fee block: it carries a fee schedule with no
@@ -1697,7 +1736,7 @@ mod tests {
 		let base = client.base_token()?;
 		let fees = Fees::from_entries(false, vec![fee(10, None, None)])?;
 
-		let ops = client.fee_operations(&[signed_vote(Some(fees))?])?;
+		let ops = client.fee_operations(&[signed_vote(Some(fees))?], &[])?;
 		assert_eq!(ops.len(), 1);
 		assert_eq!(ops[0].amount, Amount::from(10u64));
 		assert_eq!(ops[0].token.to_string(), base.to_string());
@@ -1710,7 +1749,7 @@ mod tests {
 		let client = test_client();
 		let fees = Fees::from_entries(false, vec![fee(10, None, None), fee(0, None, None)])?;
 		assert!(client
-			.fee_operations(&[signed_vote(Some(fees))?])?
+			.fee_operations(&[signed_vote(Some(fees))?], &[])?
 			.is_empty());
 
 		Ok(())
@@ -1723,25 +1762,69 @@ mod tests {
 		let token = generate_identifier_ref(0xC3, KeyPairType::TOKEN, 0);
 		let fees = Fees::from_entries(false, vec![fee(5, Some(Arc::clone(&pay_to)), Some(Arc::clone(&token)))])?;
 
-		let ops = client.fee_operations(&[signed_vote(Some(fees))?])?;
+		let ops = client.fee_operations(&[signed_vote(Some(fees))?], &[])?;
 		assert_eq!(ops[0].to.to_string(), pay_to.to_string());
 		assert_eq!(ops[0].token.to_string(), token.to_string());
 		Ok(())
 	}
 
 	#[test]
-	fn fee_operations_prefer_base_token_entry() -> TestResult {
+	fn fee_operations_select_the_payable_entry() -> TestResult {
 		let client = test_client();
 		let base = client.base_token()?;
-		let other = generate_identifier_ref(0xC4, KeyPairType::TOKEN, 0);
-		let fees = Fees::from_entries(
-			false,
-			vec![fee(7, None, Some(Arc::clone(&other))), fee(9, None, Some(Arc::clone(&base)))],
-		)?;
+		let a = generate_identifier_ref(0xC4, KeyPairType::TOKEN, 0);
+		let b = generate_identifier_ref(0xC5, KeyPairType::TOKEN, 0);
+		let absent = generate_identifier_ref(0xC6, KeyPairType::TOKEN, 0);
 
-		let ops = client.fee_operations(&[signed_vote(Some(fees))?])?;
-		assert_eq!(ops[0].token.to_string(), base.to_string());
-		assert_eq!(ops[0].amount, Amount::from(9u64));
+		let cases = [
+			// base preferred when no priority is given
+			(
+				vec![fee(7, None, Some(Arc::clone(&a))), fee(9, None, Some(Arc::clone(&base)))],
+				vec![],
+				Arc::clone(&base),
+				9u64,
+			),
+			// priority overrides the base default
+			(
+				vec![fee(7, None, Some(Arc::clone(&a))), fee(9, None, Some(Arc::clone(&base)))],
+				vec![Arc::clone(&a)],
+				Arc::clone(&a),
+				7,
+			),
+			// priority is ranked highest first
+			(
+				vec![
+					fee(7, None, Some(Arc::clone(&b))),
+					fee(8, None, Some(Arc::clone(&a))),
+					fee(9, None, Some(Arc::clone(&base))),
+				],
+				vec![Arc::clone(&a), Arc::clone(&b)],
+				Arc::clone(&a),
+				8,
+			),
+			// unmatched priority falls back to base
+			(
+				vec![fee(7, None, Some(Arc::clone(&a))), fee(9, None, Some(Arc::clone(&base)))],
+				vec![Arc::clone(&absent)],
+				Arc::clone(&base),
+				9,
+			),
+			// priority matches the implicit (`None`) base entry
+			(
+				vec![fee(7, None, Some(Arc::clone(&a))), fee(9, None, None)],
+				vec![Arc::clone(&base)],
+				Arc::clone(&base),
+				9,
+			),
+		];
+
+		for (entries, priority, token, amount) in cases {
+			let fees = Fees::from_entries(false, entries)?;
+			let ops = client.fee_operations(&[signed_vote(Some(fees))?], &priority)?;
+			assert_eq!(ops[0].token.to_string(), token.to_string());
+			assert_eq!(ops[0].amount, Amount::from(amount));
+		}
+
 		Ok(())
 	}
 
@@ -1769,6 +1852,40 @@ mod tests {
 			.validity(from, to)
 			.add_block(BlockHash::from([7u8; 32]))
 			.build_signed(issuer.as_ref())?)
+	}
+
+	#[test]
+	fn rep_vote_keeps_only_the_reps_own_vote() -> TestResult {
+		let rep_a = generate_ed25519_ref(0xA1);
+		let rep_b = generate_ed25519_ref(0xB2);
+		// rep_b's vote outlives rep_a's, yet rep_a must still get its own vote.
+		let votes = vec![vote_by(&rep_a, 0, 60)?, vote_by(&rep_b, 0, 600)?];
+
+		let chosen = rep_vote(votes, &rep_a.to_string(), false).ok_or("rep_a must have a vote")?;
+		assert_eq!(chosen.issuer().to_string(), rep_a.to_string());
+		Ok(())
+	}
+
+	#[test]
+	fn rep_vote_absent_issuer_is_none_for_multi_rep() -> TestResult {
+		let rep_a = generate_ed25519_ref(0xA1);
+		let rep_b = generate_ed25519_ref(0xB2);
+
+		let votes = vec![vote_by(&rep_b, 0, 60)?];
+		assert!(rep_vote(votes, &rep_a.to_string(), false).is_none());
+		Ok(())
+	}
+
+	#[test]
+	fn rep_vote_single_rep_falls_back_to_latest() -> TestResult {
+		let rep_a = generate_ed25519_ref(0xA1);
+		let rep_b = generate_ed25519_ref(0xB2);
+		let votes = vec![vote_by(&rep_a, 0, 60)?, vote_by(&rep_b, 0, 600)?];
+
+		// A URL key matches no issuer; the single-rep client keeps the latest.
+		let chosen = rep_vote(votes, "http://localhost", true).ok_or("single-rep must fall back to a vote")?;
+		assert_eq!(chosen.issuer().to_string(), rep_b.to_string());
+		Ok(())
 	}
 
 	#[test]

@@ -71,7 +71,6 @@ pub(super) fn decode_vote(bytes: &[u8]) -> Result<DecodedVoteCertificate, Asn1Er
 
 	// Reference rejects wrappers that are not exactly 3 elements (TBS,
 	// signature algorithm, signature) before inspecting individual slot
-	// types, so we mirror that ordering here.
 	let mut count_reader = SliceReader::new(wrapper_inner).map_err(|_| slot(VoteDecodeSlot::Wrapper))?;
 	let mut wrapper_count: usize = 0;
 	while !count_reader.is_finished() {
@@ -176,7 +175,6 @@ pub(super) fn decode_vote_staple(bytes: &[u8]) -> Result<VoteStapleBundle, Asn1E
 
 	// Reference rejects staple wrappers that are not exactly 2 elements
 	// (blocks SEQUENCE, votes SEQUENCE) before inspecting individual slot
-	// types, so we mirror that ordering here.
 	let mut count_reader = SliceReader::new(inner).map_err(|_| staple_slot(VoteStapleDecodeSlot::Wrapper))?;
 	let mut wrapper_count: usize = 0;
 	while !count_reader.is_finished() {

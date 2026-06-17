@@ -134,4 +134,9 @@ pub struct TransmitOptions {
 	/// Pre-fetched vote quotes to attach to the temporary round. Each quote is
 	/// routed to the representative that issued it.
 	pub quotes: Vec<VoteQuote>,
+	/// Tokens to prefer when a fee entry is payable in several tokens, ranked
+	/// highest priority first. An entry with an implicit (`None`) token counts
+	/// as the network base token. Empty (the default) prefers the base-token
+	/// entry, then the first entry.
+	pub fee_token_priority: Vec<AccountRef>,
 }
