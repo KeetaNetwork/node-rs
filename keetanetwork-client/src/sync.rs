@@ -4,4 +4,4 @@
 //! spin locks, no OS dependency), so the same scoring core compiles under
 //! `--no-default-features`.
 
-pub(crate) use spin::{Mutex, RwLock};
+pub(crate) use spin::{Mutex, Once, RwLock};

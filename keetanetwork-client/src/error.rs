@@ -15,8 +15,7 @@ use snafu::Snafu;
 pub enum ClientError {
 	/// The request failed at the HTTP/transport layer: connection, timeout,
 	/// or response decoding problems. The concrete error is supplied by the
-	/// active transport backend, so the orchestrator stays transport-agnostic
-	/// (and `no_std`).
+	/// active transport backend, so the orchestrator stays transport-agnostic.
 	#[snafu(display("node request failed"))]
 	Transport {
 		/// Underlying transport error from the backend.
@@ -111,4 +110,46 @@ pub enum ClientError {
 	/// Recovery could not assemble or fetch the blocks it needed.
 	#[snafu(display("account recovery failed"))]
 	RecoverFailed,
+
+	/// A [`PendingAccount`](crate::PendingAccount) was resolved before the
+	/// builder that creates the identifier was built.
+	#[snafu(display("identifier is unresolved until its builder is built"))]
+	UnresolvedIdentifier,
+
+	/// A write operation requires a signer, but the client has none bound.
+	#[snafu(display("operation requires a signer but none is bound"))]
+	SignerRequired,
+
+	/// A swap-request block did not render to exactly one block.
+	#[snafu(display("swap request must render to exactly one block"))]
+	SwapMultiBlock,
+
+	/// A swap-request block is missing its SEND operation.
+	#[snafu(display("swap request is missing a send operation"))]
+	SwapMissingSend,
+
+	/// A swap-request block is missing its RECEIVE operation.
+	#[snafu(display("swap request is missing a receive operation"))]
+	SwapMissingReceive,
+
+	/// A swap-request block's send/receive accounts do not match the accepting
+	/// account.
+	#[snafu(display("swap request accounts do not match"))]
+	SwapAccountMismatch,
+
+	/// A swap-request leg's token did not match the expected token.
+	#[snafu(display("swap request token does not match expected"))]
+	SwapTokenMismatch,
+
+	/// A swap-request leg's amount did not match the expected amount.
+	#[snafu(display("swap request amount does not match expected"))]
+	SwapAmountMismatch,
+
+	/// The taker's send amount is below the maker's requested receive amount.
+	#[snafu(display("swap send amount is below the requested receive amount"))]
+	SwapAmountTooLow,
+
+	/// The taker's send amount differs from an exact-match receive amount.
+	#[snafu(display("swap send amount differs from an exact receive amount"))]
+	SwapExactMismatch,
 }

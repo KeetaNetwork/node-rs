@@ -9,11 +9,12 @@ use core::str::FromStr;
 use core::time::Duration;
 use std::sync::Arc;
 
-use keetanetwork_account::GenericAccount;
+use keetanetwork_account::{GenericAccount, KeyPairType};
 use keetanetwork_block::testing::generate_ed25519_ref;
 use keetanetwork_block::{AccountRef, Amount, Block, Hashable};
 use keetanetwork_client::{
-	ClientConfig, ClientError, KeetaClient, KeetaNetError, NodeErrorType, RepEndpoint, TransmitOptions,
+	ClientConfig, ClientError, InitializeNetwork, KeetaClient, KeetaNetError, NodeErrorType, RepEndpoint,
+	TransmitOptions, UserClient,
 };
 use keetanetwork_utils::node_harness::E2eNode;
 use num_bigint::BigInt;
@@ -169,10 +170,7 @@ async fn fixture() -> Fixture {
 	assert_eq!(accounts.trusted.to_string(), trusted, "the derived trusted signer must match the node address");
 	assert_eq!(accounts.recipient.to_string(), recipient, "the derived recipient must match the node address");
 
-	let block = client
-		.builder(&accounts.trusted)
-		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
+	let block = send_block(&client, &accounts, &accounts.recipient, SEND_AMOUNT)
 		.await
 		.expect("the client must build and sign a send block");
 
@@ -483,6 +481,10 @@ async fn test_send_with_required_fee_is_accepted() -> Result<(), Box<dyn core::e
 		.balance(accounts.trusted.to_string(), &base_token)
 		.await?;
 
+	let quote_block = send_block(&client, &accounts, &accounts.recipient, SEND_AMOUNT).await?;
+	let quotes = client.quotes(&[quote_block]).await?;
+	assert!(!quotes.is_empty(), "a fee-charging node must return a vote quote for the block");
+
 	let accepted = client
 		.send(&accounts.trusted, &accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
 		.await?;
@@ -507,11 +509,7 @@ async fn test_send_with_required_fee_is_accepted() -> Result<(), Box<dyn core::e
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transmit_without_signer_when_fee_required_errors() -> Result<(), Box<dyn core::error::Error>> {
 	let (_node, client, accounts, _base_token) = fee_fixture();
-	let block = client
-		.builder(&accounts.trusted)
-		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
-		.await?;
+	let block = send_block(&client, &accounts, &accounts.recipient, SEND_AMOUNT).await?;
 
 	let result = client.transmit(&[block], TransmitOptions::default()).await;
 	assert!(
@@ -572,6 +570,28 @@ async fn await_convergence(node: &mut E2eNode, account: &str) -> Result<(), Box<
 	}
 
 	Err("the cluster nodes did not converge on a common head".into())
+}
+
+/// Unwrap the sole block produced by a single-account builder render.
+fn one_block(mut blocks: Vec<Block>) -> Block {
+	assert_eq!(blocks.len(), 1, "a single-account builder must render exactly one block");
+	blocks.remove(0)
+}
+
+/// Build and sign a single SEND block of `amount` base token from the trusted
+/// account to `to`.
+async fn send_block(
+	client: &KeetaClient,
+	accounts: &SigningAccounts,
+	to: &AccountRef,
+	amount: u64,
+) -> Result<Block, Box<dyn core::error::Error>> {
+	let blocks = client
+		.builder(&accounts.trusted)
+		.send(to, &accounts.token, Amount::from(amount))
+		.build()
+		.await?;
+	Ok(one_block(blocks))
 }
 
 /// Hex-encode a block's transport bytes for the harness's ledger hooks, which parse
@@ -686,6 +706,66 @@ impl Drop for ClusterFixture {
 	}
 }
 
+/// Stage a temporary side-ledger vote for `block` on reps `0..reps`, then
+/// escalate the primary rep to a permanent vote built over that quorum.
+/// Returns the temporary votes and the permanent vote.
+fn stage_quorum_side_votes(
+	node: &mut E2eNode,
+	reps: usize,
+	block: &str,
+) -> Result<(Vec<String>, String), Box<dyn core::error::Error>> {
+	let mut temporary = Vec::with_capacity(reps);
+	for index in 0..reps {
+		temporary.push(side_vote(node, index, block, &[])?);
+	}
+
+	let permanent = side_vote(node, 0, block, &temporary)?;
+	Ok((temporary, permanent))
+}
+
+/// Assert the primary rep's head is `block` while every peer still lags behind.
+fn assert_heads_diverged(node: &mut E2eNode, account: &str, block: &Block) -> Result<(), Box<dyn core::error::Error>> {
+	let heads = head_hashes(node, account)?;
+	assert_eq!(heads[0], block.hash().to_string(), "the primary rep must hold the advanced head");
+	assert!(
+		heads[1..].iter().all(|head| *head != heads[0]),
+		"the peer reps must lag behind the primary before the repair"
+	);
+
+	Ok(())
+}
+
+/// Converge the cluster, then assert `block` is the trusted head everywhere and
+/// the send debited the trusted account by [`SEND_AMOUNT`].
+async fn assert_converged_send(
+	fixture: &mut ClusterFixture,
+	block: &Block,
+	trusted: &str,
+	base_token: &str,
+) -> Result<(), Box<dyn core::error::Error>> {
+	fixture.converge().await?;
+
+	let head = fixture
+		.client
+		.head_block(trusted)
+		.await?
+		.ok_or("the trusted account must have a head once the staple publishes")?;
+	assert_eq!(
+		head.hash().to_string(),
+		block.hash().to_string(),
+		"the published block must become the cluster-wide head"
+	);
+
+	let balance = fixture.client.balance(trusted, base_token).await?;
+	assert_eq!(
+		balance,
+		Amount::from(MINTED_SUPPLY - SEND_AMOUNT),
+		"the published send must debit the trusted account across the cluster"
+	);
+
+	Ok(())
+}
+
 /// A peered multi-rep cluster must vote to quorum, publish across every rep,
 /// and replicate over P2P.
 #[tokio::test(flavor = "multi_thread")]
@@ -703,12 +783,7 @@ async fn test_multi_rep_quorum_publish_and_convergence() -> Result<(), Box<dyn c
 
 	// A client-built send must vote to quorum and publish across the cluster.
 	let accounts = fixture.accounts()?;
-	let block = fixture
-		.client
-		.builder(&accounts.trusted)
-		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
-		.await?;
+	let block = send_block(&fixture.client, &accounts, &accounts.recipient, SEND_AMOUNT).await?;
 
 	let accepted = fixture
 		.client
@@ -769,25 +844,31 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 	let rep1_account: AccountRef = Arc::new(GenericAccount::from_str(&rep_accounts[1])?);
 	let rep2_account: AccountRef = Arc::new(GenericAccount::from_str(&rep_accounts[2])?);
 
-	let distribute = fixture
-		.client
-		.builder(&accounts.trusted)
-		.send(&account2, &accounts.token, Amount::from(DISTRIBUTE_AMOUNT))
-		.send(&account3, &accounts.token, Amount::from(DISTRIBUTE_AMOUNT))
-		.build()
-		.await?;
-	let set_rep2 = fixture
-		.client
-		.builder(&account2)
-		.set_rep(&rep1_account)
-		.build()
-		.await?;
-	let set_rep3 = fixture
-		.client
-		.builder(&account3)
-		.set_rep(&rep2_account)
-		.build()
-		.await?;
+	let distribute = one_block(
+		fixture
+			.client
+			.builder(&accounts.trusted)
+			.send(&account2, &accounts.token, Amount::from(DISTRIBUTE_AMOUNT))
+			.send(&account3, &accounts.token, Amount::from(DISTRIBUTE_AMOUNT))
+			.build()
+			.await?,
+	);
+	let set_rep2 = one_block(
+		fixture
+			.client
+			.builder(&account2)
+			.set_rep(&rep1_account)
+			.build()
+			.await?,
+	);
+	let set_rep3 = one_block(
+		fixture
+			.client
+			.builder(&account3)
+			.set_rep(&rep2_account)
+			.build()
+			.await?,
+	);
 
 	let accepted = fixture
 		.client
@@ -798,6 +879,7 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 
 	// Weights now split 0.6 / 0.2 / 0.2 — no rep meets the 0.7 quorum alone.
 	fixture.client.discover_representatives().await?;
+
 	let all = fixture.client.representatives().await?;
 	let primary = MINTED_SUPPLY - 2 * DISTRIBUTE_AMOUNT;
 	assert_eq!(rep_weight(&all, &rep_accounts[0]), Some(Amount::from(primary)), "primary rep weight mismatch");
@@ -815,12 +897,7 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 
 	// A send now requires aggregating the primary with at least one secondary
 	// rep to clear quorum; acceptance proves the client gathered both.
-	let send = fixture
-		.client
-		.builder(&accounts.trusted)
-		.send(&account2, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
-		.await?;
+	let send = send_block(&fixture.client, &accounts, &account2, SEND_AMOUNT).await?;
 	let accepted = fixture
 		.client
 		.transmit(&[send], TransmitOptions::default())
@@ -847,12 +924,7 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 		.node
 		.request("stop_rep", json!({ "index": WEIGHTED_REPS - 1 }))?;
 
-	let degraded = fixture
-		.client
-		.builder(&accounts.trusted)
-		.send(&account2, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
-		.await?;
+	let degraded = send_block(&fixture.client, &accounts, &account2, SEND_AMOUNT).await?;
 	let accepted = fixture
 		.client
 		.transmit(&[degraded], TransmitOptions::default())
@@ -884,20 +956,11 @@ async fn test_multi_rep_recover_publishes_pending_side_block() -> Result<(), Box
 
 	// Build a send block but never transmit it; instead stage it on every
 	// rep's side ledger so it becomes a pending, half-published successor.
-	let block = fixture
-		.client
-		.builder(&accounts.trusted)
-		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
-		.await?;
+	let block = send_block(&fixture.client, &accounts, &accounts.recipient, SEND_AMOUNT).await?;
 	let block_bytes = block_hex(&block);
 
-	let mut temporary = Vec::with_capacity(WEIGHTED_REPS);
-	for index in 0..WEIGHTED_REPS {
-		temporary.push(side_vote(&mut fixture.node, index, &block_bytes, &[])?);
-	}
-	// Escalate the primary rep to a permanent side-ledger vote.
-	side_vote(&mut fixture.node, 0, &block_bytes, &temporary)?;
+	// Stage temp votes on every rep, then escalate the primary to permanent.
+	stage_quorum_side_votes(&mut fixture.node, WEIGHTED_REPS, &block_bytes)?;
 
 	// The client must see the half-published block as the pending successor.
 	let pending = fixture
@@ -917,24 +980,8 @@ async fn test_multi_rep_recover_publishes_pending_side_block() -> Result<(), Box
 		.recover_account(&accounts.trusted, true, TransmitOptions::default())
 		.await?;
 	assert!(recovered.is_some(), "recovery must produce a staple for the pending block");
-	fixture.converge().await?;
 
-	let head = fixture
-		.client
-		.head_block(&trusted)
-		.await?
-		.ok_or("the trusted account must have a head once recovery publishes")?;
-	assert_eq!(
-		head.hash().to_string(),
-		block.hash().to_string(),
-		"the recovered block must become the main-ledger head"
-	);
-	let balance = fixture.client.balance(&trusted, &base_token).await?;
-	assert_eq!(
-		balance,
-		Amount::from(MINTED_SUPPLY - SEND_AMOUNT),
-		"the recovered send must debit the trusted account across the cluster"
-	);
+	assert_converged_send(&mut fixture, &block, &trusted, &base_token).await?;
 
 	Ok(())
 }
@@ -950,36 +997,18 @@ async fn test_multi_rep_recover_reads_main_promoted_vote() -> Result<(), Box<dyn
 	let base_token = fixture.base_token.clone();
 	let accounts = fixture.accounts()?;
 
-	let block = fixture
-		.client
-		.builder(&accounts.trusted)
-		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
-		.await?;
+	let block = send_block(&fixture.client, &accounts, &accounts.recipient, SEND_AMOUNT).await?;
 	let block_bytes = block_hex(&block);
 
 	// Stage temporary side votes on every rep, then escalate the primary to a
 	// permanent vote built over that quorum.
-	let mut temporary = Vec::with_capacity(WEIGHTED_REPS);
-	for index in 0..WEIGHTED_REPS {
-		temporary.push(side_vote(&mut fixture.node, index, &block_bytes, &[])?);
-	}
-	let permanent = side_vote(&mut fixture.node, 0, &block_bytes, &temporary)?;
+	let (_temporary, permanent) = stage_quorum_side_votes(&mut fixture.node, WEIGHTED_REPS, &block_bytes)?;
 
 	// Promote the staple onto the primary's main ledger only: its head now
 	// holds the successor while the peers stay pending on their side ledgers.
 	ledger_add(&mut fixture.node, 0, &[permanent], &block_bytes)?;
 
-	let heads = head_hashes(&mut fixture.node, &trusted)?;
-	assert_eq!(
-		heads[0],
-		block.hash().to_string(),
-		"the primary rep must have promoted the successor to its main ledger"
-	);
-	assert!(
-		heads[1..].iter().all(|head| *head != heads[0]),
-		"the peer reps must still lag on their side ledgers before recovery"
-	);
+	assert_heads_diverged(&mut fixture.node, &trusted, &block)?;
 
 	// The divergent head must not hide the pending successor: the majority of
 	// reps still report it, so it remains recoverable.
@@ -1001,24 +1030,8 @@ async fn test_multi_rep_recover_reads_main_promoted_vote() -> Result<(), Box<dyn
 		.recover_account(&accounts.trusted, true, TransmitOptions::default())
 		.await?;
 	assert!(recovered.is_some(), "recovery must rebuild the staple from the main-promoted vote and the side votes");
-	fixture.converge().await?;
 
-	let head = fixture
-		.client
-		.head_block(&trusted)
-		.await?
-		.ok_or("the trusted account must have a head once recovery publishes")?;
-	assert_eq!(
-		head.hash().to_string(),
-		block.hash().to_string(),
-		"the recovered block must become the cluster-wide head"
-	);
-	let balance = fixture.client.balance(&trusted, &base_token).await?;
-	assert_eq!(
-		balance,
-		Amount::from(MINTED_SUPPLY - SEND_AMOUNT),
-		"the recovered send must debit the trusted account across the cluster"
-	);
+	assert_converged_send(&mut fixture, &block, &trusted, &base_token).await?;
 
 	Ok(())
 }
@@ -1034,37 +1047,22 @@ async fn test_multi_rep_sync_repairs_lagging_rep() -> Result<(), Box<dyn core::e
 	let accounts = fixture.accounts()?;
 
 	// Build the successor and assemble a permanent staple from side votes.
-	let block = fixture
-		.client
-		.builder(&accounts.trusted)
-		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
-		.build()
-		.await?;
+	let block = send_block(&fixture.client, &accounts, &accounts.recipient, SEND_AMOUNT).await?;
 	let block_bytes = block_hex(&block);
 
-	let temp_primary = side_vote(&mut fixture.node, 0, &block_bytes, &[])?;
-	let temp_secondary = side_vote(&mut fixture.node, 1, &block_bytes, &[])?;
-	let permanent = side_vote(&mut fixture.node, 0, &block_bytes, &[temp_primary, temp_secondary])?;
+	let (_temporary, permanent) = stage_quorum_side_votes(&mut fixture.node, 2, &block_bytes)?;
 
 	// Promote the staple onto the primary rep's main ledger only; the direct
 	// ledger add does not broadcast, so the peers stay at the prior head.
 	ledger_add(&mut fixture.node, 0, &[permanent], &block_bytes)?;
 
-	let heads = head_hashes(&mut fixture.node, &trusted)?;
-	assert_eq!(heads[0], block.hash().to_string(), "the primary rep must hold the advanced head");
-	assert!(heads[1..].iter().all(|head| *head != heads[0]), "the peer reps must lag behind the primary before sync");
+	assert_heads_diverged(&mut fixture.node, &trusted, &block)?;
 
 	// Sync detects the divergence and publishes the staple to the lagging reps.
 	let synced = fixture.client.sync_account(&accounts.trusted, true).await?;
 	assert!(synced.is_some(), "sync must produce the repair staple while the reps diverge");
-	fixture.converge().await?;
 
-	let balance = fixture.client.balance(&trusted, &base_token).await?;
-	assert_eq!(
-		balance,
-		Amount::from(MINTED_SUPPLY - SEND_AMOUNT),
-		"the synced send must debit the trusted account across the cluster"
-	);
+	assert_converged_send(&mut fixture, &block, &trusted, &base_token).await?;
 
 	Ok(())
 }
@@ -1080,5 +1078,175 @@ async fn test_certificates_after_add() -> Result<(), Box<dyn core::error::Error>
 	assert!(!certificates.is_empty(), "the trusted account must hold a certificate after adding one");
 	assert!(!certificates[0].certificate.is_empty(), "the returned certificate must carry a PEM body");
 
+	Ok(())
+}
+
+/// The multi-account builder must derive a pending identifier at build time and
+/// the node must accept the creating block, proving the derived address matches
+/// the node's own derivation from the operation index.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_builder_creates_pending_identifier() -> Result<(), Box<dyn core::error::Error>> {
+	let mut fixture = fixture().await;
+	let accounts = signing_accounts(&fixture.base_token)?;
+
+	let mut builder = fixture.client.builder(&accounts.trusted);
+	let storage = builder.generate_identifier(KeyPairType::STORAGE, None);
+	let blocks = builder.build().await?;
+	assert_eq!(blocks.len(), 1, "a single originator must render exactly one block");
+
+	let identifier = storage.get()?;
+	assert!(identifier.to_keypair_type().is_identifier(), "the resolved handle must be an identifier");
+
+	let accepted = fixture
+		.client
+		.transmit(&blocks, TransmitOptions::default())
+		.await?;
+	assert!(accepted, "the node must accept the create-identifier block, validating the derived address");
+
+	let head = fixture.head_hash();
+	assert_eq!(head, blocks[0].hash().to_string(), "the create-identifier block must become the trusted head");
+
+	Ok(())
+}
+
+/// One builder spanning two originators must render one chained block each and
+/// publish them in a single staple.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multi_account_builder_staple() -> Result<(), Box<dyn core::error::Error>> {
+	let fixture = fixture().await;
+	let accounts = signing_accounts(&fixture.base_token)?;
+	let account2 = generate_ed25519_ref(ACCOUNT2_SEED_BYTE);
+
+	let mut builder = fixture.client.builder(&accounts.trusted);
+	builder.send(&account2, &accounts.token, Amount::from(SEND_AMOUNT));
+	builder.for_account(&account2).set_rep(&accounts.recipient);
+	let blocks = builder.build().await?;
+	assert_eq!(blocks.len(), 2, "two distinct originators must render two blocks");
+
+	let accepted = fixture
+		.client
+		.transmit(&blocks, TransmitOptions::default())
+		.await?;
+	assert!(accepted, "the node must accept the multi-account staple");
+
+	let head = fixture.client.head_block(account2.to_string()).await?;
+	assert!(head.is_some(), "account2's opening set-rep block must become its head");
+
+	let after = fixture
+		.client
+		.balance(&fixture.trusted, &fixture.base_token)
+		.await?;
+	assert_eq!(
+		after,
+		Amount::from(MINTED_SUPPLY - SEND_AMOUNT),
+		"the trusted account must be debited by the bundled send"
+	);
+
+	Ok(())
+}
+
+/// A signer-bound [`UserClient`] must resolve account-scoped reads against its
+/// signer and round-trip a convenience send.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_client_send_round_trip() -> Result<(), Box<dyn core::error::Error>> {
+	let mut node = E2eNode::start().expect("the reference node harness must start");
+	let network = BigInt::from_str(&ready_field(&node, "network"))?;
+	let api = ready_field(&node, "api");
+	let base_token = ready_field(&node, "baseToken");
+	node.request("init_supply", json!({ "amount": MINTED_SUPPLY.to_string() }))?;
+
+	let accounts = signing_accounts(&base_token)?;
+	let client = KeetaClient::new(&api).with_network(network);
+	let user = UserClient::from_parts(client, Some(Arc::clone(&accounts.trusted)));
+
+	let balance = user.balance(&base_token).await?;
+	assert_eq!(balance, Amount::from(MINTED_SUPPLY), "the bound signer's balance must be the minted supply");
+
+	let accepted = user
+		.send(&accounts.recipient, &accounts.token, Amount::from(SEND_AMOUNT))
+		.await?;
+	assert!(accepted, "the user client send must publish");
+
+	let after = user.balance(&base_token).await?;
+	assert_eq!(after, Amount::from(MINTED_SUPPLY - SEND_AMOUNT), "the user client send must debit the bound signer");
+
+	assert_eq!(
+		user.account()?.to_string(),
+		accounts.trusted.to_string(),
+		"a signer-bound client must operate on the signer's account by default"
+	);
+	assert!(!user.is_read_only(), "a signer-bound client must accept writes");
+
+	let head = user
+		.head()
+		.await?
+		.expect("the operating account must have a head after a send");
+	let fetched = user.block(head.hash().to_string()).await?;
+	assert!(fetched.is_some(), "the head block must be fetchable by hash through the user client");
+
+	let statuses = user.client().network_status().await?;
+	assert!(
+		statuses.iter().any(|status| status.online),
+		"network status must report at least one online representative"
+	);
+
+	let read_only = UserClient::from_parts(user.client().clone(), None);
+	assert!(read_only.is_read_only(), "a signerless client must be read-only");
+	assert!(
+		matches!(read_only.account(), Err(ClientError::SignerRequired)),
+		"a signerless client must reject account-scoped operations"
+	);
+
+	let _ = node.request("shutdown", json!({}));
+	Ok(())
+}
+
+/// Genesis: a Rust-built permanent staple bootstraps a fresh, uninitialized
+/// network. The harness node starts empty (no `init_supply`), so the client's
+/// own `initialize_network` mints the base-token supply, credits the recipient
+/// (the bound signer), and delegates its weight to the representative.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_initialize_network_bootstraps_fresh_chain() -> Result<(), Box<dyn core::error::Error>> {
+	let mut node = E2eNode::start().expect("the reference node harness must start");
+	let network = BigInt::from_str(&ready_field(&node, "network"))?;
+	let api = ready_field(&node, "api");
+	let base_token = ready_field(&node, "baseToken");
+	let trusted_address = ready_field(&node, "trusted");
+	let rep_address = ready_field(&node, "representative");
+
+	let trusted = generate_ed25519_ref(TRUSTED_SEED_BYTE);
+	let rep = generate_ed25519_ref(REP_SEED_BYTE);
+	assert_eq!(trusted.to_string(), trusted_address, "the derived trusted signer must match the node address");
+	assert_eq!(rep.to_string(), rep_address, "the derived representative must match the node address");
+
+	let client =
+		KeetaClient::with_representatives([RepEndpoint::new(&api, Arc::clone(&rep), 1u8)], ClientConfig::default())
+			.with_network(network);
+	let user = UserClient::from_parts(client, Some(Arc::clone(&trusted)));
+
+	let accepted = user
+		.initialize_network(InitializeNetwork { add_supply_amount: Amount::from(MINTED_SUPPLY), ..Default::default() })
+		.await?;
+	assert!(accepted, "the node must accept the genesis staple");
+
+	let supply = user.client().token_supply(&base_token).await?;
+	assert_eq!(supply, Some(Amount::from(MINTED_SUPPLY)), "genesis must mint the full base-token supply");
+
+	let state = user.client().state(&trusted_address).await?;
+	assert_eq!(
+		state.representative.as_deref(),
+		Some(rep_address.as_str()),
+		"genesis must delegate the recipient's weight to the representative"
+	);
+	let base = state
+		.balances
+		.iter()
+		.find(|entry| entry.token == base_token);
+	assert!(
+		base.is_some_and(|entry| entry.balance == Amount::from(MINTED_SUPPLY)),
+		"genesis must credit the recipient with the minted supply"
+	);
+
+	let _ = node.request("shutdown", json!({}));
 	Ok(())
 }

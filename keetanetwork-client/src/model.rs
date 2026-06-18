@@ -2,10 +2,88 @@
 //! [`KeetaClient`](crate::KeetaClient).
 
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use keetanetwork_block::{AccountRef, Amount};
 use keetanetwork_vote::{VoteQuote, VoteStaple};
+
+use crate::error::ClientError;
+use crate::sync::Once;
+
+/// A handle to an identifier account that does not exist until the
+/// [`TransactionBuilder`](crate::TransactionBuilder) that creates it is built.
+#[derive(Clone, Debug, Default)]
+pub struct PendingAccount {
+	cell: Arc<Once<AccountRef>>,
+}
+
+impl PendingAccount {
+	/// Resolve the derived identifier address, or
+	/// [`ClientError::UnresolvedIdentifier`] when the builder has not yet
+	/// produced the creating block.
+	pub fn get(&self) -> Result<AccountRef, ClientError> {
+		self.cell
+			.get()
+			.map(Arc::clone)
+			.ok_or(ClientError::UnresolvedIdentifier)
+	}
+
+	/// Fill the address once, during `build`. A second fill is ignored,
+	/// preserving the set-once invariant.
+	pub(crate) fn fill(&self, account: AccountRef) {
+		self.cell.call_once(|| account);
+	}
+}
+
+/// An operation operand that is either a resolved account or a
+/// [`PendingAccount`] resolved at build time.
+///
+/// Builder operands accept `impl Into<AccountOrPending>`, so a resolved
+/// [`AccountRef`] and a builder-issued [`PendingAccount`] are both usable
+/// without separate methods.
+#[derive(Clone, Debug)]
+pub enum AccountOrPending {
+	/// An already-known account.
+	Resolved(AccountRef),
+	/// An identifier resolved when the builder is built.
+	Pending(PendingAccount),
+}
+
+impl AccountOrPending {
+	/// Resolve to a concrete account, or [`ClientError::UnresolvedIdentifier`]
+	/// when a pending identifier has not been filled.
+	pub(crate) fn resolve(&self) -> Result<AccountRef, ClientError> {
+		match self {
+			AccountOrPending::Resolved(account) => Ok(Arc::clone(account)),
+			AccountOrPending::Pending(pending) => pending.get(),
+		}
+	}
+}
+
+impl From<AccountRef> for AccountOrPending {
+	fn from(account: AccountRef) -> Self {
+		AccountOrPending::Resolved(account)
+	}
+}
+
+impl From<&AccountRef> for AccountOrPending {
+	fn from(account: &AccountRef) -> Self {
+		AccountOrPending::Resolved(Arc::clone(account))
+	}
+}
+
+impl From<PendingAccount> for AccountOrPending {
+	fn from(pending: PendingAccount) -> Self {
+		AccountOrPending::Pending(pending)
+	}
+}
+
+impl From<&PendingAccount> for AccountOrPending {
+	fn from(pending: &PendingAccount) -> Self {
+		AccountOrPending::Pending(pending.clone())
+	}
+}
 
 /// A token balance entry for an account.
 #[derive(Debug, Clone)]
@@ -131,7 +209,7 @@ pub struct TransmitOptions {
 	/// Account that originates and signs a
 	/// [`BlockPurpose::Fee`](keetanetwork_block::BlockPurpose::Fee) block when
 	/// the representatives' votes require a fee. Absent, a required fee fails
-	/// with [`ClientError::FeeRequired`](crate::ClientError::FeeRequired).
+	/// with [`ClientError::FeeRequired`].
 	pub fee_signer: Option<AccountRef>,
 	/// Pre-fetched vote quotes to attach to the temporary round. Each quote is
 	/// routed to the representative that issued it.
@@ -141,4 +219,63 @@ pub struct TransmitOptions {
 	/// as the network base token. Empty (the default) prefers the base-token
 	/// entry, then the first entry.
 	pub fee_token_priority: Vec<AccountRef>,
+}
+
+/// Liveness and statistics for a single representative, as gathered by
+/// [`KeetaClient::network_status`](crate::KeetaClient::network_status).
+#[cfg(feature = "std")]
+#[derive(Clone, Debug)]
+pub struct RepStatus {
+	/// The representative key the status was gathered for.
+	pub representative: String,
+	/// Whether the representative answered the statistics query.
+	pub online: bool,
+	/// The representative's statistics, present only when `online`.
+	pub stats: Option<serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use keetanetwork_block::testing::generate_ed25519_ref;
+
+	#[test]
+	fn pending_account_resolves_after_fill() -> Result<(), ClientError> {
+		let pending = PendingAccount::default();
+		assert!(matches!(pending.get(), Err(ClientError::UnresolvedIdentifier)));
+
+		let account = generate_ed25519_ref(0x01);
+		pending.fill(Arc::clone(&account));
+
+		assert_eq!(pending.get()?.to_string(), account.to_string());
+		Ok(())
+	}
+
+	#[test]
+	fn pending_account_fill_is_set_once() {
+		let pending = PendingAccount::default();
+		let first = generate_ed25519_ref(0x02);
+		let second = generate_ed25519_ref(0x03);
+
+		pending.fill(Arc::clone(&first));
+		pending.fill(Arc::clone(&second));
+
+		assert!(matches!(pending.get(), Ok(account) if account.to_string() == first.to_string()));
+	}
+
+	#[test]
+	fn account_or_pending_resolves_both_variants() -> Result<(), ClientError> {
+		let account = generate_ed25519_ref(0x04);
+		let resolved: AccountOrPending = (&account).into();
+		assert_eq!(resolved.resolve()?.to_string(), account.to_string());
+
+		let pending = PendingAccount::default();
+		let operand: AccountOrPending = pending.clone().into();
+		assert!(matches!(operand.resolve(), Err(ClientError::UnresolvedIdentifier)));
+
+		pending.fill(Arc::clone(&account));
+		assert_eq!(operand.resolve()?.to_string(), account.to_string());
+		Ok(())
+	}
 }

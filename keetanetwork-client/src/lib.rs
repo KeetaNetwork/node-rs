@@ -23,14 +23,15 @@
 //! let (_, _, signer) = create_ed25519_test_keys(None);
 //! let account: AccountRef = Arc::new(GenericAccount::Ed25519(signer));
 //!
-//! let block = client
+//! let blocks = client
 //!     .builder(&account)
 //!     .with_previous(account.to_opening_hash())
 //!     .set_rep(&account)
 //!     .build()
 //!     .await?;
 //!
-//! assert_eq!(block.data().account().to_string(), account.to_string());
+//! assert_eq!(blocks.len(), 1);
+//! assert_eq!(blocks[0].data().account().to_string(), account.to_string());
 //! # Ok(())
 //! # }
 //! ```
@@ -54,8 +55,15 @@ pub mod math;
 mod model;
 mod rep;
 mod runtime;
+mod swap;
 mod sync;
 mod transport;
+mod user;
+
+#[cfg(feature = "std")]
+mod genesis;
+#[cfg(feature = "std")]
+mod network;
 
 /// Generated transport client (`Client`, request/response `types`, and the
 /// transport `Error`). Emitted from the OpenAPI document at build time.
@@ -70,19 +78,23 @@ pub use client::KeetaClient;
 pub use config::ClientConfig;
 pub use error::ClientError;
 pub use keetanetwork_error::{KeetaNetError, NodeErrorType};
-pub use keetanetwork_vote::VoteQuote;
+pub use keetanetwork_vote::{VoteQuote, VoteStaple};
 pub use model::{
-	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
-	TokenBalance, TransmitOptions,
+	AccountOrPending, AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
+	PendingAccount, Representative, TokenBalance, TransmitOptions,
 };
 pub use runtime::{BoxFuture, Runtime, TaskHandle};
+pub use swap::{AcceptSwapRequest, CreateSwapRequest, SwapExpectation, SwapTokenAmount};
 pub use transport::{LedgerSide, NodeTransport, TransportFactory};
+pub use user::UserClient;
 
 #[cfg(feature = "std")]
-pub use rep::RepEndpoint;
-#[cfg(feature = "std")]
-pub use reqwest;
-#[cfg(feature = "std")]
-pub use runtime::TokioRuntime;
-#[cfg(feature = "std")]
-pub use transport::{ApiError, GeneratedTransport, GeneratedTransportFactory};
+pub use {
+	genesis::{BaseNetworkInfo, BaseTokenInfo, InitializeNetwork},
+	model::RepStatus,
+	network::{Network, NetworkConfig},
+	rep::RepEndpoint,
+	reqwest,
+	runtime::TokioRuntime,
+	transport::{ApiError, GeneratedTransport, GeneratedTransportFactory},
+};

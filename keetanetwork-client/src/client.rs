@@ -10,11 +10,16 @@ use core::future::Future;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
+#[cfg(feature = "std")]
+use core::str::FromStr;
+
 use futures::future::{select, Either};
 use futures::pin_mut;
 use futures::stream::{FuturesUnordered, StreamExt};
 use keetanetwork_account::{Account, GenericAccount, KeyNETWORK, KeyPairType};
-use keetanetwork_block::{AccountRef, Amount, Block, BlockBuilder, BlockPurpose, BlockTime, Hashable, Send};
+use keetanetwork_block::{
+	AccountRef, Amount, Block, BlockBuilder, BlockHash, BlockPurpose, BlockTime, Hashable, Operation, Send,
+};
 use keetanetwork_error::KeetaNetError;
 use keetanetwork_vote::{Fee, Fees, ValidationConfig, Vote, VoteQuote, VoteStaple};
 use num_bigint::BigInt;
@@ -22,7 +27,7 @@ use snafu::ResultExt;
 
 use crate::builder::TransactionBuilder;
 use crate::config::ClientConfig;
-use crate::error::{AccountSnafu, ClientError, VoteSnafu};
+use crate::error::{AccountSnafu, BlockSnafu, ClientError, VoteSnafu};
 use crate::math::{meets_quorum, most_common_hash, next_backoff, overlapping_moment};
 use crate::model::{
 	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
@@ -35,8 +40,8 @@ use crate::transport::{LedgerSide, NodeTransport, TransportFactory};
 
 #[cfg(feature = "std")]
 use {
-	crate::generated::Client as Transport, crate::rep::RepEndpoint, crate::runtime::TokioRuntime,
-	crate::transport::GeneratedTransportFactory, std::sync::OnceLock,
+	crate::generated::Client as Transport, crate::model::RepStatus, crate::network::Network, crate::rep::RepEndpoint,
+	crate::runtime::TokioRuntime, crate::transport::GeneratedTransportFactory, std::sync::OnceLock,
 };
 
 /// Bookkeeping for the background representative-refresh task.
@@ -130,6 +135,34 @@ impl Drop for Inner {
 #[derive(Clone, Debug)]
 pub struct KeetaClient {
 	inner: Arc<Inner>,
+}
+
+/// Build a client for a well-known [`Network`], seeded with its default
+/// representatives and network identifier.
+///
+/// # Errors
+///
+/// - [`ClientError::Account`] -- a representative key in the network registry
+///   fails to parse.
+///
+/// # Examples
+///
+/// ```
+/// use keetanetwork_client::{KeetaClient, Network};
+///
+/// let client = KeetaClient::try_from(Network::Test)?;
+/// # let _ = client;
+/// # Ok::<(), keetanetwork_client::ClientError>(())
+/// ```
+#[cfg(feature = "std")]
+impl TryFrom<Network> for KeetaClient {
+	type Error = ClientError;
+
+	fn try_from(network: Network) -> Result<Self, Self::Error> {
+		let config = network.config()?;
+		let client = Self::with_representatives(config.representatives, ClientConfig::default());
+		Ok(client.with_network(config.network_id))
+	}
 }
 
 impl KeetaClient {
@@ -352,12 +385,12 @@ impl KeetaClient {
 
 	/// Fetch the representative set as `(key, weight, api_url)` entries.
 	async fn fetch_rep_entries(&self) -> Result<Vec<RepEntry>, ClientError> {
-		Ok(self
-			.representatives()
-			.await?
+		let representatives = self.representatives().await?;
+		let entries = representatives
 			.into_iter()
 			.map(|rep| (rep.account, rep.weight.as_bigint().clone(), rep.api_url))
-			.collect())
+			.collect();
+		Ok(entries)
 	}
 
 	/// Apply fetched representative entries to the shared state: refresh the
@@ -646,14 +679,21 @@ impl KeetaClient {
 	/// - [`ClientError::MissingQuote`] -- a representative responded without a quote
 	/// - [`ClientError::Node`] -- every representative rejected the quote request
 	pub async fn request_quote(&self, blocks: &[Block]) -> Result<VoteQuote, ClientError> {
-		let quotes = self.request_quotes(blocks).await?;
+		let quotes = self.request_quotes(blocks, false).await?;
 		quotes.into_iter().next().ok_or(ClientError::MissingQuote)
 	}
 
 	/// Request vote quotes for `blocks` from every representative, returning
-	/// each valid quote. Quorum-based early exit is not required because
-	/// quotes do not process blocks.
-	async fn request_quotes(&self, blocks: &[Block]) -> Result<Vec<VoteQuote>, ClientError> {
+	/// one quote per responding rep without quorum early-exit.
+	pub async fn quotes(&self, blocks: &[Block]) -> Result<Vec<VoteQuote>, ClientError> {
+		self.request_quotes(blocks, true).await
+	}
+
+	/// Request vote quotes for `blocks` from every representative, returning
+	/// each valid quote. With `collect_all` unset the collection stops once
+	/// the responding weight reaches quorum; quotes do not process blocks, so
+	/// a partial set still suffices for fee estimation.
+	async fn request_quotes(&self, blocks: &[Block], collect_all: bool) -> Result<Vec<VoteQuote>, ClientError> {
 		self.ensure_refresh();
 		let (refs, total_weight) = self.inner.reps.snapshot_with_total();
 		let picks = self.bind_transports(refs);
@@ -679,7 +719,7 @@ impl KeetaClient {
 					self.boost(&key);
 					accumulated += weight;
 					quotes.push(quote);
-					if meets_quorum(&accumulated, &total_weight, threshold) {
+					if !collect_all && meets_quorum(&accumulated, &total_weight, threshold) {
 						break;
 					}
 				}
@@ -765,8 +805,9 @@ impl KeetaClient {
 		}
 
 		let permanent = self.request_votes(&all, &temporary, &[]).await?;
-		let staple = VoteStaple::try_new(all.iter().cloned(), permanent, ValidationConfig::default(), moment)
-			.context(VoteSnafu)?;
+
+		let config = ValidationConfig::default();
+		let staple = VoteStaple::try_new(all, permanent, config, moment).context(VoteSnafu)?;
 
 		self.transmit_staple(&staple).await
 	}
@@ -801,7 +842,8 @@ impl KeetaClient {
 
 		let lowest_height = height_value(&infos[0].1);
 		let highest_index = infos.len() - 1;
-		if lowest_height == height_value(&infos[highest_index].1) {
+		let highest_height = height_value(&infos[highest_index].1);
+		if lowest_height == highest_height {
 			return Ok(None);
 		}
 
@@ -1089,7 +1131,8 @@ impl KeetaClient {
 		}
 
 		let moment = staple_moment(&votes, self.now_moment());
-		let staple = VoteStaple::try_new(blocks, votes, ValidationConfig::default(), moment).context(VoteSnafu)?;
+		let config = ValidationConfig::default();
+		let staple = VoteStaple::try_new(blocks, votes, config, moment).context(VoteSnafu)?;
 		Ok(Some(staple))
 	}
 
@@ -1110,28 +1153,17 @@ impl KeetaClient {
 			.map(|block| block.hash())
 			.ok_or(ClientError::FeeRequired)?;
 
-		let mut builder = self
-			.builder(signer)
+		let mut builder = self.builder(signer);
+		builder
 			.with_purpose(BlockPurpose::Fee)
 			.with_previous(previous)
 			.with_date(moment);
 		for operation in self.fee_operations(votes, priority)? {
-			builder = builder.with_operation(operation);
+			builder.with_operation(operation);
 		}
 
-		builder.build().await
-	}
-
-	/// Apply the configured network and subnet to `builder`, if set.
-	pub(crate) fn apply_network(&self, mut builder: BlockBuilder) -> BlockBuilder {
-		if let Some(network) = self.network() {
-			builder = builder.with_network(network);
-		}
-		if let Some(subnet) = self.subnet() {
-			builder = builder.with_subnet(subnet);
-		}
-
-		builder
+		let mut blocks = builder.build().await?;
+		blocks.pop().ok_or(ClientError::FeeRequired)
 	}
 
 	/// Translate the fee schedule carried by `votes` into the `SEND`
@@ -1140,7 +1172,6 @@ impl KeetaClient {
 	fn fee_operations(&self, votes: &[Vote], priority: &[AccountRef]) -> Result<Vec<Send>, ClientError> {
 		let base_token = self.base_token()?;
 		let mut operations = Vec::new();
-
 		for vote in votes {
 			let Some(fees) = vote.fees() else {
 				continue;
@@ -1171,14 +1202,8 @@ impl KeetaClient {
 	/// Derive the network base token (the `TOKEN` identifier of the
 	/// configured network), used as the implicit fee currency.
 	fn base_token(&self) -> Result<AccountRef, ClientError> {
-		let network = self.network().ok_or(ClientError::UnsupportedNetwork)?;
-		let id = u64::try_from(&network).map_err(|_| ClientError::UnsupportedNetwork)?;
-		let network_account = Account::<KeyNETWORK>::generate_network_address(id).context(AccountSnafu)?;
-		let token = network_account
-			.generate_identifier(KeyPairType::TOKEN, None, 0)
-			.context(AccountSnafu)?;
-
-		Ok(Arc::new(token))
+		let (_network_address, base_token) = self.base_addresses()?;
+		Ok(base_token)
 	}
 
 	/// Start a transaction originated by `account`.
@@ -1243,9 +1268,17 @@ impl KeetaClient {
 		token: &AccountRef,
 		amount: Amount,
 	) -> Result<bool, ClientError> {
-		let block = self.builder(from).send(to, token, amount).build().await?;
+		let mut builder = self.builder(from);
+		builder.send(to, token, amount);
+		let blocks = builder.build().await?;
+
 		let options = TransmitOptions { fee_signer: Some(Arc::clone(from)), ..Default::default() };
-		self.publish(block, options).await
+		let mut accepted = true;
+		for block in blocks {
+			accepted = self.publish(block, options.clone()).await?;
+		}
+
+		Ok(accepted)
 	}
 
 	/// The node software version string.
@@ -1291,7 +1324,8 @@ impl KeetaClient {
 	/// The total supply of `token`, or `None` when the account reports no
 	/// supply (it is not a token account).
 	pub async fn token_supply(&self, token: impl AsRef<str>) -> Result<Option<Amount>, ClientError> {
-		Ok(self.state(token).await?.supply)
+		let state = self.state(token).await?;
+		Ok(state.supply)
 	}
 
 	/// The head block of `account`, or `None` when the account has no blocks.
@@ -1359,7 +1393,10 @@ impl KeetaClient {
 			}
 		}
 
-		match most_common_hash(&observed).and_then(|hash| blocks_by_hash.remove(&hash)) {
+		let majority_hash = most_common_hash(&observed);
+		let majority_block = majority_hash.and_then(|hash| blocks_by_hash.remove(&hash));
+
+		match majority_block {
 			Some(block) => Ok(Some(block)),
 			None if any_success => Ok(None),
 			None => match last_error {
@@ -1474,8 +1511,11 @@ impl KeetaClient {
 			let next_cursor = page.last().map(|block| block.hash().to_string());
 			blocks.extend(page);
 
+			let cursor_advanced = next_cursor.as_ref() != cursor.as_ref();
+			let page_was_full = page_len as i64 >= limit;
+
 			match next_cursor {
-				Some(hash) if Some(&hash) != cursor.as_ref() && page_len as i64 >= limit => {
+				Some(hash) if cursor_advanced && page_was_full => {
 					cursor = Some(hash);
 				}
 				_ => break,
@@ -1643,6 +1683,32 @@ impl KeetaClient {
 			.await
 	}
 
+	/// Per-representative liveness: query each known rep's statistics once
+	/// and report whether it answered, attaching its stats when it did.
+	#[cfg(feature = "std")]
+	pub async fn network_status(&self) -> Result<Vec<RepStatus>, ClientError> {
+		self.ensure_refresh();
+		let picks = self.snapshot_picks();
+		if picks.is_empty() {
+			return Err(ClientError::NoRepresentatives);
+		}
+
+		let mut requests = FuturesUnordered::new();
+		for pick in picks {
+			requests.push(async move {
+				let stats = pick.transport.node_stats().await.ok();
+				RepStatus { representative: pick.key, online: stats.is_some(), stats }
+			});
+		}
+
+		let mut statuses = Vec::new();
+		while let Some(status) = requests.next().await {
+			statuses.push(status);
+		}
+
+		Ok(statuses)
+	}
+
 	/// Ledger state for several `accounts` in one call.
 	pub async fn states(&self, accounts: &[&str]) -> Result<Vec<AccountState>, ClientError> {
 		let accounts = accounts.join(",");
@@ -1651,6 +1717,83 @@ impl KeetaClient {
 			async move { t.account_states(&accounts).await }
 		})
 		.await
+	}
+
+	/// Derive the network address and its base token (the `TOKEN` identifier
+	/// at operation index zero) for the configured network.
+	pub(crate) fn base_addresses(&self) -> Result<(AccountRef, AccountRef), ClientError> {
+		let network = self.network().ok_or(ClientError::UnsupportedNetwork)?;
+		let id = u64::try_from(&network).map_err(|_| ClientError::UnsupportedNetwork)?;
+		let network_account = Account::<KeyNETWORK>::generate_network_address(id).context(AccountSnafu)?;
+		let token = network_account
+			.generate_identifier(KeyPairType::TOKEN, None, 0)
+			.context(AccountSnafu)?;
+
+		let network_address = Arc::new(GenericAccount::Network(network_account));
+		let base_token = Arc::new(token);
+		Ok((network_address, base_token))
+	}
+
+	/// The account of the client's first representative, parsed from its
+	/// published key; used as the default delegate at genesis.
+	#[cfg(feature = "std")]
+	pub(crate) fn first_rep_account(&self) -> Result<Option<AccountRef>, ClientError> {
+		match self.inner.reps.snapshot().into_iter().next() {
+			Some(rep) => {
+				let account = GenericAccount::from_str(&rep.key).map_err(|source| ClientError::Account { source })?;
+				Ok(Some(Arc::new(account)))
+			}
+			None => Ok(None),
+		}
+	}
+
+	/// Apply the configured network and subnet to `builder`, if set.
+	pub(crate) fn apply_network(&self, mut builder: BlockBuilder) -> BlockBuilder {
+		if let Some(network) = self.network() {
+			builder = builder.with_network(network);
+		}
+		if let Some(subnet) = self.subnet() {
+			builder = builder.with_subnet(subnet);
+		}
+
+		builder
+	}
+
+	/// Build and sign a single block over this client's network context:
+	/// stamp the network/subnet, set account, operations, an optional distinct
+	/// signer, an optional purpose/date, and either chain onto `previous` or
+	/// open the chain.
+	pub(crate) fn seal_block(
+		&self,
+		account: &AccountRef,
+		signer: &AccountRef,
+		previous: Option<BlockHash>,
+		purpose: Option<BlockPurpose>,
+		date: Option<BlockTime>,
+		operations: Vec<Operation>,
+	) -> Result<Block, ClientError> {
+		let mut builder = self
+			.apply_network(BlockBuilder::default())
+			.with_account(Arc::clone(account))
+			.with_operations(operations);
+
+		if signer.to_string() != account.to_string() {
+			builder = builder.with_signer(Arc::clone(signer));
+		}
+		if let Some(purpose) = purpose {
+			builder = builder.with_purpose(purpose);
+		}
+		if let Some(date) = date {
+			builder = builder.with_date(date);
+		}
+
+		builder = match previous {
+			Some(prev) => builder.with_previous(prev),
+			None => builder.as_opening(),
+		};
+
+		let unsigned = builder.build().context(BlockSnafu)?;
+		unsigned.sign().context(BlockSnafu)
 	}
 }
 
