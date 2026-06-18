@@ -1,10 +1,10 @@
 //! Runtime: timer, task spawning, and clock abstracted behind [`Runtime`] so
 //! the orchestrator never names a concrete executor.
 //!
-//! The trait is `no_std`+`alloc`; [`TokioRuntime`] is the std backend. Swapping
-//! in a different runtime (e.g. an embedded executor), it is the interface that
-//! keeps backoff, per-request deadlines, the background refresh task, and cache
-//! TTLs executor-agnostic.
+//! The trait is `no_std`+`alloc`; [`TokioRuntime`] is the std backend. Routing
+//! backoff, per-request deadlines, the background refresh task, and cache TTLs
+//! through this interface keeps them executor-agnostic, so a different runtime
+//! (e.g. an embedded executor) can be supplied without touching the orchestrator.
 
 use alloc::boxed::Box;
 use core::future::Future;

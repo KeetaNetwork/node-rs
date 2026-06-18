@@ -35,20 +35,6 @@
 //! # }
 //! ```
 //!
-//! Transmitting an assembled staple to the node (networked):
-//!
-//! ```no_run
-//! use keetanetwork_client::KeetaClient;
-//! use keetanetwork_vote::VoteStaple;
-//!
-//! # async fn run(staple: &VoteStaple) -> Result<(), keetanetwork_client::ClientError> {
-//! let client = KeetaClient::new("http://localhost:8080/api");
-//! let accepted = client.transmit_staple(staple).await?;
-//! # let _ = accepted;
-//! # Ok(())
-//! # }
-//! ```
-//!
 //! ## `no_std`
 //!
 //! The orchestrator ([`KeetaClient`]) is `no_std`+`alloc`: it is written

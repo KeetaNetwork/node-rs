@@ -125,6 +125,8 @@ impl Drop for Inner {
 /// Talks to a set of representatives: reads pick one rep (power-of-two
 /// choices, weighted by reliability) with retry, backoff, and timeout; votes,
 /// quotes, and publishes fan out to every rep and aggregate by quorum weight.
+///
+/// See the [crate-level example](crate) for building and transmitting a block.
 #[derive(Clone, Debug)]
 pub struct KeetaClient {
 	inner: Arc<Inner>,
@@ -336,6 +338,12 @@ impl KeetaClient {
 
 	/// Refresh weights *and* add any newly advertised representatives,
 	/// bypassing the cache.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to query
+	/// - [`ClientError::Transport`] -- the rep-listing request failed at the transport layer
+	/// - [`ClientError::Node`] -- the node rejected the rep-listing request
 	pub async fn discover_representatives(&self) -> Result<(), ClientError> {
 		let entries = self.fetch_rep_entries().await?;
 		self.apply_reps(&entries, true);
@@ -402,18 +410,18 @@ impl KeetaClient {
 			};
 
 			let error = match self.run_call(call(pick.transport)).await {
-				Ok(Ok(response)) => {
+				Some(Ok(response)) => {
 					self.boost(&pick.key);
 					return Ok(response);
 				}
-				Ok(Err(error)) => {
+				Some(Err(error)) => {
 					if self.try_recover_on_error(&error).await {
 						continue;
 					}
 					self.decay(&pick.key);
 					error
 				}
-				Err(()) => {
+				None => {
 					self.decay(&pick.key);
 					ClientError::Timeout
 				}
@@ -430,23 +438,24 @@ impl KeetaClient {
 	}
 
 	/// Await a transport call, bounding it by the configured request timeout
-	/// (`Err(())` on timeout); an unset timeout awaits indefinitely.
+	/// (`None` on timeout); an unset timeout awaits indefinitely.
 	async fn run_call<T>(
 		&self,
 		future: impl Future<Output = Result<T, ClientError>>,
-	) -> Result<Result<T, ClientError>, ()> {
+	) -> Option<Result<T, ClientError>> {
 		let timeout_ms = self.inner.config.request_timeout_ms;
 		if timeout_ms == 0 {
-			return Ok(future.await);
+			return Some(future.await);
 		}
 
-		let timer = self.inner.runtime.sleep(Duration::from_millis(timeout_ms));
+		let duration = Duration::from_millis(timeout_ms);
+		let timer = self.inner.runtime.sleep(duration);
 		pin_mut!(future);
 		pin_mut!(timer);
 
 		match select(future, timer).await {
-			Either::Left((result, _)) => Ok(result),
-			Either::Right(((), _)) => Err(()),
+			Either::Left((result, _)) => Some(result),
+			Either::Right(((), _)) => None,
 		}
 	}
 
@@ -493,6 +502,14 @@ impl KeetaClient {
 	}
 
 	/// Publish an assembled vote staple to the node.
+	///
+	/// Returns `true` once any representative accepts the staple.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to publish to
+	/// - [`ClientError::Transport`] -- every publish attempt failed at the transport layer
+	/// - [`ClientError::Node`] -- every representative rejected the staple
 	pub async fn transmit_staple(&self, staple: &VoteStaple) -> Result<bool, ClientError> {
 		self.ensure_refresh();
 		let picks = self.snapshot_picks();
@@ -510,7 +527,8 @@ impl KeetaClient {
 		while let Some((key, result)) = requests.next().await {
 			match result {
 				// A fulfilled publish response counts as success regardless of
-				// the returned `publish` flag, matching the reference.
+				// the returned `publish` flag: the node accepted the staple, and
+				// the flag only reports whether this node also voted on it.
 				Ok(_) => {
 					self.boost(&key);
 					accepted = true;
@@ -535,6 +553,12 @@ impl KeetaClient {
 	///
 	/// Fans out to every representative and returns the first vote received;
 	/// use the two-round [`transmit`](Self::transmit) for full quorum voting.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to query
+	/// - [`ClientError::MissingVote`] -- a representative responded without a vote
+	/// - [`ClientError::Node`] -- every representative rejected the vote request
 	pub async fn request_vote(&self, blocks: &[Block]) -> Result<Vote, ClientError> {
 		let votes = self.request_votes(blocks, &[], &[]).await?;
 		votes.into_iter().next().ok_or(ClientError::MissingVote)
@@ -615,6 +639,12 @@ impl KeetaClient {
 
 	/// Request a non-binding vote quote for `blocks`, used during fee
 	/// negotiation. Fans out to all reps and returns the first quote.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to query
+	/// - [`ClientError::MissingQuote`] -- a representative responded without a quote
+	/// - [`ClientError::Node`] -- every representative rejected the quote request
 	pub async fn request_quote(&self, blocks: &[Block]) -> Result<VoteQuote, ClientError> {
 		let quotes = self.request_quotes(blocks).await?;
 		quotes.into_iter().next().ok_or(ClientError::MissingQuote)
@@ -674,6 +704,13 @@ impl KeetaClient {
 	/// [`ValidationConfig`]; the votes are freshly minted in this call, so
 	/// surfacing a moment to the caller would be both unknowable in advance and
 	/// inert on the staple bytes.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to vote
+	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
+	/// - [`ClientError::FeeRequired`] -- the node requires a fee but no `fee_signer` was supplied
+	/// - [`ClientError::Node`] -- a representative rejected the blocks or staple
 	pub async fn transmit(&self, blocks: &[Block], options: TransmitOptions) -> Result<bool, ClientError> {
 		self.transmit_with_optional_fee(blocks, &options).await
 	}
@@ -710,7 +747,7 @@ impl KeetaClient {
 
 	/// One temporary-then-permanent voting round, building a fee block when
 	/// required, and publishing the assembled staple. Quotes attach only to the
-	/// temporary round, matching the reference flow.
+	/// temporary round, since the permanent round votes on the finalized blocks.
 	async fn transmit_round(&self, blocks: &[Block], options: &TransmitOptions) -> Result<bool, ClientError> {
 		let moment = self.now_moment();
 		let temporary = self.request_votes(blocks, &[], &options.quotes).await?;
@@ -737,6 +774,15 @@ impl KeetaClient {
 	/// Synchronize an account whose head height differs across
 	/// representatives: pull the missing successor staple from the highest
 	/// rep and publish it to the lagging reps.
+	///
+	/// Returns the staple used to reconcile the lagging reps, or `None` when
+	/// the reps already agree or no successor staple is available.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to query
+	/// - [`ClientError::SyncPublishFailed`] -- the lagging reps did not advance after publishing
+	/// - [`ClientError::Node`] -- a representative rejected a fetch or publish request
 	pub async fn sync_account(&self, account: &AccountRef, publish: bool) -> Result<Option<VoteStaple>, ClientError> {
 		let picks = self.snapshot_picks();
 		if picks.is_empty() {
@@ -806,6 +852,13 @@ impl KeetaClient {
 	/// `options.fee_signer` originates a fee block if the recovered votes
 	/// require a fee and no permanent votes exist yet. Returns the recovered
 	/// staple, or `None` when there is nothing pending to recover.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to query
+	/// - [`ClientError::RecoverFailed`] -- the pending votes or blocks could not be reassembled
+	/// - [`ClientError::FeeRequired`] -- a fee is required but `options.fee_signer` is absent
+	/// - [`ClientError::Node`] -- a representative rejected a fetch or publish request
 	pub async fn recover_account(
 		&self,
 		account: &AccountRef,
@@ -1143,6 +1196,13 @@ impl KeetaClient {
 	/// `options.fee_signer` pays a fee when the node requires one (absent, a
 	/// required fee fails with [`ClientError::FeeRequired`]) and drives
 	/// recovery on a `LEDGER_SUCCESSOR_VOTE_EXISTS` conflict.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to vote
+	/// - [`ClientError::FeeRequired`] -- the node requires a fee but no `fee_signer` was supplied
+	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
+	/// - [`ClientError::Node`] -- a representative rejected the block or staple
 	pub async fn publish(&self, block: Block, options: TransmitOptions) -> Result<bool, ClientError> {
 		let account = Arc::clone(block.data().account());
 		let mut attempt = 0u32;
@@ -1169,6 +1229,13 @@ impl KeetaClient {
 	/// `token` from `from` to `to`, paying any required fee with `from`.
 	///
 	/// Returns whether the node accepted the resulting staple.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to vote
+	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
+	/// - [`ClientError::Block`] -- the SEND block could not be assembled
+	/// - [`ClientError::Node`] -- a representative rejected the block or staple
 	pub async fn send(
 		&self,
 		from: &AccountRef,
@@ -1264,7 +1331,8 @@ impl KeetaClient {
 		}
 
 		// Tally candidate blocks by hash so the block seen on the most reps
-		// wins, matching the reference's majority selection.
+		// wins: reps may briefly disagree on the pending head, so majority
+		// agreement is the safest single answer to return.
 		let mut blocks_by_hash: BTreeMap<String, Block> = BTreeMap::new();
 		let mut observed: Vec<String> = Vec::new();
 		let mut any_success = false;
@@ -1745,17 +1813,16 @@ fn fee_token(fee: &Fee, base_token: &AccountRef) -> String {
 /// (an implicit `None` token counts as the base token); otherwise prefer the
 /// base-token entry, then fall back to the first entry.
 fn select_fee<'a>(fees: &'a Fees, base_token: &AccountRef, priority: &[AccountRef]) -> Option<&'a Fee> {
-	for wanted in priority {
-		let matched = fees
-			.entries()
-			.find(|fee| fee_token(fee, base_token) == wanted.to_string());
-		if matched.is_some() {
-			return matched;
-		}
-	}
-
-	fees.entries()
-		.find(|&fee| fee_pays_base_token(fee, base_token))
+	priority
+		.iter()
+		.find_map(|wanted| {
+			fees.entries()
+				.find(|fee| fee_token(fee, base_token) == wanted.to_string())
+		})
+		.or_else(|| {
+			fees.entries()
+				.find(|&fee| fee_pays_base_token(fee, base_token))
+		})
 		.or_else(|| fees.entries().next())
 }
 

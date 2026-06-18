@@ -1,8 +1,8 @@
 //! Per-representative transport
 //!
-//! [`NodeTransport`] is the domain-typed request surface the orchestrator
-//! ([`KeetaClient`](crate::KeetaClient)) drives one representative at a time.
-//! It returns decoded domain values ([`Block`], [`Vote`], [`VoteStaple`].
+//! [`NodeTransport`] is the domain-typed request surface that the orchestrator
+//! ([`KeetaClient`](crate::KeetaClient)) drives one representative at a time,
+//! returning domain values such as [`Block`], [`Vote`], and [`VoteStaple`].
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -81,20 +81,10 @@ pub trait NodeTransport: core::fmt::Debug + Send + Sync {
 	async fn acls_by_principal(&self, account: &str) -> Result<Vec<Acl>, ClientError>;
 	/// ACL entries where `account` is the entity.
 	async fn acls_by_entity(&self, account: &str) -> Result<Vec<Acl>, ClientError>;
-	/// The aggregate ACL-with-info view for principal `account` (opaque JSON;
-	/// std-only, as it returns a `serde_json::Value`).
-	#[cfg(feature = "std")]
-	async fn acls_by_principal_with_info(&self, account: &str) -> Result<serde_json::Value, ClientError>;
 	/// Every certificate held by `account`.
 	async fn certificates(&self, account: &str) -> Result<Vec<Certificate>, ClientError>;
 	/// The certificate of `account` identified by `hash`, if present.
 	async fn certificate(&self, account: &str, hash: &str) -> Result<Option<Certificate>, ClientError>;
-	/// Node statistics (opaque JSON; std-only).
-	#[cfg(feature = "std")]
-	async fn node_stats(&self) -> Result<serde_json::Value, ClientError>;
-	/// Connected peers (opaque JSON; std-only).
-	#[cfg(feature = "std")]
-	async fn node_peers(&self) -> Result<serde_json::Value, ClientError>;
 	/// Request a vote for `blocks`, attaching `prior` votes and an optional
 	/// `quote` issued by this representative.
 	async fn create_vote(
@@ -106,8 +96,19 @@ pub trait NodeTransport: core::fmt::Debug + Send + Sync {
 	/// Request a non-binding vote quote for `blocks`.
 	async fn create_vote_quote(&self, blocks: &[Block]) -> Result<VoteQuote, ClientError>;
 	/// Publish `staple`. A fulfilled response counts as success regardless of
-	/// the returned `publish` flag, matching the reference.
+	/// the returned `publish` flag, which only reports whether this node also
+	/// voted on the staple.
 	async fn publish_staple(&self, staple: &VoteStaple) -> Result<bool, ClientError>;
+	/// The aggregate ACL-with-info view for principal `account` (opaque JSON;
+	/// std-only, as it returns a `serde_json::Value`).
+	#[cfg(feature = "std")]
+	async fn acls_by_principal_with_info(&self, account: &str) -> Result<serde_json::Value, ClientError>;
+	/// Node statistics (opaque JSON; std-only).
+	#[cfg(feature = "std")]
+	async fn node_stats(&self) -> Result<serde_json::Value, ClientError>;
+	/// Connected peers (opaque JSON; std-only).
+	#[cfg(feature = "std")]
+	async fn node_peers(&self) -> Result<serde_json::Value, ClientError>;
 }
 
 /// Builds a [`NodeTransport`] for a representative reachable at `url`. Lets the

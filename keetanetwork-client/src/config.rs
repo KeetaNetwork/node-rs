@@ -31,7 +31,7 @@ pub struct ClientConfig {
 	/// Fraction of total voting weight required for quorum (`0.0..=1.0`).
 	pub quorum_threshold: f64,
 	/// Whether the periodic refresh also discovers and adds newly advertised
-	/// representatives (matching the reference's `addNewReps`).
+	/// representatives, not just refreshing the weights of known ones.
 	pub discover_reps: bool,
 }
 
