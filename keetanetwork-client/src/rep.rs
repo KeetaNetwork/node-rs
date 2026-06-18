@@ -20,7 +20,6 @@ pub(crate) struct RepRecord {
 	/// Stable key (account public-key string, or base URL for an anonymous
 	/// single-rep client) used for scoring and weight refresh.
 	pub(crate) key: String,
-	/// API base URL, retained for the generated-transport escape hatch.
 	pub(crate) url: String,
 	pub(crate) weight: BigInt,
 	score: f64,
@@ -82,8 +81,7 @@ impl RepState {
 		self.set_score(key, next);
 	}
 
-	/// The first representative's API URL, if any (escape hatch for building a
-	/// fresh generated transport).
+	/// The first representative's API URL, if any.
 	fn first_url(&self) -> Option<String> {
 		self.reps.first().map(|rep| rep.url.clone())
 	}

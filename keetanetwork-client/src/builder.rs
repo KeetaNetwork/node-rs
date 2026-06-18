@@ -18,9 +18,6 @@ use crate::error::{BlockSnafu, ClientError};
 ///
 /// Operations are accumulated synchronously against one originating account;
 /// [`build`](Self::build) then resolves the block context and seals the block.
-/// Each operation has a convenience method covering its common shape, plus a
-/// typed `*_op` variant (where the operation carries rarely-used optional
-/// fields) and the generic [`with_operation`](Self::with_operation) escape hatch.
 ///
 /// Create one with [`KeetaClient::builder`].
 #[must_use = "a TransactionBuilder does nothing until `build` is called"]
@@ -102,8 +99,7 @@ impl TransactionBuilder<'_> {
 		self.with_operation(certificate)
 	}
 
-	/// Append an arbitrary operation. Escape hatch for operations without a
-	/// dedicated convenience method.
+	/// Append an arbitrary operation.
 	pub fn with_operation(mut self, operation: impl Into<Operation>) -> Self {
 		self.operations.push(operation.into());
 		self

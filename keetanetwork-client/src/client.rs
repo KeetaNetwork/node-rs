@@ -266,8 +266,7 @@ impl KeetaClient {
 	}
 
 	/// Build a generated transport for the first representative, for endpoints
-	/// not covered by this wrapper. Uses a fresh HTTP client (this escape hatch
-	/// does not share the orchestrator's connection pool).
+	/// not covered by this wrapper.
 	#[cfg(feature = "std")]
 	pub fn transport(&self) -> Transport {
 		let url = self.inner.reps.first_url().unwrap_or_default();
