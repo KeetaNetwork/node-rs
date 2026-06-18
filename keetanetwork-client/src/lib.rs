@@ -75,6 +75,7 @@ pub use model::{
 	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
 	TokenBalance, TransmitOptions,
 };
+pub use rep::RepPart;
 pub use runtime::{BoxFuture, Runtime, TaskHandle};
 pub use transport::{LedgerSide, NodeTransport, TransportFactory};
 

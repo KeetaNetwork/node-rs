@@ -40,6 +40,19 @@ pub(crate) struct RepRef {
 	pub(crate) weight: BigInt,
 }
 
+/// Construction parts for one representative, consumed by
+/// [`KeetaClient::with_parts`](crate::KeetaClient::with_parts).
+#[derive(Clone, Debug)]
+pub struct RepPart {
+	/// Stable scoring key: the representative's account string, or its API
+	/// URL for an anonymous single-rep client.
+	pub key: String,
+	/// API base URL the representative is reached at.
+	pub url: String,
+	/// Voting weight.
+	pub weight: BigInt,
+}
+
 /// The mutable representative set plus per-rep reliability scores.
 ///
 /// Selection reads scores; success/failure feedback mutates them via AIMD.
