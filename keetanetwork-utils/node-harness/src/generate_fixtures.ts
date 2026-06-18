@@ -14,16 +14,12 @@ import type * as OperationsModule from '@keetanetwork/keetanet-node/dist/lib/blo
 import type * as PermissionsModule from '@keetanetwork/keetanet-node/dist/lib/permissions';
 import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/utils/certificate';
 
-import { loadModule, resolveDist } from './dist';
+import { loadModule, resolveDist, resolveOutputPath } from './dist';
 
 const USAGE = 'usage: generate_fixtures.js <path-to-node-dist> <output-json>';
 
 const dist = resolveDist(process.argv[2], USAGE);
-const outFile = process.argv[3];
-if (outFile === undefined) {
-	console.error(USAGE);
-	process.exit(1);
-}
+const outFile = resolveOutputPath(process.argv[3], USAGE);
 
 const { Account, AccountKeyAlgorithm } = loadModule<typeof AccountModule>(dist, 'lib/account.js');
 const { UnsignedBlock, BlockHash, BlockPurpose, AdjustMethod } = loadModule<typeof BlockModule>(dist, 'lib/block/index.js');

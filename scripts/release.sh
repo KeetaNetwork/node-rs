@@ -11,6 +11,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly MAX_DEPENDENCY_ITERATIONS=20
 readonly CRATES_IO_WAIT_TIME=30
+readonly ERR_RETURN_DIR="Failed to return to previous directory"
 
 # Parse command line arguments
 DRY_RUN=false
@@ -63,8 +64,8 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            echo "Unknown option: $1"
-            echo "Use --help for usage information"
+            echo "Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
             exit 1
             ;;
     esac
@@ -89,29 +90,36 @@ fi
 
 # Logging functions with consistent formatting
 log_info() {
-    echo -e "${BLUE}INFO:${NC} $1" >&2
+    local message="$1"
+    echo -e "${BLUE}INFO:${NC} ${message}" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}SUCCESS:${NC} $1" >&2
+    local message="$1"
+    echo -e "${GREEN}SUCCESS:${NC} ${message}" >&2
 }
 
 log_warning() {
-    echo -e "${YELLOW}WARNING:${NC} $1" >&2
+    local message="$1"
+    echo -e "${YELLOW}WARNING:${NC} ${message}" >&2
 }
 
 log_error() {
-    echo -e "${RED}ERROR:${NC} $1" >&2
+    local message="$1"
+    echo -e "${RED}ERROR:${NC} ${message}" >&2
 }
 
 log_dry_run() {
-    echo -e "${CYAN}DRY-RUN:${NC} $1" >&2
+    local message="$1"
+    echo -e "${CYAN}DRY-RUN:${NC} ${message}" >&2
 }
 
 # Utility functions
 die() {
-    log_error "$1"
-    exit "${2:-1}"
+    local message="$1"
+    local exit_code="${2:-1}"
+    log_error "$message"
+    exit "$exit_code"
 }
 
 require_command() {
@@ -272,11 +280,11 @@ validate_package() {
             die "Package validation failed for $package_name v$package_version"
         fi
         
-        cd - > /dev/null || die "Failed to return to previous directory"
+        cd - > /dev/null || die "$ERR_RETURN_DIR"
         return 0
     else
         log_error "Compilation validation failed for $package_name v$package_version"
-        cd - > /dev/null || die "Failed to return to previous directory"
+        cd - > /dev/null || die "$ERR_RETURN_DIR"
         return 1
     fi
 }
@@ -297,11 +305,11 @@ publish_package() {
     
     if cargo publish --all-features; then
         log_success "Published $package_name v$package_version"
-        cd - > /dev/null || die "Failed to return to previous directory"
+        cd - > /dev/null || die "$ERR_RETURN_DIR"
         return 0
     else
         log_error "Failed to publish $package_name v$package_version"
-        cd - > /dev/null || die "Failed to return to previous directory"
+        cd - > /dev/null || die "$ERR_RETURN_DIR"
         return 1
     fi
 }

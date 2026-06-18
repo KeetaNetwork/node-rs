@@ -374,170 +374,215 @@ use rasn::types::ObjectIdentifier;
 "#,
 	);
 
-	// Generate algorithm constants
-	if let Some(algorithms) = oids["algorithms"].as_object() {
-		generated_code.push_str("// Algorithm OID constants\n");
-		for (name, oid_array) in algorithms {
-			let const_name = name.to_uppercase().replace('-', "_");
-			let oid_values = format_oid_array(oid_array);
-			generated_code.push_str(&format!(
-				"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-			));
-		}
-		generated_code.push('\n');
-	}
-
-	// Generate crypto OID constants in a typed module to avoid conflicts with string constants
-	if let Some(crypto) = oids["crypto"].as_object() {
-		generated_code.push_str("/// Typed OID constants for the rasn backend.\n");
-		generated_code.push_str("/// These are const-evaluated at compile time, avoiding runtime panics.\n");
-		generated_code.push_str("pub mod typed {\n");
-		generated_code.push_str("    use super::*;\n\n");
-		for (name, crypto_info) in crypto {
-			if let Some(oid_array) = crypto_info["oid"].as_array() {
-				let const_name = name.to_uppercase().replace('-', "_");
-				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
-
-				if let Some(description) = crypto_info["description"].as_str() {
-					generated_code.push_str(&format!("    /// {description}\n"));
-				}
-
-				generated_code.push_str(&format!(
-					"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-				));
-			}
-		}
-		generated_code.push_str("}\n\n");
-	}
-
-	// Generate plain attribute constants
-	if let Some(plain_attrs) = oids["plain_attributes"].as_object() {
-		generated_code.push_str("// Plain attribute OID constants\n");
-		for (name, attr_info) in plain_attrs {
-			if let Some(oid_array) = attr_info["oid"].as_array() {
-				let const_name = match name.as_str() {
-					"postalCode" => "ADDRESS_POSTAL_CODE",
-					_ => &format!("ADDRESS_{}", name.to_uppercase()),
-				};
-				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
-
-				if let Some(description) = attr_info["description"].as_str() {
-					generated_code.push_str(&format!("/// {description}\n"));
-				}
-				if let Some(reference) = attr_info["reference"].as_str() {
-					generated_code.push_str(&format!("/// # References\n/// - [{reference}]({reference})\n"));
-				}
-
-				generated_code.push_str(&format!(
-					"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-				));
-			}
-		}
-		generated_code.push('\n');
-	}
-
-	// Generate Keeta module
-	generated_code.push_str("pub mod keeta {\n");
-	generated_code.push_str("    use super::*;\n\n");
-
-	// Generate extension constants
-	if let Some(extensions) = oids["extensions"].as_object() {
-		generated_code.push_str("    // Extension OID constants\n");
-		for (name, ext_info) in extensions {
-			if let Some(oid_array) = ext_info["oid"].as_array() {
-				let const_name = camel_to_snake_upper(name);
-				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
-				generated_code.push_str(&format!(
-					"    pub const {const_name}_EXTENSION: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-				));
-			}
-		}
-		generated_code.push('\n');
-	}
-
-	// Generate sensitive attribute constants
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		generated_code.push_str("    // Sensitive attribute OID constants\n");
-		for (name, attr_info) in sensitive_attrs {
-			if let Some(oid_array) = attr_info["oid"].as_array() {
-				let const_name = camel_to_snake_upper(name);
-				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
-
-				if let Some(description) = attr_info["description"].as_str() {
-					generated_code.push_str(&format!("    /// {description}\n"));
-				}
-
-				generated_code.push_str(&format!(
-					"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-				));
-			}
-		}
-		generated_code.push('\n');
-	}
-
-	// Generate sensitive attributes HashMap
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		generated_code.push_str("    lazy_static::lazy_static! {\n");
-		generated_code.push_str("        /// OID database for sensitive certificate attributes.\n");
-		generated_code
-			.push_str("        pub static ref SENSITIVE_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
-		generated_code.push_str("            [\n");
-		for name in sensitive_attrs.keys() {
-			let const_name = camel_to_snake_upper(name);
-			generated_code.push_str(&format!("                (\"{name}\", {const_name}),\n"));
-		}
-		generated_code.push_str("            ]\n");
-		generated_code.push_str("            .iter()\n");
-		generated_code.push_str("            .cloned()\n");
-		generated_code.push_str("            .collect()\n");
-		generated_code.push_str("        };\n");
-		generated_code.push_str("    }\n");
-	}
-
-	generated_code.push_str("}\n\n");
-
-	// Generate algorithm attributes HashMap
-	if let Some(algorithms) = oids["algorithms"].as_object() {
-		generated_code.push_str("lazy_static::lazy_static! {\n");
-		generated_code.push_str("    /// OID database for sensitive attribute algorithms.\n");
-		generated_code
-			.push_str("    pub static ref ALGORITHM_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
-		generated_code.push_str("        [\n");
-		for name in algorithms.keys() {
-			let const_name = name.to_uppercase().replace('-', "_");
-			generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
-		}
-		generated_code.push_str("        ]\n");
-		generated_code.push_str("        .iter()\n");
-		generated_code.push_str("        .cloned()\n");
-		generated_code.push_str("        .collect()\n");
-		generated_code.push_str("    };\n");
-		generated_code.push_str("}\n\n");
-	}
-
-	// Generate plain attributes HashMap
-	if let Some(plain_attrs) = oids["plain_attributes"].as_object() {
-		generated_code.push_str("lazy_static::lazy_static! {\n");
-		generated_code.push_str("    /// OID database for plain certificate attributes.\n");
-		generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
-		generated_code.push_str("        [\n");
-		for name in plain_attrs.keys() {
-			let const_name = match name.as_str() {
-				"postalCode" => "ADDRESS_POSTAL_CODE",
-				_ => &format!("ADDRESS_{}", name.to_uppercase()),
-			};
-			generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
-		}
-		generated_code.push_str("        ]\n");
-		generated_code.push_str("        .iter()\n");
-		generated_code.push_str("        .cloned()\n");
-		generated_code.push_str("        .collect()\n");
-		generated_code.push_str("    };\n");
-		generated_code.push_str("}\n");
-	}
+	emit_algorithm_constants(&oids, &mut generated_code);
+	emit_crypto_typed_module(&oids, &mut generated_code);
+	emit_plain_attribute_constants(&oids, &mut generated_code);
+	emit_keeta_module(&oids, &mut generated_code);
+	emit_algorithm_attributes_map(&oids, &mut generated_code);
+	emit_plain_attributes_map(&oids, &mut generated_code);
 
 	ensure_single_newline_ending(&mut generated_code);
 	fs::write(&dest_path, generated_code).expect("OUT_DIR must be writable during build");
+}
+
+/// Resolve the constant name used for a plain certificate attribute.
+fn plain_attr_const_name(name: &str) -> String {
+	match name {
+		"postalCode" => "ADDRESS_POSTAL_CODE".to_string(),
+		_ => format!("ADDRESS_{}", name.to_uppercase()),
+	}
+}
+
+fn emit_algorithm_constants(oids: &Value, generated_code: &mut String) {
+	let Some(algorithms) = oids["algorithms"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("// Algorithm OID constants\n");
+	for (name, oid_array) in algorithms {
+		let const_name = name.to_uppercase().replace('-', "_");
+		let oid_values = format_oid_array(oid_array);
+		generated_code.push_str(&format!(
+			"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
+	}
+	generated_code.push('\n');
+}
+
+fn emit_crypto_typed_module(oids: &Value, generated_code: &mut String) {
+	let Some(crypto) = oids["crypto"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("/// Typed OID constants for the rasn backend.\n");
+	generated_code.push_str("/// These are const-evaluated at compile time, avoiding runtime panics.\n");
+	generated_code.push_str("pub mod typed {\n");
+	generated_code.push_str("    use super::*;\n\n");
+	for (name, crypto_info) in crypto {
+		let Some(oid_array) = crypto_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = name.to_uppercase().replace('-', "_");
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+
+		if let Some(description) = crypto_info["description"].as_str() {
+			generated_code.push_str(&format!("    /// {description}\n"));
+		}
+
+		generated_code.push_str(&format!(
+			"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
+	}
+	generated_code.push_str("}\n\n");
+}
+
+fn emit_plain_attribute_constants(oids: &Value, generated_code: &mut String) {
+	let Some(plain_attrs) = oids["plain_attributes"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("// Plain attribute OID constants\n");
+	for (name, attr_info) in plain_attrs {
+		let Some(oid_array) = attr_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = plain_attr_const_name(name);
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+
+		if let Some(description) = attr_info["description"].as_str() {
+			generated_code.push_str(&format!("/// {description}\n"));
+		}
+		if let Some(reference) = attr_info["reference"].as_str() {
+			generated_code.push_str(&format!("/// # References\n/// - [{reference}]({reference})\n"));
+		}
+
+		generated_code.push_str(&format!(
+			"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
+	}
+	generated_code.push('\n');
+}
+
+fn emit_keeta_module(oids: &Value, generated_code: &mut String) {
+	generated_code.push_str("pub mod keeta {\n");
+	generated_code.push_str("    use super::*;\n\n");
+
+	emit_extension_constants(oids, generated_code);
+	emit_sensitive_attribute_constants(oids, generated_code);
+	emit_sensitive_attributes_map(oids, generated_code);
+
+	generated_code.push_str("}\n\n");
+}
+
+fn emit_extension_constants(oids: &Value, generated_code: &mut String) {
+	let Some(extensions) = oids["extensions"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("    // Extension OID constants\n");
+	for (name, ext_info) in extensions {
+		let Some(oid_array) = ext_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = camel_to_snake_upper(name);
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+		generated_code.push_str(&format!(
+			"    pub const {const_name}_EXTENSION: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
+	}
+	generated_code.push('\n');
+}
+
+fn emit_sensitive_attribute_constants(oids: &Value, generated_code: &mut String) {
+	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("    // Sensitive attribute OID constants\n");
+	for (name, attr_info) in sensitive_attrs {
+		let Some(oid_array) = attr_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = camel_to_snake_upper(name);
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+
+		if let Some(description) = attr_info["description"].as_str() {
+			generated_code.push_str(&format!("    /// {description}\n"));
+		}
+
+		generated_code.push_str(&format!(
+			"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
+	}
+	generated_code.push('\n');
+}
+
+fn emit_sensitive_attributes_map(oids: &Value, generated_code: &mut String) {
+	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("    lazy_static::lazy_static! {\n");
+	generated_code.push_str("        /// OID database for sensitive certificate attributes.\n");
+	generated_code
+		.push_str("        pub static ref SENSITIVE_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
+	generated_code.push_str("            [\n");
+	for name in sensitive_attrs.keys() {
+		let const_name = camel_to_snake_upper(name);
+		generated_code.push_str(&format!("                (\"{name}\", {const_name}),\n"));
+	}
+	generated_code.push_str("            ]\n");
+	generated_code.push_str("            .iter()\n");
+	generated_code.push_str("            .cloned()\n");
+	generated_code.push_str("            .collect()\n");
+	generated_code.push_str("        };\n");
+	generated_code.push_str("    }\n");
+}
+
+fn emit_algorithm_attributes_map(oids: &Value, generated_code: &mut String) {
+	let Some(algorithms) = oids["algorithms"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("lazy_static::lazy_static! {\n");
+	generated_code.push_str("    /// OID database for sensitive attribute algorithms.\n");
+	generated_code.push_str("    pub static ref ALGORITHM_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
+	generated_code.push_str("        [\n");
+	for name in algorithms.keys() {
+		let const_name = name.to_uppercase().replace('-', "_");
+		generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
+	}
+	generated_code.push_str("        ]\n");
+	generated_code.push_str("        .iter()\n");
+	generated_code.push_str("        .cloned()\n");
+	generated_code.push_str("        .collect()\n");
+	generated_code.push_str("    };\n");
+	generated_code.push_str("}\n\n");
+}
+
+fn emit_plain_attributes_map(oids: &Value, generated_code: &mut String) {
+	let Some(plain_attrs) = oids["plain_attributes"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("lazy_static::lazy_static! {\n");
+	generated_code.push_str("    /// OID database for plain certificate attributes.\n");
+	generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
+	generated_code.push_str("        [\n");
+	for name in plain_attrs.keys() {
+		let const_name = plain_attr_const_name(name);
+		generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
+	}
+	generated_code.push_str("        ]\n");
+	generated_code.push_str("        .iter()\n");
+	generated_code.push_str("        .cloned()\n");
+	generated_code.push_str("        .collect()\n");
+	generated_code.push_str("    };\n");
+	generated_code.push_str("}\n");
 }
 
 #[derive(Debug)]
@@ -594,126 +639,93 @@ fn generate_default_impl(oids: &Value, generated_code: &mut String) {
 		"OctetString",
 	];
 
-	// Check sensitive_attributes for SEQUENCE types
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		for (name, attr_info) in sensitive_attrs {
-			if attr_info["type"] == "SEQUENCE" {
-				if let Some(fields) = attr_info["fields"].as_object() {
-					let token = attr_info["token"].as_str().unwrap_or(name);
+	emit_defaults_for_sensitive(oids, generated_code, &default_types);
+	emit_defaults_for_sequences(oids, generated_code, &default_types);
+}
 
-					// Check if we can generate Default for this type
-					let mut can_default = true;
-					let mut field_defaults = Vec::new();
+/// Determine whether a field type can be defaulted via `Default::default()`.
+fn type_implements_default(field_type: &str, default_types: &[&str]) -> bool {
+	default_types.iter().any(|&t| field_type.contains(t))
+		|| field_type == "NamePrefixCode"
+		|| field_type == "PreferredContactMethodCode"
+}
 
-					for (_field_name, field_info) in fields {
-						let is_optional = field_info["optional"].as_bool().unwrap_or(false);
-						let field_type = field_info["type"].as_str().unwrap_or("");
+/// Compute the `Self::new` arguments for a sequence type, or `None` when a
+/// required field has no `Default` implementation.
+fn field_defaults(fields: &serde_json::Map<String, Value>, default_types: &[&str]) -> Option<Vec<String>> {
+	let mut defaults = Vec::new();
+	for field_info in fields.values() {
+		let is_optional = field_info["optional"].as_bool().unwrap_or(false);
+		let field_type = field_info["type"].as_str().unwrap_or("");
 
-						if is_optional {
-							field_defaults.push("None".to_string());
-						} else {
-							// Check if the required field type implements Default
-							if default_types.iter().any(|&t| field_type.contains(t))
-								|| field_type == "NamePrefixCode"
-								|| field_type == "PreferredContactMethodCode"
-							{
-								field_defaults.push("Default::default()".to_string());
-							} else {
-								can_default = false;
-								break;
-							}
-						}
-					}
-
-					if can_default {
-						generated_code.push_str(&format!(
-							r#"impl Default for {token} {{
-	fn default() -> Self {{
-		Self::new({})
-	}}
-}}
-
-"#,
-							field_defaults.join(", ")
-						));
-					}
-				}
-			}
+		if is_optional {
+			defaults.push("None".to_string());
+		} else if type_implements_default(field_type, default_types) {
+			defaults.push("Default::default()".to_string());
+		} else {
+			return None;
 		}
 	}
 
-	// Check iso20022_types sequences
-	if let Some(iso_types) = oids["iso20022_types"]["sequences"].as_object() {
-		for (name, type_info) in iso_types {
-			if let Some(fields) = type_info["fields"].as_object() {
-				let mut can_default = true;
-				let mut field_defaults = Vec::new();
+	Some(defaults)
+}
 
-				for (_field_name, field_info) in fields {
-					let is_optional = field_info["optional"].as_bool().unwrap_or(false);
-					let field_type = field_info["type"].as_str().unwrap_or("");
-
-					if is_optional {
-						field_defaults.push("None".to_string());
-					} else {
-						// Check if the required field type implements Default
-						if default_types.iter().any(|&t| field_type.contains(t))
-							|| field_type == "NamePrefixCode"
-							|| field_type == "PreferredContactMethodCode"
-						{
-							field_defaults.push("Default::default()".to_string());
-						} else {
-							can_default = false;
-							break;
-						}
-					}
-				}
-
-				if can_default {
-					generated_code.push_str(&format!(
-						r#"impl Default for {name} {{
+fn emit_default_impl(generated_code: &mut String, type_name: &str, defaults: &[String]) {
+	generated_code.push_str(&format!(
+		r#"impl Default for {type_name} {{
 	fn default() -> Self {{
 		Self::new({})
 	}}
 }}
 
 "#,
-						field_defaults.join(", ")
-					));
-				}
-			}
+		defaults.join(", ")
+	));
+}
+
+fn emit_defaults_for_sensitive(oids: &Value, generated_code: &mut String, default_types: &[&str]) {
+	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
+		return;
+	};
+
+	for (name, attr_info) in sensitive_attrs {
+		if attr_info["type"] != "SEQUENCE" {
+			continue;
 		}
+		let Some(fields) = attr_info["fields"].as_object() else {
+			continue;
+		};
+		let Some(defaults) = field_defaults(fields, default_types) else {
+			continue;
+		};
+
+		let token = attr_info["token"].as_str().unwrap_or(name);
+		emit_default_impl(generated_code, token, &defaults);
+	}
+}
+
+fn emit_defaults_for_sequences(oids: &Value, generated_code: &mut String, default_types: &[&str]) {
+	let Some(iso_types) = oids["iso20022_types"]["sequences"].as_object() else {
+		return;
+	};
+
+	for (name, type_info) in iso_types {
+		let Some(fields) = type_info["fields"].as_object() else {
+			continue;
+		};
+		let Some(defaults) = field_defaults(fields, default_types) else {
+			continue;
+		};
+
+		emit_default_impl(generated_code, name, &defaults);
 	}
 }
 
 fn collect_wrapper_types(oids: &Value) -> std::collections::HashMap<String, Vec<String>> {
 	let mut wrapper_types: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
-	// Add primitive types
-	if let Some(primitives) = oids["iso20022_types"]["primitives"].as_object() {
-		for (name, info) in primitives {
-			if let Some(asn1_type) = info["type"].as_str() {
-				wrapper_types
-					.entry(asn1_type.to_string())
-					.or_default()
-					.push(name.clone());
-			}
-		}
-	}
-
-	// Add sensitive attributes
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		for (_name, info) in sensitive_attrs {
-			if let Some(token) = info["token"].as_str() {
-				if let Some(asn1_type) = info["type"].as_str() {
-					wrapper_types
-						.entry(asn1_type.to_string())
-						.or_default()
-						.push(token.to_string());
-				}
-			}
-		}
-	}
+	add_primitive_wrappers(oids, &mut wrapper_types);
+	add_sensitive_wrappers(oids, &mut wrapper_types);
 
 	// Sort for consistent output
 	for wrappers in wrapper_types.values_mut() {
@@ -721,6 +733,39 @@ fn collect_wrapper_types(oids: &Value) -> std::collections::HashMap<String, Vec<
 	}
 
 	wrapper_types
+}
+
+fn add_primitive_wrappers(oids: &Value, wrapper_types: &mut std::collections::HashMap<String, Vec<String>>) {
+	let Some(primitives) = oids["iso20022_types"]["primitives"].as_object() else {
+		return;
+	};
+
+	for (name, info) in primitives {
+		if let Some(asn1_type) = info["type"].as_str() {
+			wrapper_types
+				.entry(asn1_type.to_string())
+				.or_default()
+				.push(name.clone());
+		}
+	}
+}
+
+fn add_sensitive_wrappers(oids: &Value, wrapper_types: &mut std::collections::HashMap<String, Vec<String>>) {
+	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
+		return;
+	};
+
+	for info in sensitive_attrs.values() {
+		let Some(token) = info["token"].as_str() else {
+			continue;
+		};
+		if let Some(asn1_type) = info["type"].as_str() {
+			wrapper_types
+				.entry(asn1_type.to_string())
+				.or_default()
+				.push(token.to_string());
+		}
+	}
 }
 
 fn generate_from_implementations(path: &str) {

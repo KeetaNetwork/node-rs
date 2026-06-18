@@ -969,6 +969,45 @@ pub struct Certificate {
 	pub signature: der::asn1::BitString,
 }
 
+/// Apply a single extension to the accumulated base extensions.
+fn apply_base_extension(base_extensions: &mut BaseExtensions, ext: &Extension) {
+	match ext.extn_id.to_string().as_str() {
+		// Basic Constraints
+		oids::BASIC_CONSTRAINTS => {
+			if let Ok(constraints) = BasicConstraints::from_der(ext.extn_value.as_bytes()) {
+				base_extensions.basic_constraints = Some(constraints);
+			}
+		}
+		// Subject Key Identifier is an OCTET STRING containing the key identifier
+		oids::SUBJECT_KEY_IDENTIFIER => {
+			if let Some(key_id) = parse_key_identifier(ext.extn_value.as_bytes()) {
+				base_extensions.subject_key_identifier = Some(hex::encode(key_id));
+			}
+		}
+		// Authority Key Identifier is a SEQUENCE with optional KeyIdentifier [0]
+		oids::AUTHORITY_KEY_IDENTIFIER => {
+			if let Some(key_id) = parse_authority_key_identifier(ext.extn_value.as_bytes()) {
+				base_extensions.authority_key_identifier = Some(hex::encode(key_id));
+			}
+		}
+		_ => {} // Ignore other extensions for base extensions
+	}
+}
+
+/// Reject duplicate extension OIDs per RFC 5280 section 4.2.
+fn check_duplicate_extensions(extensions: &[Extension]) -> Result<(), CertificateError> {
+	let mut seen_oids = HashSet::new();
+	for extension in extensions {
+		let oid_str = extension.extn_id.to_string();
+		if seen_oids.contains(&oid_str) {
+			return Err(CertificateError::ValidationFailed { reason: format!("Duplicate extension OID: {oid_str}") });
+		}
+		seen_oids.insert(oid_str);
+	}
+
+	Ok(())
+}
+
 impl Certificate {
 	/// Check if the certificate is valid at a specific time
 	pub fn is_valid_at(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
@@ -1173,29 +1212,7 @@ impl Certificate {
 		let mut base_extensions = BaseExtensions::default();
 		if let Some(extensions) = &self.tbs_certificate.extensions {
 			for ext in extensions {
-				match ext.extn_id.to_string().as_str() {
-					// Basic Constraints
-					oids::BASIC_CONSTRAINTS => {
-						if let Ok(constraints) = BasicConstraints::from_der(ext.extn_value.as_bytes()) {
-							base_extensions.basic_constraints = Some(constraints);
-						}
-					}
-					// Subject Key Identifier
-					oids::SUBJECT_KEY_IDENTIFIER => {
-						// Subject Key Identifier is an OCTET STRING containing the key identifier
-						if let Some(key_id) = parse_key_identifier(ext.extn_value.as_bytes()) {
-							base_extensions.subject_key_identifier = Some(hex::encode(key_id));
-						}
-					}
-					// Authority Key Identifier
-					oids::AUTHORITY_KEY_IDENTIFIER => {
-						// Authority Key Identifier is a SEQUENCE with optional KeyIdentifier [0]
-						if let Some(key_id) = parse_authority_key_identifier(ext.extn_value.as_bytes()) {
-							base_extensions.authority_key_identifier = Some(hex::encode(key_id));
-						}
-					}
-					_ => {} // Ignore other extensions for base extensions
-				}
+				apply_base_extension(&mut base_extensions, ext);
 			}
 		}
 
@@ -1287,45 +1304,29 @@ impl Certificate {
 
 	/// Validate that all critical extensions are properly handled
 	pub fn validate_critical_extensions(&self) -> Result<(), CertificateError> {
-		if let Some(extensions) = &self.tbs_certificate.extensions {
-			let known_critical_extensions = [
-				oids::BASIC_CONSTRAINTS,
-				oids::KEY_USAGE,
-				oids::CERTIFICATE_POLICIES,
-				oids::SUBJECT_ALT_NAME,
-				oids::NAME_CONSTRAINTS,
-			];
+		let Some(extensions) = &self.tbs_certificate.extensions else {
+			return Ok(());
+		};
 
-			for extension in extensions {
-				if extension.critical {
-					let oid_str = extension.extn_id.to_string();
+		let known_critical_extensions = [
+			oids::BASIC_CONSTRAINTS,
+			oids::KEY_USAGE,
+			oids::CERTIFICATE_POLICIES,
+			oids::SUBJECT_ALT_NAME,
+			oids::NAME_CONSTRAINTS,
+		];
 
-					// Check if this is a known critical extension
-					if !known_critical_extensions.contains(&oid_str.as_str()) {
-						return Err(CertificateError::ValidationFailed {
-							reason: format!("Unknown critical extension: {oid_str}"),
-						});
-					}
+		for extension in extensions {
+			if !extension.critical {
+				continue;
+			}
 
-					// Validate specific critical extensions
-					match oid_str.as_str() {
-						oids::BASIC_CONSTRAINTS => {
-							// Basic Constraints MUST be marked critical for CA certificates
-							if self.is_ca() {
-								// Extension is correctly marked critical for CA
-								continue;
-							}
-						}
-						oids::KEY_USAGE => {
-							// Key Usage should be critical per RFC 5280 recommendations
-							continue;
-						}
-						_ => {
-							// Other critical extensions are implementation-specific
-							continue;
-						}
-					}
-				}
+			// Reject any critical extension we do not recognize per RFC 5280.
+			let oid_str = extension.extn_id.to_string();
+			if !known_critical_extensions.contains(&oid_str.as_str()) {
+				return Err(CertificateError::ValidationFailed {
+					reason: format!("Unknown critical extension: {oid_str}"),
+				});
 			}
 		}
 
@@ -1334,30 +1335,31 @@ impl Certificate {
 
 	/// Validate extension consistency per RFC 5280
 	pub fn validate_extension_consistency(&self) -> Result<(), CertificateError> {
-		if let Some(extensions) = &self.tbs_certificate.extensions {
-			// Check for duplicate extensions (RFC 5280 section 4.2)
-			let mut seen_oids = HashSet::new();
-			for extension in extensions {
-				let oid_str = extension.extn_id.to_string();
-				if seen_oids.contains(&oid_str) {
-					return Err(CertificateError::ValidationFailed {
-						reason: format!("Duplicate extension OID: {oid_str}"),
-					});
-				}
-				seen_oids.insert(oid_str);
-			}
+		let Some(extensions) = &self.tbs_certificate.extensions else {
+			return Ok(());
+		};
 
-			// Validate Basic Constraints consistency
-			if let Some(basic_constraints_ext) = self.extension(oids::BASIC_CONSTRAINTS) {
-				if let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.extn_value.as_bytes()) {
-					// CA certificates MUST have Basic Constraints marked as critical
-					if basic_constraints.ca && !basic_constraints_ext.critical {
-						return Err(CertificateError::ValidationFailed {
-							reason: "CA certificates must have Basic Constraints marked as critical".to_string(),
-						});
-					}
-				}
-			}
+		// Check for duplicate extensions (RFC 5280 section 4.2)
+		check_duplicate_extensions(extensions)?;
+		// Validate Basic Constraints consistency
+		self.check_basic_constraints_consistency()?;
+
+		Ok(())
+	}
+
+	/// CA certificates MUST have Basic Constraints marked as critical (RFC 5280).
+	fn check_basic_constraints_consistency(&self) -> Result<(), CertificateError> {
+		let Some(basic_constraints_ext) = self.extension(oids::BASIC_CONSTRAINTS) else {
+			return Ok(());
+		};
+		let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.extn_value.as_bytes()) else {
+			return Ok(());
+		};
+
+		if basic_constraints.ca && !basic_constraints_ext.critical {
+			return Err(CertificateError::ValidationFailed {
+				reason: "CA certificates must have Basic Constraints marked as critical".to_string(),
+			});
 		}
 
 		Ok(())
