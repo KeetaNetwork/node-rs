@@ -51,6 +51,9 @@
 
 extern crate alloc;
 
+#[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+mod parse;
+
 #[cfg(target_family = "wasm")]
 mod account;
 #[cfg(target_family = "wasm")]

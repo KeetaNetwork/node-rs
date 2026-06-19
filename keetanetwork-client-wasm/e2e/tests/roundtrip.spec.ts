@@ -38,7 +38,7 @@ interface GenerationRoundTrip {
 }
 
 interface TypedReads {
-	balanceFields: { token: string; balance: string; pending: string } | null;
+	balanceFields: { token: string; balance: string } | null;
 	stateBalances: number;
 	stateHeadIsString: boolean;
 	repCount: number;
@@ -60,6 +60,10 @@ interface PermissionDecode {
 
 // A fresh recipient the test fully controls, distinct from the harness rep.
 const RECIPIENT_SEED_HEX = '22'.repeat(32);
+
+// A recipient reserved for the external-data send so its credited balance is
+// the sole consequence of that one transfer.
+const EXTERNAL_RECIPIENT_SEED_HEX = '55'.repeat(32);
 
 async function loadNodeInfo(request: {
 	get: (url: string) => Promise<{ json: () => Promise<NodeInfo> }>;
@@ -350,10 +354,10 @@ test('reads return structured, typed views with string amounts', async ({ page }
 		await client.send(trusted, Account.fromAddress(cfg.recipient), cfg.amount, token);
 
 		const balances = await client.balances(trusted);
-		let balanceFields: { token: string; balance: string; pending: string } | null = null;
+		let balanceFields: { token: string; balance: string } | null = null;
 		const baseEntry = balances.find((entry) => entry.token === cfg.baseToken);
 		if (baseEntry) {
-			balanceFields = { token: baseEntry.token, balance: baseEntry.balance, pending: baseEntry.pending };
+			balanceFields = { token: baseEntry.token, balance: baseEntry.balance };
 		}
 
 		const state = await client.state(trusted);
@@ -380,7 +384,6 @@ test('reads return structured, typed views with string amounts', async ({ page }
 	expect(result.balanceFields, 'balances must expose a base-token entry').not.toBeNull();
 	expect(result.balanceFields?.token, 'the balance entry must name the base token').toBe(info.baseToken);
 	expect(typeof result.balanceFields?.balance, 'a settled balance must be a decimal string').toBe('string');
-	expect(typeof result.balanceFields?.pending, 'a pending balance must be a decimal string').toBe('string');
 	expect(result.stateBalances, 'state must carry at least the base-token balance').toBeGreaterThanOrEqual(1);
 	expect(result.stateHeadIsString, 'a settled head must surface as a hex string').toBe(true);
 	expect(result.repCount, 'the network must report at least one representative').toBeGreaterThanOrEqual(1);
@@ -438,4 +441,242 @@ test('Permissions decode and round-trip the on-chain bitmaps', async ({ page }) 
 	expect(result.roundTripOffsets, 'a bitmap round-trip must preserve offsets').toEqual([3, 7]);
 	expect(result.decodedFlags, 'raw ACL bitmaps must decode to flag names').toEqual(['access', 'update_info']);
 	expect(result.decodedOffsets, 'raw ACL bitmaps must decode external offsets').toEqual([2, 7]);
+});
+
+test.describe('extended client and user surface', () => {
+	let info: NodeInfo;
+
+	test.beforeEach(async ({ page }) => {
+		info = await loadNodeInfo(page.request);
+		await page.goto('/e2e/index.html');
+		await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
+	});
+
+	test('account state surfaces the name, description, and metadata set via setInfo', async ({ page }) => {
+		const result: { name?: string; description?: string; metadata?: string } | undefined = await page.evaluate(
+			async (cfg: NodeInfo) => {
+				const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+				const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+				const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+				const user = UserClient.fromClient(client, trusted);
+
+				await user.setInfo('WASMTREASURY', 'the wasm treasury account', 'tier-genesis');
+
+				const state = await user.state();
+				return state.info;
+			},
+			info,
+		);
+
+		expect(result?.name, 'state.info must echo the name set via setInfo').toBe('WASMTREASURY');
+		expect(result?.description, 'state.info must echo the description set via setInfo').toBe(
+			'the wasm treasury account',
+		);
+		expect(result?.metadata, 'state.info must echo the metadata set via setInfo').toBe('tier-genesis');
+	});
+
+	const SUPPLY_ADJUSTMENTS = [
+		{ method: 'add', sign: 1n },
+		{ method: 'subtract', sign: -1n },
+	] as const;
+
+	for (const { method, sign } of SUPPLY_ADJUSTMENTS) {
+		test(`modifyTokenSupplyAndBalance "${method}" moves the named token's total supply`, async ({ page }) => {
+			const result: { accepted: boolean; before: string; after: string } = await page.evaluate(
+				async (cfg: NodeInfo & { method: string }) => {
+					const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+					const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+					const token = Account.fromAddress(cfg.baseToken);
+					const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+					const user = UserClient.fromClient(client, trusted);
+
+					const before = await client.tokenSupply(token);
+					const accepted = await user.modifyTokenSupplyAndBalance(token, cfg.amount, cfg.method, trusted);
+					const after = await client.tokenSupply(token);
+
+					return { accepted, before: before ?? '', after: after ?? '' };
+				},
+				{ ...info, method },
+			);
+
+			expect(result.accepted, 'the node must accept the supply-and-balance staple').toBe(true);
+			expect(BigInt(result.after) - BigInt(result.before), `a "${method}" must shift supply by the amount`).toBe(
+				sign * BigInt(info.amount),
+			);
+		});
+	}
+
+	test('a UserClient pages its own chain and history', async ({ page }) => {
+		const result: { pageCount: number; allCount: number; historyCount: number; firstStapleIsHex: boolean } =
+			await page.evaluate(async (cfg: NodeInfo) => {
+				const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+				const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+				const token = Account.fromAddress(cfg.baseToken);
+				const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+				const user = UserClient.fromClient(client, trusted);
+
+				await user.send(Account.fromAddress(cfg.recipient), cfg.amount, token);
+
+				const firstPage = await user.chainPage(undefined, undefined, 1);
+				const everyBlock = await user.chainAll(50);
+				const history = await user.historyPage(undefined, 50);
+
+				return {
+					pageCount: firstPage.length,
+					allCount: everyBlock.length,
+					historyCount: history.length,
+					firstStapleIsHex: /^[0-9a-f]+$/.test(history[0]?.staple ?? ''),
+				};
+			}, info);
+
+		expect(result.allCount, 'chainAll must return the account chain').toBeGreaterThanOrEqual(1);
+		expect(result.pageCount, 'a one-block page must return at least one block').toBeGreaterThanOrEqual(1);
+		expect(result.pageCount, 'a bounded page must not exceed the full chain').toBeLessThanOrEqual(result.allCount);
+		expect(result.historyCount, 'historyPage must return at least one entry').toBeGreaterThanOrEqual(1);
+		expect(result.firstStapleIsHex, 'a history entry must carry its staple as hex').toBe(true);
+	});
+
+	test('a certificate lookup by an unknown hash resolves to nothing', async ({ page }) => {
+		const result: { missing: boolean; listed: boolean } = await page.evaluate(async (cfg: NodeInfo) => {
+			const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+			const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+			const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+			const user = UserClient.fromClient(client, trusted);
+
+			const found = await user.certificate('00'.repeat(32));
+			const all = await user.certificates();
+
+			return { missing: found === undefined || found === null, listed: Array.isArray(all) };
+		}, info);
+
+		expect(result.missing, 'an unknown certificate hash must resolve to nothing').toBe(true);
+		expect(result.listed, 'certificates must return a list').toBe(true);
+	});
+
+	test('sendExternal transfers and credits the recipient', async ({ page }) => {
+		const result: { accepted: boolean; balance: string } = await page.evaluate(
+			async (cfg: NodeInfo & { externalRecipientSeedHex: string }) => {
+				const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+				const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+				const recipient = Account.fromSeed(cfg.externalRecipientSeedHex, 0, 'ed25519');
+				const token = Account.fromAddress(cfg.baseToken);
+				const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+				const user = UserClient.fromClient(client, trusted);
+
+				const accepted = await user.sendExternal(recipient, cfg.amount, token, 'invoice-42');
+				const balance = await client.balance(recipient, token);
+
+				return { accepted, balance };
+			},
+			{ ...info, externalRecipientSeedHex: EXTERNAL_RECIPIENT_SEED_HEX },
+		);
+
+		expect(result.accepted, 'the node must accept the external-data send').toBe(true);
+		expect(BigInt(result.balance), 'the external-data send must credit the recipient').toBe(BigInt(info.amount));
+	});
+
+	test('getBlock reads the main ledger by hash and rejects an unknown side', async ({ page }) => {
+		const result: {
+			headHash: string;
+			mainHash: string | null;
+			defaultHash: string | null;
+			sideIsEmpty: boolean;
+			invalidCode: string;
+		} = await page.evaluate(async (cfg: NodeInfo) => {
+			const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+			const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+			const token = Account.fromAddress(cfg.baseToken);
+			const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+			const user = UserClient.fromClient(client, trusted);
+
+			await user.send(Account.fromAddress(cfg.recipient), cfg.amount, token);
+
+			const head = await user.head();
+			const headHash = head?.hash ?? '';
+			const onMain = await client.block(headHash, 'main');
+			const onDefault = await client.block(headHash, undefined);
+			const onSide = await client.block(headHash, 'side');
+
+			let invalidCode = 'NO_THROW';
+			try {
+				await client.block(headHash, 'galaxy');
+			} catch (error) {
+				invalidCode = (error as { code?: string }).code ?? 'NO_CODE';
+			}
+
+			return {
+				headHash,
+				mainHash: onMain?.hash ?? null,
+				defaultHash: onDefault?.hash ?? null,
+				sideIsEmpty: onSide === undefined || onSide === null,
+				invalidCode,
+			};
+		}, info);
+
+		expect(result.mainHash, 'the settled head must resolve on the main ledger').toBe(result.headHash);
+		expect(result.defaultHash, 'an omitted side must default to the main ledger').toBe(result.headHash);
+		expect(result.sideIsEmpty, 'a settled head must not appear on the side ledger').toBe(true);
+		expect(result.invalidCode, 'an unknown side must throw code INVALID_LEDGER_SIDE').toBe('INVALID_LEDGER_SIDE');
+	});
+
+	const RECOVER_VARIANTS = ['default', 'options'] as const;
+
+	for (const variant of RECOVER_VARIANTS) {
+		test(`recover finds nothing to recover for a healthy account (${variant})`, async ({ page }) => {
+			const result: { recovered: boolean } = await page.evaluate(
+				async (cfg: NodeInfo & { variant: string }) => {
+					const { KeetaClient, UserClient, Account, TransmitOptions } = (
+						window as unknown as { keeta: typeof Keeta }
+					).keeta;
+
+					const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+					const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+					const user = UserClient.fromClient(client, trusted);
+
+					const optionsByVariant: Record<string, InstanceType<typeof TransmitOptions> | undefined> = {
+						default: undefined,
+						options: new TransmitOptions(),
+					};
+
+					const staple = await user.recover(false, optionsByVariant[cfg.variant]);
+					return { recovered: staple === undefined || staple === null };
+				},
+				{ ...info, variant },
+			);
+
+			expect(result.recovered, 'a healthy account must have nothing to recover').toBe(true);
+		});
+	}
+
+	test('a representative endpoint accepts a bigint-string weight and rejects a non-numeric one', async ({ page }) => {
+		const result: { version: string; invalidCode: string } = await page.evaluate(async (cfg: NodeInfo) => {
+			const { KeetaClient, Account, RepEndpoint } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+			const discovery = new KeetaClient(cfg.api).withNetwork(cfg.network);
+			const rep = await discovery.nodeRepresentative();
+			const repAccount = Account.fromAddress(rep.account);
+
+			const endpoint = new RepEndpoint(cfg.api, repAccount, '7');
+			const client = KeetaClient.forRepresentatives([endpoint]).withNetwork(cfg.network);
+			const version = await client.nodeVersion();
+
+			let invalidCode = 'NO_THROW';
+			try {
+				new RepEndpoint(cfg.api, repAccount, 'not-a-number');
+			} catch (error) {
+				invalidCode = (error as { code?: string }).code ?? 'NO_CODE';
+			}
+
+			return { version, invalidCode };
+		}, info);
+
+		expect(result.version, 'a string-weighted representative must yield a working client').not.toBe('');
+		expect(result.invalidCode, 'a non-numeric weight must throw code INVALID_WEIGHT').toBe('INVALID_WEIGHT');
+	});
 });

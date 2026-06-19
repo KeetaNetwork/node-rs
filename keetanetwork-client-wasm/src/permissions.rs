@@ -76,8 +76,7 @@ impl Permissions {
 		Ok(self.inner.has(&flags, &offsets))
 	}
 
-	/// The `[base, external]` bitmaps as `0x`-prefixed hex, mirroring the
-	/// ACL wire shape `fromBitmaps` accepts.
+	/// The `[base, external]` bitmaps as `0x`-prefixed hex.
 	#[wasm_bindgen(js_name = toBitmaps)]
 	pub fn to_bitmaps(&self) -> Vec<String> {
 		let base = self.inner.base().as_bigint().to_str_radix(16);

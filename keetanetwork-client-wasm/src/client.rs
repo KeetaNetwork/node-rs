@@ -11,7 +11,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use crate::account::Account;
 use crate::block::{Block, VoteStaple};
 use crate::builder::Builder;
-use crate::convert::{amount_to_string, client_error, coded_error, parse_amount, JsResult};
+use crate::convert::{amount_to_string, client_error, coded_error, parse_amount, parse_ledger_side, JsResult};
 use crate::dto::{
 	AccountStateView, AclView, CertificateView, HistoryEntryView, LedgerChecksumView, RepresentativeView,
 	TokenBalanceView,
@@ -154,9 +154,16 @@ impl KeetaClient {
 		Ok(pending.map(Block::from))
 	}
 
-	/// The block with hash `block_hash`, if the node has it.
-	pub async fn block(&self, block_hash: String) -> JsResult<Option<Block>> {
-		let block = self.inner.block(block_hash).await.map_err(client_error)?;
+	/// The block with hash `block_hash`, if the node has it. `side` selects the
+	/// ledger to read (`"main"`, `"side"`, or `"both"`); the main ledger is
+	/// used when omitted.
+	pub async fn block(&self, block_hash: String, side: Option<String>) -> JsResult<Option<Block>> {
+		let side = parse_ledger_side(side)?;
+		let block = self
+			.inner
+			.block(block_hash, side)
+			.await
+			.map_err(client_error)?;
 		Ok(block.map(Block::from))
 	}
 

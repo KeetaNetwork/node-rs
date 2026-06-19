@@ -4,41 +4,29 @@
 //! `code` property (`error.code`), so consumers can branch programmatically
 //! instead of string-matching the message.
 
-use alloc::string::{String, ToString};
-use core::str::FromStr;
+use alloc::string::String;
 
 use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockPurpose};
-use keetanetwork_client::ClientError;
+use keetanetwork_client::{ClientError, LedgerSide};
 use num_bigint::BigInt;
 use wasm_bindgen::JsValue;
+
+use crate::parse::{self, ParseError};
 
 /// Result whose error is a coded JavaScript `Error` (see module docs).
 pub type JsResult<T> = Result<T, JsValue>;
 
-/// Canonical map from JS permission flag name to base flag. Single source of
-/// truth for both parsing names and rendering them.
-const BASE_FLAGS: [(&str, BaseFlag); 15] = [
-	("access", BaseFlag::Access),
-	("owner", BaseFlag::Owner),
-	("admin", BaseFlag::Admin),
-	("update_info", BaseFlag::UpdateInfo),
-	("send_on_behalf", BaseFlag::SendOnBehalf),
-	("token_admin_create", BaseFlag::TokenAdminCreate),
-	("token_admin_supply", BaseFlag::TokenAdminSupply),
-	("token_admin_modify_balance", BaseFlag::TokenAdminModifyBalance),
-	("storage_create", BaseFlag::StorageCreate),
-	("storage_can_hold", BaseFlag::StorageCanHold),
-	("storage_deposit", BaseFlag::StorageDeposit),
-	("permission_delegate_add", BaseFlag::PermissionDelegateAdd),
-	("permission_delegate_remove", BaseFlag::PermissionDelegateRemove),
-	("manage_certificate", BaseFlag::ManageCertificate),
-	("multisig_signer", BaseFlag::MultisigSigner),
-];
+pub use crate::parse::{amount_to_string, base_flag_name};
+
+/// Map a pure [`ParseError`] onto a coded JavaScript `Error`.
+fn rejected(error: ParseError) -> JsValue {
+	coded_error(error.code(), error.message())
+}
 
 /// Parse a decimal integer string into an [`Amount`].
 pub fn parse_amount(amount: &str) -> JsResult<Amount> {
-	Amount::from_str(amount).map_err(|_| coded_error("INVALID_AMOUNT", "amount must be a decimal integer"))
+	parse::amount(amount).map_err(rejected)
 }
 
 /// Parse a 32-byte hex string into a fixed array.
@@ -51,51 +39,34 @@ pub fn parse_hash32(value: &str, label: &str) -> JsResult<[u8; 32]> {
 
 /// Parse a supply/balance/permission adjustment method.
 pub fn parse_adjust_method(method: &str) -> JsResult<AdjustMethod> {
-	match method {
-		"add" => Ok(AdjustMethod::Add),
-		"subtract" => Ok(AdjustMethod::Subtract),
-		"set" => Ok(AdjustMethod::Set),
-		_ => Err(coded_error("INVALID_ADJUST_METHOD", "method must be add, subtract, or set")),
+	parse::adjust_method(method).map_err(rejected)
+}
+
+/// Parse a ledger side selector, defaulting to the main ledger when absent.
+pub fn parse_ledger_side(side: Option<String>) -> JsResult<Option<LedgerSide>> {
+	match side.as_deref() {
+		None => Ok(None),
+		Some("main") => Ok(Some(LedgerSide::Main)),
+		Some("side") => Ok(Some(LedgerSide::Side)),
+		Some("both") => Ok(Some(LedgerSide::Both)),
+		Some(_) => Err(coded_error("INVALID_LEDGER_SIDE", "side must be main, side, or both")),
 	}
 }
 
 /// Parse a block purpose.
 pub fn parse_purpose(purpose: &str) -> JsResult<BlockPurpose> {
-	match purpose {
-		"generic" => Ok(BlockPurpose::Generic),
-		"fee" => Ok(BlockPurpose::Fee),
-		_ => Err(coded_error("INVALID_PURPOSE", "purpose must be generic or fee")),
-	}
+	parse::purpose(purpose).map_err(rejected)
 }
 
 /// Parse an identifier key type by its kind. Multisig identifiers are created
 /// through the dedicated multisig path, which supplies the required arguments.
 pub fn parse_identifier_type(kind: &str) -> JsResult<KeyPairType> {
-	match kind {
-		"network" => Ok(KeyPairType::NETWORK),
-		"token" => Ok(KeyPairType::TOKEN),
-		"storage" => Ok(KeyPairType::STORAGE),
-		_ => Err(coded_error(
-			"INVALID_IDENTIFIER_TYPE",
-			"identifier type must be network, token, or storage (use the multisig path for multisig)",
-		)),
-	}
+	parse::identifier_type(kind).map_err(rejected)
 }
 
 /// Parse a base permission flag by its snake_case name.
 pub fn parse_base_flag(flag: &str) -> JsResult<BaseFlag> {
-	BASE_FLAGS
-		.iter()
-		.find_map(|(name, candidate)| (*name == flag).then_some(*candidate))
-		.ok_or_else(|| coded_error("INVALID_PERMISSION_FLAG", "unknown base permission flag"))
-}
-
-/// Render a base flag as its snake_case JS name.
-pub fn base_flag_name(flag: BaseFlag) -> &'static str {
-	BASE_FLAGS
-		.iter()
-		.find_map(|(name, candidate)| (*candidate == flag).then_some(*name))
-		.unwrap_or("unknown")
+	parse::base_flag(flag).map_err(rejected)
 }
 
 /// Parse a `0x`-prefixed (or bare) hexadecimal string into a [`BigInt`].
@@ -103,11 +74,6 @@ pub fn parse_bigint_hex(value: &str, label: &str) -> JsResult<BigInt> {
 	let digits = value.strip_prefix("0x").unwrap_or(value);
 	BigInt::parse_bytes(digits.as_bytes(), 16)
 		.ok_or_else(|| coded_error("INVALID_INTEGER", &alloc::format!("{label} must be 0x-hex")))
-}
-
-/// Render an [`Amount`] as a decimal integer string.
-pub fn amount_to_string(amount: Amount) -> String {
-	BigInt::from(amount).to_string()
 }
 
 /// Build a JavaScript `Error` carrying a `code` property.

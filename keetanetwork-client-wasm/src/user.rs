@@ -6,7 +6,10 @@ use core::str::FromStr;
 
 use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{IdentifierCreateArguments, MultisigCreateArguments, SetInfo};
-use keetanetwork_client::{AcceptSwapRequest, CreateSwapRequest, KeetaClient as Core, Network, UserClient as CoreUser};
+use keetanetwork_client::{
+	AcceptSwapRequest, ChainQuery, CreateSwapRequest, HistoryQuery, KeetaClient as Core, Network,
+	UserClient as CoreUser,
+};
 use num_bigint::BigInt;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -16,7 +19,8 @@ use crate::builder::Builder;
 use crate::certificate::CertificateChange;
 use crate::client::KeetaClient;
 use crate::convert::{
-	amount_to_string, client_error, parse_adjust_method, parse_amount, parse_identifier_type, JsResult,
+	amount_to_string, client_error, parse_adjust_method, parse_amount, parse_identifier_type, parse_ledger_side,
+	JsResult,
 };
 use crate::dto::{AccountStateView, AclView, CertificateView, HistoryEntryView, TokenBalanceView};
 use crate::options::TransmitOptions;
@@ -143,9 +147,44 @@ impl UserClient {
 		Ok(blocks.into_iter().map(Block::from).collect())
 	}
 
+	/// A single page of the operating account's chain, bounded by the optional
+	/// `start`/`end` block-hash cursors and `limit`.
+	#[wasm_bindgen(js_name = chainPage)]
+	pub async fn chain_page(
+		&self,
+		start: Option<String>,
+		end: Option<String>,
+		limit: Option<u32>,
+	) -> JsResult<Vec<Block>> {
+		let query = ChainQuery { start, end, limit: limit.map(i64::from) };
+		let blocks = self.inner.chain_page(query).await.map_err(client_error)?;
+		Ok(blocks.into_iter().map(Block::from).collect())
+	}
+
+	/// Every block in the operating account's chain, fetched by paging
+	/// `page_limit` blocks at a time.
+	#[wasm_bindgen(js_name = chainAll)]
+	pub async fn chain_all(&self, page_limit: u32) -> JsResult<Vec<Block>> {
+		let blocks = self
+			.inner
+			.chain_all(page_limit)
+			.await
+			.map_err(client_error)?;
+		Ok(blocks.into_iter().map(Block::from).collect())
+	}
+
 	/// The operating account's verified history.
 	pub async fn history(&self) -> JsResult<Vec<HistoryEntryView>> {
 		let entries = self.inner.history().await.map_err(client_error)?;
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
+	}
+
+	/// A single page of the operating account's history, bounded by `start`
+	/// and `limit`.
+	#[wasm_bindgen(js_name = historyPage)]
+	pub async fn history_page(&self, start: Option<String>, limit: Option<u32>) -> JsResult<Vec<HistoryEntryView>> {
+		let query = HistoryQuery { start, limit: limit.map(i64::from) };
+		let entries = self.inner.history_page(query).await.map_err(client_error)?;
 		Ok(entries.iter().map(HistoryEntryView::from).collect())
 	}
 
@@ -175,9 +214,22 @@ impl UserClient {
 		Ok(certificates.iter().map(CertificateView::from).collect())
 	}
 
-	/// The block with hash `block_hash`, if the node has it.
-	pub async fn block(&self, block_hash: String) -> JsResult<Option<Block>> {
-		let block = self.inner.block(block_hash).await.map_err(client_error)?;
+	/// A single certificate on the operating account by its `hash`, if present.
+	pub async fn certificate(&self, hash: String) -> JsResult<Option<CertificateView>> {
+		let certificate = self.inner.certificate(hash).await.map_err(client_error)?;
+		Ok(certificate.as_ref().map(CertificateView::from))
+	}
+
+	/// The block with hash `block_hash`, if the node has it. `side` selects the
+	/// ledger to read (`"main"`, `"side"`, or `"both"`); the main ledger is
+	/// used when omitted.
+	pub async fn block(&self, block_hash: String, side: Option<String>) -> JsResult<Option<Block>> {
+		let side = parse_ledger_side(side)?;
+		let block = self
+			.inner
+			.block(block_hash, side)
+			.await
+			.map_err(client_error)?;
 		Ok(block.map(Block::from))
 	}
 
@@ -200,9 +252,26 @@ impl UserClient {
 	}
 
 	/// Recover the operating account's pending side block, optionally
-	/// republishing. Returns the resulting staple, if any.
-	pub async fn recover(&self, publish: bool) -> JsResult<Option<VoteStaple>> {
-		let staple = self.inner.recover(publish).await.map_err(client_error)?;
+	/// republishing. Returns the resulting staple, if any. `options` tunes the
+	/// fee paid for the recovery block (fee-token preference, pre-fetched
+	/// quotes); the bound signer pays the fee when none is set. Omit `options`
+	/// to recover with the bound signer as fee signer.
+	pub async fn recover(&self, publish: bool, options: Option<TransmitOptions>) -> JsResult<Option<VoteStaple>> {
+		let staple = match options {
+			None => self.inner.recover(publish).await,
+			Some(options) => {
+				let account = self.inner.account().map_err(client_error)?;
+				let mut core = options.to_core();
+				if core.fee_signer.is_none() {
+					core.fee_signer = self.inner.signer_account().cloned();
+				}
+				self.inner
+					.client()
+					.recover_account(&account, publish, core)
+					.await
+			}
+		}
+		.map_err(client_error)?;
 		Ok(staple.map(VoteStaple::from))
 	}
 
@@ -219,6 +288,23 @@ impl UserClient {
 		let amount = parse_amount(&amount)?;
 		self.inner
 			.send(&to.inner(), &token.inner(), amount)
+			.await
+			.map_err(client_error)
+	}
+
+	/// Send `amount` of `token` to `to`, attaching opaque `external` reference
+	/// data to the SEND operation. Signed and fee-paid by the bound signer.
+	#[wasm_bindgen(js_name = sendExternal)]
+	pub async fn send_external(
+		&self,
+		to: &Account,
+		amount: String,
+		token: &Account,
+		external: String,
+	) -> JsResult<bool> {
+		let amount = parse_amount(&amount)?;
+		self.inner
+			.send_external(&to.inner(), &token.inner(), amount, external)
 			.await
 			.map_err(client_error)
 	}
@@ -286,13 +372,22 @@ impl UserClient {
 			.map_err(client_error)
 	}
 
-	/// Adjust the operating token's supply and the account's balance of it in
-	/// one block. `method` is `"add"`, `"subtract"`, or `"set"`.
+	/// Adjust `token`'s supply and a holder's balance of it in one block.
+	/// `holder` defaults to the operating account when omitted. `method` is
+	/// `"add"`, `"subtract"`, or `"set"`.
 	#[wasm_bindgen(js_name = modifyTokenSupplyAndBalance)]
-	pub async fn modify_token_supply_and_balance(&self, amount: String, method: String) -> JsResult<bool> {
+	pub async fn modify_token_supply_and_balance(
+		&self,
+		token: &Account,
+		amount: String,
+		method: String,
+		holder: Option<Account>,
+	) -> JsResult<bool> {
 		let amount = parse_amount(&amount)?;
+		let method = parse_adjust_method(&method)?;
+		let holder = holder.map(|account| account.inner());
 		self.inner
-			.modify_token_supply_and_balance(amount, parse_adjust_method(&method)?)
+			.modify_token_supply_and_balance(&token.inner(), holder.as_ref(), amount, method)
 			.await
 			.map_err(client_error)
 	}

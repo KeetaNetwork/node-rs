@@ -4,28 +4,40 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use keetanetwork_client::{AccountState, Acl, Certificate, HistoryEntry, LedgerChecksum, Representative, TokenBalance};
+use keetanetwork_client::{
+	AccountInfo, AccountState, Acl, Certificate, HistoryEntry, LedgerChecksum, Representative, TokenBalance,
+};
 use serde::Serialize;
 use tsify_next::Tsify;
 
 use crate::convert::amount_to_string;
 
-/// A per-token balance: settled and pending amounts as decimal strings.
+/// A per-token settled balance as a decimal string.
 #[derive(Serialize, Tsify)]
 #[tsify(into_wasm_abi)]
 pub struct TokenBalanceView {
 	pub token: String,
 	pub balance: String,
-	pub pending: String,
 }
 
 impl From<&TokenBalance> for TokenBalanceView {
 	fn from(balance: &TokenBalance) -> Self {
-		Self {
-			token: balance.token.clone(),
-			balance: amount_to_string(balance.balance.clone()),
-			pending: amount_to_string(balance.pending.clone()),
-		}
+		Self { token: balance.token.clone(), balance: amount_to_string(balance.balance.clone()) }
+	}
+}
+
+/// Account metadata as set via `setInfo`.
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
+pub struct AccountInfoView {
+	pub name: Option<String>,
+	pub description: Option<String>,
+	pub metadata: Option<String>,
+}
+
+impl From<&AccountInfo> for AccountInfoView {
+	fn from(info: &AccountInfo) -> Self {
+		Self { name: info.name.clone(), description: info.description.clone(), metadata: info.metadata.clone() }
 	}
 }
 
@@ -36,6 +48,7 @@ pub struct AccountStateView {
 	pub representative: Option<String>,
 	pub head: Option<String>,
 	pub height: Option<String>,
+	pub info: Option<AccountInfoView>,
 	pub supply: Option<String>,
 	pub balances: Vec<TokenBalanceView>,
 }
@@ -46,6 +59,7 @@ impl From<&AccountState> for AccountStateView {
 			representative: state.representative.clone(),
 			head: state.head.clone(),
 			height: state.height.clone().map(amount_to_string),
+			info: state.info.as_ref().map(AccountInfoView::from),
 			supply: state.supply.clone().map(amount_to_string),
 			balances: state.balances.iter().map(TokenBalanceView::from).collect(),
 		}
