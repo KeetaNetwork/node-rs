@@ -15,7 +15,7 @@ use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
 
 use crate::error::ClientError;
 use crate::model::{
-	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
+	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
 	TokenBalance,
 };
 
@@ -61,8 +61,9 @@ pub trait NodeTransport: core::fmt::Debug + Send + Sync {
 	async fn block_by_idempotent(&self, account: &str, key: &str) -> Result<Option<Block>, ClientError>;
 	/// The verified votes a rep holds for `hash` on `side`. `None` when none.
 	async fn block_votes(&self, hash: &str, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError>;
-	/// A single page of `account`'s block chain, bounded by `query`.
-	async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<Vec<Block>, ClientError>;
+	/// A single page of `account`'s block chain, bounded by `query`, including
+	/// the cursor for the next page.
+	async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<ChainPage, ClientError>;
 	/// A single page of `account`'s staple history, bounded by `query`.
 	async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError>;
 	/// A single page of global staple history, bounded by `query`.
@@ -142,8 +143,8 @@ mod backend {
 	use crate::error::{AmountSnafu, BlockSnafu, ClientError, DecodeSnafu, VoteSnafu};
 	use crate::generated::{types, Client as Transport, Error as GeneratedError};
 	use crate::model::{
-		AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
-		TokenBalance,
+		AccountInfo, AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
+		Representative, TokenBalance,
 	};
 
 	/// Transport-layer error returned by the generated client: connection
@@ -267,7 +268,7 @@ mod backend {
 				state.representative,
 				state.current_head_block,
 				state.current_head_block_height,
-				state.info.and_then(|info| info.supply),
+				state.info,
 				state.balances,
 			)
 		}
@@ -283,7 +284,7 @@ mod backend {
 						item.representative,
 						item.current_head_block,
 						item.current_head_block_height,
-						item.info.and_then(|info| info.supply),
+						item.info,
 						item.balances,
 					)
 				})
@@ -341,15 +342,20 @@ mod backend {
 			Ok(Some(votes))
 		}
 
-		async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<Vec<Block>, ClientError> {
-			self.client
+		async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<ChainPage, ClientError> {
+			let response = self
+				.client
 				.get_account_chain(account, query.end.as_deref(), query.limit, query.start.as_deref())
 				.await?
-				.into_inner()
+				.into_inner();
+
+			let blocks = response
 				.blocks
 				.into_iter()
 				.filter_map(|entry| decode_block(entry.block).transpose())
-				.collect()
+				.collect::<Result<Vec<Block>, ClientError>>()?;
+
+			Ok(ChainPage { blocks, next_key: response.next_key })
 		}
 
 		async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
@@ -590,13 +596,14 @@ mod backend {
 		entries
 			.into_iter()
 			.map(|entry| {
-				Ok(TokenBalance {
-					token: entry.token.unwrap_or_default(),
-					balance: decode_amount(entry.balance)?,
-					pending: decode_amount(entry.pending)?,
-				})
+				Ok(TokenBalance { token: entry.token.unwrap_or_default(), balance: decode_amount(entry.balance)? })
 			})
 			.collect()
+	}
+
+	/// Map a transport account-info envelope into the domain [`AccountInfo`].
+	fn decode_account_info(info: types::AccountInfo) -> AccountInfo {
+		AccountInfo { name: info.name, description: info.description, metadata: info.metadata }
 	}
 
 	/// Assemble an [`AccountState`] from the transport fields shared by the
@@ -605,18 +612,23 @@ mod backend {
 		representative: Option<String>,
 		head: Option<String>,
 		height: Option<String>,
-		supply: Option<String>,
+		info: Option<types::AccountInfo>,
 		balances: Vec<types::BalanceEntry>,
 	) -> Result<AccountState, ClientError> {
+		let supply = info
+			.as_ref()
+			.and_then(|info| info.supply.clone())
+			.map(|supply| decode_amount(Some(supply)))
+			.transpose()?;
+
 		Ok(AccountState {
 			representative,
 			head,
 			height: height
 				.map(|height| decode_amount(Some(height)))
 				.transpose()?,
-			supply: supply
-				.map(|supply| decode_amount(Some(supply)))
-				.transpose()?,
+			info: info.map(decode_account_info),
+			supply,
 			balances: decode_balances(balances)?,
 		})
 	}

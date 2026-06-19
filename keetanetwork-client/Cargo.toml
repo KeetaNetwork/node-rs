@@ -40,7 +40,7 @@ keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", de
 progenitor-client = { workspace = true, optional = true }
 num-bigint = { workspace = true }
 rand_core = { workspace = true }
-spin = { workspace = true, features = ["mutex", "spin_mutex", "rwlock"] }
+spin = { workspace = true, features = ["mutex", "spin_mutex", "rwlock", "once"] }
 async-trait = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
 
