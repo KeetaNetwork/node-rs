@@ -11,10 +11,10 @@ use std::sync::Arc;
 
 use keetanetwork_account::{GenericAccount, KeyPairType};
 use keetanetwork_block::testing::generate_ed25519_ref;
-use keetanetwork_block::{AccountRef, AdjustMethod, Amount, Block, Hashable, SetInfo};
+use keetanetwork_block::{AccountRef, AdjustMethod, Amount, Block, Hashable, Operation, SetInfo};
 use keetanetwork_client::{
-	ChainQuery, ClientConfig, ClientError, InitializeNetwork, KeetaClient, KeetaNetError, NodeErrorType, RepEndpoint,
-	TransmitOptions, UserClient,
+	AcceptSwapRequest, ChainQuery, ClientConfig, ClientError, CreateSwapRequest, HistoryQuery, InitializeNetwork,
+	KeetaClient, KeetaNetError, Network, NodeErrorType, RepEndpoint, TransmitOptions, UserClient,
 };
 use keetanetwork_utils::node_harness::E2eNode;
 use num_bigint::BigInt;
@@ -1454,5 +1454,185 @@ async fn test_initialize_network_bootstraps_fresh_chain() -> Result<(), Box<dyn 
 	);
 
 	let _ = node.request("shutdown", json!({}));
+	Ok(())
+}
+
+/// The signer-bound `UserClient` read surface must resolve account-scoped
+/// reads against the bound signer and delegate every thin wrapper.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_client_read_surface() -> Result<(), Box<dyn core::error::Error>> {
+	let fixture = fixture().await;
+	let accounts = signing_accounts(&fixture.base_token)?;
+	let user = UserClient::from_parts(fixture.client.clone(), Some(Arc::clone(&accounts.trusted)));
+	assert_eq!(
+		user.signer_account().map(|signer| signer.to_string()),
+		Some(accounts.trusted.to_string()),
+		"the bound signer must be reported"
+	);
+	assert!(!user.is_read_only(), "a signer-bound client must be writable");
+	assert_eq!(user.account()?.to_string(), accounts.trusted.to_string(), "reads must default to the signer's account");
+
+	assert_eq!(
+		user.balance(&fixture.base_token).await?,
+		Amount::from(MINTED_SUPPLY),
+		"the balance wrapper must delegate"
+	);
+
+	let balances = user.all_balances().await?;
+	assert!(
+		balances
+			.iter()
+			.any(|entry| entry.token == fixture.base_token),
+		"all_balances must include the base token"
+	);
+
+	let state = user.state().await?;
+	assert!(
+		state
+			.balances
+			.iter()
+			.any(|entry| entry.token == fixture.base_token),
+		"state must carry the base balance"
+	);
+
+	assert!(user.head().await?.is_some(), "the funded account must have a head");
+	assert!(!user.chain().await?.is_empty(), "the chain wrapper must return blocks");
+	assert!(!user.chain_page(ChainQuery::default()).await?.is_empty(), "the chain_page wrapper must return blocks");
+	assert!(!user.chain_all(50).await?.is_empty(), "the chain_all wrapper must return blocks");
+
+	let _ = user.history().await?;
+	let _ = user.history_page(HistoryQuery::default()).await?;
+	assert!(user.pending_block().await?.is_none(), "a settled account must have no pending successor");
+
+	let _ = user.acls().await?;
+	let _ = user.acls_by_entity().await?;
+	let _ = user.acls_with_info().await?;
+	assert!(
+		user.block_from_idempotent("missing-key").await?.is_none(),
+		"an unknown idempotency key must resolve to none"
+	);
+
+	let _ = user.certificates().await?;
+	assert!(user.certificate("0".repeat(64)).await?.is_none(), "an unknown certificate hash must resolve to none");
+
+	let quotes = user.quotes(&fixture.blocks).await?;
+	assert!(!quotes.is_empty(), "every responding representative must return a quote");
+
+	Ok(())
+}
+
+/// Exercise the signer-bound write wrappers lacking other coverage:
+/// representative delegation, identifier creation, and the recover/sync no-op
+/// paths on a healthy account.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_client_write_surface() -> Result<(), Box<dyn core::error::Error>> {
+	let fixture = fixture().await;
+	let accounts = signing_accounts(&fixture.base_token)?;
+	let user = UserClient::from_parts(fixture.client.clone(), Some(Arc::clone(&accounts.trusted)));
+
+	assert!(user.set_rep(&accounts.recipient).await?, "set_rep must publish");
+	let state = user.state().await?;
+	assert_eq!(
+		state.representative.as_deref(),
+		Some(accounts.recipient.to_string().as_str()),
+		"the representative wrapper must delegate weight"
+	);
+
+	let identifier = user.generate_identifier(KeyPairType::STORAGE, None).await?;
+	assert_eq!(
+		identifier.to_keypair_type(),
+		KeyPairType::STORAGE,
+		"generate_identifier must derive a storage identifier account"
+	);
+
+	assert!(user.recover(false).await?.is_none(), "a healthy account has nothing to recover");
+	let _ = user.sync(false).await?;
+
+	Ok(())
+}
+
+/// The swap orchestration must build a single maker request block carrying
+/// both legs, let the taker append its matching send, and reject a taker
+/// whose account is not the swap counterparty.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_client_swap_request_round_trip_builds() -> Result<(), Box<dyn core::error::Error>> {
+	let fixture = fixture().await;
+	let accounts = signing_accounts(&fixture.base_token)?;
+	let maker = UserClient::from_parts(fixture.client.clone(), Some(Arc::clone(&accounts.trusted)));
+
+	let request = maker
+		.create_swap_request(CreateSwapRequest {
+			counterparty: Arc::clone(&accounts.recipient),
+			send_token: Arc::clone(&accounts.token),
+			send_amount: Amount::from(SEND_AMOUNT),
+			receive_token: Arc::clone(&accounts.token),
+			receive_amount: Amount::from(SEND_AMOUNT / 2),
+			receive_exact: false,
+		})
+		.await?;
+
+	let legs = request
+		.data()
+		.operations()
+		.iter()
+		.filter(|op| matches!(op, Operation::Send(_) | Operation::Receive(_)))
+		.count();
+	assert_eq!(legs, 2, "a swap request must carry exactly one send and one receive leg");
+
+	let taker = UserClient::from_parts(fixture.client.clone(), Some(Arc::clone(&accounts.recipient)));
+	let blocks = taker
+		.accept_swap_request(AcceptSwapRequest { block: request.clone(), expected: None })
+		.await?;
+	assert_eq!(blocks.len(), 2, "accepting must yield the taker's block followed by the maker's request");
+
+	let mismatched = maker
+		.accept_swap_request(AcceptSwapRequest { block: request, expected: None })
+		.await;
+	assert!(
+		matches!(mismatched, Err(ClientError::SwapAccountMismatch)),
+		"a taker whose account is not the swap counterparty must be rejected"
+	);
+
+	Ok(())
+}
+
+/// A distinct operating account resolves reads against itself while the bound
+/// signer still pays fees, and the offline constructors bind a signer correctly.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_user_client_account_split_and_transmit() -> Result<(), Box<dyn core::error::Error>> {
+	let fixture = fixture().await;
+	let accounts = signing_accounts(&fixture.base_token)?;
+
+	let split = UserClient::from_parts(fixture.client.clone(), Some(Arc::clone(&accounts.trusted)))
+		.with_account(Arc::clone(&accounts.recipient));
+	assert_eq!(
+		split.account()?.to_string(),
+		accounts.recipient.to_string(),
+		"with_account must override the read/originator account"
+	);
+	assert_eq!(
+		split.signer_account().map(|signer| signer.to_string()),
+		Some(accounts.trusted.to_string()),
+		"the bound signer must remain the trusted account"
+	);
+
+	let single = UserClient::from_single_rep(
+		"127.0.0.1:0",
+		false,
+		&accounts.recipient,
+		0u8,
+		Some(Arc::clone(&accounts.trusted)),
+	);
+	assert!(!single.is_read_only(), "a signer-bound single-rep client must be writable");
+
+	let networked = UserClient::from_network(Network::Test, None)?;
+	assert!(networked.is_read_only(), "a signerless networked client must be read-only");
+
+	let user = UserClient::from_parts(fixture.client.clone(), Some(Arc::clone(&accounts.trusted)));
+	let accepted = user
+		.transmit(&fixture.blocks, TransmitOptions::default())
+		.await?;
+	assert!(accepted, "the transmit wrapper must publish the prepared send staple");
+
 	Ok(())
 }
