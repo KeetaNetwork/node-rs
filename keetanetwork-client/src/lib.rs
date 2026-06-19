@@ -93,9 +93,10 @@ pub use keetanetwork_error::{KeetaNetError, NodeErrorType};
 pub use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
 pub use marker::{MaybeSend, MaybeSync};
 pub use model::{
-	AccountOrPending, AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
-	PendingAccount, Representative, TokenBalance, TransmitOptions,
+	AccountInfo, AccountOrPending, AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery,
+	LedgerChecksum, PendingAccount, Representative, TokenBalance, TransmitOptions,
 };
+pub use rep::RepPart;
 pub use runtime::{BoxFuture, Runtime, TaskHandle};
 pub use swap::{AcceptSwapRequest, CreateSwapRequest, SwapExpectation, SwapTokenAmount};
 pub use transport::{LedgerSide, NodeTransport, TransportFactory};

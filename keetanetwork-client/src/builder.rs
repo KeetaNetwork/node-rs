@@ -184,8 +184,30 @@ impl TransactionBuilder {
 		self.push(PendingOp::SetRep { to: Arc::clone(to) })
 	}
 
-	/// Append a block setting the originator's on-chain info.
+	/// Set the originator's on-chain info. Repeated calls within the active
+	/// group merge field-by-field into a single SET_INFO op.
 	pub fn set_info(&mut self, info: SetInfo) -> &mut Self {
+		for op in &mut self.current.ops {
+			let PendingOp::SetInfo(existing) = op else {
+				continue;
+			};
+
+			if !info.name.is_empty() {
+				existing.name = info.name;
+			}
+			if !info.description.is_empty() {
+				existing.description = info.description;
+			}
+			if !info.metadata.is_empty() {
+				existing.metadata = info.metadata;
+			}
+			if info.default_permission.is_some() {
+				existing.default_permission = info.default_permission;
+			}
+
+			return self;
+		}
+
 		self.push(PendingOp::SetInfo(info))
 	}
 
@@ -276,7 +298,6 @@ impl TransactionBuilder {
 
 		let mut previous_by_account: BTreeMap<String, BlockHash> = BTreeMap::new();
 		let mut blocks = Vec::with_capacity(groups.len());
-
 		for group in &groups {
 			let account_key = group.account.to_string();
 			let previous = match previous_by_account.get(&account_key) {
@@ -284,7 +305,16 @@ impl TransactionBuilder {
 				None => self.first_previous(&group.account).await?,
 			};
 
-			let block = self.render_group(group, previous)?;
+			// A group whose operations all render away (e.g. only zero-amount
+			// transfers) must not seal an empty, head-advancing no-op block.
+			let operations = render_ops(group, previous)?;
+			if operations.is_empty() {
+				continue;
+			}
+
+			let block =
+				self.client
+					.seal_block(&group.account, &group.signer, previous, self.purpose, self.date, operations)?;
 			previous_by_account.insert(account_key, block.hash());
 			blocks.push(block);
 		}
@@ -305,12 +335,6 @@ impl TransactionBuilder {
 			Some(head) => Ok(Some(head.hash())),
 			None => Ok(None),
 		}
-	}
-
-	fn render_group(&self, group: &Group, previous: Option<BlockHash>) -> Result<Block, ClientError> {
-		let operations = render_ops(group, previous)?;
-		self.client
-			.seal_block(&group.account, &group.signer, previous, self.purpose, self.date, operations)
 	}
 }
 

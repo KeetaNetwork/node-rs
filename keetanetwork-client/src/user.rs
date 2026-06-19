@@ -1,6 +1,6 @@
 //! Signer-bound high-level facade over [`KeetaClient`].
 
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -12,10 +12,13 @@ use keetanetwork_block::{
 use keetanetwork_vote::{VoteQuote, VoteStaple};
 
 use crate::builder::TransactionBuilder;
-use crate::client::KeetaClient;
+use crate::client::{is_ledger_code, KeetaClient};
 use crate::error::ClientError;
-use crate::model::{AccountState, Acl, Certificate, HistoryEntry, TokenBalance, TransmitOptions};
+use crate::model::{
+	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, TokenBalance, TransmitOptions,
+};
 use crate::swap::{AcceptSwapRequest, CreateSwapRequest, SwapTokenAmount};
+use crate::transport::LedgerSide;
 
 #[cfg(feature = "http")]
 use {crate::config::ClientConfig, crate::network::Network, crate::rep::RepEndpoint, num_bigint::BigInt};
@@ -58,6 +61,10 @@ pub struct UserClient {
 }
 
 impl UserClient {
+	/// Upper bound on rebuild-and-republish attempts after a successor
+	/// conflict, matching the reference client's `send` retry ceiling.
+	const MAX_REBUILD_RETRIES: u32 = 2;
+
 	/// Bind `client` to `signer` (the originator and fee payer for writes;
 	/// `None` for a read-only client).
 	pub fn from_parts(client: KeetaClient, signer: Option<AccountRef>) -> Self {
@@ -155,6 +162,19 @@ impl UserClient {
 		}
 	}
 
+	/// A builder for the operating account, signed by the bound signer. Writes
+	/// require a signer, so this errors when none is provided.
+	fn signed_builder(&self) -> Result<TransactionBuilder, ClientError> {
+		let signer = self.signer()?;
+		let account = self.account_or(None)?;
+		let mut builder = self.client.builder(&account);
+		if account.to_string() != signer.to_string() {
+			builder.for_account_with_signer(&account, &signer);
+		}
+
+		Ok(builder)
+	}
+
 	/// The settled balance of `token` held by the operating account.
 	pub async fn balance(&self, token: impl AsRef<str>) -> Result<Amount, ClientError> {
 		let account = self.account_or(None)?;
@@ -179,16 +199,35 @@ impl UserClient {
 		self.client.head_block(account.to_string()).await
 	}
 
-	/// The operating account's settled chain.
+	/// The operating account's settled chain (first/default page).
 	pub async fn chain(&self) -> Result<Vec<Block>, ClientError> {
 		let account = self.account_or(None)?;
 		self.client.chain(account.to_string()).await
 	}
 
-	/// The operating account's transaction history.
+	/// A single page of the operating account's chain, bounded by `query`.
+	pub async fn chain_page(&self, query: ChainQuery) -> Result<Vec<Block>, ClientError> {
+		let account = self.account_or(None)?;
+		self.client.chain_page(account.to_string(), query).await
+	}
+
+	/// Every block in the operating account's chain, following the node's
+	/// pagination cursor with `page_limit` blocks per request.
+	pub async fn chain_all(&self, page_limit: u32) -> Result<Vec<Block>, ClientError> {
+		let account = self.account_or(None)?;
+		self.client.chain_all(account.to_string(), page_limit).await
+	}
+
+	/// The operating account's transaction history (first/default page).
 	pub async fn history(&self) -> Result<Vec<HistoryEntry>, ClientError> {
 		let account = self.account_or(None)?;
 		self.client.history(account.to_string()).await
+	}
+
+	/// A single page of the operating account's history, bounded by `query`.
+	pub async fn history_page(&self, query: HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
+		let account = self.account_or(None)?;
+		self.client.history_page(account.to_string(), query).await
 	}
 
 	/// The operating account's half-published successor, if any reps agree on
@@ -250,9 +289,14 @@ impl UserClient {
 			.await
 	}
 
-	/// A specific block by hash, regardless of account.
-	pub async fn block(&self, blockhash: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
-		self.client.block(blockhash).await
+	/// A specific block by hash, regardless of account. `side` selects the
+	/// ledger to read (`None` defaults to the main ledger).
+	pub async fn block(
+		&self,
+		blockhash: impl AsRef<str>,
+		side: Option<LedgerSide>,
+	) -> Result<Option<Block>, ClientError> {
+		self.client.block(blockhash, side).await
 	}
 
 	/// The operating account's block carrying the idempotency `key`, if any.
@@ -274,10 +318,20 @@ impl UserClient {
 		self.client.certificates(account.to_string()).await
 	}
 
-	/// Start a transaction originated by the operating account.
-	pub fn init_builder(&self) -> Result<TransactionBuilder, ClientError> {
+	/// A single certificate on the operating account by its `hash`, if present.
+	pub async fn certificate(&self, hash: impl AsRef<str>) -> Result<Option<Certificate>, ClientError> {
 		let account = self.account_or(None)?;
-		Ok(self.client.builder(&account))
+		self.client.certificate(account.to_string(), hash).await
+	}
+
+	/// Start a transaction originated by the operating account and signed by
+	/// the bound signer.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::SignerRequired`] -- no signer is bound.
+	pub fn init_builder(&self) -> Result<TransactionBuilder, ClientError> {
+		self.signed_builder()
 	}
 
 	/// Publish a single block, paying any required fee with the bound signer.
@@ -315,8 +369,32 @@ impl UserClient {
 	/// - [`ClientError::FeeRequired`] -- a required fee cannot be paid.
 	/// - [`ClientError::Node`] -- the node rejected the staple.
 	pub async fn send(&self, to: &AccountRef, token: &AccountRef, amount: Amount) -> Result<bool, ClientError> {
-		let account = self.account_or(None)?;
-		self.client.send(&account, to, token, amount).await
+		self.build_and_publish(move |builder| {
+			builder.send(to, token, amount.clone());
+		})
+		.await
+	}
+
+	/// Send `amount` of `token` to `to`, attaching `external` reference data.
+	/// External sends are never aggregated with other sends.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::SignerRequired`] -- no signer is bound.
+	/// - [`ClientError::FeeRequired`] -- a required fee cannot be paid.
+	/// - [`ClientError::Node`] -- the node rejected the staple.
+	pub async fn send_external(
+		&self,
+		to: &AccountRef,
+		token: &AccountRef,
+		amount: Amount,
+		external: impl Into<String>,
+	) -> Result<bool, ClientError> {
+		let external = external.into();
+		self.build_and_publish(move |builder| {
+			builder.send_external(to, token, amount.clone(), external.clone());
+		})
+		.await
 	}
 
 	/// Set the operating account's representative to `rep`.
@@ -341,7 +419,7 @@ impl UserClient {
 	/// - [`ClientError::Node`] -- the node rejected the block.
 	pub async fn set_info(&self, info: SetInfo) -> Result<bool, ClientError> {
 		self.build_and_publish(move |builder| {
-			builder.set_info(info);
+			builder.set_info(info.clone());
 		})
 		.await
 	}
@@ -354,7 +432,7 @@ impl UserClient {
 	/// - [`ClientError::Node`] -- the node rejected the block.
 	pub async fn update_permissions(&self, permissions: ModifyPermissions) -> Result<bool, ClientError> {
 		self.build_and_publish(move |builder| {
-			builder.modify_permissions(permissions);
+			builder.modify_permissions(permissions.clone());
 		})
 		.await
 	}
@@ -367,13 +445,13 @@ impl UserClient {
 	/// - [`ClientError::Node`] -- the node rejected the block.
 	pub async fn modify_certificate(&self, certificate: ManageCertificate) -> Result<bool, ClientError> {
 		self.build_and_publish(move |builder| {
-			builder.manage_certificate(certificate);
+			builder.manage_certificate(certificate.clone());
 		})
 		.await
 	}
 
-	/// Adjust the supply of the operating token and, in the same block, the
-	/// account's balance of it.
+	/// Adjust `token`'s supply and, in the same transaction, `holder`'s balance
+	/// of it, both signed by the bound signer.
 	///
 	/// # Errors
 	///
@@ -381,13 +459,39 @@ impl UserClient {
 	/// - [`ClientError::Node`] -- the node rejected the block.
 	pub async fn modify_token_supply_and_balance(
 		&self,
+		token: &AccountRef,
+		holder: Option<&AccountRef>,
 		amount: Amount,
 		method: AdjustMethod,
 	) -> Result<bool, ClientError> {
-		let account = self.account_or(None)?;
+		let signer = self.signer()?;
+		let token = Arc::clone(token);
+		let holder = match holder {
+			Some(holder) => Arc::clone(holder),
+			None => self.account_or(None)?,
+		};
+
+		let distinct_holder = holder.to_string() != token.to_string();
+		// A burn must debit the holder's balance before cutting supply
+		let burn = matches!(method, AdjustMethod::Subtract);
 		self.build_and_publish(move |builder| {
-			builder.modify_token_supply(amount.clone(), method);
-			builder.modify_token_balance(&account, amount, method);
+			if burn {
+				builder.for_account_with_signer(&holder, &signer);
+				builder.modify_token_balance(&token, amount.clone(), method);
+				if distinct_holder {
+					builder.for_account_with_signer(&token, &signer);
+				}
+
+				builder.modify_token_supply(amount.clone(), method);
+			} else {
+				builder.for_account_with_signer(&token, &signer);
+				builder.modify_token_supply(amount.clone(), method);
+				if distinct_holder {
+					builder.for_account_with_signer(&holder, &signer);
+				}
+
+				builder.modify_token_balance(&token, amount.clone(), method);
+			}
 		})
 		.await
 	}
@@ -404,8 +508,7 @@ impl UserClient {
 		key_type: KeyPairType,
 		create_arguments: Option<IdentifierCreateArguments>,
 	) -> Result<AccountRef, ClientError> {
-		let account = self.account_or(None)?;
-		let mut builder = self.client.builder(&account);
+		let mut builder = self.signed_builder()?;
 		let pending = builder.generate_identifier(key_type, create_arguments);
 		let blocks = builder.build().await?;
 
@@ -453,8 +556,7 @@ impl UserClient {
 	/// - [`ClientError::SwapMultiBlock`] -- the request does not render to a
 	///   single block.
 	pub async fn create_swap_request(&self, request: CreateSwapRequest) -> Result<Block, ClientError> {
-		let maker = self.account_or(None)?;
-		let mut builder = self.client.builder(&maker);
+		let mut builder = self.signed_builder()?;
 		builder.send(&request.counterparty, &request.send_token, request.send_amount);
 		builder.receive_with(
 			&request.counterparty,
@@ -498,7 +600,7 @@ impl UserClient {
 		let send_amount: Amount = resolve_swap_amount(send, receive, request.expected.as_ref())?;
 
 		let maker = request.block.data().account();
-		let mut builder = self.client.builder(&account);
+		let mut builder = self.signed_builder()?;
 		builder.send(maker, &receive.token, send_amount);
 
 		let mut blocks = builder.build().await?;
@@ -517,23 +619,50 @@ impl UserClient {
 	}
 
 	/// Build the operating account's block(s) from `assemble`, then publish.
-	async fn build_and_publish(&self, assemble: impl FnOnce(&mut TransactionBuilder)) -> Result<bool, ClientError> {
-		let account = self.account_or(None)?;
-		let mut builder = self.client.builder(&account);
+	///
+	/// On a `LEDGER_SUCCESSOR_VOTE_EXISTS` conflict (another block already
+	/// claimed the head height), recover the operating account and, if a
+	/// staple was reassembled, re-render the operations against the advanced
+	/// head and republish. `assemble` can be invoked multiple times, so it must
+	/// not consume its captured operands.
+	async fn build_and_publish(&self, assemble: impl Fn(&mut TransactionBuilder)) -> Result<bool, ClientError> {
+		let mut attempt = 0u32;
+		loop {
+			let mut builder = self.signed_builder()?;
+			assemble(&mut builder);
+			let blocks = builder.build().await?;
 
-		assemble(&mut builder);
+			match self.originate(blocks).await {
+				Ok(accepted) => return Ok(accepted),
+				Err(error) => {
+					let conflict = is_ledger_code(&error, "LEDGER_SUCCESSOR_VOTE_EXISTS");
+					if !conflict || attempt >= Self::MAX_REBUILD_RETRIES {
+						return Err(error);
+					}
 
-		let blocks = builder.build().await?;
-		self.originate(blocks).await
+					// Recovering only helps once it reassembles the conflicting
+					// staple; with nothing to recover the conflict is terminal.
+					match self.recover(true).await? {
+						Some(_) => attempt += 1,
+						None => return Err(error),
+					}
+				}
+			}
+		}
 	}
 
 	/// Publish each block, paying any required fee with the bound signer.
+	/// Acceptance is the conjunction of every block's result; a rejection
+	/// stops the run.
 	async fn originate(&self, blocks: Vec<Block>) -> Result<bool, ClientError> {
 		let signer = self.signer()?;
 		let options = TransmitOptions { fee_signer: Some(signer), ..Default::default() };
 		let mut accepted = true;
 		for block in blocks {
-			accepted = self.client.publish(block, options.clone()).await?;
+			accepted &= self.client.publish(block, options.clone()).await?;
+			if !accepted {
+				break;
+			}
 		}
 
 		Ok(accepted)
@@ -617,9 +746,12 @@ fn assert_swap_amount(amount: &Amount, expected: &SwapTokenAmount) -> Result<(),
 mod tests {
 	use keetanetwork_block::testing::generate_ed25519_ref;
 
+	use core::mem::discriminant;
+
 	use super::*;
 	use crate::swap::SwapExpectation;
 
+	/// Fixed send leg every case resolves against: 100 of token 3 to account 1.
 	fn send_op(amount: u64) -> Send {
 		Send {
 			to: generate_ed25519_ref(1),
@@ -629,6 +761,8 @@ mod tests {
 		}
 	}
 
+	/// Fixed receive leg every case resolves against: 50 of token 4 from
+	/// account 1, exactness varied per scenario.
 	fn receive_op(amount: u64, exact: bool) -> Receive {
 		Receive {
 			amount: Amount::from(amount),
@@ -639,59 +773,62 @@ mod tests {
 		}
 	}
 
+	/// A send-side expectation overriding only the send amount.
+	fn send_expectation(amount: u64) -> SwapExpectation {
+		SwapExpectation {
+			receive: None,
+			send: Some(SwapTokenAmount { token: None, amount: Some(Amount::from(amount)) }),
+		}
+	}
+
+	/// Resolve the fixed legs against `expectation` and require `expected`.
+	fn assert_resolves_to(expectation: Option<SwapExpectation>, exact: bool, expected: u64) {
+		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, exact), expectation.as_ref());
+		assert_eq!(resolved.ok(), Some(Amount::from(expected)));
+	}
+
+	/// Resolve the fixed legs against `expectation` and require the `expected`
+	/// rejection variant.
+	fn assert_rejects(expectation: SwapExpectation, exact: bool, expected: ClientError) {
+		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, exact), Some(&expectation));
+		assert_eq!(resolved.err().map(|error| discriminant(&error)), Some(discriminant(&expected)));
+	}
+
 	#[test]
 	fn swap_amount_defaults_to_requested_receive() {
-		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, false), None);
-		assert_eq!(resolved.ok(), Some(Amount::from(50u64)));
-	}
-
-	#[test]
-	fn swap_rejects_mismatched_receive_token() {
-		let expected = SwapExpectation {
-			receive: Some(SwapTokenAmount { token: Some(generate_ed25519_ref(9)), amount: None }),
-			send: None,
-		};
-		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, false), Some(&expected));
-		assert!(matches!(resolved, Err(ClientError::SwapTokenMismatch)));
-	}
-
-	#[test]
-	fn swap_rejects_mismatched_receive_amount() {
-		let expected = SwapExpectation {
-			receive: Some(SwapTokenAmount { token: None, amount: Some(Amount::from(99u64)) }),
-			send: None,
-		};
-		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, false), Some(&expected));
-		assert!(matches!(resolved, Err(ClientError::SwapAmountMismatch)));
-	}
-
-	#[test]
-	fn swap_rejects_send_amount_below_requested() {
-		let expected = SwapExpectation {
-			receive: None,
-			send: Some(SwapTokenAmount { token: None, amount: Some(Amount::from(49u64)) }),
-		};
-		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, false), Some(&expected));
-		assert!(matches!(resolved, Err(ClientError::SwapAmountTooLow)));
-	}
-
-	#[test]
-	fn swap_rejects_inexact_override_of_exact_receive() {
-		let expected = SwapExpectation {
-			receive: None,
-			send: Some(SwapTokenAmount { token: None, amount: Some(Amount::from(60u64)) }),
-		};
-		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, true), Some(&expected));
-		assert!(matches!(resolved, Err(ClientError::SwapExactMismatch)));
+		assert_resolves_to(None, false, 50);
 	}
 
 	#[test]
 	fn swap_raises_send_amount_when_permitted() {
-		let expected = SwapExpectation {
-			receive: None,
-			send: Some(SwapTokenAmount { token: None, amount: Some(Amount::from(70u64)) }),
+		assert_resolves_to(Some(send_expectation(70)), false, 70);
+	}
+
+	#[test]
+	fn swap_rejects_send_amount_below_requested() {
+		assert_rejects(send_expectation(49), false, ClientError::SwapAmountTooLow);
+	}
+
+	#[test]
+	fn swap_rejects_inexact_override_of_exact_receive() {
+		assert_rejects(send_expectation(60), true, ClientError::SwapExactMismatch);
+	}
+
+	#[test]
+	fn swap_rejects_mismatched_receive_token() {
+		let expectation = SwapExpectation {
+			receive: Some(SwapTokenAmount { token: Some(generate_ed25519_ref(9)), amount: None }),
+			send: None,
 		};
-		let resolved = resolve_swap_amount(&send_op(100), &receive_op(50, false), Some(&expected));
-		assert_eq!(resolved.ok(), Some(Amount::from(70u64)));
+		assert_rejects(expectation, false, ClientError::SwapTokenMismatch);
+	}
+
+	#[test]
+	fn swap_rejects_mismatched_receive_amount() {
+		let expectation = SwapExpectation {
+			receive: Some(SwapTokenAmount { token: None, amount: Some(Amount::from(99u64)) }),
+			send: None,
+		};
+		assert_rejects(expectation, false, ClientError::SwapAmountMismatch);
 	}
 }

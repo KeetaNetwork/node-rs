@@ -2413,6 +2413,7 @@ impl CertificateBuilder {
 
 #[cfg(test)]
 mod tests {
+	#[cfg(not(all(feature = "rasn", not(feature = "der"))))]
 	use core::str::FromStr;
 
 	use chrono::Utc;
