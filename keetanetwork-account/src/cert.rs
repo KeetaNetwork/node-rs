@@ -66,7 +66,7 @@ impl CertSigner for Account<KeyECDSASECP256R1> {
 
 impl CertSigner for Account<KeyED25519> {
 	fn sign_for_cert(&self, message: impl AsRef<[u8]>) -> Result<Vec<u8>, AccountError> {
-		// Mirrors the reference implementation: ed25519 certificate signatures
+		// Equivalent to the TS reference implementation: ed25519 certificate signatures
 		// are produced by signing the raw TBS bytes (no pre-hash) and emitted
 		// as the standard 64-byte raw form.
 		let signature: Ed25519Signature = self

@@ -27,18 +27,31 @@
 //! builders validate eagerly and surface configuration errors as
 //! [`VoteError`] variants.
 //!
-//! ```no_run
-//! use keetanetwork_block::{AccountRef, BlockHash, BlockTime};
+//! ## Example
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use keetanetwork_account::GenericAccount;
+//! use keetanetwork_account::doc_utils::create_ed25519_test_keys;
+//! use keetanetwork_block::{AccountRef, BlockTime};
 //! use keetanetwork_vote::{VoteBuilder, VoteError};
 //!
-//! # fn build(issuer: AccountRef, block: BlockHash, from: BlockTime, to: BlockTime) -> Result<(), VoteError> {
+//! # fn main() -> Result<(), VoteError> {
+//! let (_, _, signer) = create_ed25519_test_keys(None);
+//! let issuer: AccountRef = Arc::new(GenericAccount::Ed25519(signer));
+//!
+//! let from = BlockTime::from_unix_millis(1_000_000).expect("moment in range");
+//! let to = BlockTime::from_unix_millis(2_000_000).expect("moment in range");
+//!
 //! let vote = VoteBuilder::new()
 //!     .serial(1u64)
 //!     .issuer(issuer.clone())
 //!     .validity(from, to)
-//!     .add_block(block)
+//!     .add_block(issuer.to_opening_hash())
 //!     .build_signed(issuer.as_ref())?;
-//! let _bytes: &[u8] = vote.as_bytes();
+//!
+//! assert!(!vote.as_bytes().is_empty());
 //! # Ok(())
 //! # }
 //! ```

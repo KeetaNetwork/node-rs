@@ -242,9 +242,7 @@ impl BlockData {
 				continue;
 			};
 
-			// The reference implementation only accepts MULTISIG principals
-			// in the signer tree; mirror that here since the enum cannot
-			// make it un-representable.
+			// Only accept MULTISIG principals in the signer tree
 			if address.to_keypair_type() != KeyPairType::MULTISIG {
 				return Err(BlockError::MalformedSigner);
 			}

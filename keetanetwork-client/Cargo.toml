@@ -1,0 +1,93 @@
+[package]
+name = "keetanetwork-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Async REST client for transmitting vote staples to a KeetaNet node"
+
+[features]
+default = ["std"]
+# `std` adds the networking backends (reqwest/tokio transport + runtime) and
+# enables `std` on the core/domain crates. With `--no-default-features` the
+# crate is `no_std`+`alloc`: the orchestrator, traits, scoring, error, and
+# model compile, awaiting a `no_std` transport/runtime backend.
+std = [
+	"dep:reqwest",
+	"dep:tokio",
+	"dep:progenitor-client",
+	"dep:serde",
+	"dep:serde_json",
+	"futures/std",
+	"base64/std",
+	"snafu/std",
+	"num-bigint/std",
+	"keetanetwork-block/std",
+	"keetanetwork-vote/std",
+	"keetanetwork-error/std",
+	"keetanetwork-account/std",
+]
+testing = []
+
+[dependencies]
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote", default-features = false, features = ["alloc", "der", "rasn"] }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false, features = ["alloc"] }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false, features = ["alloc", "rasn"] }
+
+progenitor-client = { workspace = true, optional = true }
+num-bigint = { workspace = true }
+rand_core = { workspace = true }
+spin = { workspace = true, features = ["mutex", "spin_mutex", "rwlock"] }
+async-trait = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+
+[dependencies.tokio]
+workspace = true
+features = ["rt", "time"]
+optional = true
+
+[dependencies.reqwest]
+workspace = true
+features = ["json", "query", "stream", "rustls"]
+optional = true
+
+[dependencies.serde]
+workspace = true
+optional = true
+
+[dependencies.serde_json]
+workspace = true
+optional = true
+
+[dependencies.base64]
+workspace = true
+features = ["alloc"]
+
+[dependencies.snafu]
+workspace = true
+
+[build-dependencies]
+progenitor = { workspace = true }
+serde_yaml = "0.9"
+serde_json.workspace = true
+prettyplease = "0.2"
+syn = "2.0"
+
+[dev-dependencies]
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = ["node-harness"] }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", features = ["testing"] }
+hex = { workspace = true }
+
+[dev-dependencies.serde_json]
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = ["rt", "rt-multi-thread", "macros", "time"]
+
+[[test]]
+name = "e2e"
+required-features = ["testing"]
