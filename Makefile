@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer node-harness node-harness-lint
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer node-harness node-harness-lint wasm-build test-wasm
 
 # Project name
 PROJ_NAME := node-rs
@@ -89,6 +89,15 @@ test-feat:
 	cargo check -p keetanetwork-block --no-default-features --features alloc,der
 	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn,der
 	cargo clippy -p keetanetwork-client --no-default-features -- -D warnings
+	# Browser wasm build: no_std orchestrator with the relaxed (!Send) traits.
+	rustup target add wasm32-unknown-unknown
+	cargo build -p keetanetwork-client --no-default-features --target wasm32-unknown-unknown
+	cargo build -p keetanetwork-client --no-default-features --features wasm --target wasm32-unknown-unknown
+
+# Build the wasm client into a browser-ready npm package (pkg/).
+wasm-build:
+	rustup target add wasm32-unknown-unknown
+	wasm-pack build keetanetwork-client-wasm --target web --out-dir pkg
 
 # Reference implementation harness (required by compatibility/e2e tests)
 HARNESS_DIR := keetanetwork-utils/node-harness
@@ -111,6 +120,14 @@ test: node-harness
 	sh -c 'unset CARGO_BUILD_TARGET; cargo test --all-features --workspace'
 
 test-all: test test-feat
+
+# Browser end-to-end test
+WASM_E2E_DIR := keetanetwork-client-wasm/e2e
+
+test-wasm: node-harness wasm-build
+	cd $(WASM_E2E_DIR) && npm ci
+	cd $(WASM_E2E_DIR) && npx playwright install --with-deps chromium
+	cd $(WASM_E2E_DIR) && npx playwright test
 
 # Set up coverage tools (internal helper target)
 coverage-setup:

@@ -53,7 +53,7 @@ pub fn validity_millis(from_ms: i64, to_ms: i64) -> Validity {
 	Validity::try_new(moment(from_ms), moment(to_ms)).expect("validity range must be well-formed")
 }
 
-/// A validity range anchored at the current wall clock - 60s of slack
+/// A validity range anchored at the current clock - 60s of slack
 /// before now, 24h after - sized so live-node tests stay valid even on
 /// slow runners.
 pub fn future_validity() -> Validity {
@@ -71,9 +71,9 @@ pub fn find_version_tag(buf: &[u8]) -> Result<usize, VoteError> {
 		.ok_or(VoteError::MalformedVoteContent)
 }
 
-// -- Wall-clock --------------------------------------------------------------
+// -- Clock --------------------------------------------------------------
 
-/// Current wall clock as a [`BlockTime`]. For tests that need a moment
+/// Current clock as a [`BlockTime`]. For tests that need a moment
 /// "now" against the live system clock.
 pub fn now_blocktime() -> BlockTime {
 	let millis = chrono::Utc::now().timestamp_millis();

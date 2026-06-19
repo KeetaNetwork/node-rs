@@ -18,8 +18,13 @@ pub enum ClientError {
 	/// active transport backend, so the orchestrator stays transport-agnostic.
 	#[snafu(display("node request failed"))]
 	Transport {
-		/// Underlying transport error from the backend.
+		/// Underlying transport error from the backend. `Send + Sync` on native
+		/// targets; relaxed on wasm, where browser transport errors.
+		#[cfg(not(target_family = "wasm"))]
 		source: Box<dyn core::error::Error + Send + Sync>,
+		/// Underlying transport error from the backend.
+		#[cfg(target_family = "wasm")]
+		source: Box<dyn core::error::Error>,
 	},
 
 	/// The node returned a structured, coded error response.
@@ -152,4 +157,64 @@ pub enum ClientError {
 	/// The taker's send amount differs from an exact-match receive amount.
 	#[snafu(display("swap send amount differs from an exact receive amount"))]
 	SwapExactMismatch,
+}
+
+impl ClientError {
+	/// A stable, machine-readable code for programmatic branching. A
+	/// [`Node`](Self::Node) error surfaces the node's own code (e.g.
+	/// `LEDGER_*`) when it carries one; every other variant maps to a fixed
+	/// `SCREAMING_SNAKE_CASE` discriminant.
+	pub fn code(&self) -> &str {
+		match self {
+			Self::Transport { .. } => "TRANSPORT",
+			Self::Node { source } => source.code().unwrap_or("NODE"),
+			Self::Decode { .. } => "DECODE",
+			Self::Vote { .. } => "VOTE",
+			Self::Block { .. } => "BLOCK",
+			Self::Amount { .. } => "AMOUNT",
+			Self::MissingVote => "MISSING_VOTE",
+			Self::MissingQuote => "MISSING_QUOTE",
+			Self::MissingPublish => "MISSING_PUBLISH",
+			Self::MissingVersion => "MISSING_VERSION",
+			Self::FeeRequired => "FEE_REQUIRED",
+			Self::Account { .. } => "ACCOUNT",
+			Self::UnsupportedNetwork => "UNSUPPORTED_NETWORK",
+			Self::NoRepresentatives => "NO_REPRESENTATIVES",
+			Self::Timeout => "TIMEOUT",
+			Self::QuorumNotReached => "QUORUM_NOT_REACHED",
+			Self::SyncPublishFailed => "SYNC_PUBLISH_FAILED",
+			Self::RecoverFailed => "RECOVER_FAILED",
+			Self::UnresolvedIdentifier => "UNRESOLVED_IDENTIFIER",
+			Self::SignerRequired => "SIGNER_REQUIRED",
+			Self::SwapMultiBlock => "SWAP_MULTI_BLOCK",
+			Self::SwapMissingSend => "SWAP_MISSING_SEND",
+			Self::SwapMissingReceive => "SWAP_MISSING_RECEIVE",
+			Self::SwapAccountMismatch => "SWAP_ACCOUNT_MISMATCH",
+			Self::SwapTokenMismatch => "SWAP_TOKEN_MISMATCH",
+			Self::SwapAmountMismatch => "SWAP_AMOUNT_MISMATCH",
+			Self::SwapAmountTooLow => "SWAP_AMOUNT_TOO_LOW",
+			Self::SwapExactMismatch => "SWAP_EXACT_MISMATCH",
+		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn code_maps_fixed_variants() {
+		let cases = [
+			(ClientError::FeeRequired, "FEE_REQUIRED"),
+			(ClientError::SignerRequired, "SIGNER_REQUIRED"),
+			(ClientError::QuorumNotReached, "QUORUM_NOT_REACHED"),
+			(ClientError::NoRepresentatives, "NO_REPRESENTATIVES"),
+			(ClientError::UnsupportedNetwork, "UNSUPPORTED_NETWORK"),
+			(ClientError::Timeout, "TIMEOUT"),
+		];
+
+		for (error, expected) in cases {
+			assert_eq!(error.code(), expected);
+		}
+	}
 }

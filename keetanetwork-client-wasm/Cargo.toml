@@ -1,0 +1,25 @@
+[package]
+name = "keetanetwork-client-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "WebAssembly bindings for the KeetaNet client"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+keetanetwork-client = { version = "0.1.0", path = "../keetanetwork-client", default-features = false, features = ["wasm"] }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
+num-bigint = { workspace = true }
+hex = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"

@@ -265,7 +265,7 @@ impl RngCore for SmallRng {
 
 /// A representative the client can talk to: its API endpoint, account, and
 /// voting weight.
-#[cfg(feature = "std")]
+#[cfg(feature = "http")]
 #[derive(Debug, Clone)]
 pub struct RepEndpoint {
 	api_url: String,
@@ -273,7 +273,7 @@ pub struct RepEndpoint {
 	weight: BigInt,
 }
 
-#[cfg(feature = "std")]
+#[cfg(feature = "http")]
 impl RepEndpoint {
 	/// Describe a representative by its API URL, account, and voting weight.
 	pub fn new(api_url: impl Into<String>, account: keetanetwork_block::AccountRef, weight: impl Into<BigInt>) -> Self {

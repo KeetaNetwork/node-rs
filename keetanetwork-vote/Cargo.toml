@@ -33,8 +33,6 @@ alloc = [
 ]
 der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der", "keetanetwork-block/der"]
 rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn", "keetanetwork-block/rasn"]
-# Deterministic issuer / validity factories for downstream test suites.
-# Requires `std` because the helpers reach for the wall clock.
 testing = ["std", "keetanetwork-block/testing", "keetanetwork-asn1/testing"]
 
 [dependencies]

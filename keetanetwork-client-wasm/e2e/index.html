@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<title>KeetaNet wasm client e2e</title>
+</head>
+<body>
+	<main id="status">loading wasm client...</main>
+	<script type="module">
+		import init, * as keeta from '/pkg/keetanetwork_client_wasm.js';
+
+		await init();
+		window.keeta = keeta;
+		window.wasmReady = true;
+		document.getElementById('status').textContent = 'wasm client ready';
+	</script>
+</body>
+</html>

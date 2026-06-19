@@ -2725,6 +2725,26 @@ impl GenericAccount {
 	) -> Result<GenericAccount, AccountError> {
 		delegate_to_variants!(self, generate_identifier, identifier_type, block_hash, operation_index)
 	}
+
+	/// Verify `signature` over `message` using the account's public key.
+	pub fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
+		&self,
+		message: T,
+		signature: S,
+		options: Option<SigningOptions>,
+	) -> Result<(), AccountError> {
+		delegate_to_variants!(self, verify, message, signature, options)
+	}
+
+	/// Encrypt `plaintext` to the account's public key.
+	pub fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
+		delegate_to_variants!(self, encrypt, plaintext)
+	}
+
+	/// Decrypt `ciphertext` with the account's private key.
+	pub fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
+		delegate_to_variants!(self, decrypt, ciphertext)
+	}
 }
 
 impl Display for GenericAccount {

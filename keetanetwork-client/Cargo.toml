@@ -10,16 +10,18 @@ description = "Async REST client for transmitting vote staples to a KeetaNet nod
 
 [features]
 default = ["std"]
-# `std` adds the networking backends (reqwest/tokio transport + runtime) and
-# enables `std` on the core/domain crates. With `--no-default-features` the
-# crate is `no_std`+`alloc`: the orchestrator, traits, scoring, error, and
-# model compile, awaiting a `no_std` transport/runtime backend.
-std = [
+http = [
 	"dep:reqwest",
-	"dep:tokio",
+	"reqwest/json",
+	"reqwest/query",
 	"dep:progenitor-client",
 	"dep:serde",
 	"dep:serde_json",
+]
+std = [
+	"http",
+	"dep:tokio",
+	"reqwest/rustls",
 	"futures/std",
 	"base64/std",
 	"snafu/std",
@@ -29,6 +31,7 @@ std = [
 	"keetanetwork-error/std",
 	"keetanetwork-account/std",
 ]
+wasm = ["http"]
 testing = []
 
 [dependencies]
@@ -51,7 +54,6 @@ optional = true
 
 [dependencies.reqwest]
 workspace = true
-features = ["json", "query", "stream", "rustls"]
 optional = true
 
 [dependencies.serde]
@@ -68,6 +70,14 @@ features = ["alloc"]
 
 [dependencies.snafu]
 workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Performance"] }
 
 [build-dependencies]
 progenitor = { workspace = true }
