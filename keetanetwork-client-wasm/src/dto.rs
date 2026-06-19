@@ -6,11 +6,13 @@ use alloc::vec::Vec;
 
 use keetanetwork_client::{AccountState, Acl, Certificate, HistoryEntry, LedgerChecksum, Representative, TokenBalance};
 use serde::Serialize;
+use tsify_next::Tsify;
 
 use crate::convert::amount_to_string;
 
 /// A per-token balance: settled and pending amounts as decimal strings.
-#[derive(Serialize)]
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
 pub struct TokenBalanceView {
 	pub token: String,
 	pub balance: String,
@@ -28,7 +30,8 @@ impl From<&TokenBalance> for TokenBalanceView {
 }
 
 /// A snapshot of an account's ledger state.
-#[derive(Serialize)]
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
 pub struct AccountStateView {
 	pub representative: Option<String>,
 	pub head: Option<String>,
@@ -50,7 +53,8 @@ impl From<&AccountState> for AccountStateView {
 }
 
 /// A history entry: the staple as hex plus its id and timestamp.
-#[derive(Serialize)]
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
 pub struct HistoryEntryView {
 	pub staple: String,
 	pub id: Option<String>,
@@ -64,7 +68,8 @@ impl From<&HistoryEntry> for HistoryEntryView {
 }
 
 /// A representative and its voting weight.
-#[derive(Serialize)]
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
 pub struct RepresentativeView {
 	pub account: String,
 	pub weight: String,
@@ -82,7 +87,8 @@ impl From<&Representative> for RepresentativeView {
 }
 
 /// A point-in-time ledger checksum.
-#[derive(Serialize)]
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
 pub struct LedgerChecksumView {
 	pub checksum: String,
 	pub moment: Option<String>,
@@ -100,7 +106,8 @@ impl From<&LedgerChecksum> for LedgerChecksumView {
 }
 
 /// An access-control entry.
-#[derive(Serialize)]
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
 pub struct AclView {
 	pub principal: Option<String>,
 	pub entity: Option<String>,
@@ -120,7 +127,8 @@ impl From<&Acl> for AclView {
 }
 
 /// A certificate and its intermediate chain.
-#[derive(Serialize)]
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
 pub struct CertificateView {
 	pub certificate: String,
 	pub intermediates: Vec<String>,

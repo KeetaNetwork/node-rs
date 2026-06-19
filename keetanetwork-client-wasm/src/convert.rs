@@ -11,11 +11,30 @@ use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockPurpose};
 use keetanetwork_client::ClientError;
 use num_bigint::BigInt;
-use serde::Serialize;
 use wasm_bindgen::JsValue;
 
 /// Result whose error is a coded JavaScript `Error` (see module docs).
 pub type JsResult<T> = Result<T, JsValue>;
+
+/// Canonical map from JS permission flag name to base flag. Single source of
+/// truth for both parsing names and rendering them.
+const BASE_FLAGS: [(&str, BaseFlag); 15] = [
+	("access", BaseFlag::Access),
+	("owner", BaseFlag::Owner),
+	("admin", BaseFlag::Admin),
+	("update_info", BaseFlag::UpdateInfo),
+	("send_on_behalf", BaseFlag::SendOnBehalf),
+	("token_admin_create", BaseFlag::TokenAdminCreate),
+	("token_admin_supply", BaseFlag::TokenAdminSupply),
+	("token_admin_modify_balance", BaseFlag::TokenAdminModifyBalance),
+	("storage_create", BaseFlag::StorageCreate),
+	("storage_can_hold", BaseFlag::StorageCanHold),
+	("storage_deposit", BaseFlag::StorageDeposit),
+	("permission_delegate_add", BaseFlag::PermissionDelegateAdd),
+	("permission_delegate_remove", BaseFlag::PermissionDelegateRemove),
+	("manage_certificate", BaseFlag::ManageCertificate),
+	("multisig_signer", BaseFlag::MultisigSigner),
+];
 
 /// Parse a decimal integer string into an [`Amount`].
 pub fn parse_amount(amount: &str) -> JsResult<Amount> {
@@ -65,34 +84,30 @@ pub fn parse_identifier_type(kind: &str) -> JsResult<KeyPairType> {
 
 /// Parse a base permission flag by its snake_case name.
 pub fn parse_base_flag(flag: &str) -> JsResult<BaseFlag> {
-	match flag {
-		"access" => Ok(BaseFlag::Access),
-		"owner" => Ok(BaseFlag::Owner),
-		"admin" => Ok(BaseFlag::Admin),
-		"update_info" => Ok(BaseFlag::UpdateInfo),
-		"send_on_behalf" => Ok(BaseFlag::SendOnBehalf),
-		"token_admin_create" => Ok(BaseFlag::TokenAdminCreate),
-		"token_admin_supply" => Ok(BaseFlag::TokenAdminSupply),
-		"token_admin_modify_balance" => Ok(BaseFlag::TokenAdminModifyBalance),
-		"storage_create" => Ok(BaseFlag::StorageCreate),
-		"storage_can_hold" => Ok(BaseFlag::StorageCanHold),
-		"storage_deposit" => Ok(BaseFlag::StorageDeposit),
-		"permission_delegate_add" => Ok(BaseFlag::PermissionDelegateAdd),
-		"permission_delegate_remove" => Ok(BaseFlag::PermissionDelegateRemove),
-		"manage_certificate" => Ok(BaseFlag::ManageCertificate),
-		"multisig_signer" => Ok(BaseFlag::MultisigSigner),
-		_ => Err(coded_error("INVALID_PERMISSION_FLAG", "unknown base permission flag")),
-	}
+	BASE_FLAGS
+		.iter()
+		.find_map(|(name, candidate)| (*name == flag).then_some(*candidate))
+		.ok_or_else(|| coded_error("INVALID_PERMISSION_FLAG", "unknown base permission flag"))
+}
+
+/// Render a base flag as its snake_case JS name.
+pub fn base_flag_name(flag: BaseFlag) -> &'static str {
+	BASE_FLAGS
+		.iter()
+		.find_map(|(name, candidate)| (*candidate == flag).then_some(*name))
+		.unwrap_or("unknown")
+}
+
+/// Parse a `0x`-prefixed (or bare) hexadecimal string into a [`BigInt`].
+pub fn parse_bigint_hex(value: &str, label: &str) -> JsResult<BigInt> {
+	let digits = value.strip_prefix("0x").unwrap_or(value);
+	BigInt::parse_bytes(digits.as_bytes(), 16)
+		.ok_or_else(|| coded_error("INVALID_INTEGER", &alloc::format!("{label} must be 0x-hex")))
 }
 
 /// Render an [`Amount`] as a decimal integer string.
 pub fn amount_to_string(amount: Amount) -> String {
 	BigInt::from(amount).to_string()
-}
-
-/// Serialize a value to a plain JS object.
-pub fn to_js<T: Serialize>(value: &T) -> JsResult<JsValue> {
-	serde_wasm_bindgen::to_value(value).map_err(|error| coded_error("SERIALIZE", &error.to_string()))
 }
 
 /// Build a JavaScript `Error` carrying a `code` property.

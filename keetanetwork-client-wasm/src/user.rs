@@ -8,7 +8,7 @@ use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{IdentifierCreateArguments, MultisigCreateArguments, SetInfo};
 use keetanetwork_client::{AcceptSwapRequest, CreateSwapRequest, KeetaClient as Core, Network, UserClient as CoreUser};
 use num_bigint::BigInt;
-use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::account::Account;
 use crate::block::{Block, VoteStaple};
@@ -16,7 +16,7 @@ use crate::builder::Builder;
 use crate::certificate::CertificateChange;
 use crate::client::KeetaClient;
 use crate::convert::{
-	amount_to_string, client_error, parse_adjust_method, parse_amount, parse_identifier_type, to_js, JsResult,
+	amount_to_string, client_error, parse_adjust_method, parse_amount, parse_identifier_type, JsResult,
 };
 use crate::dto::{AccountStateView, AclView, CertificateView, HistoryEntryView, TokenBalanceView};
 use crate::options::TransmitOptions;
@@ -120,16 +120,15 @@ impl UserClient {
 
 	/// Every token balance held by the operating account.
 	#[wasm_bindgen(js_name = allBalances)]
-	pub async fn all_balances(&self) -> JsResult<JsValue> {
+	pub async fn all_balances(&self) -> JsResult<Vec<TokenBalanceView>> {
 		let balances = self.inner.all_balances().await.map_err(client_error)?;
-		let views: Vec<TokenBalanceView> = balances.iter().map(TokenBalanceView::from).collect();
-		to_js(&views)
+		Ok(balances.iter().map(TokenBalanceView::from).collect())
 	}
 
 	/// A snapshot of the operating account's ledger state.
-	pub async fn state(&self) -> JsResult<JsValue> {
+	pub async fn state(&self) -> JsResult<AccountStateView> {
 		let state = self.inner.state().await.map_err(client_error)?;
-		to_js(&AccountStateView::from(&state))
+		Ok(AccountStateView::from(&state))
 	}
 
 	/// The operating account's head block, or `undefined` when it has none.
@@ -145,10 +144,9 @@ impl UserClient {
 	}
 
 	/// The operating account's verified history.
-	pub async fn history(&self) -> JsResult<JsValue> {
+	pub async fn history(&self) -> JsResult<Vec<HistoryEntryView>> {
 		let entries = self.inner.history().await.map_err(client_error)?;
-		let views: Vec<HistoryEntryView> = entries.iter().map(HistoryEntryView::from).collect();
-		to_js(&views)
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
 	}
 
 	/// The next pending block for the operating account, if any.
@@ -159,25 +157,22 @@ impl UserClient {
 	}
 
 	/// ACL entries where the operating account is the principal (grantee).
-	pub async fn acls(&self) -> JsResult<JsValue> {
+	pub async fn acls(&self) -> JsResult<Vec<AclView>> {
 		let acls = self.inner.acls().await.map_err(client_error)?;
-		let views: Vec<AclView> = acls.iter().map(AclView::from).collect();
-		to_js(&views)
+		Ok(acls.iter().map(AclView::from).collect())
 	}
 
 	/// ACL entries granted to the operating account as an entity.
 	#[wasm_bindgen(js_name = aclsByEntity)]
-	pub async fn acls_by_entity(&self) -> JsResult<JsValue> {
+	pub async fn acls_by_entity(&self) -> JsResult<Vec<AclView>> {
 		let acls = self.inner.acls_by_entity().await.map_err(client_error)?;
-		let views: Vec<AclView> = acls.iter().map(AclView::from).collect();
-		to_js(&views)
+		Ok(acls.iter().map(AclView::from).collect())
 	}
 
 	/// Every certificate held by the operating account.
-	pub async fn certificates(&self) -> JsResult<JsValue> {
+	pub async fn certificates(&self) -> JsResult<Vec<CertificateView>> {
 		let certificates = self.inner.certificates().await.map_err(client_error)?;
-		let views: Vec<CertificateView> = certificates.iter().map(CertificateView::from).collect();
-		to_js(&views)
+		Ok(certificates.iter().map(CertificateView::from).collect())
 	}
 
 	/// The block with hash `block_hash`, if the node has it.

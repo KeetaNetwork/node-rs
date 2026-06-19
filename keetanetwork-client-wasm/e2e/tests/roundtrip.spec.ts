@@ -37,6 +37,27 @@ interface GenerationRoundTrip {
 	recipientBalance: string;
 }
 
+interface TypedReads {
+	balanceFields: { token: string; balance: string; pending: string } | null;
+	stateBalances: number;
+	stateHeadIsString: boolean;
+	repCount: number;
+	repWeightIsString: boolean;
+}
+
+interface PermissionDecode {
+	builtFlags: string[];
+	builtOffsets: number[];
+	hasAccess: boolean;
+	hasOwner: boolean;
+	hasOffset3: boolean;
+	hasOffset4: boolean;
+	roundTripFlags: string[];
+	roundTripOffsets: number[];
+	decodedFlags: string[];
+	decodedOffsets: number[];
+}
+
 // A fresh recipient the test fully controls, distinct from the harness rep.
 const RECIPIENT_SEED_HEX = '22'.repeat(32);
 
@@ -310,4 +331,111 @@ test('UserClient builds a swap-request block against a live node', async ({ page
 
 	expect(result.hash, 'the swap-request block must have a hash').toMatch(/[0-9A-F]/i);
 	expect(result.hexRoundTrips, 'the swap-request block must survive a hex round-trip').toBe(true);
+});
+
+test('reads return structured, typed views with string amounts', async ({ page }) => {
+	const info = await loadNodeInfo(page.request);
+
+	await page.goto('/e2e/index.html');
+	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
+
+	const result: TypedReads = await page.evaluate(async (cfg: NodeInfo) => {
+		const { KeetaClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+		const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+		const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+		const token = Account.fromAddress(cfg.baseToken);
+
+		// Drive a send so the trusted account has settled state to read back.
+		await client.send(trusted, Account.fromAddress(cfg.recipient), cfg.amount, token);
+
+		const balances = await client.balances(trusted);
+		let balanceFields: { token: string; balance: string; pending: string } | null = null;
+		const baseEntry = balances.find((entry) => entry.token === cfg.baseToken);
+		if (baseEntry) {
+			balanceFields = { token: baseEntry.token, balance: baseEntry.balance, pending: baseEntry.pending };
+		}
+
+		const state = await client.state(trusted);
+		let stateHeadIsString = false;
+		if (state.head) {
+			stateHeadIsString = typeof state.head === 'string';
+		}
+
+		const reps = await client.representatives();
+		let repWeightIsString = false;
+		if (reps.length > 0) {
+			repWeightIsString = typeof reps[0].weight === 'string';
+		}
+
+		return {
+			balanceFields,
+			stateBalances: state.balances.length,
+			stateHeadIsString,
+			repCount: reps.length,
+			repWeightIsString,
+		};
+	}, info);
+
+	expect(result.balanceFields, 'balances must expose a base-token entry').not.toBeNull();
+	expect(result.balanceFields?.token, 'the balance entry must name the base token').toBe(info.baseToken);
+	expect(typeof result.balanceFields?.balance, 'a settled balance must be a decimal string').toBe('string');
+	expect(typeof result.balanceFields?.pending, 'a pending balance must be a decimal string').toBe('string');
+	expect(result.stateBalances, 'state must carry at least the base-token balance').toBeGreaterThanOrEqual(1);
+	expect(result.stateHeadIsString, 'a settled head must surface as a hex string').toBe(true);
+	expect(result.repCount, 'the network must report at least one representative').toBeGreaterThanOrEqual(1);
+	expect(result.repWeightIsString, 'a representative weight must be a decimal string').toBe(true);
+});
+
+test('Permissions decode and round-trip the on-chain bitmaps', async ({ page }) => {
+	await page.goto('/e2e/index.html');
+	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
+
+	const result: PermissionDecode = await page.evaluate(async () => {
+		const { Permissions } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+		const built = new Permissions(['access', 'update_info'], new Uint8Array([3, 7]));
+		const builtFlags = built.flags;
+		const builtOffsets = Array.from(built.offsets);
+		const hasAccess = built.has(['access'], new Uint8Array());
+		const hasOwner = built.has(['owner'], new Uint8Array());
+		const hasOffset3 = built.has(['access'], new Uint8Array([3]));
+		const hasOffset4 = built.has(['access'], new Uint8Array([4]));
+
+		// toBitmaps -> fromBitmaps must reconstruct the same permission set.
+		const [base, external] = built.toBitmaps();
+		const roundTrip = Permissions.fromBitmaps(base, external);
+		const roundTripFlags = roundTrip.flags;
+		const roundTripOffsets = Array.from(roundTrip.offsets);
+
+		// Decode the raw bitmaps an ACL row returns: 0x9 = ACCESS|UPDATE_INFO,
+		// 0x84 = external offsets {2, 7}.
+		const decoded = Permissions.fromBitmaps('0x9', '0x84');
+		const decodedFlags = decoded.flags;
+		const decodedOffsets = Array.from(decoded.offsets);
+
+		return {
+			builtFlags,
+			builtOffsets,
+			hasAccess,
+			hasOwner,
+			hasOffset3,
+			hasOffset4,
+			roundTripFlags,
+			roundTripOffsets,
+			decodedFlags,
+			decodedOffsets,
+		};
+	});
+
+	expect(result.builtFlags, 'flags must decode back to the named base flags').toEqual(['access', 'update_info']);
+	expect(result.builtOffsets, 'offsets must decode back to the external bits set').toEqual([3, 7]);
+	expect(result.hasAccess, 'a granted base flag must report present').toBe(true);
+	expect(result.hasOwner, 'an absent base flag must report missing').toBe(false);
+	expect(result.hasOffset3, 'a granted external offset must report present').toBe(true);
+	expect(result.hasOffset4, 'an absent external offset must report missing').toBe(false);
+	expect(result.roundTripFlags, 'a bitmap round-trip must preserve flags').toEqual(['access', 'update_info']);
+	expect(result.roundTripOffsets, 'a bitmap round-trip must preserve offsets').toEqual([3, 7]);
+	expect(result.decodedFlags, 'raw ACL bitmaps must decode to flag names').toEqual(['access', 'update_info']);
+	expect(result.decodedOffsets, 'raw ACL bitmaps must decode external offsets').toEqual([2, 7]);
 });

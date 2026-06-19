@@ -7,7 +7,9 @@ use keetanetwork_block::{ModifyPermissions, ModifyPermissionsPrincipal, Permissi
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::account::Account;
-use crate::convert::{coded_error, parse_adjust_method, parse_base_flag, parse_hash32, JsResult};
+use crate::convert::{
+	base_flag_name, coded_error, parse_adjust_method, parse_base_flag, parse_bigint_hex, parse_hash32, JsResult,
+};
 
 /// A permission set: well-known base flags plus optional external bit offsets.
 #[wasm_bindgen]
@@ -29,6 +31,58 @@ impl Permissions {
 		let inner = CorePermissions::from_flags(&flags, &offsets)
 			.map_err(|error| coded_error("INVALID_PERMISSIONS", &error.to_string()))?;
 		Ok(Self { inner })
+	}
+
+	/// Decode from the on-chain `[base, external]` bitmaps an ACL entry
+	/// returns, each a `0x`-prefixed hex integer.
+	#[wasm_bindgen(js_name = fromBitmaps)]
+	pub fn from_bitmaps(base: String, external: String) -> JsResult<Permissions> {
+		let base = parse_bigint_hex(&base, "base")?;
+		let external = parse_bigint_hex(&external, "external")?;
+		let inner = CorePermissions::from_bigints(base, external)
+			.map_err(|error| coded_error("INVALID_PERMISSIONS", &error.to_string()))?;
+		Ok(Self { inner })
+	}
+
+	/// The base flag names present, after normalization (`owner`/`admin`
+	/// subsume narrower flags).
+	#[wasm_bindgen(getter)]
+	pub fn flags(&self) -> Vec<String> {
+		self.inner
+			.base()
+			.flags()
+			.iter()
+			.map(|flag| String::from(base_flag_name(*flag)))
+			.collect()
+	}
+
+	/// The external bit offsets present, ascending.
+	#[wasm_bindgen(getter)]
+	pub fn offsets(&self) -> Vec<u8> {
+		let bits = self.inner.external().as_bigint();
+		(0..bits.bits())
+			.filter(|offset| bits.bit(*offset))
+			.map(|offset| offset as u8)
+			.collect()
+	}
+
+	/// Whether every named base `flags` and external `offsets` is granted,
+	/// honoring `owner`/`admin` precedence.
+	pub fn has(&self, flags: Vec<String>, offsets: Vec<u8>) -> JsResult<bool> {
+		let flags = flags
+			.iter()
+			.map(|flag| parse_base_flag(flag))
+			.collect::<JsResult<Vec<_>>>()?;
+		Ok(self.inner.has(&flags, &offsets))
+	}
+
+	/// The `[base, external]` bitmaps as `0x`-prefixed hex, mirroring the
+	/// ACL wire shape `fromBitmaps` accepts.
+	#[wasm_bindgen(js_name = toBitmaps)]
+	pub fn to_bitmaps(&self) -> Vec<String> {
+		let base = self.inner.base().as_bigint().to_str_radix(16);
+		let external = self.inner.external().as_bigint().to_str_radix(16);
+		alloc::vec![alloc::format!("0x{base}"), alloc::format!("0x{external}")]
 	}
 }
 

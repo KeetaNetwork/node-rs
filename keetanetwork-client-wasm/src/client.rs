@@ -6,12 +6,12 @@ use core::str::FromStr;
 
 use keetanetwork_client::{ChainQuery, HistoryQuery, KeetaClient as Core, Network};
 use num_bigint::BigInt;
-use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::account::Account;
 use crate::block::{Block, VoteStaple};
 use crate::builder::Builder;
-use crate::convert::{amount_to_string, client_error, coded_error, parse_amount, to_js, JsResult};
+use crate::convert::{amount_to_string, client_error, coded_error, parse_amount, JsResult};
 use crate::dto::{
 	AccountStateView, AclView, CertificateView, HistoryEntryView, LedgerChecksumView, RepresentativeView,
 	TokenBalanceView,
@@ -84,32 +84,30 @@ impl KeetaClient {
 	}
 
 	/// Every token balance held by `account`.
-	pub async fn balances(&self, account: &Account) -> JsResult<JsValue> {
+	pub async fn balances(&self, account: &Account) -> JsResult<Vec<TokenBalanceView>> {
 		let balances = self
 			.inner
 			.balances(account.address())
 			.await
 			.map_err(client_error)?;
-		let views: Vec<TokenBalanceView> = balances.iter().map(TokenBalanceView::from).collect();
-		to_js(&views)
+		Ok(balances.iter().map(TokenBalanceView::from).collect())
 	}
 
 	/// A snapshot of `account`'s ledger state.
-	pub async fn state(&self, account: &Account) -> JsResult<JsValue> {
+	pub async fn state(&self, account: &Account) -> JsResult<AccountStateView> {
 		let state = self
 			.inner
 			.state(account.address())
 			.await
 			.map_err(client_error)?;
-		to_js(&AccountStateView::from(&state))
+		Ok(AccountStateView::from(&state))
 	}
 
 	/// Snapshots of several accounts' ledger state, in input order.
-	pub async fn states(&self, accounts: Vec<String>) -> JsResult<JsValue> {
+	pub async fn states(&self, accounts: Vec<String>) -> JsResult<Vec<AccountStateView>> {
 		let refs: Vec<&str> = accounts.iter().map(String::as_str).collect();
 		let states = self.inner.states(&refs).await.map_err(client_error)?;
-		let views: Vec<AccountStateView> = states.iter().map(AccountStateView::from).collect();
-		to_js(&views)
+		Ok(states.iter().map(AccountStateView::from).collect())
 	}
 
 	/// The total supply of `token`, as a decimal string, when it is a token.
@@ -237,14 +235,13 @@ impl KeetaClient {
 	}
 
 	/// `account`'s verified history.
-	pub async fn history(&self, account: &Account) -> JsResult<JsValue> {
+	pub async fn history(&self, account: &Account) -> JsResult<Vec<HistoryEntryView>> {
 		let entries = self
 			.inner
 			.history(account.address())
 			.await
 			.map_err(client_error)?;
-		let views: Vec<HistoryEntryView> = entries.iter().map(HistoryEntryView::from).collect();
-		to_js(&views)
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
 	}
 
 	/// A single page of `account`'s history, bounded by `start` and `limit`.
@@ -254,36 +251,37 @@ impl KeetaClient {
 		account: &Account,
 		start: Option<String>,
 		limit: Option<u32>,
-	) -> JsResult<JsValue> {
+	) -> JsResult<Vec<HistoryEntryView>> {
 		let query = HistoryQuery { start, limit: limit.map(i64::from) };
 		let entries = self
 			.inner
 			.history_page(account.address(), query)
 			.await
 			.map_err(client_error)?;
-		let views: Vec<HistoryEntryView> = entries.iter().map(HistoryEntryView::from).collect();
-		to_js(&views)
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
 	}
 
 	/// The node's global transaction history.
 	#[wasm_bindgen(js_name = globalHistory)]
-	pub async fn global_history(&self) -> JsResult<JsValue> {
+	pub async fn global_history(&self) -> JsResult<Vec<HistoryEntryView>> {
 		let entries = self.inner.global_history().await.map_err(client_error)?;
-		let views: Vec<HistoryEntryView> = entries.iter().map(HistoryEntryView::from).collect();
-		to_js(&views)
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
 	}
 
 	/// A single page of the node's global history, bounded by `start`/`limit`.
 	#[wasm_bindgen(js_name = globalHistoryPage)]
-	pub async fn global_history_page(&self, start: Option<String>, limit: Option<u32>) -> JsResult<JsValue> {
+	pub async fn global_history_page(
+		&self,
+		start: Option<String>,
+		limit: Option<u32>,
+	) -> JsResult<Vec<HistoryEntryView>> {
 		let query = HistoryQuery { start, limit: limit.map(i64::from) };
 		let entries = self
 			.inner
 			.global_history_page(query)
 			.await
 			.map_err(client_error)?;
-		let views: Vec<HistoryEntryView> = entries.iter().map(HistoryEntryView::from).collect();
-		to_js(&views)
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
 	}
 
 	/// Vote staples committed at or after the ISO 8601 `start` moment.
@@ -311,83 +309,78 @@ impl KeetaClient {
 
 	/// The node's own representative and its weight.
 	#[wasm_bindgen(js_name = nodeRepresentative)]
-	pub async fn node_representative(&self) -> JsResult<JsValue> {
+	pub async fn node_representative(&self) -> JsResult<RepresentativeView> {
 		let rep = self
 			.inner
 			.node_representative()
 			.await
 			.map_err(client_error)?;
-		to_js(&RepresentativeView::from(&rep))
+		Ok(RepresentativeView::from(&rep))
 	}
 
 	/// The weight of representative `rep`.
-	pub async fn representative(&self, rep: &Account) -> JsResult<JsValue> {
+	pub async fn representative(&self, rep: &Account) -> JsResult<RepresentativeView> {
 		let rep = self
 			.inner
 			.representative(rep.address())
 			.await
 			.map_err(client_error)?;
-		to_js(&RepresentativeView::from(&rep))
+		Ok(RepresentativeView::from(&rep))
 	}
 
 	/// Every known representative and its weight.
-	pub async fn representatives(&self) -> JsResult<JsValue> {
+	pub async fn representatives(&self) -> JsResult<Vec<RepresentativeView>> {
 		let reps = self.inner.representatives().await.map_err(client_error)?;
-		let views: Vec<RepresentativeView> = reps.iter().map(RepresentativeView::from).collect();
-		to_js(&views)
+		Ok(reps.iter().map(RepresentativeView::from).collect())
 	}
 
 	/// The current ledger checksum.
 	#[wasm_bindgen(js_name = ledgerChecksum)]
-	pub async fn ledger_checksum(&self) -> JsResult<JsValue> {
+	pub async fn ledger_checksum(&self) -> JsResult<LedgerChecksumView> {
 		let checksum = self.inner.ledger_checksum().await.map_err(client_error)?;
-		to_js(&LedgerChecksumView::from(&checksum))
+		Ok(LedgerChecksumView::from(&checksum))
 	}
 
 	/// ACL entries where `account` is the principal (grantee).
 	#[wasm_bindgen(js_name = aclsByPrincipal)]
-	pub async fn acls_by_principal(&self, account: &Account) -> JsResult<JsValue> {
+	pub async fn acls_by_principal(&self, account: &Account) -> JsResult<Vec<AclView>> {
 		let acls = self
 			.inner
 			.acls_by_principal(account.address())
 			.await
 			.map_err(client_error)?;
-		let views: Vec<AclView> = acls.iter().map(AclView::from).collect();
-		to_js(&views)
+		Ok(acls.iter().map(AclView::from).collect())
 	}
 
 	/// ACL entries granted to `account` as an entity.
 	#[wasm_bindgen(js_name = aclsByEntity)]
-	pub async fn acls_by_entity(&self, account: &Account) -> JsResult<JsValue> {
+	pub async fn acls_by_entity(&self, account: &Account) -> JsResult<Vec<AclView>> {
 		let acls = self
 			.inner
 			.acls_by_entity(account.address())
 			.await
 			.map_err(client_error)?;
-		let views: Vec<AclView> = acls.iter().map(AclView::from).collect();
-		to_js(&views)
+		Ok(acls.iter().map(AclView::from).collect())
 	}
 
 	/// Every certificate held by `account`.
-	pub async fn certificates(&self, account: &Account) -> JsResult<JsValue> {
+	pub async fn certificates(&self, account: &Account) -> JsResult<Vec<CertificateView>> {
 		let certificates = self
 			.inner
 			.certificates(account.address())
 			.await
 			.map_err(client_error)?;
-		let views: Vec<CertificateView> = certificates.iter().map(CertificateView::from).collect();
-		to_js(&views)
+		Ok(certificates.iter().map(CertificateView::from).collect())
 	}
 
 	/// The certificate of `account` identified by `hash`, if present.
-	pub async fn certificate(&self, account: &Account, hash: String) -> JsResult<JsValue> {
+	pub async fn certificate(&self, account: &Account, hash: String) -> JsResult<Option<CertificateView>> {
 		let certificate = self
 			.inner
 			.certificate(account.address(), hash)
 			.await
 			.map_err(client_error)?;
-		let view = certificate.as_ref().map(CertificateView::from);
-		to_js(&view)
+		Ok(certificate.as_ref().map(CertificateView::from))
 	}
 
 	/// Build, sign, and publish a SEND of `amount` of `token` from `from` to
