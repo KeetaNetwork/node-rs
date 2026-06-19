@@ -18,6 +18,10 @@ This will:
 - Install development tools
 - Run initial build and tests
 
+Configure GitHub PAT for private packages
+- Create a GitHub Personal Access Token that can read packages [GitHub Docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)
+- Create ~/.npmrc with //npm.pkg.github.com/:_authToken=TOKEN where TOKEN is the PAT created in the last step
+
 ### Building
 
 ```bash
