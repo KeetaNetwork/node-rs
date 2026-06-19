@@ -54,5 +54,12 @@ fn strip_browser_incompatible_headers(code: String) -> String {
 		return code;
 	}
 
+	assert!(
+		code.contains(API_VERSION_HEADER),
+		"progenitor output no longer contains the api-version header snippet; \
+		 update API_VERSION_HEADER in keetanetwork-client/build.rs so wasm builds \
+		 keep stripping it (otherwise browser fetch fails CORS at runtime)"
+	);
+
 	code.replace(API_VERSION_HEADER, EMPTY_HEADER_MAP)
 }

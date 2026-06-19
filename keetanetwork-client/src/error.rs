@@ -19,7 +19,7 @@ pub enum ClientError {
 	#[snafu(display("node request failed"))]
 	Transport {
 		/// Underlying transport error from the backend. `Send + Sync` on native
-		/// targets; relaxed on wasm, where browser transport errors.
+		/// targets, relaxed on wasm. Browser transport errors are often `!Send`/`!Sync`.
 		#[cfg(not(target_family = "wasm"))]
 		source: Box<dyn core::error::Error + Send + Sync>,
 		/// Underlying transport error from the backend.
