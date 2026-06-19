@@ -33,7 +33,7 @@ use crate::model::{
 	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
 	TokenBalance, TransmitOptions,
 };
-use crate::rep::{RepBook, RepRecord, RepRef, SmallRng};
+use crate::rep::{RepBook, RepPart, RepRecord, RepRef, SmallRng};
 use crate::runtime::{Runtime, TaskHandle};
 use crate::sync::{Mutex, RwLock};
 use crate::transport::{LedgerSide, NodeTransport, TransportFactory};
@@ -59,6 +59,13 @@ struct RepPick {
 	key: String,
 	weight: BigInt,
 	transport: Arc<dyn NodeTransport>,
+}
+
+/// A representative paired with the head block hash and height it reports for
+/// an account, used to detect and reconcile divergence during a sync.
+struct RepHead {
+	pick: RepPick,
+	head: Option<(String, Amount)>,
 }
 
 /// Representatives' own votes for a pending successor block, sorted into
@@ -188,9 +195,11 @@ impl KeetaClient {
 	pub fn with_representatives(reps: impl IntoIterator<Item = RepEndpoint>, config: ClientConfig) -> Self {
 		let http = reqwest::Client::new();
 		let factory = Arc::new(GeneratedTransportFactory::new(http));
-		let parts = reps
-			.into_iter()
-			.map(|rep| (rep.account().to_string(), rep.api_url().to_owned(), rep.weight().clone()));
+		let parts = reps.into_iter().map(|rep| RepPart {
+			key: rep.account().to_string(),
+			url: rep.api_url().to_owned(),
+			weight: rep.weight().clone(),
+		});
 
 		Self::with_parts(parts, factory, Arc::new(TokioRuntime), config, false)
 	}
@@ -198,16 +207,18 @@ impl KeetaClient {
 	#[cfg(feature = "std")]
 	fn single(base_url: &str, http: reqwest::Client, config: ClientConfig) -> Self {
 		let factory = Arc::new(GeneratedTransportFactory::new(http));
-		let parts = [(base_url.to_owned(), base_url.to_owned(), BigInt::from(1u8))];
+		// An anonymous single-rep client has no account, so it keys the rep by
+		// its API URL; the weight is moot with a single representative.
+		let part = RepPart { key: base_url.to_owned(), url: base_url.to_owned(), weight: BigInt::from(1u8) };
 
-		Self::with_parts(parts, factory, Arc::new(TokioRuntime), config, true)
+		Self::with_parts([part], factory, Arc::new(TokioRuntime), config, true)
 	}
 
-	/// Construct a client from explicit `(key, url, weight)` representatives,
-	/// an injected [`TransportFactory`] (used to bind each rep and any later
+	/// Construct a client from explicit [`RepPart`] representatives, an
+	/// injected [`TransportFactory`] (used to bind each rep and any later
 	/// discovered ones), and a [`Runtime`].
 	pub fn with_parts(
-		reps: impl IntoIterator<Item = (String, String, BigInt)>,
+		reps: impl IntoIterator<Item = RepPart>,
 		factory: Arc<dyn TransportFactory>,
 		runtime: Arc<dyn Runtime>,
 		config: ClientConfig,
@@ -215,7 +226,7 @@ impl KeetaClient {
 	) -> Self {
 		let mut records = Vec::new();
 		let mut transports = BTreeMap::new();
-		for (key, url, weight) in reps {
+		for RepPart { key, url, weight } in reps {
 			let transport = factory.create(&url);
 			records.push(RepRecord::new(key.clone(), url, weight));
 			transports.insert(key, transport);
@@ -259,8 +270,10 @@ impl KeetaClient {
 
 	/// Select one representative bound to its transport.
 	fn pick_target(&self) -> Option<RepPick> {
-		let seed = self.inner.runtime.now_millis() ^ self.inner.rng_counter.fetch_add(1, Ordering::Relaxed);
-		let chosen = self.inner.reps.pick(&mut SmallRng::seed_from_u64(seed))?;
+		let now = self.inner.runtime.now_millis();
+		let counter = self.inner.rng_counter.fetch_add(1, Ordering::Relaxed);
+		let mut rng = SmallRng::seed_from_u64(now ^ counter);
+		let chosen = self.inner.reps.pick(&mut rng)?;
 		let transports = self.inner.transports.read();
 		transports.get(&chosen.key).map(|transport| RepPick {
 			key: chosen.key,
@@ -295,12 +308,12 @@ impl KeetaClient {
 	/// The current wall-clock moment from the runtime, falling back to the
 	/// epoch if the clock is out of [`BlockTime`]'s representable range.
 	fn now_moment(&self) -> BlockTime {
-		BlockTime::from_unix_millis(self.inner.runtime.unix_millis()).unwrap_or_default()
+		let millis = self.inner.runtime.unix_millis();
+		BlockTime::from_unix_millis(millis).unwrap_or_default()
 	}
 
 	/// Build a generated transport for the first representative, for endpoints
-	/// not covered by this wrapper. Uses a fresh HTTP client (this escape hatch
-	/// does not share the orchestrator's connection pool).
+	/// not covered by this wrapper.
 	#[cfg(feature = "std")]
 	pub fn transport(&self) -> Transport {
 		let url = self.inner.reps.first_url().unwrap_or_default();
@@ -465,7 +478,10 @@ impl KeetaClient {
 			}
 
 			attempt += 1;
-			self.inner.runtime.sleep(Duration::from_millis(delay)).await;
+
+			let backoff = Duration::from_millis(delay);
+			self.inner.runtime.sleep(backoff).await;
+
 			delay = next_backoff(delay, max_backoff);
 		}
 	}
@@ -545,6 +561,7 @@ impl KeetaClient {
 	/// - [`ClientError::Node`] -- every representative rejected the staple
 	pub async fn transmit_staple(&self, staple: &VoteStaple) -> Result<bool, ClientError> {
 		self.ensure_refresh();
+
 		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
@@ -552,7 +569,10 @@ impl KeetaClient {
 
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
-			requests.push(async move { (pick.key, pick.transport.publish_staple(staple).await) });
+			let key = pick.key;
+			let transport = pick.transport;
+
+			requests.push(async move { (key, transport.publish_staple(staple).await) });
 		}
 
 		let mut accepted = false;
@@ -594,7 +614,8 @@ impl KeetaClient {
 	/// - [`ClientError::Node`] -- every representative rejected the vote request
 	pub async fn request_vote(&self, blocks: &[Block]) -> Result<Vote, ClientError> {
 		let votes = self.request_votes(blocks, &[], &[]).await?;
-		votes.into_iter().next().ok_or(ClientError::MissingVote)
+		let first = votes.into_iter().next();
+		first.ok_or(ClientError::MissingVote)
 	}
 
 	/// Request votes for `blocks` from every representative concurrently,
@@ -608,6 +629,7 @@ impl KeetaClient {
 		quotes: &[VoteQuote],
 	) -> Result<Vec<Vote>, ClientError> {
 		self.ensure_refresh();
+
 		// In the permanent round, contact only the reps that issued a prior
 		// (temporary) vote: the node refuses a permanent vote from a rep that
 		// has no temporary vote of its own (`LEDGER_NO_PERM_WITHOUT_SELF_TEMP`).
@@ -630,12 +652,15 @@ impl KeetaClient {
 			// its own temporary vote, which the node requires to escalate, plus
 			// its own quote when the caller supplied one.
 			let quote = quotes_by_issuer.get(&pick.key).cloned();
+			let key = pick.key;
+			let weight = pick.weight;
+			let transport = pick.transport;
+
 			requests.push(async move {
-				let vote = pick
-					.transport
+				let vote = transport
 					.create_vote(blocks, prior_votes, quote.as_ref())
 					.await;
-				(pick.key, pick.weight, vote)
+				(key, weight, vote)
 			});
 		}
 
@@ -695,6 +720,7 @@ impl KeetaClient {
 	/// a partial set still suffices for fee estimation.
 	async fn request_quotes(&self, blocks: &[Block], collect_all: bool) -> Result<Vec<VoteQuote>, ClientError> {
 		self.ensure_refresh();
+
 		let (refs, total_weight) = self.inner.reps.snapshot_with_total();
 		let picks = self.bind_transports(refs);
 		if picks.is_empty() {
@@ -704,9 +730,12 @@ impl KeetaClient {
 		let threshold = self.inner.config.quorum_threshold;
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
+			let key = pick.key;
+			let weight = pick.weight;
+			let transport = pick.transport;
 			requests.push(async move {
-				let quote = pick.transport.create_vote_quote(blocks).await;
-				(pick.key, pick.weight, quote)
+				let quote = transport.create_vote_quote(blocks).await;
+				(key, weight, quote)
 			});
 		}
 
@@ -778,7 +807,10 @@ impl KeetaClient {
 					}
 
 					attempt += 1;
-					self.inner.runtime.sleep(Duration::from_millis(delay)).await;
+
+					let backoff = Duration::from_millis(delay);
+					self.inner.runtime.sleep(backoff).await;
+
 					delay = next_backoff(delay, self.inner.config.max_backoff_ms);
 				}
 			}
@@ -832,37 +864,34 @@ impl KeetaClient {
 
 		let account_key = account.to_string();
 
-		let mut infos: Vec<(RepPick, Option<(String, Amount)>)> = Vec::with_capacity(picks.len());
+		let mut heads: Vec<RepHead> = Vec::with_capacity(picks.len());
 		for pick in picks {
-			let info = head_info(&pick.transport, &account_key).await;
-			infos.push((pick, info));
+			let head = head_info(&pick.transport, &account_key).await;
+			heads.push(RepHead { pick, head });
 		}
 
-		infos.sort_by(|left, right| height_value(&left.1).cmp(&height_value(&right.1)));
+		heads.sort_by_key(|entry| height_value(&entry.head));
 
-		let lowest_height = height_value(&infos[0].1);
-		let highest_index = infos.len() - 1;
-		let highest_height = height_value(&infos[highest_index].1);
+		let highest_index = heads.len() - 1;
+		let lowest_height = height_value(&heads[0].head);
+		let highest_height = height_value(&heads[highest_index].head);
 		if lowest_height == highest_height {
 			return Ok(None);
 		}
 
-		let lowest_head = match &infos[0].1 {
-			Some((head, _)) => head.clone(),
+		let lowest_head = match &heads[0].head {
+			Some((hash, _)) => hash.clone(),
 			None => account.to_opening_hash().to_string(),
 		};
+		let highest_transport = Arc::clone(&heads[highest_index].pick.transport);
 
-		let successor = match infos[highest_index]
-			.0
-			.transport
-			.successor_block(&lowest_head)
-			.await?
-		{
+		let successor = match highest_transport.successor_block(&lowest_head).await? {
 			Some(block) => block,
 			None => return Ok(None),
 		};
+		let successor_hash = successor.hash().to_string();
 		let staple = match self
-			.compose_staple_on(&infos[highest_index].0.transport, &successor.hash().to_string())
+			.compose_staple_on(&highest_transport, &successor_hash)
 			.await?
 		{
 			Some(staple) => staple,
@@ -870,15 +899,15 @@ impl KeetaClient {
 		};
 
 		if publish {
-			for (pick, info) in &infos {
-				if height_value(info) == lowest_height {
+			for entry in &heads {
+				if height_value(&entry.head) == lowest_height {
 					// Publish serially to every lagging rep; ignore conflicts
 					// (e.g. LEDGER_BLOCK_ALREADY_EXISTS) and verify by height.
-					let _ = pick.transport.publish_staple(&staple).await;
+					let _ = entry.pick.transport.publish_staple(&staple).await;
 				}
 			}
 
-			let updated = head_info(&infos[0].0.transport, &account_key).await;
+			let updated = head_info(&heads[0].pick.transport, &account_key).await;
 			if height_value(&updated) == lowest_height {
 				return Err(ClientError::SyncPublishFailed);
 			}
@@ -908,6 +937,7 @@ impl KeetaClient {
 		options: TransmitOptions,
 	) -> Result<Option<VoteStaple>, ClientError> {
 		self.ensure_refresh();
+
 		let successor = match self.pending_block(account.to_string()).await? {
 			Some(block) => block,
 			None => return Ok(None),
@@ -936,7 +966,6 @@ impl KeetaClient {
 			self.top_up_recover_votes(&picks, &mut votes, &mut blocks, moment, &options)
 				.await?;
 		}
-
 		if votes.perm_votes.is_empty() {
 			return Err(ClientError::RecoverFailed);
 		}
@@ -1146,10 +1175,11 @@ impl KeetaClient {
 		moment: BlockTime,
 		priority: &[AccountRef],
 	) -> Result<Block, ClientError> {
+		let signer_key = signer.to_string();
 		let previous = blocks
 			.iter()
 			.rev()
-			.find(|block| block.data().account().to_string() == signer.to_string())
+			.find(|block| block.data().account().to_string() == signer_key)
 			.map(|block| block.hash())
 			.ok_or(ClientError::FeeRequired)?;
 
@@ -1158,6 +1188,7 @@ impl KeetaClient {
 			.with_purpose(BlockPurpose::Fee)
 			.with_previous(previous)
 			.with_date(moment);
+
 		for operation in self.fee_operations(votes, priority)? {
 			builder.with_operation(operation);
 		}
@@ -1352,6 +1383,7 @@ impl KeetaClient {
 	/// The next pending (unreceived) block for `account`, if any.
 	pub async fn pending_block(&self, account: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
 		self.ensure_refresh();
+
 		let account = account.as_ref().to_owned();
 		let picks = self.snapshot_picks();
 		if picks.is_empty() {
@@ -1361,7 +1393,9 @@ impl KeetaClient {
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
 			let account = account.clone();
-			requests.push(async move { (pick.key, pick.transport.pending_block(&account).await) });
+			let key = pick.key;
+			let transport = pick.transport;
+			requests.push(async move { (key, transport.pending_block(&account).await) });
 		}
 
 		// Tally candidate blocks by hash so the block seen on the most reps
@@ -1411,6 +1445,7 @@ impl KeetaClient {
 	/// representative has the staple.
 	pub async fn vote_staple(&self, blockhash: impl AsRef<str>) -> Result<Option<VoteStaple>, ClientError> {
 		self.ensure_refresh();
+
 		let blockhash = blockhash.as_ref();
 		let picks = self.snapshot_picks();
 		if picks.is_empty() {
@@ -1511,15 +1546,17 @@ impl KeetaClient {
 			let next_cursor = page.last().map(|block| block.hash().to_string());
 			blocks.extend(page);
 
-			let cursor_advanced = next_cursor.as_ref() != cursor.as_ref();
-			let page_was_full = page_len as i64 >= limit;
+			let Some(hash) = next_cursor else {
+				break;
+			};
 
-			match next_cursor {
-				Some(hash) if cursor_advanced && page_was_full => {
-					cursor = Some(hash);
-				}
-				_ => break,
+			let advanced = Some(&hash) != cursor.as_ref();
+			let full_page = page_len as i64 >= limit;
+			if !advanced || !full_page {
+				break;
 			}
+
+			cursor = Some(hash);
 		}
 
 		Ok(blocks)
@@ -1819,7 +1856,9 @@ fn reps_cache() -> &'static Mutex<RepsCache> {
 fn cached_representatives(runtime: &Arc<dyn Runtime>, signature: &str, ttl: Duration) -> Option<Vec<RepEntry>> {
 	let cache = reps_cache().lock();
 	let (stored_at, reps) = cache.get(signature)?;
-	if runtime.now_millis().saturating_sub(*stored_at) < ttl.as_millis() as u64 {
+	let elapsed = runtime.now_millis().saturating_sub(*stored_at);
+	let ttl_ms = ttl.as_millis() as u64;
+	if elapsed < ttl_ms {
 		return Some(reps.clone());
 	}
 

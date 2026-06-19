@@ -83,6 +83,7 @@ pub use model::{
 	AccountOrPending, AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
 	PendingAccount, Representative, TokenBalance, TransmitOptions,
 };
+pub use rep::RepPart;
 pub use runtime::{BoxFuture, Runtime, TaskHandle};
 pub use swap::{AcceptSwapRequest, CreateSwapRequest, SwapExpectation, SwapTokenAmount};
 pub use transport::{LedgerSide, NodeTransport, TransportFactory};

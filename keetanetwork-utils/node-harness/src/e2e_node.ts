@@ -35,7 +35,6 @@ import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/in
 import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/utils/certificate';
 import type * as HelperTestingModule from '@keetanetwork/keetanet-node/dist/lib/utils/helper_testing';
 import type * as VoteModule from '@keetanetwork/keetanet-node/dist/lib/vote';
-import type { Block as BlockInstance } from '@keetanetwork/keetanet-node/dist/lib/block/index';
 
 import { loadModule, resolveDist } from './dist';
 
@@ -184,7 +183,7 @@ type HarnessRequest =
 
 interface DirectResult {
 	voteStaple: {
-		blocks: BlockInstance[];
+		blocks: BlockModule.Block[];
 		toBytes: () => ArrayBuffer;
 	};
 }
