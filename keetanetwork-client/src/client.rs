@@ -30,7 +30,7 @@ use crate::config::ClientConfig;
 use crate::error::{AccountSnafu, BlockSnafu, ClientError, VoteSnafu};
 use crate::math::{meets_quorum, most_common_hash, next_backoff, overlapping_moment};
 use crate::model::{
-	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
+	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
 	TokenBalance, TransmitOptions,
 };
 use crate::rep::{RepBook, RepPart, RepRecord, RepRef, SmallRng};
@@ -857,6 +857,8 @@ impl KeetaClient {
 	/// - [`ClientError::SyncPublishFailed`] -- the lagging reps did not advance after publishing
 	/// - [`ClientError::Node`] -- a representative rejected a fetch or publish request
 	pub async fn sync_account(&self, account: &AccountRef, publish: bool) -> Result<Option<VoteStaple>, ClientError> {
+		self.ensure_refresh();
+
 		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
@@ -1050,7 +1052,10 @@ impl KeetaClient {
 			} else {
 				votes.perm_votes.clone()
 			};
-			if let Ok(mut more) = self.request_votes_on(&votes.missing, blocks, &prior).await {
+			if let Ok(mut more) = self
+				.request_votes_on(&votes.missing, blocks, &prior, &options.quotes)
+				.await
+			{
 				votes.temp_votes.append(&mut more);
 			}
 		}
@@ -1075,7 +1080,10 @@ impl KeetaClient {
 		let mut prior = votes.temp_votes.clone();
 		prior.extend(votes.perm_votes.iter().cloned());
 
-		if let Ok(mut more) = self.request_votes_on(&missing_perm, blocks, &prior).await {
+		if let Ok(mut more) = self
+			.request_votes_on(&missing_perm, blocks, &prior, &options.quotes)
+			.await
+		{
 			votes.perm_votes.append(&mut more);
 		}
 
@@ -1100,24 +1108,28 @@ impl KeetaClient {
 	}
 
 	/// Request votes from a specific subset of representatives, attaching
-	/// `prior_votes`. Failures are scored and dropped; only successful votes
-	/// are returned.
+	/// `prior_votes` and each rep's own caller-supplied `quotes`.
 	async fn request_votes_on(
 		&self,
 		reps: &[RepPick],
 		blocks: &[Block],
 		prior_votes: &[Vote],
+		quotes: &[VoteQuote],
 	) -> Result<Vec<Vote>, ClientError> {
 		if reps.is_empty() {
 			return Ok(Vec::new());
 		}
 
+		let quotes_by_issuer = quotes_by_issuer(quotes);
 		let mut requests = FuturesUnordered::new();
 		for pick in reps {
+			let quote = quotes_by_issuer.get(&pick.key).cloned();
 			let key = pick.key.clone();
 			let transport = Arc::clone(&pick.transport);
 			requests.push(async move {
-				let vote = transport.create_vote(blocks, prior_votes, None).await;
+				let vote = transport
+					.create_vote(blocks, prior_votes, quote.as_ref())
+					.await;
 				(key, vote)
 			});
 		}
@@ -1250,8 +1262,7 @@ impl KeetaClient {
 	/// Publish a single block built via [`builder`](Self::builder).
 	///
 	/// `options.fee_signer` pays a fee when the node requires one (absent, a
-	/// required fee fails with [`ClientError::FeeRequired`]) and drives
-	/// recovery on a `LEDGER_SUCCESSOR_VOTE_EXISTS` conflict.
+	/// required fee fails with [`ClientError::FeeRequired`]).
 	///
 	/// # Errors
 	///
@@ -1260,25 +1271,8 @@ impl KeetaClient {
 	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
 	/// - [`ClientError::Node`] -- a representative rejected the block or staple
 	pub async fn publish(&self, block: Block, options: TransmitOptions) -> Result<bool, ClientError> {
-		let account = Arc::clone(block.data().account());
-		let mut attempt = 0u32;
-		loop {
-			let result = self
-				.transmit_with_optional_fee(core::slice::from_ref(&block), &options)
-				.await;
-
-			match result {
-				Ok(accepted) => return Ok(accepted),
-				Err(error) => {
-					let recoverable = is_ledger_code(&error, "LEDGER_SUCCESSOR_VOTE_EXISTS");
-					if !recoverable || attempt >= 2 {
-						return Err(error);
-					}
-					attempt += 1;
-					let _ = self.recover_account(&account, true, options.clone()).await;
-				}
-			}
-		}
+		self.transmit_with_optional_fee(core::slice::from_ref(&block), &options)
+			.await
 	}
 
 	/// Build, sign, and [`publish`](Self::publish) a SEND of `amount` of
@@ -1306,7 +1300,10 @@ impl KeetaClient {
 		let options = TransmitOptions { fee_signer: Some(Arc::clone(from)), ..Default::default() };
 		let mut accepted = true;
 		for block in blocks {
-			accepted = self.publish(block, options.clone()).await?;
+			accepted &= self.publish(block, options.clone()).await?;
+			if !accepted {
+				break;
+			}
 		}
 
 		Ok(accepted)
@@ -1473,12 +1470,17 @@ impl KeetaClient {
 		}
 	}
 
-	/// The block identified by `blockhash`, if the node has it.
-	pub async fn block(&self, blockhash: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
+	/// The block identified by `blockhash`, if the node has it. `side` selects
+	/// the ledger to read (`None` defaults to the main ledger).
+	pub async fn block(
+		&self,
+		blockhash: impl AsRef<str>,
+		side: Option<LedgerSide>,
+	) -> Result<Option<Block>, ClientError> {
 		let blockhash = blockhash.as_ref().to_owned();
 		self.dispatch_any(move |t| {
 			let blockhash = blockhash.clone();
-			async move { t.block(&blockhash, None).await }
+			async move { t.block(&blockhash, side).await }
 		})
 		.await
 	}
@@ -1517,6 +1519,16 @@ impl KeetaClient {
 	/// A single page of `account`'s block chain (most recent first), bounded
 	/// by `query`.
 	pub async fn chain_page(&self, account: impl AsRef<str>, query: ChainQuery) -> Result<Vec<Block>, ClientError> {
+		Ok(self.chain_page_cursor(account, query).await?.blocks)
+	}
+
+	/// A single page of `account`'s chain together with the node's `next_key`
+	/// cursor for the following page.
+	pub async fn chain_page_cursor(
+		&self,
+		account: impl AsRef<str>,
+		query: ChainQuery,
+	) -> Result<ChainPage, ClientError> {
 		let account = account.as_ref().to_owned();
 		self.dispatch_any(move |t| {
 			let account = account.clone();
@@ -1527,11 +1539,8 @@ impl KeetaClient {
 	}
 
 	/// Every block in `account`'s chain (most recent first), fetched by
-	/// paging with `page_limit` per request until a short page is returned.
-	///
-	/// Paging uses the last block hash of each page as the next `start`
-	/// cursor and stops when the cursor stops advancing, guarding against a
-	/// node whose cursor semantics differ from the expected contract.
+	/// following the node's `next_key` cursor with `page_limit` per request
+	/// until the cursor is exhausted.
 	pub async fn chain_all(&self, account: impl AsRef<str>, page_limit: u32) -> Result<Vec<Block>, ClientError> {
 		let account = account.as_ref();
 		let limit = i64::from(page_limit.max(1));
@@ -1540,23 +1549,14 @@ impl KeetaClient {
 
 		loop {
 			let query = ChainQuery { start: cursor.clone(), end: None, limit: Some(limit) };
-			let page = self.chain_page(account, query).await?;
-			let page_len = page.len();
+			let page = self.chain_page_cursor(account, query).await?;
 
-			let next_cursor = page.last().map(|block| block.hash().to_string());
-			blocks.extend(page);
+			blocks.extend(page.blocks);
 
-			let Some(hash) = next_cursor else {
-				break;
-			};
-
-			let advanced = Some(&hash) != cursor.as_ref();
-			let full_page = page_len as i64 >= limit;
-			if !advanced || !full_page {
-				break;
+			match page.next_key {
+				Some(next) => cursor = Some(next),
+				None => break,
 			}
-
-			cursor = Some(hash);
 		}
 
 		Ok(blocks)
@@ -1922,7 +1922,7 @@ fn contacts_for(picks: Vec<RepPick>, prior_votes: &[Vote]) -> Vec<RepPick> {
 }
 
 /// Whether `error` is a node ledger error carrying the given `code`.
-fn is_ledger_code(error: &ClientError, code: &str) -> bool {
+pub(crate) fn is_ledger_code(error: &ClientError, code: &str) -> bool {
 	matches!(error, ClientError::Node { source } if source.code() == Some(code))
 }
 

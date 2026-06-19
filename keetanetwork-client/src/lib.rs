@@ -80,8 +80,8 @@ pub use error::ClientError;
 pub use keetanetwork_error::{KeetaNetError, NodeErrorType};
 pub use keetanetwork_vote::{VoteQuote, VoteStaple};
 pub use model::{
-	AccountOrPending, AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
-	PendingAccount, Representative, TokenBalance, TransmitOptions,
+	AccountInfo, AccountOrPending, AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery,
+	LedgerChecksum, PendingAccount, Representative, TokenBalance, TransmitOptions,
 };
 pub use rep::RepPart;
 pub use runtime::{BoxFuture, Runtime, TaskHandle};

@@ -7,9 +7,9 @@
 
 use super::types::VoteOid;
 
-/// `commonName` attribute (RFC 5280) — used by the issuer DN.
+/// `commonName` attribute (RFC 5280) - used by the issuer DN.
 pub const COMMON_NAME: VoteOid = VoteOid::from_static(&[2, 5, 4, 3]);
-/// `serialNumber` attribute (RFC 5280) — used by the subject DN.
+/// `serialNumber` attribute (RFC 5280) - used by the subject DN.
 pub const SERIAL_NUMBER: VoteOid = VoteOid::from_static(&[2, 5, 4, 5]);
 
 /// Generic "EC public key" algorithm OID (RFC 5480).

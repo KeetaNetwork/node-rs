@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use keetanetwork_block::{AccountRef, Amount};
+use keetanetwork_block::{AccountRef, Amount, Block};
 use keetanetwork_vote::{VoteQuote, VoteStaple};
 
 use crate::error::ClientError;
@@ -92,8 +92,6 @@ pub struct TokenBalance {
 	pub token: String,
 	/// Settled balance.
 	pub balance: Amount,
-	/// Pending (unreceived) balance.
-	pub pending: Amount,
 }
 
 /// A representative and its voting weight.
@@ -167,6 +165,17 @@ pub struct ChainQuery {
 	pub limit: Option<i64>,
 }
 
+/// A single page of an account's chain together with the cursor for the next
+/// page, mirroring the node's `nextKey` pagination contract.
+#[derive(Debug, Clone, Default)]
+pub struct ChainPage {
+	/// The blocks in this page, most recent first.
+	pub blocks: Vec<Block>,
+	/// Cursor to pass as the next page's [`ChainQuery::start`], or `None` once
+	/// the chain is exhausted.
+	pub next_key: Option<String>,
+}
+
 /// Pagination/range bounds for
 /// [`KeetaClient::history_page`](crate::KeetaClient::history_page) and
 /// [`KeetaClient::global_history_page`](crate::KeetaClient::global_history_page).
@@ -178,6 +187,17 @@ pub struct HistoryQuery {
 	pub limit: Option<i64>,
 }
 
+/// Account metadata as set via [`UserClient::set_info`](crate::UserClient::set_info).
+#[derive(Debug, Clone, Default)]
+pub struct AccountInfo {
+	/// Human-readable name, if set.
+	pub name: Option<String>,
+	/// Free-form description, if set.
+	pub description: Option<String>,
+	/// Opaque metadata string, if set.
+	pub metadata: Option<String>,
+}
+
 /// A snapshot of an account's ledger state.
 #[derive(Debug, Clone)]
 pub struct AccountState {
@@ -187,6 +207,8 @@ pub struct AccountState {
 	pub head: Option<String>,
 	/// Head block height, if known.
 	pub height: Option<Amount>,
+	/// Account metadata, if the account reports any.
+	pub info: Option<AccountInfo>,
 	/// Total token supply, present only for token accounts.
 	pub supply: Option<Amount>,
 	/// Per-token balances held by the account.
