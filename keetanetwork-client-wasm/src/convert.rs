@@ -96,3 +96,46 @@ pub fn client_error(error: ClientError) -> JsValue {
 
 	coded_error(error.code(), &message)
 }
+
+#[cfg(all(test, target_family = "wasm"))]
+mod wasm_tests {
+	use super::*;
+	use wasm_bindgen_test::wasm_bindgen_test;
+
+	#[wasm_bindgen_test]
+	fn ledger_side_parses_each_known_side() {
+		assert!(matches!(parse_ledger_side(None), Ok(None)));
+		assert!(matches!(parse_ledger_side(Some(String::from("main"))), Ok(Some(LedgerSide::Main))));
+		assert!(matches!(parse_ledger_side(Some(String::from("side"))), Ok(Some(LedgerSide::Side))));
+		assert!(matches!(parse_ledger_side(Some(String::from("both"))), Ok(Some(LedgerSide::Both))));
+	}
+
+	#[wasm_bindgen_test]
+	fn ledger_side_rejects_an_unknown_side() {
+		let rejected = parse_ledger_side(Some(String::from("galaxy")));
+		assert!(rejected.is_err());
+	}
+
+	#[wasm_bindgen_test]
+	fn hash32_round_trips_valid_hex_and_rejects_bad_length() {
+		let valid = parse_hash32(&"ab".repeat(32), "hash");
+		assert!(matches!(valid, Ok(bytes) if bytes == [0xabu8; 32]));
+		assert!(parse_hash32("zz", "hash").is_err());
+	}
+
+	#[wasm_bindgen_test]
+	fn bigint_hex_parses_prefixed_and_bare_input() {
+		let prefixed = parse_bigint_hex("0xff", "value").expect("prefixed hex must parse");
+		let bare = parse_bigint_hex("ff", "value").expect("bare hex must parse");
+		assert_eq!(prefixed, bare);
+		assert_eq!(prefixed, BigInt::from(255u8));
+		assert!(parse_bigint_hex("xy", "value").is_err());
+	}
+
+	#[wasm_bindgen_test]
+	fn coded_error_attaches_the_stable_code_property() {
+		let error = coded_error("INVALID_LEDGER_SIDE", "side must be main, side, or both");
+		let code = js_sys::Reflect::get(&error, &JsValue::from_str("code")).expect("code property must be readable");
+		assert_eq!(code.as_string().as_deref(), Some("INVALID_LEDGER_SIDE"));
+	}
+}

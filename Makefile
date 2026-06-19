@@ -125,6 +125,7 @@ test-all: test test-feat
 WASM_E2E_DIR := keetanetwork-client-wasm/e2e
 
 test-wasm: node-harness wasm-build
+	wasm-pack test --node keetanetwork-client-wasm
 	cd $(WASM_E2E_DIR) && npm ci
 	cd $(WASM_E2E_DIR) && npx playwright install --with-deps chromium
 	cd $(WASM_E2E_DIR) && npx playwright test

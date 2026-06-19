@@ -123,7 +123,7 @@ pub fn base_flag_name(flag: BaseFlag) -> &'static str {
 		.unwrap_or("unknown")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
 	use super::*;
 

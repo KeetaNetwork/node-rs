@@ -124,7 +124,8 @@ impl TaskHandle for WasmTask {
 #[async_trait(?Send)]
 impl Runtime for WasmRuntime {
 	async fn sleep(&self, duration: Duration) {
-		gloo_timers::future::TimeoutFuture::new(duration.as_millis() as u32).await;
+		let millis = u32::try_from(duration.as_millis()).unwrap_or(u32::MAX);
+		gloo_timers::future::TimeoutFuture::new(millis).await;
 	}
 
 	fn spawn(&self, future: BoxFuture) -> Box<dyn TaskHandle> {
