@@ -16,8 +16,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::convert::{coded_error, JsResult};
 
-/// Canonical map from JS algorithm name to crypto key type. Single source of
-/// truth for parsing, formatting, and the supported set reported in errors.
+/// Canonical map from JS algorithm name to crypto key type.
 const CRYPTO_ALGORITHMS: [(&str, KeyPairType); 3] = [
 	("ed25519", KeyPairType::ED25519),
 	("ecdsa_secp256k1", KeyPairType::ECDSASECP256K1),

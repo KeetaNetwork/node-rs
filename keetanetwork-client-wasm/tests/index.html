@@ -7,11 +7,12 @@
 <body>
 	<main id="status">loading wasm client...</main>
 	<script type="module">
-		import init, * as keeta from '/pkg/keetanetwork_client_wasm.js';
+		import init, * as keeta from '../pkg/keetanetwork_client_wasm.js';
 
 		await init();
-		window.keeta = keeta;
-		window.wasmReady = true;
+
+		globalThis.keeta = keeta;
+		globalThis.wasmReady = true;
 		document.getElementById('status').textContent = 'wasm client ready';
 	</script>
 </body>

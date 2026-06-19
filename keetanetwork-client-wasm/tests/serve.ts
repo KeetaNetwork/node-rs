@@ -8,7 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { extname, join, resolve } from 'node:path';
+import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -100,7 +100,9 @@ const server = createServer(async (request: IncomingMessage, response: ServerRes
 	}
 
 	const filePath = resolve(staticRoot, `.${path}`);
-	if (!filePath.startsWith(staticRoot) || !existsSync(filePath)) {
+	const relativePath = relative(staticRoot, filePath);
+	const withinRoot = relativePath !== '' && !relativePath.startsWith('..') && !isAbsolute(relativePath);
+	if (!withinRoot || !existsSync(filePath)) {
 		response.statusCode = 404;
 		response.end('not found');
 		return;
@@ -117,8 +119,11 @@ function shutdown(): void {
 	try {
 		command({ cmd: 'shutdown' });
 	} catch {
-		// The harness may already be gone; fall through to the kill below.
+		/*
+		 * The harness may already be gone
+		 */
 	}
+
 	harness.kill('SIGTERM');
 	server.close(() => process.exit(0));
 }

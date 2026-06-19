@@ -75,7 +75,7 @@ async function loadNodeInfo(request: {
 test('KeetaClient publishes a send round-trip against a live node', async ({ page }) => {
 	const info = await loadNodeInfo(page.request);
 
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const result: SendRoundTrip = await page.evaluate(async (cfg: NodeInfo) => {
@@ -112,7 +112,7 @@ test('KeetaClient publishes a send round-trip against a live node', async ({ pag
 test('UserClient transmits a builder-assembled send', async ({ page }) => {
 	const info = await loadNodeInfo(page.request);
 
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const result: BuilderRoundTrip = await page.evaluate(
@@ -158,7 +158,7 @@ test('UserClient transmits a builder-assembled send', async ({ page }) => {
 });
 
 test('errors cross the boundary with a stable code', async ({ page }) => {
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const code: string = await page.evaluate(async () => {
@@ -178,7 +178,7 @@ test('errors cross the boundary with a stable code', async ({ page }) => {
 test('a generated account is recoverable and can be funded', async ({ page }) => {
 	const info = await loadNodeInfo(page.request);
 
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const result: GenerationRoundTrip = await page.evaluate(async (cfg: NodeInfo) => {
@@ -220,7 +220,7 @@ test('a generated account is recoverable and can be funded', async ({ page }) =>
 });
 
 test('permission inputs validate their flags with a stable code', async ({ page }) => {
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const result: { code: string; accepts: boolean } = await page.evaluate(async () => {
@@ -252,7 +252,7 @@ const SIGNING_ALGORITHMS = ['ed25519', 'ecdsa_secp256k1', 'ecdsa_secp256r1'] as 
 
 for (const algorithm of SIGNING_ALGORITHMS) {
 	test(`${algorithm} account signs, verifies, and round-trips encryption`, async ({ page }) => {
-		await page.goto('/e2e/index.html');
+		await page.goto('/tests/index.html');
 		await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 		const result: {
@@ -295,7 +295,7 @@ for (const algorithm of SIGNING_ALGORITHMS) {
 }
 
 test('fromSeed defaults to secp256k1 when no algorithm is given', async ({ page }) => {
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const derivedAlgorithm: string = await page.evaluate(async () => {
@@ -309,7 +309,7 @@ test('fromSeed defaults to secp256k1 when no algorithm is given', async ({ page 
 test('UserClient builds a swap-request block against a live node', async ({ page }) => {
 	const info = await loadNodeInfo(page.request);
 
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const result: { hash: string; hexRoundTrips: boolean } = await page.evaluate(
@@ -340,7 +340,7 @@ test('UserClient builds a swap-request block against a live node', async ({ page
 test('reads return structured, typed views with string amounts', async ({ page }) => {
 	const info = await loadNodeInfo(page.request);
 
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const result: TypedReads = await page.evaluate(async (cfg: NodeInfo) => {
@@ -391,7 +391,7 @@ test('reads return structured, typed views with string amounts', async ({ page }
 });
 
 test('Permissions decode and round-trip the on-chain bitmaps', async ({ page }) => {
-	await page.goto('/e2e/index.html');
+	await page.goto('/tests/index.html');
 	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 
 	const result: PermissionDecode = await page.evaluate(async () => {
@@ -448,7 +448,7 @@ test.describe('extended client and user surface', () => {
 
 	test.beforeEach(async ({ page }) => {
 		info = await loadNodeInfo(page.request);
-		await page.goto('/e2e/index.html');
+		await page.goto('/tests/index.html');
 		await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
 	});
 

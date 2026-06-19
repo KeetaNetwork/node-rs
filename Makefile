@@ -122,13 +122,13 @@ test: node-harness
 test-all: test test-feat
 
 # Browser end-to-end test
-WASM_E2E_DIR := keetanetwork-client-wasm/e2e
+WASM_TEST_DIR := keetanetwork-client-wasm/tests
 
 test-wasm: node-harness wasm-build
 	wasm-pack test --node keetanetwork-client-wasm
-	cd $(WASM_E2E_DIR) && npm ci
-	cd $(WASM_E2E_DIR) && npx playwright install --with-deps chromium
-	cd $(WASM_E2E_DIR) && npx playwright test
+	cd $(WASM_TEST_DIR) && npm ci
+	cd $(WASM_TEST_DIR) && npx playwright install --with-deps chromium
+	cd $(WASM_TEST_DIR) && npx playwright test
 
 # Set up coverage tools (internal helper target)
 coverage-setup:

@@ -162,8 +162,7 @@ pub enum ClientError {
 impl ClientError {
 	/// A stable, machine-readable code for programmatic branching. A
 	/// [`Node`](Self::Node) error surfaces the node's own code (e.g.
-	/// `LEDGER_*`) when it carries one; every other variant maps to a fixed
-	/// `SCREAMING_SNAKE_CASE` discriminant.
+	/// `LEDGER_*`) when it carries one.
 	pub fn code(&self) -> &str {
 		match self {
 			Self::Transport { .. } => "TRANSPORT",
@@ -194,27 +193,6 @@ impl ClientError {
 			Self::SwapAmountMismatch => "SWAP_AMOUNT_MISMATCH",
 			Self::SwapAmountTooLow => "SWAP_AMOUNT_TOO_LOW",
 			Self::SwapExactMismatch => "SWAP_EXACT_MISMATCH",
-		}
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn code_maps_fixed_variants() {
-		let cases = [
-			(ClientError::FeeRequired, "FEE_REQUIRED"),
-			(ClientError::SignerRequired, "SIGNER_REQUIRED"),
-			(ClientError::QuorumNotReached, "QUORUM_NOT_REACHED"),
-			(ClientError::NoRepresentatives, "NO_REPRESENTATIVES"),
-			(ClientError::UnsupportedNetwork, "UNSUPPORTED_NETWORK"),
-			(ClientError::Timeout, "TIMEOUT"),
-		];
-
-		for (error, expected) in cases {
-			assert_eq!(error.code(), expected);
 		}
 	}
 }

@@ -11,8 +11,7 @@ use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockPurpose};
 use num_bigint::BigInt;
 
-/// Canonical map from JS permission flag name to base flag. Single source of
-/// truth for both parsing names and rendering them.
+/// Canonical map from JS permission flag name to base flag.
 pub const BASE_FLAGS: [(&str, BaseFlag); 15] = [
 	("access", BaseFlag::Access),
 	("owner", BaseFlag::Owner),

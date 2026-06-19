@@ -3481,6 +3481,26 @@ mod tests {
 		Account::<T>::try_from(Accountable::KeyAndType(keyable, T::keypair_type()))
 	}
 
+	#[test]
+	fn generic_account_signs_verifies_and_round_trips_encryption() -> Result<(), AccountError> {
+		let account = GenericAccount::EcdsaSecp256k1(create_test_account::<KeyECDSASECP256K1>(None)?);
+		let message: &[u8] = b"generic account behavioral round-trip";
+		let other: &[u8] = b"a different message entirely";
+
+		let signature = account.sign(message, None)?;
+		assert!(account.verify(message, &signature, None).is_ok(), "a fresh signature must verify");
+		assert!(
+			account.verify(other, &signature, None).is_err(),
+			"verification must reject a signature over a different message"
+		);
+
+		let ciphertext = account.encrypt(message)?;
+		let plaintext = account.decrypt(&ciphertext)?;
+		assert_eq!(plaintext.as_slice(), message, "decrypt must recover the encrypted plaintext");
+
+		Ok(())
+	}
+
 	/// Test helper function to create an account from a public key string.
 	/// This is useful for testing scenarios where you have hex-encoded public key strings.
 	fn create_test_account_from_pub_key_string<T>(pub_key_string: &str) -> Result<Account<T>, AccountError>

@@ -34,8 +34,7 @@ impl Builder {
 		self.inner.for_account(&account.inner());
 	}
 
-	/// Switch the active account to `account`, signed by `signer` (delegated
-	/// signing).
+	/// Switch the active account to `account`, signed by `signer`.
 	#[wasm_bindgen(js_name = forAccountWithSigner)]
 	pub fn for_account_with_signer(&mut self, account: &Account, signer: &Account) {
 		self.inner
@@ -62,8 +61,7 @@ impl Builder {
 		Ok(())
 	}
 
-	/// Append a RECEIVE with explicit `exact` matching and optional `forward`
-	/// recipient.
+	/// Append a RECEIVE with `exact` matching and optional `forward` recipient.
 	#[wasm_bindgen(js_name = receiveWith)]
 	pub fn receive_with(
 		&mut self,

@@ -4,7 +4,7 @@ const PORT = 5173;
 const baseURL = `http://localhost:${PORT}`;
 
 export default defineConfig({
-	testDir: './tests',
+	testDir: '.',
 	timeout: 90_000,
 	fullyParallel: false,
 	reporter: 'list',
