@@ -52,9 +52,11 @@ export function resolveOutputPath(argument: string | undefined, usage: string): 
  */
 export function writeOutputFile(outFile: string, contents: string): void {
 	const resolved = path.resolve(outFile);
-	const permitted = allowedOutputBases().some(function(base) {
-		return(resolved === base || resolved.startsWith(base + path.sep));
-	});
+	const cwd = path.resolve(process.cwd());
+	const tmp = path.resolve(os.tmpdir());
+	const permitted =
+		resolved === cwd || resolved.startsWith(cwd + path.sep) ||
+		resolved === tmp || resolved.startsWith(tmp + path.sep);
 	if (!permitted) {
 		throw(new Error(`refusing to write outside permitted directories: ${outFile}`));
 	}
