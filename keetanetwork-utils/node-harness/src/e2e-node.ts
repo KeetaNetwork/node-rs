@@ -38,7 +38,7 @@ import type * as VoteModule from '@keetanetwork/keetanet-node/dist/lib/vote';
 
 import { loadModule, resolveDist } from './dist';
 
-const dist = resolveDist(process.argv[2], 'usage: e2e_node.js <path-to-node-dist>');
+const dist = resolveDist(process.argv[2], 'usage: e2e-node.js <path-to-node-dist>');
 
 const { UserClient } = loadModule<typeof ClientModule>(dist, 'client/index.js');
 const { createTestNode, testingNetworkId } = loadModule<typeof HelperTestingModule>(dist, 'lib/utils/helper_testing.js');

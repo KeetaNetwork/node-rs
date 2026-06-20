@@ -5,18 +5,15 @@
  * Usage: node dist/generate_fixtures.js <path-to-node-dist> <output-json>
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
 import type * as AccountModule from '@keetanetwork/keetanet-node/dist/lib/account';
 import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/index';
 import type * as OperationsModule from '@keetanetwork/keetanet-node/dist/lib/block/operations';
 import type * as PermissionsModule from '@keetanetwork/keetanet-node/dist/lib/permissions';
 import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/utils/certificate';
 
-import { loadModule, resolveDist, resolveOutputPath } from './dist';
+import { loadModule, resolveDist, resolveOutputPath, writeOutputFile } from './dist';
 
-const USAGE = 'usage: generate_fixtures.js <path-to-node-dist> <output-json>';
+const USAGE = 'usage: generate-fixtures.js <path-to-node-dist> <output-json>';
 
 const dist = resolveDist(process.argv[2], USAGE);
 const outFile = resolveOutputPath(process.argv[3], USAGE);
@@ -400,8 +397,7 @@ async function main(): Promise<void> {
 		});
 	});
 
-	fs.mkdirSync(path.dirname(outFile), { recursive: true });
-	fs.writeFileSync(outFile, JSON.stringify(fixtures, null, '\t') + '\n');
+	writeOutputFile(outFile, JSON.stringify(fixtures, null, '\t') + '\n');
 	console.log(`Wrote ${fixtures.length} fixtures to ${outFile}`);
 }
 

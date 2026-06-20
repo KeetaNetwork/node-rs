@@ -85,7 +85,9 @@ fn test_passphrase_deterministic_behavior() -> Result<(), CryptoError> {
 	// Multiple calls with same passphrase should produce identical results
 	let seed1 = seed_from_passphrase(TEST_PASSPHRASE)?;
 	let seed2 = seed_from_passphrase(TEST_PASSPHRASE)?;
-	assert_eq!(*seed1.expose_secret(), *seed2.expose_secret(), "Passphrase derivation should be deterministic");
+	let seed1_bytes = *seed1.expose_secret();
+	let seed2_bytes = *seed2.expose_secret();
+	assert_eq!(seed1_bytes, seed2_bytes, "Passphrase derivation should be deterministic");
 
 	Ok(())
 }
@@ -154,9 +156,10 @@ fn test_passphrase_normalization() -> Result<(), CryptoError> {
 
 		// Also verify the normalized version produces the same result
 		let normalized_seed = seed_from_passphrase(normalized_expected)?;
+		let seed_bytes = *seed.expose_secret();
+		let normalized_seed_bytes = *normalized_seed.expose_secret();
 		assert_eq!(
-			*seed.expose_secret(),
-			*normalized_seed.expose_secret(),
+			seed_bytes, normalized_seed_bytes,
 			"Passphrase '{passphrase}' should normalize to '{normalized_expected}' and produce the same seed"
 		);
 	}

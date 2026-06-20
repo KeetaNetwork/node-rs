@@ -11,11 +11,12 @@
 
 use alloc::vec::Vec;
 
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use keetanetwork_account::cert::CertSigner;
 use keetanetwork_block::{AccountRef, Block, BlockHash, BlockTime};
 use num_bigint::BigInt;
 
-use crate::error::VoteError;
+use crate::error::{VoteError, VoteField};
 use crate::fee::Fees;
 use crate::staple::VoteStaple;
 use crate::validation::ValidationConfig;
@@ -31,6 +32,7 @@ pub struct VoteBuilder {
 	validity_to: Option<BlockTime>,
 	blocks: Vec<BlockHash>,
 	fees: Option<Fees>,
+	permanent: bool,
 }
 
 impl VoteBuilder {
@@ -92,17 +94,37 @@ impl VoteBuilder {
 		self
 	}
 
+	/// Mark the vote permanent.
+	///
+	/// A permanent vote's `validityTo` is derived from `validityFrom` and set
+	/// beyond the permanence threshold, so any explicit `validityTo` is ignored.
+	/// Permanent votes may not carry fees.
+	pub fn permanent(mut self) -> Self {
+		self.permanent = true;
+		self
+	}
+
 	/// Build an unsigned vote, validating that all required fields were
 	/// populated.
 	pub fn build_unsigned(self) -> Result<UnsignedVote, VoteError> {
-		let serial = self.serial.ok_or(VoteError::BuilderInvalidSerial)?;
-		let issuer = self.issuer.ok_or(VoteError::BuilderInvalidConstruction)?;
+		let serial = self
+			.serial
+			.ok_or(VoteError::BuilderMissingField { field: VoteField::Serial })?;
+		let issuer = self
+			.issuer
+			.ok_or(VoteError::BuilderMissingField { field: VoteField::Issuer })?;
 		let from = self
 			.validity_from
-			.ok_or(VoteError::BuilderInvalidValidToFrom)?;
-		let to = self
-			.validity_to
-			.ok_or(VoteError::BuilderInvalidValidToFrom)?;
+			.ok_or(VoteError::BuilderMissingField { field: VoteField::Validity })?;
+		let to = if self.permanent {
+			if self.fees.is_some() {
+				return Err(VoteError::MalformedFeesInPermanentVote);
+			}
+			permanent_validity_to(from)?
+		} else {
+			self.validity_to
+				.ok_or(VoteError::BuilderMissingField { field: VoteField::Validity })?
+		};
 		let validity = Validity::try_new(from, to)?;
 
 		UnsignedVote::try_new(serial, issuer, validity, self.blocks, self.fees)
@@ -112,6 +134,30 @@ impl VoteBuilder {
 	pub fn build_signed(self, signer: &(impl CertSigner + ?Sized)) -> Result<Vote, VoteError> {
 		self.build_unsigned()?.sign(signer)
 	}
+}
+
+/// Compute the `validityTo` for a permanent vote from its `validityFrom`.
+fn permanent_validity_to(from: BlockTime) -> Result<BlockTime, VoteError> {
+	let base = DateTime::<Utc>::from_timestamp_millis(from.unix_millis()).ok_or(VoteError::InvalidValidity)?;
+	let to = Utc
+		.with_ymd_and_hms(base.year() + 1001, 1, 31, 0, 0, 0)
+		.single()
+		.ok_or(VoteError::InvalidValidity)?;
+	BlockTime::from_unix_millis(to.timestamp_millis()).ok_or(VoteError::InvalidValidity)
+}
+
+/// Generate fluent setters on [`VoteQuoteBuilder`] that forward, by value,
+/// to the wrapped [`VoteBuilder`].
+macro_rules! forward_to_inner {
+	($( $(#[$meta:meta])* $name:ident($($arg:ident: $ty:ty),*) ),* $(,)?) => {
+		$(
+			$(#[$meta])*
+			pub fn $name(mut self, $($arg: $ty),*) -> Self {
+				self.inner = self.inner.$name($($arg),*);
+				self
+			}
+		)*
+	};
 }
 
 /// Builder that produces a [`VoteQuote`].
@@ -129,28 +175,15 @@ impl VoteQuoteBuilder {
 		Self::default()
 	}
 
-	/// Set the serial number.
-	pub fn serial(mut self, serial: impl Into<BigInt>) -> Self {
-		self.inner = self.inner.serial(serial);
-		self
-	}
-
-	/// Set the issuing representative.
-	pub fn issuer(mut self, issuer: AccountRef) -> Self {
-		self.inner = self.inner.issuer(issuer);
-		self
-	}
-
-	/// Set the validity range.
-	pub fn validity(mut self, from: BlockTime, to: BlockTime) -> Self {
-		self.inner = self.inner.validity(from, to);
-		self
-	}
-
-	/// Append a single block hash.
-	pub fn add_block(mut self, hash: BlockHash) -> Self {
-		self.inner = self.inner.add_block(hash);
-		self
+	forward_to_inner! {
+		/// Set the serial number.
+		serial(serial: impl Into<BigInt>),
+		/// Set the issuing representative.
+		issuer(issuer: AccountRef),
+		/// Set the validity range.
+		validity(from: BlockTime, to: BlockTime),
+		/// Append a single block hash.
+		add_block(hash: BlockHash),
 	}
 
 	/// Append multiple block hashes.
@@ -174,7 +207,14 @@ impl VoteQuoteBuilder {
 	}
 
 	/// Build and sign the quote in a single call.
+	///
+	/// A quote negotiates fees, so omitting the fee schedule is a builder
+	/// error rather than a fee-less vote.
 	pub fn build(self, signer: &(impl CertSigner + ?Sized)) -> Result<VoteQuote, VoteError> {
+		if self.inner.fees.is_none() {
+			return Err(VoteError::FeeQuoteMissingFees);
+		}
+
 		let vote = self.inner.build_signed(signer)?;
 		VoteQuote::try_from_vote(vote)
 	}
@@ -267,7 +307,7 @@ mod tests {
 			.validity(from, to)
 			.add_block(BlockHash::from([1u8; 32]))
 			.build_unsigned();
-		assert!(matches!(result, Err(VoteError::BuilderInvalidSerial)));
+		assert!(matches!(result, Err(VoteError::BuilderMissingField { field: VoteField::Serial })));
 	}
 
 	#[test]
@@ -299,5 +339,48 @@ mod tests {
 			.build(issuer.as_ref())?;
 		assert!(quote.as_vote().is_quote());
 		Ok(())
+	}
+
+	#[test]
+	fn test_vote_quote_builder_rejects_missing_fees() {
+		let issuer = ed25519_issuer(b"alice");
+		let (from, to) = one_minute_validity();
+		let result = VoteQuoteBuilder::new()
+			.serial(BigInt::from(7u8))
+			.issuer(issuer.clone())
+			.validity(from, to)
+			.add_block(BlockHash::from([1u8; 32]))
+			.build(issuer.as_ref());
+		assert!(matches!(result, Err(VoteError::FeeQuoteMissingFees)));
+	}
+
+	#[test]
+	fn test_permanent_vote_builder_is_permanent() -> Result<(), VoteError> {
+		let issuer = ed25519_issuer(b"alice");
+		let vote = VoteBuilder::new()
+			.serial(BigInt::from(7u8))
+			.issuer(issuer.clone())
+			.validity_from(moment(0))
+			.add_block(BlockHash::from([1u8; 32]))
+			.permanent()
+			.build_signed(issuer.as_ref())?;
+		assert!(vote.is_permanent_at(moment(0), ValidationConfig::default()));
+		Ok(())
+	}
+
+	#[test]
+	fn test_permanent_vote_builder_rejects_fees() {
+		use crate::testing::single_fees;
+
+		let issuer = ed25519_issuer(b"alice");
+		let result = VoteBuilder::new()
+			.serial(BigInt::from(7u8))
+			.issuer(issuer.clone())
+			.validity_from(moment(0))
+			.add_block(BlockHash::from([1u8; 32]))
+			.fees(single_fees(1))
+			.permanent()
+			.build_unsigned();
+		assert!(matches!(result, Err(VoteError::MalformedFeesInPermanentVote)));
 	}
 }

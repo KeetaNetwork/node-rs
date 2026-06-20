@@ -1511,10 +1511,14 @@ impl Certificate {
 			.unwrap_or(false)
 	}
 
+	/// Maximum number of intermediate certificates permitted in a graph.
+	pub const MAX_GRAPH_CERTIFICATES: usize = 10;
+
 	/// Assert that a valid certificate graph can be constructed with the
 	/// given certificates.
 	///
 	/// This validates that:
+	/// - The graph does not exceed [`Self::MAX_GRAPH_CERTIFICATES`] intermediates
 	/// - No duplicate certificates exist
 	/// - No orphaned certificates exist
 	/// - No cycles exist in the certificate chain
@@ -1522,6 +1526,10 @@ impl Certificate {
 		&self,
 		certificates: &BTreeSet<Certificate>,
 	) -> Result<(), CertificateError> {
+		if certificates.len() > Self::MAX_GRAPH_CERTIFICATES {
+			return Err(CertificateError::CertificateInvalidGraphCount { max: Self::MAX_GRAPH_CERTIFICATES });
+		}
+
 		// Check for duplicates - this is automatically handled by BTreeSet,
 		// but we need to ensure no certificates contain same content but are
 		// different objects.
@@ -3123,6 +3131,17 @@ mod tests {
 		let cycle_result = cycle_subject_cert.assert_can_construct_valid_graph(&certificates_with_cycle);
 		assert!(cycle_result.is_err());
 		assert!(matches!(cycle_result, Err(CertificateError::CertificateCycleFound)));
+
+		// Test graph-count limit: more than MAX_GRAPH_CERTIFICATES intermediates
+		let mut oversized = BTreeSet::new();
+		for serial in 0..=Certificate::MAX_GRAPH_CERTIFICATES {
+			oversized.insert(create_dummy_cert_builder("Issuer", "Issuer", (serial + 10) as u32, true)?.build_test()?);
+		}
+		let count_result = subject_cert.assert_can_construct_valid_graph(&oversized);
+		assert!(matches!(
+			count_result,
+			Err(CertificateError::CertificateInvalidGraphCount { max }) if max == Certificate::MAX_GRAPH_CERTIFICATES
+		));
 
 		Ok(())
 	}

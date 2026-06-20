@@ -5,11 +5,10 @@
 //! [`crate::generated`].
 
 use alloc::borrow::Cow;
-use alloc::format;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use rasn::types::{Any, BitString, Integer, ObjectIdentifier, OctetString, SetOf, Utf8String};
+use rasn::types::{Any, BitString, Integer, ObjectIdentifier, OctetString, SetOf};
 
 use super::super::oids;
 use super::super::types::{
@@ -20,6 +19,8 @@ use super::super::types::{
 // Generated rasn-compiler types. Names that collide with the neutral
 // types above are renamed with a `Rasn` prefix; the rest keep their
 // original names.
+use super::VoteDecodeContext;
+use crate::error::RasnDecodeExt;
 use crate::generated::{
 	AlgorithmIdentifier, AttributeTypeAndValue as RasnAttributeTypeAndValue,
 	DistinguishedName as RasnDistinguishedName, Extension as RasnExtension, Extensions, FeeEntries,
@@ -47,8 +48,7 @@ pub(super) fn encode_vote(value: &VoteCertificate) -> Result<Vec<u8>, Asn1Error>
 }
 
 pub(super) fn decode_vote(bytes: &[u8]) -> Result<DecodedVoteCertificate, Asn1Error> {
-	let transport: RasnVoteCertificate =
-		::rasn::der::decode(bytes).map_err(|_| Asn1Error::VoteDecode { slot: VoteDecodeSlot::Wrapper })?;
+	let transport: RasnVoteCertificate = ::rasn::der::decode(bytes).or_slot(VoteDecodeSlot::Wrapper)?;
 	let tbs = tbs_from_transport(&transport.tbs_certificate)?;
 	if tbs.signature_algo != signature_algo_from_algorithm_identifier(&transport.signature_algorithm)? {
 		return Err(Asn1Error::VoteDecode { slot: VoteDecodeSlot::WrapperSignatureAlgorithm });
@@ -68,8 +68,7 @@ pub(super) fn encode_vote_staple(bundle: &VoteStapleBundle) -> Result<Vec<u8>, A
 }
 
 pub(super) fn decode_vote_staple(bytes: &[u8]) -> Result<VoteStapleBundle, Asn1Error> {
-	let transport: RasnVoteStapleBundle =
-		::rasn::der::decode(bytes).map_err(|_| Asn1Error::VoteStapleDecode { slot: VoteStapleDecodeSlot::Wrapper })?;
+	let transport: RasnVoteStapleBundle = ::rasn::der::decode(bytes).or_staple_slot(VoteStapleDecodeSlot::Wrapper)?;
 	Ok(VoteStapleBundle {
 		blocks: transport.blocks.into_iter().map(octet_to_bytes).collect(),
 		votes: transport.votes.into_iter().map(octet_to_bytes).collect(),
@@ -85,8 +84,7 @@ pub(super) fn encode_hash_data(value: &HashData) -> Result<Vec<u8>, Asn1Error> {
 }
 
 pub(super) fn decode_hash_data(bytes: &[u8]) -> Result<HashData, Asn1Error> {
-	let transport: RasnHashData = ::rasn::der::decode(bytes)
-		.map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })?;
+	let transport: RasnHashData = ::rasn::der::decode(bytes).or_rasn_decode()?;
 	Ok(HashData {
 		algorithm: rasn_oid_to_vote(&transport.0.algorithm),
 		hashes: transport.0.hashes.into_iter().map(octet_to_bytes).collect(),
@@ -111,8 +109,8 @@ pub(super) fn decode_fees(bytes: &[u8]) -> Result<Fees, Asn1Error> {
 	if let Ok(single) = ::rasn::der::decode::<FeesSingle>(bytes) {
 		return Ok(Fees::Single(fee_entry_from_transport(&single.0)));
 	}
-	let multi: FeesMultiple = ::rasn::der::decode(bytes)
-		.map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })?;
+
+	let multi: FeesMultiple = ::rasn::der::decode(bytes).or_rasn_decode()?;
 	let entries: Vec<FeeEntry> = multi.0 .0 .0.iter().map(fee_entry_from_transport).collect();
 	Ok(Fees::Multiple(entries))
 }
@@ -123,8 +121,7 @@ pub(super) fn encode_extension(value: &Extension) -> Result<Vec<u8>, Asn1Error> 
 }
 
 pub(super) fn decode_extension(bytes: &[u8]) -> Result<Extension, Asn1Error> {
-	let transport: RasnExtension = ::rasn::der::decode(bytes)
-		.map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })?;
+	let transport: RasnExtension = ::rasn::der::decode(bytes).or_rasn_decode()?;
 	Ok(extension_from_transport(transport))
 }
 
@@ -205,7 +202,7 @@ fn distinguished_name_from_transport(value: &RasnDistinguishedName) -> Distingui
 			rdn.0
 				.to_vec()
 				.into_iter()
-				.map(|attr| attribute_from_transport(&attr))
+				.map(attribute_from_transport)
 				.collect()
 		})
 		.collect();
@@ -213,7 +210,7 @@ fn distinguished_name_from_transport(value: &RasnDistinguishedName) -> Distingui
 }
 
 fn attribute_to_transport(value: &AttributeTypeAndValue) -> RasnAttributeTypeAndValue {
-	RasnAttributeTypeAndValue { r_type: vote_oid_to_rasn(&value.oid), value: Utf8String::from(value.value.clone()) }
+	RasnAttributeTypeAndValue { r_type: vote_oid_to_rasn(&value.oid), value: value.value.clone() }
 }
 
 fn attribute_from_transport(value: &RasnAttributeTypeAndValue) -> AttributeTypeAndValue {
@@ -284,13 +281,13 @@ fn subject_public_key_from_transport(value: &SubjectPublicKeyInfo) -> Result<Vot
 	let algo_oid = rasn_oid_to_vote(&value.algorithm.algorithm);
 	let key = value.subject_public_key.as_raw_slice().to_vec();
 
-	if oid_eq(&algo_oid, &oids::ED25519) {
+	if algo_oid == oids::ED25519 {
 		if value.algorithm.parameters.is_some() {
 			return Err(Asn1Error::RasnError { reason: "Ed25519 SPKI must not carry algorithm parameters".into() });
 		}
 
 		Ok(VoteSubjectPublicKey::Ed25519 { key })
-	} else if oid_eq(&algo_oid, &oids::EC_PUBLIC_KEY) {
+	} else if algo_oid == oids::EC_PUBLIC_KEY {
 		let parameters = value
 			.algorithm
 			.parameters
@@ -299,40 +296,26 @@ fn subject_public_key_from_transport(value: &SubjectPublicKeyInfo) -> Result<Vot
 				reason: "ECDSA SPKI must carry curve OID in algorithm parameters".into(),
 			})?;
 		let curve_oid = decode_oid_from_any(parameters)?;
-		let curve = if oid_eq(&curve_oid, &oids::SECP256K1) {
+		let curve = if curve_oid == oids::SECP256K1 {
 			EcdsaCurve::Secp256k1
-		} else if oid_eq(&curve_oid, &oids::SECP256R1) {
+		} else if curve_oid == oids::SECP256R1 {
 			EcdsaCurve::Secp256r1
 		} else {
-			return Err(Asn1Error::InvalidOid { reason: format_oid(&curve_oid) });
+			return Err(Asn1Error::InvalidOid { reason: curve_oid.to_string() });
 		};
 
 		Ok(VoteSubjectPublicKey::Ecdsa { curve, key })
 	} else {
-		Err(Asn1Error::InvalidOid { reason: format_oid(&algo_oid) })
+		Err(Asn1Error::InvalidOid { reason: algo_oid.to_string() })
 	}
 }
 
 fn signature_algo_to_algorithm_identifier(algo: VoteSignatureAlgo) -> AlgorithmIdentifier {
-	AlgorithmIdentifier { algorithm: vote_oid_to_rasn(&signature_algo_oid(algo)), parameters: None }
+	AlgorithmIdentifier { algorithm: vote_oid_to_rasn(&algo.oid()), parameters: None }
 }
 
 fn signature_algo_from_algorithm_identifier(algo: &AlgorithmIdentifier) -> Result<VoteSignatureAlgo, Asn1Error> {
-	let oid = rasn_oid_to_vote(&algo.algorithm);
-	if oid_eq(&oid, &oids::ED25519) {
-		Ok(VoteSignatureAlgo::Ed25519)
-	} else if oid_eq(&oid, &oids::ECDSA_WITH_SHA3_256) {
-		Ok(VoteSignatureAlgo::EcdsaWithSha3_256)
-	} else {
-		Err(Asn1Error::InvalidOid { reason: format_oid(&oid) })
-	}
-}
-
-fn signature_algo_oid(algo: VoteSignatureAlgo) -> VoteOid {
-	match algo {
-		VoteSignatureAlgo::Ed25519 => oids::ED25519,
-		VoteSignatureAlgo::EcdsaWithSha3_256 => oids::ECDSA_WITH_SHA3_256,
-	}
+	VoteSignatureAlgo::try_from(&rasn_oid_to_vote(&algo.algorithm))
 }
 
 // ---------------------------------------------------------------------------
@@ -345,23 +328,6 @@ fn vote_oid_to_rasn(oid: &VoteOid) -> ObjectIdentifier {
 
 fn rasn_oid_to_vote(oid: &ObjectIdentifier) -> VoteOid {
 	VoteOid::from(oid.to_vec())
-}
-
-fn oid_eq(left: &VoteOid, right: &VoteOid) -> bool {
-	left.arcs() == right.arcs()
-}
-
-fn format_oid(oid: &VoteOid) -> alloc::string::String {
-	use alloc::string::ToString;
-	let mut out = alloc::string::String::new();
-	for (i, arc) in oid.arcs().iter().enumerate() {
-		if i > 0 {
-			out.push('.');
-		}
-		out.push_str(&arc.to_string());
-	}
-
-	out
 }
 
 fn bytes_to_octet(value: impl AsRef<[u8]>) -> OctetString {
@@ -383,7 +349,6 @@ fn encode_oid_as_any(oid: &VoteOid) -> Result<Any, Asn1Error> {
 }
 
 fn decode_oid_from_any(value: &Any) -> Result<VoteOid, Asn1Error> {
-	let oid: ObjectIdentifier = ::rasn::der::decode(value.as_bytes())
-		.map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })?;
+	let oid: ObjectIdentifier = ::rasn::der::decode(value.as_bytes()).or_rasn_decode()?;
 	Ok(rasn_oid_to_vote(&oid))
 }

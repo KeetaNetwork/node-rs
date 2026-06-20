@@ -8,7 +8,6 @@
 extern crate alloc;
 
 pub mod asn1;
-#[cfg(feature = "std")]
 pub mod builder;
 pub mod certificates;
 pub mod error;

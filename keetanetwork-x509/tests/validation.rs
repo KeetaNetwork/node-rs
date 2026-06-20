@@ -45,9 +45,17 @@ fn test_certificate_public_key_extraction() {
 
 	// Use backend-appropriate method for getting bytes
 	#[cfg(feature = "der")]
-	assert_ne!(ca_public_key.subject_public_key.as_bytes(), user_public_key.subject_public_key.as_bytes());
+	{
+		let ca_public_key_bytes = ca_public_key.subject_public_key.as_bytes();
+		let user_public_key_bytes = user_public_key.subject_public_key.as_bytes();
+		assert_ne!(ca_public_key_bytes, user_public_key_bytes);
+	}
 	#[cfg(all(feature = "rasn", not(feature = "der")))]
-	assert_ne!(ca_public_key.subject_public_key.raw_bytes(), user_public_key.subject_public_key.raw_bytes());
+	{
+		let ca_public_key_bytes = ca_public_key.subject_public_key.raw_bytes();
+		let user_public_key_bytes = user_public_key.subject_public_key.raw_bytes();
+		assert_ne!(ca_public_key_bytes, user_public_key_bytes);
+	}
 }
 
 #[test]
@@ -74,8 +82,10 @@ fn test_certificate_algorithm_identifiers() {
 	let ca_algorithm = &ca_cert.signature_algorithm;
 	let user_algorithm = &user_cert.signature_algorithm;
 	// Both should have valid algorithm identifiers
-	assert!(!ca_algorithm.oid.to_string().is_empty());
-	assert!(!user_algorithm.oid.to_string().is_empty());
+	let ca_oid = ca_algorithm.oid.to_string();
+	let user_oid = user_algorithm.oid.to_string();
+	assert!(!ca_oid.is_empty());
+	assert!(!user_oid.is_empty());
 	// They should use the same signature algorithm
 	assert_eq!(ca_algorithm.oid, user_algorithm.oid);
 }
@@ -86,11 +96,10 @@ fn test_certificate_serial_numbers() {
 	let user_cert = user_certificate();
 	// Serial numbers should be different
 	assert_ne!(ca_cert.tbs_certificate.serial_number, user_cert.tbs_certificate.serial_number);
+
 	// Both should have valid serial numbers
-	assert!(!ca_cert.tbs_certificate.serial_number.as_bytes().is_empty());
-	assert!(!user_cert
-		.tbs_certificate
-		.serial_number
-		.as_bytes()
-		.is_empty());
+	let ca_serial_bytes = ca_cert.tbs_certificate.serial_number.as_bytes();
+	let user_serial_bytes = user_cert.tbs_certificate.serial_number.as_bytes();
+	assert!(!ca_serial_bytes.is_empty());
+	assert!(!user_serial_bytes.is_empty());
 }

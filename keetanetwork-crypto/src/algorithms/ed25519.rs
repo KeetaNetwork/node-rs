@@ -56,7 +56,7 @@ use crate::operations::signature::{
 };
 
 use crate::algorithms::{Algorithm, CryptoAlgorithm, KeyDerivation, PrivateKey, PublicKey};
-use crate::error::CryptoError;
+use crate::error::{CryptoError, OrCryptoError};
 use crate::hash::{hash_array, HashAlgorithm};
 use crate::IntoSecret;
 
@@ -262,7 +262,7 @@ impl TryFrom<&[u8]> for Ed25519PublicKey {
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let bytes_array: [u8; ed25519_dalek::PUBLIC_KEY_LENGTH] = bytes.try_into()?;
-		let verifying_key = VerifyingKey::from_bytes(&bytes_array).map_err(|_| CryptoError::InvalidPublicKey)?;
+		let verifying_key = VerifyingKey::from_bytes(&bytes_array).or_invalid_public_key()?;
 		Ok(Ed25519PublicKey { inner: verifying_key, bytes: bytes.to_vec() })
 	}
 }
@@ -456,10 +456,7 @@ impl TryFrom<&[u8]> for X25519PublicKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let bytes_array: [u8; 32] = bytes
-			.try_into()
-			.map_err(|_| CryptoError::InvalidPublicKey)?;
-
+		let bytes_array: [u8; 32] = bytes.try_into().or_invalid_public_key()?;
 		let public_key = DalekX25519PublicKey::from(bytes_array);
 		Ok(X25519PublicKey { inner: public_key })
 	}
@@ -538,8 +535,7 @@ pub fn ed25519_to_x25519_private(ed25519_key: &Ed25519PrivateKey) -> Result<X255
 pub fn ed25519_to_x25519_public(ed25519_key: &Ed25519PublicKey) -> Result<X25519PublicKey, CryptoError> {
 	let ed25519_bytes: Vec<u8> = ed25519_key.into();
 	// Parse the Ed25519 public key as a compressed Edwards point
-	let compressed_edwards =
-		CompressedEdwardsY::from_slice(&ed25519_bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
+	let compressed_edwards = CompressedEdwardsY::from_slice(&ed25519_bytes).or_invalid_public_key()?;
 
 	// Decompress to get the Edwards point
 	let edwards_point = compressed_edwards

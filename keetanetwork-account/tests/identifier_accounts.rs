@@ -20,6 +20,11 @@ const NETWORK_VERIFICATION_CASES: &[(u64, &str)] = &[
 	(999999, "Network ID 999999"),
 ];
 
+// Helper function to generate a base token identifier from a network address
+fn generate_base_token_identifier(network_address: &Account<KeyNETWORK>) -> Result<GenericAccount, AccountError> {
+	network_address.generate_identifier(KeyPairType::TOKEN, None, 0)
+}
+
 // Helper function to create crypto account with test seed
 fn create_test_crypto_account() -> Result<Account<KeyECDSASECP256K1>, AccountError> {
 	let seed_array = create_test_seed_array();
@@ -98,7 +103,7 @@ fn test_base_token_identifier_generation() -> Result<(), AccountError> {
 		verify_network_account_properties(&network_address);
 
 		// Generate base token identifier (None previous means opening semantics)
-		let base_token_result = network_address.generate_identifier(KeyPairType::TOKEN, None, 0);
+		let base_token_result = generate_base_token_identifier(&network_address);
 		assert!(base_token_result.is_ok(), "Failed to generate base token identifier for {description}");
 
 		let base_token_generic = base_token_result?;
@@ -114,7 +119,7 @@ fn test_base_token_identifier_generation() -> Result<(), AccountError> {
 #[test]
 fn test_token_identifier_restrictions() -> Result<(), AccountError> {
 	let network_address = Account::<KeyNETWORK>::generate_network_address(NETWORK_VERIFICATION_CASES[0].0)?;
-	let base_token_result = network_address.generate_identifier(KeyPairType::TOKEN, None, 0);
+	let base_token_result = generate_base_token_identifier(&network_address);
 	assert!(base_token_result.is_ok());
 
 	let base_token_address = Account::<KeyTOKEN>::try_from(base_token_result?)?;
@@ -183,12 +188,12 @@ fn test_base_address_consistency() -> Result<(), Box<dyn std::error::Error>> {
 	for &network_id in CONSISTENCY_TEST_NETWORK_IDS {
 		// Generate network and base token addresses
 		let network_address = Account::<KeyNETWORK>::generate_network_address(network_id)?;
-		let base_token_result = network_address.generate_identifier(KeyPairType::TOKEN, None, 0);
+		let base_token_result = generate_base_token_identifier(&network_address);
 		assert!(base_token_result.is_ok());
 
 		// Generate them again to verify consistency
 		let network_address_check = Account::<KeyNETWORK>::generate_network_address(network_id)?;
-		let base_token_check_result = network_address_check.generate_identifier(KeyPairType::TOKEN, None, 0);
+		let base_token_check_result = generate_base_token_identifier(&network_address_check);
 		assert!(base_token_check_result.is_ok());
 
 		// Compare network addresses
@@ -200,11 +205,9 @@ fn test_base_address_consistency() -> Result<(), Box<dyn std::error::Error>> {
 
 		let token1 = Account::<KeyTOKEN>::try_from(base_token_result?)?;
 		let token2 = Account::<KeyTOKEN>::try_from(base_token_check_result?)?;
-		assert_eq!(
-			token1.keypair.to_public_key_string()?,
-			token2.keypair.to_public_key_string()?,
-			"Base token addresses should be deterministic for network_id {network_id}"
-		);
+		let pk1 = token1.keypair.to_public_key_string()?;
+		let pk2 = token2.keypair.to_public_key_string()?;
+		assert_eq!(pk1, pk2, "Base token addresses should be deterministic for network_id {network_id}");
 	}
 
 	Ok(())

@@ -50,37 +50,35 @@ fn test_certificate_builder_basic() -> Result<(), Box<dyn core::error::Error>> {
 
 		// Verify the public key info matches
 		#[cfg(feature = "der")]
-		assert_eq!(
-			decoded_tbs
+		{
+			let decoded_pubkey_bytes = decoded_tbs
 				.subject_public_key_info
 				.subject_public_key
 				.as_bytes()
 				.ok_or("missing public key bytes")?
-				.to_vec(),
-			public_key
-		);
+				.to_vec();
+			assert_eq!(decoded_pubkey_bytes, public_key);
+		}
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
-		assert_eq!(
-			decoded_tbs
+		{
+			let decoded_pubkey_bytes = decoded_tbs
 				.subject_public_key_info
 				.subject_public_key
-				.raw_bytes(),
-			&public_key
-		);
+				.raw_bytes();
+			assert_eq!(decoded_pubkey_bytes, &public_key);
+		}
 
 		// Verify correct algorithm OID
 		let expected_oid = match algorithm {
 			Algorithm::Ed25519 => oids::ED25519,
 			Algorithm::Secp256r1 | Algorithm::Secp256k1 => oids::ECDSA_WITH_SHA256,
 		};
-		assert_eq!(
-			decoded_tbs
-				.subject_public_key_info
-				.algorithm
-				.oid
-				.to_string(),
-			expected_oid
-		);
+		let decoded_oid = decoded_tbs
+			.subject_public_key_info
+			.algorithm
+			.oid
+			.to_string();
+		assert_eq!(decoded_oid, expected_oid);
 	}
 	Ok(())
 }
@@ -109,10 +107,14 @@ fn test_certificate_builder_ca() -> Result<(), Box<dyn core::error::Error>> {
 			.iter()
 			.map(|ext| ext.extn_id.to_string())
 			.collect();
-		assert!(extension_oids.contains(&oids::BASIC_CONSTRAINTS.to_string()));
-		assert!(extension_oids.contains(&oids::KEY_USAGE.to_string()));
-		assert!(extension_oids.contains(&oids::SUBJECT_KEY_IDENTIFIER.to_string()));
-		assert!(extension_oids.contains(&oids::AUTHORITY_KEY_IDENTIFIER.to_string()));
+		let basic_constraints_oid = oids::BASIC_CONSTRAINTS.to_string();
+		let key_usage_oid = oids::KEY_USAGE.to_string();
+		let subject_key_identifier_oid = oids::SUBJECT_KEY_IDENTIFIER.to_string();
+		let authority_key_identifier_oid = oids::AUTHORITY_KEY_IDENTIFIER.to_string();
+		assert!(extension_oids.contains(&basic_constraints_oid));
+		assert!(extension_oids.contains(&key_usage_oid));
+		assert!(extension_oids.contains(&subject_key_identifier_oid));
+		assert!(extension_oids.contains(&authority_key_identifier_oid));
 	}
 	Ok(())
 }
@@ -199,6 +201,7 @@ fn test_algorithm_chains() -> Result<(), Box<dyn core::error::Error>> {
 			// Verify round trip
 			let tbs_der = tbs.to_der()?;
 			assert!(!tbs_der.is_empty());
+
 			let tbs_re_parsed = TbsCertificate::from_der(&tbs_der)?;
 			assert_eq!(**tbs, tbs_re_parsed);
 		}
@@ -233,11 +236,8 @@ fn test_ecdsa_signature_der_encoding() -> Result<(), Box<dyn core::error::Error>
 				.build(&account)?;
 
 			// Verify the certificate has a valid signature
-			assert!(
-				certificate.verify_signature(&public_key_info).is_ok(),
-				"{} certificate signature verification failed",
-				$curve_name
-			);
+			let signature_verification = certificate.verify_signature(&public_key_info);
+			assert!(signature_verification.is_ok(), "{} certificate signature verification failed", $curve_name);
 
 			// Get the raw signature bytes
 			let signature_bytes = certificate.signature.raw_bytes();
@@ -251,11 +251,8 @@ fn test_ecdsa_signature_der_encoding() -> Result<(), Box<dyn core::error::Error>
 			);
 
 			// Verify we can parse the signature as DER
-			assert!(
-				keetanetwork_crypto::utils::parse_der_ecdsa_signature(signature_bytes).is_ok(),
-				"Should be able to parse DER-encoded {} signature",
-				$curve_name
-			);
+			let parsed_signature = keetanetwork_crypto::utils::parse_der_ecdsa_signature(signature_bytes);
+			assert!(parsed_signature.is_ok(), "Should be able to parse DER-encoded {} signature", $curve_name);
 
 			// Verify the certificate can be converted to DER and PEM formats
 			let der_bytes = certificate.to_der()?;

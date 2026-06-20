@@ -46,7 +46,7 @@ use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGenera
 use crate::utils::generate_random_seed;
 
 use crate::algorithms::{Algorithm, CryptoAlgorithm, KeyDerivation, PrivateKey, PublicKey};
-use crate::error::CryptoError;
+use crate::error::{CryptoError, OrCryptoError};
 use crate::kdf::KdfAlgorithm;
 use crate::IntoSecret;
 
@@ -290,7 +290,7 @@ impl TryFrom<&[u8]> for Secp256r1PublicKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let public_key = p256::PublicKey::from_sec1_bytes(bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
+		let public_key = p256::PublicKey::from_sec1_bytes(bytes).or_invalid_public_key()?;
 		Ok(Secp256r1PublicKey { inner: public_key, bytes: bytes.to_vec() })
 	}
 }

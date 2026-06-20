@@ -181,18 +181,16 @@ pub fn lookup_by_object_identifier<'a>(
 pub fn parse_oid_string(oid_str: &str) -> Result<ObjectIdentifier, Asn1Error> {
 	#[cfg(feature = "der")]
 	{
-		ObjectIdentifier::new(oid_str)
-			.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {oid_str}") })
+		ObjectIdentifier::new(oid_str).map_err(|_| Asn1Error::invalid_oid_format(oid_str))
 	}
 
 	#[cfg(all(feature = "rasn", not(feature = "der")))]
 	{
 		// Parse OID string manually into numeric components for rasn
 		let arcs: Result<Vec<u32>, _> = oid_str.split('.').map(|s| s.parse::<u32>()).collect();
-		let arcs = arcs.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {oid_str}") })?;
+		let arcs = arcs.map_err(|_| Asn1Error::invalid_oid_format(oid_str))?;
 
-		ObjectIdentifier::new(arcs)
-			.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {oid_str}") })
+		ObjectIdentifier::new(arcs).ok_or_else(|| Asn1Error::invalid_oid_format(oid_str))
 	}
 }
 

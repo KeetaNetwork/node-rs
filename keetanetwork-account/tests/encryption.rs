@@ -7,32 +7,94 @@ use keetanetwork_crypto::algorithms::Algorithm;
 mod common;
 use common::*;
 
+struct EncryptionTestCase {
+	algorithm: Algorithm,
+	encrypted_data_base64: &'static str,
+	expected_plaintext: &'static [u8],
+}
+
+// Test data from TypeScript implementation
+const TYPESCRIPT_ENCRYPTION_CASES: [EncryptionTestCase; 3] = [
+	EncryptionTestCase {
+		algorithm: Algorithm::Secp256k1,
+		encrypted_data_base64: "BI8ePLqAhgOQvUXsTqW8ifQ77eRhg7Z6FpxX5wd6xJfE+ErjHyuXFKNjSDMBgTAG6iKylZITJajh6Zdgcbpdvb3+pBN17zCaaOzAgpId4hcOG3P/ueHMRWolYQPJ5jGqM1xmBO64sa3nodxDwEtAI5dA3CG4mg==",
+		expected_plaintext: b"Hello",
+	},
+	EncryptionTestCase {
+		algorithm: Algorithm::Ed25519,
+		encrypted_data_base64: "fZazrME6jGTTj2Dp1o9imAuri5s3MxeE0ZnK8HP2dK4TgnAJ3825UWKFaQnW0E0tETD0iyo8B1Zex4JUB7Ab83RnJrWBxGfoho6YqaKdHTWYfAPPJ1G2EBkDo1qoiGpO8t1Tb3o9JiOQf6jAMp2VKg==",
+		expected_plaintext: b"Ed25519 Encryption",
+	},
+	EncryptionTestCase {
+		algorithm: Algorithm::Secp256r1,
+		encrypted_data_base64: "BBF2ML5v5BMyOu/BMChxa984vGgED2rjaM5I0QP01MmjdMWnHx/00AfpxSCaVkFx3qYbl4cpxBM3WcHo9PIZG5P1CMv36lv8wmMMus+xQ/KrUozna8hLRlJN9ez3i+vzOZeMKYm9EfkpMZ2eQv1y1clevkvKicA8V+Zt3CVog0MhT9HYuTwWWN9yoxfshAlqGpODSFiHabdLG3E4er2d9q8=",
+		expected_plaintext: b"Hello",
+	},
+];
+
+fn test_encryption_round_trip_for_account<T>(
+	account: &keetanetwork_account::Account<T>,
+	plaintext: &[u8],
+	name: &str,
+) -> Result<(), AccountError>
+where
+	T: keetanetwork_account::KeyPair,
+{
+	let encrypted = account.encrypt(plaintext)?;
+	let decrypted = account.decrypt(&encrypted)?;
+	assert_eq!(plaintext, decrypted.as_slice(), "{name}: Decrypted data should match original plaintext");
+
+	// Verify encryption produces different output each time (should be non-deterministic)
+	let encrypted2 = account.encrypt(plaintext)?;
+	assert_ne!(encrypted, encrypted2, "{name}: Encryption should produce different output each time");
+
+	// But both should decrypt to the same plaintext
+	let decrypted2 = account.decrypt(&encrypted2)?;
+	assert_eq!(plaintext, decrypted2.as_slice(), "{name}: Second decryption should match original plaintext");
+
+	Ok(())
+}
+
+// Helper function to test encryption compatibility for a specific account type
+fn test_account_encryption<T>(
+	test_case: &EncryptionTestCase,
+	account: &keetanetwork_account::Account<T>,
+) -> Result<(), AccountError>
+where
+	T: keetanetwork_account::KeyPair,
+{
+	// Decode base64 encrypted data
+	let encrypted_data = BASE64
+		.decode(test_case.encrypted_data_base64)
+		.expect("constant base64 test data should decode");
+
+	// Try to decrypt TypeScript-encrypted data with Rust implementation
+	if let Ok(decrypted) = account.decrypt(&encrypted_data) {
+		assert_eq!(
+			decrypted.as_slice(),
+			test_case.expected_plaintext,
+			"{:?}: Decrypted data does not match expected plaintext",
+			test_case.algorithm
+		);
+	}
+
+	// Test round-trip: encrypt and verify we can decrypt
+	let rust_encrypted = account.encrypt(test_case.expected_plaintext)?;
+	let rust_decrypted = account.decrypt(&rust_encrypted)?;
+
+	assert_eq!(
+		rust_decrypted.as_slice(),
+		test_case.expected_plaintext,
+		"{:?}: Rust round-trip failed",
+		test_case.algorithm
+	);
+
+	Ok(())
+}
+
 #[test]
 fn test_encryption_round_trip_operations() -> Result<(), AccountError> {
 	let plaintext = b"Hello, encryption world!";
-
-	fn test_encryption_round_trip_for_account<T>(
-		account: &keetanetwork_account::Account<T>,
-		plaintext: &[u8],
-		name: &str,
-	) -> Result<(), AccountError>
-	where
-		T: keetanetwork_account::KeyPair,
-	{
-		let encrypted = account.encrypt(plaintext)?;
-		let decrypted = account.decrypt(&encrypted)?;
-		assert_eq!(plaintext, decrypted.as_slice(), "{name}: Decrypted data should match original plaintext");
-
-		// Verify encryption produces different output each time (should be non-deterministic)
-		let encrypted2 = account.encrypt(plaintext)?;
-		assert_ne!(encrypted, encrypted2, "{name}: Encryption should produce different output each time");
-
-		// But both should decrypt to the same plaintext
-		let decrypted2 = account.decrypt(&encrypted2)?;
-		assert_eq!(plaintext, decrypted2.as_slice(), "{name}: Second decryption should match original plaintext");
-
-		Ok(())
-	}
 
 	// Test SECP256K1
 	let account = create_account_from_seed::<KeyECDSASECP256K1>(KeyPairType::ECDSASECP256K1, 0)?;
@@ -148,73 +210,10 @@ fn test_encryption_nondeterministic() -> Result<(), AccountError> {
 
 #[test]
 fn test_typescript_encryption_compatibility() -> Result<(), AccountError> {
-	// Test data from TypeScript implementation - these encrypted values were
-	// generated using the same seed and keys as the TypeScript tests
 	let test_seed = "2401D206735C20485347B9A622D94DE9B21F2F1450A77C42102237FA4077567D";
 
-	struct EncryptionTestCase {
-		algorithm: Algorithm,
-		encrypted_data_base64: &'static str,
-		expected_plaintext: &'static [u8],
-	}
-
-	let test_cases = [
-		EncryptionTestCase {
-			algorithm: Algorithm::Secp256k1,
-			encrypted_data_base64: "BI8ePLqAhgOQvUXsTqW8ifQ77eRhg7Z6FpxX5wd6xJfE+ErjHyuXFKNjSDMBgTAG6iKylZITJajh6Zdgcbpdvb3+pBN17zCaaOzAgpId4hcOG3P/ueHMRWolYQPJ5jGqM1xmBO64sa3nodxDwEtAI5dA3CG4mg==",
-			expected_plaintext: b"Hello",
-		},
-		EncryptionTestCase {
-			algorithm: Algorithm::Ed25519,
-			encrypted_data_base64: "fZazrME6jGTTj2Dp1o9imAuri5s3MxeE0ZnK8HP2dK4TgnAJ3825UWKFaQnW0E0tETD0iyo8B1Zex4JUB7Ab83RnJrWBxGfoho6YqaKdHTWYfAPPJ1G2EBkDo1qoiGpO8t1Tb3o9JiOQf6jAMp2VKg==",
-			expected_plaintext: b"Ed25519 Encryption",
-		},
-		EncryptionTestCase {
-			algorithm: Algorithm::Secp256r1,
-			encrypted_data_base64: "BBF2ML5v5BMyOu/BMChxa984vGgED2rjaM5I0QP01MmjdMWnHx/00AfpxSCaVkFx3qYbl4cpxBM3WcHo9PIZG5P1CMv36lv8wmMMus+xQ/KrUozna8hLRlJN9ez3i+vzOZeMKYm9EfkpMZ2eQv1y1clevkvKicA8V+Zt3CVog0MhT9HYuTwWWN9yoxfshAlqGpODSFiHabdLG3E4er2d9q8=",
-			expected_plaintext: b"Hello",
-		},
-	];
-
-	// Helper function to test encryption compatibility for a specific account type
-	fn test_account_encryption<T>(
-		test_case: &EncryptionTestCase,
-		account: &keetanetwork_account::Account<T>,
-	) -> Result<(), AccountError>
-	where
-		T: keetanetwork_account::KeyPair,
-	{
-		// Decode base64 encrypted data
-		let encrypted_data = BASE64
-			.decode(test_case.encrypted_data_base64)
-			.expect("constant base64 test data should decode");
-
-		// Try to decrypt TypeScript-encrypted data with Rust implementation
-		if let Ok(decrypted) = account.decrypt(&encrypted_data) {
-			assert_eq!(
-				decrypted.as_slice(),
-				test_case.expected_plaintext,
-				"{:?}: Decrypted data does not match expected plaintext",
-				test_case.algorithm
-			);
-		}
-
-		// Test round-trip: encrypt and verify we can decrypt
-		let rust_encrypted = account.encrypt(test_case.expected_plaintext)?;
-		let rust_decrypted = account.decrypt(&rust_encrypted)?;
-
-		assert_eq!(
-			rust_decrypted.as_slice(),
-			test_case.expected_plaintext,
-			"{:?}: Rust round-trip failed",
-			test_case.algorithm
-		);
-
-		Ok(())
-	}
-
 	// Test each algorithm
-	for test_case in &test_cases {
+	for test_case in &TYPESCRIPT_ENCRYPTION_CASES {
 		match test_case.algorithm {
 			Algorithm::Secp256k1 => {
 				let account =

@@ -19,6 +19,7 @@ use super::super::types::{
 	TbsCertificate, Validity, VoteCertificate, VoteDecodeSlot, VoteOid, VoteSignatureAlgo, VoteStapleBundle,
 	VoteStapleDecodeSlot, VoteSubjectPublicKey,
 };
+use super::VoteDecodeContext;
 use crate::Asn1Error;
 use crate::Asn1Time;
 
@@ -63,38 +64,37 @@ pub(super) fn encode_vote(value: &VoteCertificate) -> Result<Vec<u8>, Asn1Error>
 }
 
 pub(super) fn decode_vote(bytes: &[u8]) -> Result<DecodedVoteCertificate, Asn1Error> {
-	let mut outer = SliceReader::new(bytes).map_err(|_| slot(VoteDecodeSlot::Wrapper))?;
-	let wrapper_inner = read_sequence(&mut outer).map_err(|_| slot(VoteDecodeSlot::Wrapper))?;
+	let mut outer = SliceReader::new(bytes).or_slot(VoteDecodeSlot::Wrapper)?;
+	let wrapper_inner = read_sequence(&mut outer).or_slot(VoteDecodeSlot::Wrapper)?;
 	if !outer.is_finished() {
 		return Err(slot(VoteDecodeSlot::WrapperExtraData));
 	}
 
 	// Reference rejects wrappers that are not exactly 3 elements (TBS,
 	// signature algorithm, signature) before inspecting individual slot
-	let mut count_reader = SliceReader::new(wrapper_inner).map_err(|_| slot(VoteDecodeSlot::Wrapper))?;
+	let mut count_reader = SliceReader::new(wrapper_inner).or_slot(VoteDecodeSlot::Wrapper)?;
 	let mut wrapper_count: usize = 0;
 	while !count_reader.is_finished() {
-		AnyRef::decode(&mut count_reader).map_err(|_| slot(VoteDecodeSlot::Wrapper))?;
+		AnyRef::decode(&mut count_reader).or_slot(VoteDecodeSlot::Wrapper)?;
 		wrapper_count = wrapper_count.saturating_add(1);
 	}
 	if wrapper_count != 3 {
 		return Err(slot(VoteDecodeSlot::Wrapper));
 	}
 
-	let mut wrapper_reader = SliceReader::new(wrapper_inner).map_err(|_| slot(VoteDecodeSlot::Wrapper))?;
+	let mut wrapper_reader = SliceReader::new(wrapper_inner).or_slot(VoteDecodeSlot::Wrapper)?;
 
-	let tbs_bytes = capture_tlv(&mut wrapper_reader, Tag::Sequence).map_err(|_| slot(VoteDecodeSlot::TbsContent))?;
-	let mut tbs_outer = SliceReader::new(&tbs_bytes).map_err(|_| slot(VoteDecodeSlot::TbsContent))?;
-	let tbs_content = read_sequence(&mut tbs_outer).map_err(|_| slot(VoteDecodeSlot::TbsContent))?;
+	let tbs_bytes = capture_tlv(&mut wrapper_reader, Tag::Sequence).or_slot(VoteDecodeSlot::TbsContent)?;
+	let mut tbs_outer = SliceReader::new(&tbs_bytes).or_slot(VoteDecodeSlot::TbsContent)?;
+	let tbs_content = read_sequence(&mut tbs_outer).or_slot(VoteDecodeSlot::TbsContent)?;
 	if !tbs_outer.is_finished() {
 		return Err(slot(VoteDecodeSlot::TbsContent));
 	}
 
-	let mut tbs_reader = SliceReader::new(tbs_content).map_err(|_| slot(VoteDecodeSlot::TbsContent))?;
-	let version_bytes =
-		read_explicit_context(&mut tbs_reader, VERSION_TAG).map_err(|_| slot(VoteDecodeSlot::Version))?;
-	let mut version_reader = SliceReader::new(version_bytes).map_err(|_| slot(VoteDecodeSlot::VersionValue))?;
-	let version = read_bigint(&mut version_reader).map_err(|_| slot(VoteDecodeSlot::VersionValue))?;
+	let mut tbs_reader = SliceReader::new(tbs_content).or_slot(VoteDecodeSlot::TbsContent)?;
+	let version_bytes = read_explicit_context(&mut tbs_reader, VERSION_TAG).or_slot(VoteDecodeSlot::Version)?;
+	let mut version_reader = SliceReader::new(version_bytes).or_slot(VoteDecodeSlot::VersionValue)?;
+	let version = read_bigint(&mut version_reader).or_slot(VoteDecodeSlot::VersionValue)?;
 	if !version_reader.is_finished() {
 		return Err(slot(VoteDecodeSlot::VersionValue));
 	}
@@ -102,23 +102,22 @@ pub(super) fn decode_vote(bytes: &[u8]) -> Result<DecodedVoteCertificate, Asn1Er
 		return Err(Asn1Error::InvalidVoteVersion);
 	}
 
-	let serial_number = read_bigint(&mut tbs_reader).map_err(|_| slot(VoteDecodeSlot::Serial))?;
+	let serial_number = read_bigint(&mut tbs_reader).or_slot(VoteDecodeSlot::Serial)?;
 	let signature_algo_tbs =
-		decode_signature_algo_sequence(&mut tbs_reader).map_err(|_| slot(VoteDecodeSlot::SignatureAlgorithm))?;
-	let issuer = decode_distinguished_name(&mut tbs_reader).map_err(|_| slot(VoteDecodeSlot::Issuer))?;
-	let validity = decode_validity(&mut tbs_reader).map_err(|_| slot(VoteDecodeSlot::Validity))?;
-	let subject = decode_distinguished_name(&mut tbs_reader).map_err(|_| slot(VoteDecodeSlot::Subject))?;
+		decode_signature_algo_sequence(&mut tbs_reader).or_slot(VoteDecodeSlot::SignatureAlgorithm)?;
+	let issuer = decode_distinguished_name(&mut tbs_reader).or_slot(VoteDecodeSlot::Issuer)?;
+	let validity = decode_validity(&mut tbs_reader).or_slot(VoteDecodeSlot::Validity)?;
+	let subject = decode_distinguished_name(&mut tbs_reader).or_slot(VoteDecodeSlot::Subject)?;
 	let subject_public_key =
-		decode_subject_public_key_info(&mut tbs_reader).map_err(|_| slot(VoteDecodeSlot::SubjectPublicKey))?;
-	let extensions = decode_extensions_field(&mut tbs_reader).map_err(|_| slot(VoteDecodeSlot::Extensions))?;
+		decode_subject_public_key_info(&mut tbs_reader).or_slot(VoteDecodeSlot::SubjectPublicKey)?;
+	let extensions = decode_extensions_field(&mut tbs_reader).or_slot(VoteDecodeSlot::Extensions)?;
 	if !tbs_reader.is_finished() {
 		return Err(slot(VoteDecodeSlot::TbsExtraData));
 	}
 
-	let signature_algo_outer = decode_signature_algo_sequence(&mut wrapper_reader)
-		.map_err(|_| slot(VoteDecodeSlot::WrapperSignatureAlgorithm))?;
-	let signature =
-		decode_signature_bit_string(&mut wrapper_reader).map_err(|_| slot(VoteDecodeSlot::SignatureValue))?;
+	let signature_algo_outer =
+		decode_signature_algo_sequence(&mut wrapper_reader).or_slot(VoteDecodeSlot::WrapperSignatureAlgorithm)?;
+	let signature = decode_signature_bit_string(&mut wrapper_reader).or_slot(VoteDecodeSlot::SignatureValue)?;
 	if !wrapper_reader.is_finished() {
 		return Err(slot(VoteDecodeSlot::SignatureValue));
 	}
@@ -167,39 +166,40 @@ pub(super) fn encode_vote_staple(bundle: &VoteStapleBundle) -> Result<Vec<u8>, A
 }
 
 pub(super) fn decode_vote_staple(bytes: &[u8]) -> Result<VoteStapleBundle, Asn1Error> {
-	let mut outer = SliceReader::new(bytes).map_err(|_| staple_slot(VoteStapleDecodeSlot::Wrapper))?;
-	let inner = read_sequence(&mut outer).map_err(|_| staple_slot(VoteStapleDecodeSlot::Wrapper))?;
+	let mut outer = SliceReader::new(bytes).or_staple_slot(VoteStapleDecodeSlot::Wrapper)?;
+	let inner = read_sequence(&mut outer).or_staple_slot(VoteStapleDecodeSlot::Wrapper)?;
 	if !outer.is_finished() {
 		return Err(staple_slot(VoteStapleDecodeSlot::WrapperExtraData));
 	}
 
 	// Reference rejects staple wrappers that are not exactly 2 elements
 	// (blocks SEQUENCE, votes SEQUENCE) before inspecting individual slot
-	let mut count_reader = SliceReader::new(inner).map_err(|_| staple_slot(VoteStapleDecodeSlot::Wrapper))?;
+	let mut count_reader = SliceReader::new(inner).or_staple_slot(VoteStapleDecodeSlot::Wrapper)?;
 	let mut wrapper_count: usize = 0;
 	while !count_reader.is_finished() {
-		AnyRef::decode(&mut count_reader).map_err(|_| staple_slot(VoteStapleDecodeSlot::Wrapper))?;
+		AnyRef::decode(&mut count_reader).or_staple_slot(VoteStapleDecodeSlot::Wrapper)?;
 		wrapper_count = wrapper_count.saturating_add(1);
 	}
+
 	if wrapper_count != 2 {
 		return Err(staple_slot(VoteStapleDecodeSlot::Wrapper));
 	}
 
-	let mut inner_reader = SliceReader::new(inner).map_err(|_| staple_slot(VoteStapleDecodeSlot::Wrapper))?;
+	let mut inner_reader = SliceReader::new(inner).or_staple_slot(VoteStapleDecodeSlot::Wrapper)?;
 
-	let blocks_inner = read_sequence(&mut inner_reader).map_err(|_| staple_slot(VoteStapleDecodeSlot::Blocks))?;
-	let mut blocks_reader = SliceReader::new(blocks_inner).map_err(|_| staple_slot(VoteStapleDecodeSlot::Blocks))?;
+	let blocks_inner = read_sequence(&mut inner_reader).or_staple_slot(VoteStapleDecodeSlot::Blocks)?;
+	let mut blocks_reader = SliceReader::new(blocks_inner).or_staple_slot(VoteStapleDecodeSlot::Blocks)?;
 	let mut blocks: Vec<Vec<u8>> = Vec::new();
 	while !blocks_reader.is_finished() {
-		let raw = read_octet(&mut blocks_reader).map_err(|_| staple_slot(VoteStapleDecodeSlot::Blocks))?;
+		let raw = read_octet(&mut blocks_reader).or_staple_slot(VoteStapleDecodeSlot::Blocks)?;
 		blocks.push(raw.to_vec());
 	}
 
-	let votes_inner = read_sequence(&mut inner_reader).map_err(|_| staple_slot(VoteStapleDecodeSlot::Votes))?;
-	let mut votes_reader = SliceReader::new(votes_inner).map_err(|_| staple_slot(VoteStapleDecodeSlot::Votes))?;
+	let votes_inner = read_sequence(&mut inner_reader).or_staple_slot(VoteStapleDecodeSlot::Votes)?;
+	let mut votes_reader = SliceReader::new(votes_inner).or_staple_slot(VoteStapleDecodeSlot::Votes)?;
 	let mut votes: Vec<Vec<u8>> = Vec::new();
 	while !votes_reader.is_finished() {
-		let raw = read_octet(&mut votes_reader).map_err(|_| staple_slot(VoteStapleDecodeSlot::Votes))?;
+		let raw = read_octet(&mut votes_reader).or_staple_slot(VoteStapleDecodeSlot::Votes)?;
 		votes.push(raw.to_vec());
 	}
 
@@ -339,7 +339,7 @@ pub(super) fn decode_extension(bytes: &[u8]) -> Result<Extension, Asn1Error> {
 	let oid = decode_oid(&mut reader)?;
 	let critical = match peek_tag(&reader)? {
 		Tag::Boolean => read_bool(&mut reader)?,
-		Tag::OctetString => true,
+		Tag::OctetString => false,
 		actual => return Err(unexpected_tag_err(actual)),
 	};
 
@@ -347,6 +347,7 @@ pub(super) fn decode_extension(bytes: &[u8]) -> Result<Extension, Asn1Error> {
 	if !reader.is_finished() {
 		return Err(unexpected_tag_err(Tag::Sequence));
 	}
+
 	Ok(Extension { oid, critical, value })
 }
 
@@ -356,7 +357,7 @@ pub(super) fn decode_extension(bytes: &[u8]) -> Result<Extension, Asn1Error> {
 
 fn encode_signature_algo_sequence(algo: VoteSignatureAlgo) -> Result<Vec<u8>, Asn1Error> {
 	let mut content = Vec::new();
-	encode_oid(&mut content, &signature_algo_oid(algo))?;
+	encode_oid(&mut content, &algo.oid())?;
 	wrap_sequence(&content)
 }
 
@@ -368,24 +369,7 @@ fn decode_signature_algo_sequence(reader: &mut SliceReader<'_>) -> Result<VoteSi
 		return Err(unexpected_tag_err(Tag::Sequence));
 	}
 
-	signature_algo_from_oid(&oid)
-}
-
-fn signature_algo_oid(algo: VoteSignatureAlgo) -> VoteOid {
-	match algo {
-		VoteSignatureAlgo::Ed25519 => oids::ED25519,
-		VoteSignatureAlgo::EcdsaWithSha3_256 => oids::ECDSA_WITH_SHA3_256,
-	}
-}
-
-fn signature_algo_from_oid(oid: &VoteOid) -> Result<VoteSignatureAlgo, Asn1Error> {
-	if oid_eq(oid, &oids::ED25519) {
-		Ok(VoteSignatureAlgo::Ed25519)
-	} else if oid_eq(oid, &oids::ECDSA_WITH_SHA3_256) {
-		Ok(VoteSignatureAlgo::EcdsaWithSha3_256)
-	} else {
-		Err(Asn1Error::InvalidOid { reason: format_oid(oid) })
-	}
+	VoteSignatureAlgo::try_from(&oid)
 }
 
 fn encode_distinguished_name(dn: &DistinguishedName) -> Result<Vec<u8>, Asn1Error> {
@@ -448,6 +432,7 @@ fn decode_validity(reader: &mut SliceReader<'_>) -> Result<Validity, Asn1Error> 
 	if !inner_reader.is_finished() {
 		return Err(unexpected_tag_err(Tag::Sequence));
 	}
+
 	Ok(Validity { not_before, not_after })
 }
 
@@ -486,28 +471,28 @@ fn decode_subject_public_key_info(reader: &mut SliceReader<'_>) -> Result<VoteSu
 
 	let mut algo_reader = SliceReader::new(algo_inner)?;
 	let first_oid = decode_oid(&mut algo_reader)?;
-	let key_kind = if oid_eq(&first_oid, &oids::ED25519) {
+	let key_kind = if first_oid == oids::ED25519 {
 		if !algo_reader.is_finished() {
 			return Err(unexpected_tag_err(Tag::Sequence));
 		}
 
 		None
-	} else if oid_eq(&first_oid, &oids::EC_PUBLIC_KEY) {
+	} else if first_oid == oids::EC_PUBLIC_KEY {
 		let curve_oid = decode_oid(&mut algo_reader)?;
 		if !algo_reader.is_finished() {
 			return Err(unexpected_tag_err(Tag::Sequence));
 		}
-		let curve = if oid_eq(&curve_oid, &oids::SECP256K1) {
+		let curve = if curve_oid == oids::SECP256K1 {
 			EcdsaCurve::Secp256k1
-		} else if oid_eq(&curve_oid, &oids::SECP256R1) {
+		} else if curve_oid == oids::SECP256R1 {
 			EcdsaCurve::Secp256r1
 		} else {
-			return Err(Asn1Error::InvalidOid { reason: format_oid(&curve_oid) });
+			return Err(Asn1Error::InvalidOid { reason: curve_oid.to_string() });
 		};
 
 		Some(curve)
 	} else {
-		return Err(Asn1Error::InvalidOid { reason: format_oid(&first_oid) });
+		return Err(Asn1Error::InvalidOid { reason: first_oid.to_string() });
 	};
 
 	let raw = read_bit_string(&mut inner_reader)?.to_vec();
@@ -732,28 +717,13 @@ fn unexpected_tag_err(actual: Tag) -> Asn1Error {
 }
 
 fn vote_oid_to_der(oid: &VoteOid) -> Result<ObjectIdentifier, Asn1Error> {
-	let dotted = format_oid(oid);
+	let dotted = oid.to_string();
 	ObjectIdentifier::new(&dotted).map_err(|err| Asn1Error::InvalidOid { reason: format!("{err:?}") })
 }
 
 fn der_oid_to_vote(oid: &ObjectIdentifier) -> VoteOid {
 	let arcs: Vec<u32> = oid.arcs().collect();
 	VoteOid::from(arcs)
-}
-
-fn oid_eq(left: &VoteOid, right: &VoteOid) -> bool {
-	left.arcs() == right.arcs()
-}
-
-fn format_oid(oid: &VoteOid) -> String {
-	let mut out = String::new();
-	for (i, arc) in oid.arcs().iter().enumerate() {
-		if i > 0 {
-			out.push('.');
-		}
-		out.push_str(&arc.to_string());
-	}
-	out
 }
 
 fn bigint_to_der_integer_bytes(value: &BigInt) -> Vec<u8> {

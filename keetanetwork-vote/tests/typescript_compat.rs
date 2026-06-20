@@ -102,9 +102,7 @@ fn build_ed25519_quote() -> Result<Vote, VoteError> {
 
 // -- TypeScript -> Rust ------------------------------------------------------
 
-/// One TypeScript→Rust round-trip case. `build` produces a [`MintSpec`]
-/// understood by `ts_vote_mint`; the harness mints, decodes in Rust,
-/// and asserts every field matches the originating spec.
+/// One TypeScript→Rust round-trip case.
 struct TsToRustCase {
 	name: &'static str,
 	build: fn() -> MintSpec,

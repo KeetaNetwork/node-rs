@@ -1,5 +1,8 @@
 //! Internal helpers for working with [`GenericAccount`] values.
 
+use alloc::collections::BTreeSet;
+use alloc::string::{String, ToString};
+
 use hex::FromHex;
 use keetanetwork_account::{AccountError, GenericAccount};
 
@@ -33,6 +36,19 @@ pub(crate) fn verify_account(account: &GenericAccount, message: &[u8], signature
 /// Whether two accounts share the same public key and type.
 pub(crate) fn accounts_equal(left: &GenericAccount, right: &GenericAccount) -> bool {
 	left.to_public_key_with_type() == right.to_public_key_with_type()
+}
+
+/// The number of distinct accounts, keyed by their canonical public-key string.
+pub(crate) fn unique_account_count<I, A>(accounts: I) -> usize
+where
+	I: IntoIterator<Item = A>,
+	A: ToString,
+{
+	accounts
+		.into_iter()
+		.map(|account| account.to_string())
+		.collect::<BTreeSet<String>>()
+		.len()
 }
 
 #[cfg(test)]

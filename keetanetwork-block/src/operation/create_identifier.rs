@@ -1,13 +1,11 @@
 //! CREATE_IDENTIFIER operation: create a derived identifier account.
 
-use alloc::collections::BTreeSet;
-use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use keetanetwork_account::KeyPairType;
 use num_bigint::BigInt;
 
-use crate::account_util::accounts_equal;
+use crate::account_util::{accounts_equal, unique_account_count};
 use crate::error::BlockError;
 use crate::signer::AccountRef;
 
@@ -79,29 +77,47 @@ impl BlockOperation for CreateIdentifier {
 		}
 
 		if let Some(IdentifierCreateArguments::Multisig(arguments)) = &self.create_arguments {
-			if created_type != KeyPairType::MULTISIG {
-				return Err(BlockError::InvalidCreateIdentifierArguments);
-			}
-
-			ctx.config()?
-				.validate_signer_count(arguments.signers.len() as u64)?;
-
-			let unique: BTreeSet<String> = arguments
-				.signers
-				.iter()
-				.map(|signer| signer.to_string())
-				.collect();
-			if unique.len() != arguments.signers.len() {
-				return Err(BlockError::MultisigSignerDuplicate);
-			}
-
-			if arguments.quorum < BigInt::from(1u8) || arguments.quorum > BigInt::from(unique.len()) {
-				return Err(BlockError::MultisigQuorumInvalid);
-			}
+			validate_multisig_arguments(arguments, created_type, ctx)?;
 		}
 
 		Ok(())
 	}
+}
+
+/// Validate the arguments of a multisig CREATE_IDENTIFIER: the created type
+/// must be multisig, the signer count must be permitted, every signer must be
+/// a keyed account or nested multisig, signers must be unique, and the quorum
+/// must fall within `1..=unique`.
+fn validate_multisig_arguments(
+	arguments: &MultisigCreateArguments,
+	created_type: KeyPairType,
+	ctx: &OperationContext<'_>,
+) -> Result<(), BlockError> {
+	if created_type != KeyPairType::MULTISIG {
+		return Err(BlockError::InvalidCreateIdentifierArguments);
+	}
+
+	let signer_count = arguments.signers.len();
+
+	ctx.config()?.validate_signer_count(signer_count as u64)?;
+
+	for signer in &arguments.signers {
+		let signer_type = signer.to_keypair_type();
+		if !signer_type.supports_crypto() && signer_type != KeyPairType::MULTISIG {
+			return Err(BlockError::InvalidCreateIdentifierArguments);
+		}
+	}
+
+	let unique = unique_account_count(&arguments.signers);
+	if unique != signer_count {
+		return Err(BlockError::MultisigSignerDuplicate);
+	}
+
+	if arguments.quorum < BigInt::from(1u8) || arguments.quorum > BigInt::from(unique) {
+		return Err(BlockError::MultisigQuorumInvalid);
+	}
+
+	Ok(())
 }
 
 #[cfg(test)]
@@ -169,6 +185,20 @@ mod tests {
 					.into(),
 				)
 			} => Err(BlockError::MultisigQuorumInvalid),
+			"rejects_non_keyed_signer": {
+				let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
+					signers: vec![generate_ed25519_ref(2), token(0)],
+					quorum: BigInt::from(1u8),
+				});
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier {
+						identifier: generate_identifier_ref(1, KeyPairType::MULTISIG, 0),
+						create_arguments: Some(arguments),
+					}
+					.into(),
+				)
+			} => Err(BlockError::InvalidCreateIdentifierArguments),
 			"rejects_duplicate_signers": {
 				let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
 					signers: vec![generate_ed25519_ref(2), generate_ed25519_ref(2)],

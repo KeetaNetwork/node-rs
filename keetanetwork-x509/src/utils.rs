@@ -62,7 +62,7 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 			let ia5_string = Ia5String::new(value.as_ref())?;
 			let value = Any::encode_from(&ia5_string)?;
 			let attr = AttributeTypeAndValue { oid, value };
-			RelativeDistinguishedName::try_from(vec![attr]).map_err(|_| CertificateError::InvalidCertificate)
+			RelativeDistinguishedName::try_from(vec![attr]).or_invalid_certificate()
 		})
 		.collect::<Result<Vec<_>, _>>()
 		.map(RdnSequence)
@@ -192,7 +192,8 @@ pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedNa
 			let ia5_string = Ia5String::new(&pair.value)?;
 			let value = Any::encode_from(&ia5_string)?;
 			let attr = AttributeTypeAndValue { oid, value };
-			RelativeDistinguishedName::try_from(vec![attr]).map_err(|_| CertificateError::InvalidCertificate)
+
+			RelativeDistinguishedName::try_from(vec![attr]).or_invalid_certificate()
 		})
 		.collect::<Result<Vec<_>, _>>()
 		.map(RdnSequence)
@@ -521,9 +522,7 @@ where
 	}
 	// Try raw 64-byte signature
 	else if signature_bytes.len() == 64 {
-		let sig_array: [u8; 64] = signature_bytes
-			.try_into()
-			.map_err(|_| CertificateError::InvalidCertificate)?;
+		let sig_array: [u8; 64] = signature_bytes.try_into().or_invalid_certificate()?;
 		let signature = sig_from_bytes(&sig_array)?;
 
 		// For raw signatures, also use for_cert option to match signing
@@ -578,11 +577,10 @@ pub fn try_verify_ecdsa_secp256r1(
 	signature_bytes: impl AsRef<[u8]>,
 	tbs_der: impl AsRef<[u8]>,
 ) -> Result<bool, CertificateError> {
-	let public_key =
-		Secp256r1PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
+	let public_key = Secp256r1PublicKey::try_from(public_key_bytes.as_ref()).or_invalid_certificate()?;
 
 	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, |sig_array| {
-		Secp256r1Signature::from_bytes((sig_array).into()).map_err(|_| CertificateError::InvalidCertificate)
+		Secp256r1Signature::from_bytes((sig_array).into()).or_invalid_certificate()
 	})
 }
 
@@ -625,11 +623,10 @@ pub fn try_verify_ecdsa_secp256k1(
 	signature_bytes: impl AsRef<[u8]>,
 	tbs_der: impl AsRef<[u8]>,
 ) -> Result<bool, CertificateError> {
-	let public_key =
-		Secp256k1PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
+	let public_key = Secp256k1PublicKey::try_from(public_key_bytes.as_ref()).or_invalid_certificate()?;
 
 	try_verify_ecdsa_generic(public_key, signature_bytes, tbs_der, |sig_array| {
-		Secp256k1Signature::from_bytes((sig_array).into()).map_err(|_| CertificateError::InvalidCertificate)
+		Secp256k1Signature::from_bytes((sig_array).into()).or_invalid_certificate()
 	})
 }
 

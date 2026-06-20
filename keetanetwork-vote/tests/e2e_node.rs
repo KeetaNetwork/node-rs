@@ -44,9 +44,12 @@ where
 	let mut node = E2eNode::start().expect("the reference node harness must start");
 	node.request("init_supply", json!({ "amount": "1000000" }))
 		.expect("network initialization must succeed");
+
 	let representative = parse_account(&node.info().clone(), "representative");
 	let result = body(&mut node, representative);
+
 	node.shutdown().expect("the harness must shut down cleanly");
+
 	result
 }
 
@@ -58,7 +61,9 @@ where
 {
 	let mut node = E2eNode::start().expect("the reference node harness must start");
 	let result = body(&mut node);
+
 	node.shutdown().expect("the harness must shut down cleanly");
+
 	result
 }
 
@@ -91,6 +96,7 @@ fn build_rust_staple(openings: &[Block]) -> Result<VoteStaple, VoteError> {
 	for opening in openings {
 		builder = builder.add_block(opening.clone());
 	}
+
 	builder.build()
 }
 
@@ -105,13 +111,13 @@ fn test_ts_mints_staple_from_rust_block() -> TestResult {
 		let bytes_hex = json_str(&response, "stapleBytes");
 		let staple = VoteStaple::verify(hex_decode(&bytes_hex), ValidationConfig::default(), now_blocktime())?;
 
-		assert_eq!(hex::encode_upper(staple.as_bytes()), bytes_hex, "the staple must re-encode byte-exactly");
+		let re_encoded = hex::encode_upper(staple.as_bytes());
+		assert_eq!(re_encoded, bytes_hex, "the staple must re-encode byte-exactly");
 		assert_eq!(staple.blocks().len(), 1, "the staple must contain exactly the block we transmitted");
-		assert_eq!(
-			staple.blocks()[0].hash().to_string(),
-			opening.hash().to_string(),
-			"the staple must wrap our Rust-built block"
-		);
+
+		let wrapped_hash = staple.blocks()[0].hash().to_string();
+		let opening_hash = opening.hash().to_string();
+		assert_eq!(wrapped_hash, opening_hash, "the staple must wrap our Rust-built block");
 		assert!(!staple.votes().is_empty(), "the staple must carry at least one vote");
 		Ok(())
 	})
@@ -129,18 +135,16 @@ fn test_harness_built_staple_verifies_in_rust() -> TestResult {
 		let reported_hash = json_str(&response, "stapleHash");
 		let staple = VoteStaple::verify(hex_decode(&bytes_hex), ValidationConfig::default(), now_blocktime())?;
 
-		assert_eq!(
-			hex::encode_upper(staple.as_bytes()),
-			bytes_hex,
-			"the harness-built staple must re-encode byte-exactly"
-		);
-		assert_eq!(staple.hash().to_string(), reported_hash, "Rust and TS must agree on the staple hash");
+		let re_encoded = hex::encode_upper(staple.as_bytes());
+		assert_eq!(re_encoded, bytes_hex, "the harness-built staple must re-encode byte-exactly");
+
+		let rust_hash = staple.hash().to_string();
+		assert_eq!(rust_hash, reported_hash, "Rust and TS must agree on the staple hash");
 		assert_eq!(staple.blocks().len(), 1, "the harness staple must wrap exactly the block we provided");
-		assert_eq!(
-			staple.blocks()[0].hash().to_string(),
-			opening.hash().to_string(),
-			"the harness staple must wrap our Rust-built block"
-		);
+
+		let wrapped_hash = staple.blocks()[0].hash().to_string();
+		let opening_hash = opening.hash().to_string();
+		assert_eq!(wrapped_hash, opening_hash, "the harness staple must wrap our Rust-built block");
 		Ok(())
 	})
 }

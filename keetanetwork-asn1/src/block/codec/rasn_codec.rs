@@ -2,7 +2,6 @@
 //! [`super::super::types`] into the rasn-compiler-generated transport types in
 //! `crate::generated` and back.
 
-use alloc::format;
 use alloc::vec::Vec;
 
 use crate::block::types::{
@@ -11,6 +10,7 @@ use crate::block::types::{
 	MultisigSigner, OctetStringOrNull, Operation, Permissions, PermissionsOrNull, ReceiveOp, SendOp, SetInfoOp,
 	SetRepOp, Signatures, Signer, TokenAdminModifyBalanceOp, TokenAdminSupplyOp,
 };
+use crate::error::RasnDecodeExt;
 use crate::generated as gen;
 use crate::rasn::{Integer, OctetString};
 use crate::Asn1Error;
@@ -29,14 +29,12 @@ pub(super) fn encode_v2(value: &BlockV2) -> Result<Vec<u8>, Asn1Error> {
 }
 
 pub(super) fn decode_v1(bytes: &[u8]) -> Result<BlockV1, Asn1Error> {
-	let transport: gen::BlockV1 = ::rasn::der::decode(bytes)
-		.map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })?;
+	let transport: gen::BlockV1 = ::rasn::der::decode(bytes).or_rasn_decode()?;
 	Ok(block_v1_from_transport(transport))
 }
 
 pub(super) fn decode_v2(bytes: &[u8]) -> Result<BlockV2, Asn1Error> {
-	let transport: gen::BlockV2 = ::rasn::der::decode(bytes)
-		.map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })?;
+	let transport: gen::BlockV2 = ::rasn::der::decode(bytes).or_rasn_decode()?;
 	Ok(block_v2_from_transport(transport))
 }
 

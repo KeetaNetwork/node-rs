@@ -24,12 +24,7 @@ impl BlockOperation for SetRep {
 			return Err(BlockError::IdentifierDelegationForbidden);
 		}
 
-		let set_rep_count = ctx
-			.operations
-			.iter()
-			.filter(|operation| operation.operation_type() == OperationType::SetRep)
-			.count();
-		if set_rep_count > 1 {
+		if ctx.iter_type::<SetRep>().count() > 1 {
 			return Err(BlockError::MultipleSetRep);
 		}
 

@@ -12,7 +12,7 @@ import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/ut
 
 import { loadModule, resolveDist } from './dist';
 
-const USAGE = 'usage: ts_mint_cert.js <path-to-node-dist> <subject-public-key-string>';
+const USAGE = 'usage: ts-mint-cert.js <path-to-node-dist> <subject-public-key-string>';
 
 const dist = resolveDist(process.argv[2], USAGE);
 const subjectPublicKey = process.argv[3];

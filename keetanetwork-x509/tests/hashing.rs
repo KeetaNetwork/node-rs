@@ -7,12 +7,20 @@ use keetanetwork_x509::certificates::CertificateBundle;
 
 use common::*;
 
+fn certificate_hash_pair(
+	ca_cert: &Certificate,
+	user_cert: &Certificate,
+) -> Result<(CertificateHash, CertificateHash), Box<dyn core::error::Error>> {
+	let ca_hash = CertificateHash::try_from(ca_cert)?;
+	let user_hash = CertificateHash::try_from(user_cert)?;
+	Ok((ca_hash, user_hash))
+}
+
 #[test]
 fn test_hash_uniqueness() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
-	let ca_hash = CertificateHash::try_from(&ca_cert)?;
-	let user_hash = CertificateHash::try_from(&user_cert)?;
+	let (ca_hash, user_hash) = certificate_hash_pair(&ca_cert, &user_cert)?;
 	assert_ne!(ca_hash, user_hash);
 	assert_eq!(ca_hash.len(), 32);
 	assert_eq!(user_hash.len(), 32);
@@ -36,8 +44,7 @@ fn test_hash_hex_representation() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_hash = CertificateHash::try_from(&ca_cert)?;
-	let user_hash = CertificateHash::try_from(&user_cert)?;
+	let (ca_hash, user_hash) = certificate_hash_pair(&ca_cert, &user_cert)?;
 
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
@@ -67,8 +74,7 @@ fn test_hash_json_serialization() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_hash = CertificateHash::try_from(&ca_cert)?;
-	let user_hash = CertificateHash::try_from(&user_cert)?;
+	let (ca_hash, user_hash) = certificate_hash_pair(&ca_cert, &user_cert)?;
 	let ca_hash_hex = hex::encode(ca_hash.as_ref());
 	let user_hash_hex = hex::encode(user_hash.as_ref());
 

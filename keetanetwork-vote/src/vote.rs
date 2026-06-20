@@ -118,7 +118,7 @@ impl UnsignedVote {
 		let algo = SignatureAlgo::from_issuer(&self.issuer)?;
 		let tbs = build_tbs(&self.serial, algo, &self.issuer, self.validity, &self.blocks, self.fees.as_ref())?;
 		let tbs_bytes = encode_tbs(&tbs)?;
-		let signature = signer.sign_for_cert(&tbs_bytes).map_err(VoteError::from)?;
+		let signature = signer.sign_for_cert(&tbs_bytes)?;
 		let serialized = encode_vote(tbs, algo, signature.clone())?;
 		let decoded = DecodedVote {
 			serial: self.serial,
@@ -176,14 +176,31 @@ impl Vote {
 	}
 
 	/// Decode and verify the certificate's signature.
+	///
+	/// A confirmation vote must not carry quote fees; quote certificates are
+	/// surfaced exclusively through [`VoteQuote`].
 	pub fn verify(bytes: impl Into<Vec<u8>>) -> Result<Self, VoteError> {
 		let vote = Self::from_serialized(bytes)?;
-		vote.decoded
-			.issuer
-			.verify_for_cert(&vote.decoded.tbs_bytes, &vote.decoded.signature)
-			.map_err(VoteError::from)?;
-
+		vote.verify_signature()?;
+		vote.assert_quote_flag(false)?;
 		Ok(vote)
+	}
+
+	/// Verify the certificate signature against the issuer's public key.
+	fn verify_signature(&self) -> Result<(), VoteError> {
+		self.decoded
+			.issuer
+			.verify_for_cert(&self.decoded.tbs_bytes, &self.decoded.signature)?;
+		Ok(())
+	}
+
+	/// Assert the fees' `quote` flag matches the value the wrapper variant
+	/// expects (a [`Vote`] expects `false`, a [`VoteQuote`] expects `true`).
+	fn assert_quote_flag(&self, expected_quote: bool) -> Result<(), VoteError> {
+		match self.fees() {
+			Some(fees) if fees.quote() != expected_quote => Err(VoteError::MalformedFeesQuoteInvalid),
+			_ => Ok(()),
+		}
 	}
 
 	/// The serialized DER bytes.
@@ -290,8 +307,10 @@ impl VoteQuote {
 	/// Construct from an already-verified [`Vote`], enforcing the quote
 	/// invariant.
 	pub fn try_from_vote(vote: Vote) -> Result<Self, VoteError> {
-		// Reference's `VoteQuote` constructor throws `VOTE_FEE_NOT_QUOTE`
-		// when the certificate's quote flag is missing or false.
+		// Fees that disagree with the expected quote flag are malformed; a
+		// fee-less certificate instead fails the dedicated "not a quote" check
+		// below, matching the reference's two distinct error paths.
+		vote.assert_quote_flag(true)?;
 		if !vote.is_quote() {
 			return Err(VoteError::FeeNotQuote);
 		}
@@ -300,8 +319,22 @@ impl VoteQuote {
 	}
 
 	/// Decode and verify the certificate, then enforce quote semantics.
+	///
+	/// Unlike [`Vote::verify`], this accepts quote certificates: the quote
+	/// invariant ([`VoteError::FeeNotQuote`] when absent) is enforced here.
 	pub fn verify(bytes: impl Into<Vec<u8>>) -> Result<Self, VoteError> {
-		Self::try_from_vote(Vote::verify(bytes)?)
+		let vote = Vote::from_serialized(bytes)?;
+		vote.verify_signature()?;
+		Self::try_from_vote(vote)
+	}
+
+	/// Confirm the quote is still active at `moment` under `config`.
+	///
+	/// Decoding a quote does not consult a clock (so `no_std` callers stay
+	/// clock-free). Expiry is asserted here when a moment is available.
+	pub fn ensure_active_at(self, moment: BlockTime, config: ValidationConfig) -> Result<Self, VoteError> {
+		self.0.validity().ensure_active_at(moment, config)?;
+		Ok(self)
 	}
 
 	/// Reference to the underlying vote.
@@ -334,6 +367,22 @@ impl Hashable for VoteQuote {
 	}
 }
 
+impl TryFrom<Vec<u8>> for VoteQuote {
+	type Error = VoteError;
+
+	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		Self::try_from_vote(Vote::from_serialized(bytes)?)
+	}
+}
+
+impl TryFrom<&[u8]> for VoteQuote {
+	type Error = VoteError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		Self::try_from_vote(Vote::from_serialized(bytes.to_vec())?)
+	}
+}
+
 /// A vote that has been parsed but may currently be expired. Useful for
 /// inspection paths (e.g. retrieving signature or contents) without
 /// committing to the staple-inclusion contract.
@@ -350,9 +399,7 @@ impl PossiblyExpiredVote {
 	/// Promote to a [`Vote`] if the vote is still valid at `moment` under
 	/// `config`.
 	pub fn ensure_active_at(self, moment: BlockTime, config: ValidationConfig) -> Result<Vote, VoteError> {
-		if self.0.is_expired_at(moment, config) {
-			return Err(VoteError::Expired);
-		}
+		self.0.validity().ensure_active_at(moment, config)?;
 		Ok(self.0)
 	}
 
@@ -457,6 +504,43 @@ mod tests {
 
 		let other_vote = sign_simple_vote(&issuer, 12, *vote.validity(), vote.blocks().to_vec(), None);
 		assert!(matches!(VoteQuote::try_from_vote(other_vote), Err(VoteError::FeeNotQuote)));
+		Ok(())
+	}
+
+	#[test]
+	fn test_vote_quote_try_from_bytes() -> Result<(), VoteError> {
+		let quote_bytes =
+			sign_simple_vote(&alice(), DEFAULT_SERIAL, validity_seconds(0, 60), default_blocks(), Some(quote_fees(1)))
+				.into_bytes();
+		assert!(VoteQuote::try_from(quote_bytes.clone()).is_ok());
+		assert!(VoteQuote::try_from(quote_bytes.as_slice()).is_ok());
+
+		let plain_bytes = signed_alice_vote(None).into_bytes();
+		assert!(matches!(VoteQuote::try_from(plain_bytes), Err(VoteError::FeeNotQuote)));
+		Ok(())
+	}
+
+	#[test]
+	fn test_vote_verify_rejects_quote() {
+		let bytes = signed_alice_vote(Some(quote_fees(1))).into_bytes();
+		assert!(matches!(Vote::verify(bytes.clone()), Err(VoteError::MalformedFeesQuoteInvalid)));
+		assert!(matches!(PossiblyExpiredVote::verify(bytes.clone()), Err(VoteError::MalformedFeesQuoteInvalid)));
+		assert!(VoteQuote::verify(bytes).is_ok());
+	}
+
+	#[test]
+	fn test_vote_quote_ensure_active_at() -> Result<(), VoteError> {
+		let quote = VoteQuote::verify(
+			sign_simple_vote(&alice(), DEFAULT_SERIAL, validity_seconds(0, 60), default_blocks(), Some(quote_fees(1)))
+				.into_bytes(),
+		)?;
+
+		quote
+			.clone()
+			.ensure_active_at(moment(0), ValidationConfig::default())?;
+
+		let expired = quote.ensure_active_at(moment(10_000_000), ValidationConfig::default());
+		assert!(matches!(expired, Err(VoteError::Expired)));
 		Ok(())
 	}
 

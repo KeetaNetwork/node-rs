@@ -233,7 +233,7 @@ use keetanetwork_crypto::utils::{generate_random_passphrase, seed_from_passphras
 use strum_macros::{Display, EnumIter, EnumString};
 use zeroize::Zeroize;
 
-use crate::error::AccountError;
+use crate::error::{AccountError, OrInvalidConstruction};
 use crate::utils::*;
 use crate::{HexSeedAndIndex, Index, PassphraseAndIndex, Seed, SeedAndIndex};
 
@@ -2519,8 +2519,8 @@ macro_rules! impl_crypto_key_try_from {
 						}
 
 						// Create the public key object from parsed bytes
-						let public_key = $public_key_type::try_from(public_key_bytes.as_slice())
-							.map_err(|_| AccountError::InvalidConstruction)?;
+						let public_key =
+							$public_key_type::try_from(public_key_bytes.as_slice()).or_invalid_construction()?;
 
 						Ok($key_type { private_key: None, public_key })
 					}
@@ -2531,8 +2531,8 @@ macro_rules! impl_crypto_key_try_from {
 						}
 
 						// Create the public key object from raw bytes
-						let public_key = $public_key_type::try_from(public_key_bytes.as_slice())
-							.map_err(|_| AccountError::InvalidConstruction)?;
+						let public_key =
+							$public_key_type::try_from(public_key_bytes.as_slice()).or_invalid_construction()?;
 
 						Ok($key_type { private_key: None, public_key })
 					}
@@ -3766,9 +3766,7 @@ mod tests {
 	fn test_compatibility_private_accounts() -> Result<(), AccountError> {
 		for (index, test_case) in PRIVATE_ACCOUNT_TEST_DATA.indexes.iter().enumerate() {
 			let seed_bytes = hex::decode(PRIVATE_ACCOUNT_TEST_DATA.seed)?;
-			let seed_data: [u8; 32] = seed_bytes
-				.try_into()
-				.map_err(|_| AccountError::InvalidConstruction)?;
+			let seed_data: [u8; 32] = seed_bytes.try_into().or_invalid_construction()?;
 
 			// Macro to test account derivation for any crypto key type
 			macro_rules! test_crypto_derivation {
@@ -4594,9 +4592,7 @@ mod tests {
 	fn test_try_from_trait_implementations() -> Result<(), AccountError> {
 		let passphrase = create_test_passphrase();
 		let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed)?;
-		let seed_array: [u8; 32] = seed_bytes
-			.try_into()
-			.map_err(|_| AccountError::InvalidConstruction)?;
+		let seed_array: [u8; 32] = seed_bytes.try_into().or_invalid_construction()?;
 
 		// Test error cases for crypto keys with invalid passphrases
 		let invalid_passphrase = vec!["too".to_string(), "short".to_string()];
@@ -4834,9 +4830,7 @@ mod tests {
 
 		// Test account creation from seed
 		let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed)?;
-		let seed_array: [u8; 32] = seed_bytes
-			.try_into()
-			.map_err(|_| AccountError::InvalidConstruction)?;
+		let seed_array: [u8; 32] = seed_bytes.try_into().or_invalid_construction()?;
 
 		for (index_number, test_index) in TEST_PRIVATE_ACCOUNT.indexes.iter().enumerate() {
 			// Use macros to reduce repetition
@@ -4905,9 +4899,7 @@ mod tests {
 	fn test_account_sign() -> Result<(), AccountError> {
 		let test_data = b"Some random test data";
 		let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed)?;
-		let seed_array: [u8; 32] = seed_bytes
-			.try_into()
-			.map_err(|_| AccountError::InvalidConstruction)?;
+		let seed_array: [u8; 32] = seed_bytes.try_into().or_invalid_construction()?;
 
 		// Macro to test signing for crypto algorithms
 		macro_rules! test_crypto_signing {

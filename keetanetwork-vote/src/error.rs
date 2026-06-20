@@ -15,6 +15,18 @@ use keetanetwork_error::KeetaNetError;
 use keetanetwork_utils::impl_source_error_from;
 use snafu::Snafu;
 
+/// A required field of the [`VoteBuilder`](crate::VoteBuilder) that must be
+/// set before an unsigned vote can be sealed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VoteField {
+	/// The vote serial number.
+	Serial,
+	/// The issuing representative.
+	Issuer,
+	/// The validity window (`validityFrom` / `validityTo`).
+	Validity,
+}
+
 /// Errors produced by the vote crate.
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
@@ -109,18 +121,15 @@ pub enum VoteError {
 	StapleInvalidConstruction,
 
 	// ----- Builder-level -----
-	/// Builder was misconfigured before sealing
-	#[snafu(display("invalid vote builder construction"))]
-	BuilderInvalidConstruction,
+	/// A required builder field was not set before sealing
+	#[snafu(display("vote builder is missing a required field: {field:?}"))]
+	BuilderMissingField {
+		/// Which required field was absent
+		field: VoteField,
+	},
 	/// Builder received a value that is not a block hash
 	#[snafu(display("invalid block reference for vote builder"))]
 	BuilderInvalidBlockType,
-	/// Serial supplied to builder is not a positive integer
-	#[snafu(display("invalid serial supplied to vote builder"))]
-	BuilderInvalidSerial,
-	/// `validity_from` / `validity_to` combination is invalid
-	#[snafu(display("invalid validity range supplied to vote builder"))]
-	BuilderInvalidValidToFrom,
 	/// Fee value supplied to builder is invalid
 	#[snafu(display("invalid fee supplied to vote builder"))]
 	BuilderInvalidFee,
@@ -322,10 +331,10 @@ impl VoteError {
 			VoteError::StapleDuplicateIssuer => "VOTE_STAPLE_DUPLICATE_VOTE_ISSUER",
 			VoteError::StaplePermanenceMismatch => "VOTE_STAPLE_PERMANENCE_MISMATCH",
 
-			VoteError::BuilderInvalidConstruction => "VOTE_BUILDER_INVALID_CONSTRUCTION",
+			VoteError::BuilderMissingField { field: VoteField::Serial } => "VOTE_BUILDER_INVALID_SERIAL",
+			VoteError::BuilderMissingField { field: VoteField::Issuer } => "VOTE_BUILDER_INVALID_CONSTRUCTION",
+			VoteError::BuilderMissingField { field: VoteField::Validity } => "VOTE_BUILDER_INVALID_VALID_TO_FROM",
 			VoteError::BuilderInvalidBlockType => "VOTE_BUILDER_INVALID_BLOCK_TYPE",
-			VoteError::BuilderInvalidSerial => "VOTE_BUILDER_INVALID_SERIAL",
-			VoteError::BuilderInvalidValidToFrom => "VOTE_BUILDER_INVALID_VALID_TO_FROM",
 			VoteError::BuilderInvalidFee => "VOTE_BUILDER_INVALID_FEE",
 
 			VoteError::MalformedWrapper => "VOTE_MALFORMED_WRAPPER",

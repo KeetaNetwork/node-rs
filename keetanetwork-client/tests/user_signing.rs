@@ -27,9 +27,12 @@ async fn delegated_writes_are_signed_by_the_bound_signer() -> Result<(), ClientE
 	assert_eq!(blocks.len(), 1, "one send must render to one block");
 
 	let data = blocks[0].data();
-	assert_eq!(data.account().to_string(), account.to_string(), "the block must originate for the operating account");
+	let block_account = data.account().to_string();
+	assert_eq!(block_account, account.to_string(), "the block must originate for the operating account");
+
+	let signer_principal = data.signer().principal().to_string();
 	assert_eq!(
-		data.signer().principal().to_string(),
+		signer_principal,
 		signer.to_string(),
 		"the block must be signed by the bound signer, not the operating account"
 	);

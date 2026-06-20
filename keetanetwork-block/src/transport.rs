@@ -254,7 +254,15 @@ fn parse_multisig(value: asn1::MultisigSigner, depth: usize) -> Result<Signer, B
 
 fn parse_signer(value: asn1::Signer, depth: usize) -> Result<Signer, BlockError> {
 	match value {
-		asn1::Signer::Single(bytes) => Ok(Signer::Single(parse_account(&bytes)?)),
+		asn1::Signer::Single(bytes) => {
+			// A multisig leaf signer must be a keyed (signing) account.
+			let account = parse_account(&bytes)?;
+			if !account.to_keypair_type().supports_crypto() {
+				return Err(BlockError::MalformedSigner);
+			}
+
+			Ok(Signer::Single(account))
+		}
 		asn1::Signer::Multisig(multi) => {
 			if depth > MAX_PARSE_SIGNER_DEPTH {
 				return Err(BlockError::MultisigSignerDepthExceeded {
@@ -449,15 +457,8 @@ fn create_identifier_from_transport(value: asn1::CreateIdentifierOp) -> Result<C
 // --- ManageCertificate --------------------------------------------------
 
 fn manage_certificate_to_transport(value: &ManageCertificate) -> asn1::ManageCertificateOp {
-	let certificate_or_hash = match &value.certificate_or_hash {
-		CertificateOrHash::Certificate(certificate) => {
-			// Removals always reference the certificate by hash.
-			if value.method == AdjustMethod::Subtract {
-				certificate.hash().to_vec()
-			} else {
-				certificate.as_bytes().to_vec()
-			}
-		}
+	let certificate_or_hash = match value.canonical_certificate_or_hash() {
+		CertificateOrHash::Certificate(certificate) => certificate.as_bytes().to_vec(),
 		CertificateOrHash::Hash(hash) => hash.to_vec(),
 	};
 
@@ -520,4 +521,33 @@ fn parse_account(bytes: &[u8]) -> Result<AccountRef, BlockError> {
 
 fn blockhash_from_bytes(bytes: &[u8]) -> Result<BlockHash, BlockError> {
 	Ok(BlockHash::try_from(bytes)?)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::testing::{generate_ed25519_ref, generate_identifier_ref};
+	use keetanetwork_account::KeyPairType;
+
+	fn multisig_with_leaf(leaf: &AccountRef) -> asn1::Signer {
+		let address = generate_identifier_ref(8, KeyPairType::MULTISIG, 0);
+		asn1::Signer::Multisig(asn1::MultisigSigner {
+			address: account_bytes(&address),
+			signers: vec![asn1::Signer::Single(account_bytes(leaf))],
+		})
+	}
+
+	#[test]
+	fn test_parse_signer_rejects_non_keyed_leaf() {
+		let token = generate_identifier_ref(1, KeyPairType::TOKEN, 0);
+		let result = parse_signer(multisig_with_leaf(&token), 1);
+		assert!(matches!(result, Err(BlockError::MalformedSigner)));
+	}
+
+	#[test]
+	fn test_parse_signer_accepts_keyed_leaf() {
+		let keyed = generate_ed25519_ref(2);
+		let result = parse_signer(multisig_with_leaf(&keyed), 1);
+		assert!(matches!(result, Ok(Signer::Multisig { .. })));
+	}
 }

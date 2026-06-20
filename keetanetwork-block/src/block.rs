@@ -1,7 +1,5 @@
 //! Block model: shared data, unsigned blocks and sealed (verified) blocks.
 
-use alloc::collections::BTreeSet;
-use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -11,7 +9,7 @@ use keetanetwork_crypto::hash::{hash_default, BlockHash, Hashable};
 use keetanetwork_crypto::verify::Verifiable;
 use num_bigint::BigInt;
 
-use crate::account_util::verify_account;
+use crate::account_util::{unique_account_count, verify_account};
 use crate::error::BlockError;
 use crate::operation::{Operation, OperationContext, OperationType};
 use crate::signer::{AccountRef, Signer};
@@ -249,15 +247,14 @@ impl BlockData {
 
 			config.validate_signer_count(signers.len() as u64)?;
 
-			let mut seen: BTreeSet<String> = BTreeSet::new();
 			for inner in signers {
 				if matches!(inner, Signer::Multisig { .. }) {
 					queue.push((depth + 1, inner));
 				}
+			}
 
-				if !seen.insert(inner.principal().to_string()) {
-					return Err(BlockError::MultisigSignerDuplicate);
-				}
+			if unique_account_count(signers.iter().map(Signer::principal)) != signers.len() {
+				return Err(BlockError::MultisigSignerDuplicate);
 			}
 		}
 
