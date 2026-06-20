@@ -10,7 +10,7 @@ import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/in
 
 import { loadModule, resolveDist } from './dist';
 
-const dist = resolveDist(process.argv[2], 'usage: ts_verify.js <path-to-node-dist>');
+const dist = resolveDist(process.argv[2], 'usage: ts-verify.js <path-to-node-dist>');
 const { Block } = loadModule<typeof BlockModule>(dist, 'lib/block/index.js');
 
 let input = '';

@@ -31,7 +31,7 @@ import type * as VoteModule from '@keetanetwork/keetanet-node/dist/lib/vote';
 
 import { loadModule, resolveDist } from './dist';
 
-const USAGE = 'usage: ts_vote_mint.js <path-to-node-dist>';
+const USAGE = 'usage: ts-vote-mint.js <path-to-node-dist>';
 
 const dist = resolveDist(process.argv[2], USAGE);
 

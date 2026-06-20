@@ -9,7 +9,7 @@ use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvI
 use cbc::{Decryptor, Encryptor};
 use rand_core::{OsRng, TryRngCore};
 
-use crate::error::CryptoError;
+use crate::error::{CryptoError, OrCryptoError};
 use crate::operations::encryption::SymmetricEncryption;
 
 /// AES-256-CBC symmetric encryption implementation.
@@ -54,15 +54,14 @@ impl SymmetricEncryption for Aes256Cbc {
 				if iv_slice.len() != 16 {
 					return Err(CryptoError::InvalidIvSize);
 				}
+
 				let mut iv_array = [0u8; 16];
 				iv_array.copy_from_slice(iv_slice);
 				iv_array
 			}
 			None => {
 				let mut iv_array = [0u8; 16];
-				OsRng
-					.try_fill_bytes(&mut iv_array)
-					.map_err(|_| CryptoError::EncryptionFailed)?;
+				OsRng.try_fill_bytes(&mut iv_array).or_encryption_failed()?;
 				iv_array
 			}
 		};

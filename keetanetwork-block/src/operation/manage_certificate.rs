@@ -7,7 +7,7 @@ use keetanetwork_crypto::hash::hash_default;
 
 use crate::error::BlockError;
 
-use super::{AdjustMethod, BlockOperation, Operation, OperationContext, OperationType};
+use super::{AdjustMethod, BlockOperation, OperationContext, OperationType};
 
 /// DER bytes of an X.509 certificate.
 ///
@@ -129,11 +129,7 @@ impl BlockOperation for ManageCertificate {
 		}
 
 		let mut seen: BTreeSet<[u8; 32]> = BTreeSet::new();
-		for operation in ctx.operations {
-			let Operation::ManageCertificate(other) = operation else {
-				continue;
-			};
-
+		for other in ctx.iter_type::<ManageCertificate>() {
 			if !seen.insert(other.certificate_or_hash.hash()) {
 				return Err(BlockError::DuplicateCertificateOperation);
 			}
@@ -149,6 +145,7 @@ mod tests {
 
 	use super::*;
 	use crate::operation::harness::{assert_validation, manage_certificate_subtract, Harness};
+	use crate::operation::Operation;
 	use crate::testing::generate_ed25519_ref;
 
 	#[test]

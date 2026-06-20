@@ -80,6 +80,17 @@ impl AccountError {
 	}
 }
 
+/// Maps any backend error to [`AccountError::InvalidConstruction`].
+pub(crate) trait OrInvalidConstruction<T> {
+	fn or_invalid_construction(self) -> Result<T, AccountError>;
+}
+
+impl<T, E> OrInvalidConstruction<T> for Result<T, E> {
+	fn or_invalid_construction(self) -> Result<T, AccountError> {
+		self.map_err(|_| AccountError::InvalidConstruction)
+	}
+}
+
 impl From<AccountError> for KeetaNetError {
 	fn from(err: AccountError) -> Self {
 		KeetaNetError::Code { code: err.error_code(), message: err.to_string() }

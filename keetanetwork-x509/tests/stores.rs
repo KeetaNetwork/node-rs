@@ -76,8 +76,10 @@ fn test_certificate_properties() -> Result<(), Box<dyn core::error::Error>> {
 	let user_cert = user_certificate();
 	let cert_moment = test_moment();
 	// Test validity checking
-	assert!(ca_cert.is_valid_at(cert_moment)?);
-	assert!(user_cert.is_valid_at(cert_moment)?);
+	let ca_is_valid = ca_cert.is_valid_at(cert_moment)?;
+	let user_is_valid = user_cert.is_valid_at(cert_moment)?;
+	assert!(ca_is_valid);
+	assert!(user_is_valid);
 	// Test CA vs non-CA certificates
 	assert!(ca_cert.is_ca());
 	assert!(!user_cert.is_ca());

@@ -118,7 +118,7 @@ impl UnsignedVote {
 		let algo = SignatureAlgo::from_issuer(&self.issuer)?;
 		let tbs = build_tbs(&self.serial, algo, &self.issuer, self.validity, &self.blocks, self.fees.as_ref())?;
 		let tbs_bytes = encode_tbs(&tbs)?;
-		let signature = signer.sign_for_cert(&tbs_bytes).map_err(VoteError::from)?;
+		let signature = signer.sign_for_cert(&tbs_bytes)?;
 		let serialized = encode_vote(tbs, algo, signature.clone())?;
 		let decoded = DecodedVote {
 			serial: self.serial,
@@ -180,8 +180,7 @@ impl Vote {
 		let vote = Self::from_serialized(bytes)?;
 		vote.decoded
 			.issuer
-			.verify_for_cert(&vote.decoded.tbs_bytes, &vote.decoded.signature)
-			.map_err(VoteError::from)?;
+			.verify_for_cert(&vote.decoded.tbs_bytes, &vote.decoded.signature)?;
 
 		Ok(vote)
 	}

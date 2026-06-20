@@ -196,7 +196,7 @@ impl E2eNode {
 	/// Spawn the harness script with extra argv, waiting for readiness.
 	fn start_with_args(extra: &[&str]) -> Result<Self, HarnessError> {
 		let dist = dist_dir()?;
-		let script = script_path("e2e_node")?;
+		let script = script_path("e2e-node")?;
 
 		let mut child = Command::new("node")
 			.arg(&script)

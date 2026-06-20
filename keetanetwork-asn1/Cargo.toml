@@ -62,6 +62,9 @@ keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", featur
 
 [dev-dependencies]
 serde_json = { workspace = true }
+hex = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true }
+num-bigint = { workspace = true }
 
 [features]
 default = ["std", "serde", "rasn"]

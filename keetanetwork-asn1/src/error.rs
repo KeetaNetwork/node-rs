@@ -62,6 +62,27 @@ keetanetwork_utils::impl_error_from_with_fields!(Asn1Error, {
 	rasn::der::enc::EncodeError => RasnError { reason: |e: &rasn::der::enc::EncodeError| format!("encode error: {e}") },
 });
 
+impl Asn1Error {
+	/// Construct an [`Asn1Error::InvalidOid`] for an unparseable OID string.
+	pub(crate) fn invalid_oid_format(value: &str) -> Self {
+		Asn1Error::InvalidOid { reason: format!("Invalid OID format: {value}") }
+	}
+}
+
+/// Attaches a uniform `rasn` decode-failure reason to any displayable
+/// backend error, collapsing the repeated `map_err` closure at call sites.
+#[cfg(feature = "rasn")]
+pub(crate) trait RasnDecodeExt<T> {
+	fn or_rasn_decode(self) -> Result<T, Asn1Error>;
+}
+
+#[cfg(feature = "rasn")]
+impl<T, E: core::fmt::Display> RasnDecodeExt<T> for Result<T, E> {
+	fn or_rasn_decode(self) -> Result<T, Asn1Error> {
+		self.map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })
+	}
+}
+
 // Add der::Error conversion when using rasn feature for interop
 #[cfg(all(feature = "rasn", not(feature = "der")))]
 impl From<der::Error> for Asn1Error {

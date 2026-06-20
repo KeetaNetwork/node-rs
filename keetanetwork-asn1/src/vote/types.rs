@@ -4,12 +4,14 @@
 //! [`crate::vote::codec`] for the byte-level encode/decode entry points.
 
 use alloc::borrow::Cow;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::fmt::{self, Display, Formatter};
 
 use num_bigint::BigInt;
 
-use crate::Asn1Time;
+use super::oids;
+use crate::{Asn1Error, Asn1Time};
 
 /// Backend-neutral object identifier carried by the vote codec.
 ///
@@ -54,6 +56,19 @@ impl AsRef<[u32]> for VoteOid {
 	}
 }
 
+impl Display for VoteOid {
+	fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+		for (index, arc) in self.arcs().iter().enumerate() {
+			if index > 0 {
+				f.write_str(".")?;
+			}
+			write!(f, "{arc}")?;
+		}
+
+		Ok(())
+	}
+}
+
 /// Signature algorithm carried in a vote certificate.
 ///
 /// Vote certificates fix the algorithm to one of two transport-level
@@ -63,6 +78,30 @@ impl AsRef<[u32]> for VoteOid {
 pub enum VoteSignatureAlgo {
 	Ed25519,
 	EcdsaWithSha3_256,
+}
+
+impl VoteSignatureAlgo {
+	/// The signature-algorithm OID for this scheme.
+	pub fn oid(self) -> VoteOid {
+		match self {
+			VoteSignatureAlgo::Ed25519 => oids::ED25519,
+			VoteSignatureAlgo::EcdsaWithSha3_256 => oids::ECDSA_WITH_SHA3_256,
+		}
+	}
+}
+
+impl TryFrom<&VoteOid> for VoteSignatureAlgo {
+	type Error = Asn1Error;
+
+	fn try_from(oid: &VoteOid) -> Result<Self, Self::Error> {
+		if *oid == oids::ED25519 {
+			Ok(VoteSignatureAlgo::Ed25519)
+		} else if *oid == oids::ECDSA_WITH_SHA3_256 {
+			Ok(VoteSignatureAlgo::EcdsaWithSha3_256)
+		} else {
+			Err(Asn1Error::InvalidOid { reason: oid.to_string() })
+		}
+	}
 }
 
 /// Curve identifier carried inside an ECDSA `SubjectPublicKeyInfo`.

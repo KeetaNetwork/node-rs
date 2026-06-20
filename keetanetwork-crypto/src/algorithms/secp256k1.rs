@@ -47,7 +47,7 @@ use crate::operations::signature::{
 
 use crate::algorithms::{Algorithm, CryptoAlgorithm};
 use crate::algorithms::{KeyDerivation, PrivateKey, PublicKey};
-use crate::error::CryptoError;
+use crate::error::{CryptoError, OrCryptoError};
 use crate::kdf::KdfAlgorithm;
 use crate::IntoSecret;
 
@@ -295,7 +295,7 @@ impl TryFrom<&[u8]> for Secp256k1PublicKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let public_key = k256::PublicKey::from_sec1_bytes(bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
+		let public_key = k256::PublicKey::from_sec1_bytes(bytes).or_invalid_public_key()?;
 		let bytes = public_key.to_encoded_point(true).as_bytes().to_vec();
 		Ok(Secp256k1PublicKey { inner: public_key, bytes })
 	}

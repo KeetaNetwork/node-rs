@@ -1,10 +1,6 @@
 //! Shared helpers for vote integration tests.
-//!
-//! Bundles harness-script invocation, deterministic issuer factories,
-//! reusable JSON parsing, and the round-trip assertions used to prove
-//! cross-implementation interoperability with the reference TypeScript
-//! node.
-#![allow(dead_code)] // each integration test binary uses a subset
+
+#![allow(dead_code)]
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -91,20 +87,21 @@ pub fn run_script(name: &str, stdin: &[u8]) -> Value {
 		.lines()
 		.next()
 		.expect("the harness script must produce output");
+
 	serde_json::from_str(line).expect("the harness script must produce JSON")
 }
 
 /// Hand the supplied bytes to the TypeScript verifier and return its
 /// JSON view of the certificate.
 pub fn ts_vote_verify(vote_bytes_hex: &str) -> Value {
-	run_script("ts_vote_verify", format!("{vote_bytes_hex}\n").as_bytes())
+	run_script("ts-vote-verify", format!("{vote_bytes_hex}\n").as_bytes())
 }
 
 /// Ask the TypeScript minter to produce a certificate matching `spec`
 /// and return its `{ bytes, hash }` response.
 pub fn ts_vote_mint(spec: &MintSpec) -> Value {
 	let bytes = serde_json::to_vec(&spec.to_value()).expect("the spec must serialize");
-	run_script("ts_vote_mint", &bytes)
+	run_script("ts-vote-mint", &bytes)
 }
 
 // -- rust signing helper -----------------------------------------------------
@@ -278,28 +275,28 @@ pub fn assert_ts_agrees_with_rust(vote: &Vote) {
 	let bytes_hex = hex::encode_upper(vote.as_bytes());
 	let parsed = ts_vote_verify(&bytes_hex);
 
+	let expected_hash = vote.hash().to_string();
+	let expected_serial = vote.serial().to_string();
+	let expected_issuer = vote.issuer().to_string();
+
 	assert_eq!(parsed["bytes"].as_str(), Some(bytes_hex.as_str()), "TS must re-encode the Rust bytes verbatim");
-	assert_eq!(parsed["hash"].as_str(), Some(vote.hash().to_string().as_str()), "TS hash must match Rust hash");
-	assert_eq!(parsed["serial"].as_str(), Some(vote.serial().to_string().as_str()), "TS serial must match");
-	assert_eq!(parsed["issuer"].as_str(), Some(vote.issuer().to_string().as_str()), "TS issuer must match");
+	assert_eq!(parsed["hash"].as_str(), Some(expected_hash.as_str()), "TS hash must match Rust hash");
+	assert_eq!(parsed["serial"].as_str(), Some(expected_serial.as_str()), "TS serial must match");
+	assert_eq!(parsed["issuer"].as_str(), Some(expected_issuer.as_str()), "TS issuer must match");
 
 	let expected_blocks: Vec<String> = vote.blocks().iter().map(BlockHash::to_string).collect();
 	let actual_blocks = collect_strings(json_array(&parsed, "blocks"), "blocks");
 	assert_eq!(actual_blocks, expected_blocks, "TS block list must match Rust");
 
-	assert_eq!(
-		iso_to_unix_millis(&json_str(&parsed, "validityFrom")),
-		vote.validity().from.unix_millis(),
-		"TS validityFrom must match Rust",
-	);
-	assert_eq!(
-		iso_to_unix_millis(&json_str(&parsed, "validityTo")),
-		vote.validity().to.unix_millis(),
-		"TS validityTo must match Rust",
-	);
+	let actual_from = iso_to_unix_millis(&json_str(&parsed, "validityFrom"));
+	assert_eq!(actual_from, vote.validity().from.unix_millis(), "TS validityFrom must match Rust");
+	let actual_to = iso_to_unix_millis(&json_str(&parsed, "validityTo"));
+	assert_eq!(actual_to, vote.validity().to.unix_millis(), "TS validityTo must match Rust");
 
 	assert_fees_agree(&parsed["fee"], vote.fees(), "TS");
-	assert_eq!(parsed["quote"].as_bool().unwrap_or(false), vote.is_quote(), "TS quote flag must match Rust",);
+
+	let actual_quote = parsed["quote"].as_bool().unwrap_or(false);
+	assert_eq!(actual_quote, vote.is_quote(), "TS quote flag must match Rust");
 }
 
 /// Mint a certificate via TypeScript, decode it in Rust, and assert
@@ -326,7 +323,9 @@ pub fn assert_rust_decodes_ts_minted(spec: &MintSpec) -> TestResult {
 	// `(seed, index, algorithm)`; comparing Rust's decoded view against
 	// that proves wire-format agreement on the issuer field without
 	// reproducing the seed→account derivation here.
-	assert_eq!(vote.issuer().to_string(), json_str(&minted, "issuer"), "Rust issuer must match TS-reported issuer",);
+	let rust_issuer = vote.issuer().to_string();
+	let ts_issuer = json_str(&minted, "issuer");
+	assert_eq!(rust_issuer, ts_issuer, "Rust issuer must match TS-reported issuer");
 
 	assert_eq!(vote.is_quote(), spec.quote, "Rust quote flag must match spec");
 	assert_fees_match_schedule(vote.fees(), spec.fees.as_ref());
@@ -340,7 +339,8 @@ pub fn assert_rust_decodes_ts_minted(spec: &MintSpec) -> TestResult {
 /// Compare every block / vote hash in the TypeScript `verify_staple`
 /// response against the Rust-parsed staple.
 pub fn assert_ts_staple_matches_rust(rust: &VoteStaple, ts_response: &Value) {
-	assert_eq!(json_str(ts_response, "stapleHash"), rust.hash().to_string(), "TS staple hash must match Rust",);
+	let rust_staple_hash = rust.hash().to_string();
+	assert_eq!(json_str(ts_response, "stapleHash"), rust_staple_hash, "TS staple hash must match Rust");
 
 	let ts_blocks = collect_strings(json_array(ts_response, "blockHashes"), "block hash");
 	let rust_blocks: Vec<String> = rust
@@ -403,17 +403,16 @@ fn assert_fees_agree(fee_json: &Value, vote_fees: Option<&Fees>, label: &str) {
 }
 
 fn assert_fee_entry_matches(entry: &Value, fee: &Fee, ctx: &str) {
-	assert_eq!(entry["amount"].as_str(), Some(fee.amount.to_string().as_str()), "{ctx}: amount mismatch");
-	assert_eq!(
-		entry["payTo"].as_str().map(str::to_string),
-		fee.pay_to.as_ref().map(|account| account.to_string()),
-		"{ctx}: payTo mismatch",
-	);
-	assert_eq!(
-		entry["token"].as_str().map(str::to_string),
-		fee.token.as_ref().map(|account| account.to_string()),
-		"{ctx}: token mismatch",
-	);
+	let expected_amount = fee.amount.to_string();
+	assert_eq!(entry["amount"].as_str(), Some(expected_amount.as_str()), "{ctx}: amount mismatch");
+
+	let actual_pay_to = entry["payTo"].as_str().map(str::to_string);
+	let expected_pay_to = fee.pay_to.as_ref().map(|account| account.to_string());
+	assert_eq!(actual_pay_to, expected_pay_to, "{ctx}: payTo mismatch");
+
+	let actual_token = entry["token"].as_str().map(str::to_string);
+	let expected_token = fee.token.as_ref().map(|account| account.to_string());
+	assert_eq!(actual_token, expected_token, "{ctx}: token mismatch");
 }
 
 fn assert_fees_match_schedule(vote_fees: Option<&Fees>, schedule: Option<&FeeSchedule>) {
@@ -491,6 +490,10 @@ pub fn baseline_vote_bytes(serial: u64) -> Vec<u8> {
 
 fn assert_spec_fee_matches(fee: &Fee, spec: &FeeEntry, ctx: &str) {
 	assert_eq!(fee.amount.to_string(), spec.amount.to_string(), "{ctx}: amount mismatch");
-	assert_eq!(fee.pay_to.as_ref().map(|account| account.to_string()), spec.pay_to.clone(), "{ctx}: payTo mismatch",);
-	assert_eq!(fee.token.as_ref().map(|account| account.to_string()), spec.token.clone(), "{ctx}: token mismatch",);
+
+	let actual_pay_to = fee.pay_to.as_ref().map(|account| account.to_string());
+	assert_eq!(actual_pay_to, spec.pay_to.clone(), "{ctx}: payTo mismatch");
+
+	let actual_token = fee.token.as_ref().map(|account| account.to_string());
+	assert_eq!(actual_token, spec.token.clone(), "{ctx}: token mismatch");
 }

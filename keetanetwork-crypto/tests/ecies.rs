@@ -41,66 +41,73 @@ const TEST_CASES: &[TypeScriptTestCase] = &[
 	},
 ];
 
+/// Combine a 32-byte seed with a big-endian index exactly as the
+/// accounts module does before key derivation.
+#[cfg(feature = "encryption")]
+fn indexed_seed(seed: &[u8], index: u32) -> [u8; 36] {
+	let mut indexed = [0u8; 36];
+	indexed[..32].copy_from_slice(seed);
+	indexed[32..].copy_from_slice(&index.to_be_bytes());
+	indexed
+}
+
+/// Decrypt the TypeScript-produced ciphertext, then prove a Rust
+/// encrypt/decrypt round-trip yields the same plaintext.
+#[cfg(feature = "encryption")]
+fn assert_ecies_round_trip<E: Ecies>(
+	private_key: &E::PrivateKey,
+	public_key: &E::PublicKey,
+	encrypted_data: &[u8],
+	expected_plaintext: &[u8],
+) -> Result<(), Box<dyn core::error::Error>> {
+	let decrypted = E::decrypt(private_key, encrypted_data)?;
+	assert_eq!(decrypted, expected_plaintext);
+
+	let rust_encrypted = E::encrypt(public_key, expected_plaintext)?;
+	let rust_decrypted = E::decrypt(private_key, &rust_encrypted)?;
+	assert_eq!(rust_decrypted, expected_plaintext);
+	Ok(())
+}
+
 #[cfg(feature = "encryption")]
 #[test]
 fn test_ecies_typescript_compatibility() -> Result<(), Box<dyn core::error::Error>> {
 	for test_case in TEST_CASES {
 		let seed = hex::decode(test_case.seed_hex)?;
 		let encrypted_data = BASE64.decode(test_case.encrypted_data_base64)?;
+		let expected_plaintext = test_case.expected_plaintext.as_bytes();
 
 		match test_case.algorithm {
 			Algorithm::Secp256k1 => {
-				let index = 0u32;
-				// Combine seed and index like the accounts module does
-				let mut indexed_seed = [0u8; 36];
-				indexed_seed[..32].copy_from_slice(&seed);
-				indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
-
-				let private_key = Secp256k1Derivation::derive_from_seed(indexed_seed.into_secret())?;
+				let private_key = Secp256k1Derivation::derive_from_seed(indexed_seed(&seed, 0).into_secret())?;
 				let public_key = private_key.as_public_key();
-
-				// Test decryption of TypeScript data
-				let decrypted = EciesSecp256k1::decrypt(&private_key, &encrypted_data)?;
-				assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
-
-				// Test round-trip encryption/decryption
-				let rust_encrypted = EciesSecp256k1::encrypt(&public_key, test_case.expected_plaintext.as_bytes())?;
-				let rust_decrypted = EciesSecp256k1::decrypt(&private_key, &rust_encrypted)?;
-				assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
+				assert_ecies_round_trip::<EciesSecp256k1>(
+					&private_key,
+					&public_key,
+					&encrypted_data,
+					expected_plaintext,
+				)?;
 			}
 			Algorithm::Ed25519 => {
-				let index = 0u32;
-				// Combine seed and index like the accounts module does
-				let mut indexed_seed = [0u8; 36];
-				indexed_seed[..32].copy_from_slice(&seed);
-				indexed_seed[32..].copy_from_slice(&index.to_be_bytes());
-
-				// Derive Ed25519 key first, then convert to X25519
-				let ed25519_private = Ed25519Derivation::derive_from_seed(indexed_seed.into_secret())?;
+				let ed25519_private = Ed25519Derivation::derive_from_seed(indexed_seed(&seed, 0).into_secret())?;
 				let x25519_private = ed25519_to_x25519_private(&ed25519_private)?;
 				let x25519_public = x25519_private.derive_public_key();
-
-				// Test decryption of TypeScript data
-				let decrypted = EciesX25519::decrypt(&x25519_private, &encrypted_data)?;
-				assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
-
-				// Test round-trip encryption/decryption
-				let rust_encrypted = EciesX25519::encrypt(&x25519_public, test_case.expected_plaintext.as_bytes())?;
-				let rust_decrypted = EciesX25519::decrypt(&x25519_private, &rust_encrypted)?;
-				assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
+				assert_ecies_round_trip::<EciesX25519>(
+					&x25519_private,
+					&x25519_public,
+					&encrypted_data,
+					expected_plaintext,
+				)?;
 			}
 			Algorithm::Secp256r1 => {
 				let private_key = Secp256r1Derivation::derive_from_seed(seed.into_secret())?;
 				let public_key = private_key.as_public_key();
-
-				// Test decryption of TypeScript data
-				let decrypted = EciesSecp256r1::decrypt(&private_key, &encrypted_data)?;
-				assert_eq!(decrypted, test_case.expected_plaintext.as_bytes());
-
-				// Test round-trip encryption/decryption
-				let rust_encrypted = EciesSecp256r1::encrypt(&public_key, test_case.expected_plaintext.as_bytes())?;
-				let rust_decrypted = EciesSecp256r1::decrypt(&private_key, &rust_encrypted)?;
-				assert_eq!(rust_decrypted, test_case.expected_plaintext.as_bytes());
+				assert_ecies_round_trip::<EciesSecp256r1>(
+					&private_key,
+					&public_key,
+					&encrypted_data,
+					expected_plaintext,
+				)?;
 			}
 		}
 	}

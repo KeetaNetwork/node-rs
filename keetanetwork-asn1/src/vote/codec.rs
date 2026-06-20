@@ -3,9 +3,26 @@
 use alloc::vec::Vec;
 
 use super::types::{
-	DecodedVoteCertificate, Extension, Fees, HashData, TbsCertificate, VoteCertificate, VoteStapleBundle,
+	DecodedVoteCertificate, Extension, Fees, HashData, TbsCertificate, VoteCertificate, VoteDecodeSlot,
+	VoteStapleBundle, VoteStapleDecodeSlot,
 };
 use crate::Asn1Error;
+
+/// Attaches positional decode context to a backend `Result`.
+trait VoteDecodeContext<T> {
+	fn or_slot(self, slot: VoteDecodeSlot) -> Result<T, Asn1Error>;
+	fn or_staple_slot(self, slot: VoteStapleDecodeSlot) -> Result<T, Asn1Error>;
+}
+
+impl<T, E> VoteDecodeContext<T> for Result<T, E> {
+	fn or_slot(self, slot: VoteDecodeSlot) -> Result<T, Asn1Error> {
+		self.map_err(|_| Asn1Error::VoteDecode { slot })
+	}
+
+	fn or_staple_slot(self, slot: VoteStapleDecodeSlot) -> Result<T, Asn1Error> {
+		self.map_err(|_| Asn1Error::VoteStapleDecode { slot })
+	}
+}
 
 #[cfg(feature = "der")]
 mod der_codec;

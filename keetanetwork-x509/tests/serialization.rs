@@ -41,12 +41,14 @@ fn test_json_serialization() -> Result<(), Box<dyn core::error::Error>> {
 fn test_extension_creation() -> Result<(), Box<dyn core::error::Error>> {
 	// Test Extension::new functionality
 	let ext = Extension::new("1.2.3.4", [0x01, 0x02], true)?;
-	assert_eq!(ext.extn_id.to_string(), "1.2.3.4");
+	let extn_id = ext.extn_id.to_string();
+	assert_eq!(extn_id, "1.2.3.4");
 	assert!(ext.critical);
 	assert_eq!(ext.extn_value.as_bytes(), &[0x01, 0x02]);
 
 	let ext_non_critical = Extension::new("1.2.3.4.5", [0x03, 0x04, 0x05], false)?;
-	assert_eq!(ext_non_critical.extn_id.to_string(), "1.2.3.4.5");
+	let non_critical_extn_id = ext_non_critical.extn_id.to_string();
+	assert_eq!(non_critical_extn_id, "1.2.3.4.5");
 	assert!(!ext_non_critical.critical);
 	assert_eq!(ext_non_critical.extn_value.as_bytes(), &[0x03, 0x04, 0x05]);
 
@@ -86,17 +88,21 @@ fn test_extension_listing() {
 		.extensions()
 		.map(|ext| ext.extn_id.to_string())
 		.collect();
-	assert!(ca_extension_oids.contains(&oids::BASIC_CONSTRAINTS.to_string()));
-	assert!(ca_extension_oids.contains(&oids::KEY_USAGE.to_string()));
+	let basic_constraints_oid = oids::BASIC_CONSTRAINTS.to_string();
+	let key_usage_oid = oids::KEY_USAGE.to_string();
+	let subject_key_identifier_oid = oids::SUBJECT_KEY_IDENTIFIER.to_string();
+	let authority_key_identifier_oid = oids::AUTHORITY_KEY_IDENTIFIER.to_string();
+	assert!(ca_extension_oids.contains(&basic_constraints_oid));
+	assert!(ca_extension_oids.contains(&key_usage_oid));
 
 	// User cert should have different extension set (not CA)
 	let user_extension_oids: Vec<String> = user_cert
 		.extensions()
 		.map(|ext| ext.extn_id.to_string())
 		.collect();
-	assert!(user_extension_oids.contains(&oids::KEY_USAGE.to_string()));
-	assert!(user_extension_oids.contains(&oids::SUBJECT_KEY_IDENTIFIER.to_string()));
-	assert!(user_extension_oids.contains(&oids::AUTHORITY_KEY_IDENTIFIER.to_string()));
+	assert!(user_extension_oids.contains(&key_usage_oid));
+	assert!(user_extension_oids.contains(&subject_key_identifier_oid));
+	assert!(user_extension_oids.contains(&authority_key_identifier_oid));
 }
 
 #[test]
@@ -153,14 +159,12 @@ fn test_certificate_display_round_trip() -> Result<(), Box<dyn core::error::Erro
 	// Test to_pem method produces same result as Display
 	let ca_pem_method = ca_cert.to_pem()?;
 	let user_pem_method = user_cert.to_pem()?;
-
 	assert_eq!(ca_pem_display, ca_pem_method);
 	assert_eq!(user_pem_display, user_pem_method);
 
 	// Test round-trip: Certificate -> Display -> parse -> Certificate
 	let ca_cert_roundtrip = ca_pem_display.parse::<Certificate>()?;
 	let user_cert_roundtrip = user_pem_display.parse::<Certificate>()?;
-
 	assert_eq!(ca_cert, ca_cert_roundtrip);
 	assert_eq!(user_cert, user_cert_roundtrip);
 

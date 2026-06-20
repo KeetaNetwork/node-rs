@@ -23,7 +23,7 @@ use keetanetwork_crypto::hash::hash_default;
 use keetanetwork_crypto::operations::signature::{CryptoSignerWithOptions, CryptoVerifierWithOptions, SigningOptions};
 
 use crate::account::{Account, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
-use crate::error::AccountError;
+use crate::error::{AccountError, OrInvalidConstruction};
 
 /// Sign messages using the certificate-mode convention.
 ///
@@ -79,7 +79,7 @@ impl CertSigner for Account<KeyED25519> {
 impl CertVerifier for Account<KeyECDSASECP256K1> {
 	fn verify_for_cert(&self, message: impl AsRef<[u8]>, signature: impl AsRef<[u8]>) -> Result<(), AccountError> {
 		let prehash = ecdsa_prehash(message.as_ref());
-		let parsed = Secp256k1Signature::from_der(signature.as_ref()).map_err(|_| AccountError::InvalidConstruction)?;
+		let parsed = Secp256k1Signature::from_der(signature.as_ref()).or_invalid_construction()?;
 		Ok(self
 			.keypair
 			.verify_with_options(prehash, &parsed, SigningOptions::raw())?)
@@ -89,7 +89,7 @@ impl CertVerifier for Account<KeyECDSASECP256K1> {
 impl CertVerifier for Account<KeyECDSASECP256R1> {
 	fn verify_for_cert(&self, message: impl AsRef<[u8]>, signature: impl AsRef<[u8]>) -> Result<(), AccountError> {
 		let prehash = ecdsa_prehash(message.as_ref());
-		let parsed = Secp256r1Signature::from_der(signature.as_ref()).map_err(|_| AccountError::InvalidConstruction)?;
+		let parsed = Secp256r1Signature::from_der(signature.as_ref()).or_invalid_construction()?;
 		Ok(self
 			.keypair
 			.verify_with_options(prehash, &parsed, SigningOptions::raw())?)

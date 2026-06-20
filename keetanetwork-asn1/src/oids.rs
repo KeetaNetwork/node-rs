@@ -23,6 +23,12 @@ pub const EXTENDED_KEY_USAGE: &str = "2.5.29.37";
 pub const SUBJECT_ALT_NAME: &str = "2.5.29.17";
 pub const SUBJECT_KEY_IDENTIFIER: &str = "2.5.29.14";
 pub const AUTHORITY_KEY_IDENTIFIER: &str = "2.5.29.35";
+pub const CERTIFICATE_POLICIES: &str = "2.5.29.32";
+pub const NAME_CONSTRAINTS: &str = "2.5.29.30";
+pub const POLICY_MAPPINGS: &str = "2.5.29.33";
+pub const POLICY_CONSTRAINTS: &str = "2.5.29.36";
+pub const ISSUER_ALT_NAME: &str = "2.5.29.18";
+pub const CRL_DISTRIBUTION_POINTS: &str = "2.5.29.31";
 
 // Extended Key Usage identifiers
 pub const SERVER_AUTH: &str = "1.3.6.1.5.5.7.3.1";

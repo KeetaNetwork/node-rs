@@ -96,5 +96,7 @@ pub fn encode<T: ::rasn::Encode>(value: &T) -> Result<Vec<u8>, Asn1Error> {
 /// `keetanetwork-asn1` (or any other `rasn::Decode` implementor).
 #[cfg(feature = "rasn")]
 pub fn decode<T: ::rasn::Decode>(bytes: &[u8]) -> Result<T, Asn1Error> {
-	::rasn::der::decode(bytes).map_err(|error| Asn1Error::RasnError { reason: format!("decode error: {error}") })
+	use crate::error::RasnDecodeExt;
+
+	::rasn::der::decode(bytes).or_rasn_decode()
 }

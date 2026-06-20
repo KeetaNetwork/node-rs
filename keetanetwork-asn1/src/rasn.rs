@@ -285,7 +285,7 @@ pub trait ObjectIdentifierExt {
 impl ObjectIdentifierExt for ObjectIdentifier {
 	fn from_str(s: &str) -> Result<Self, Asn1Error> {
 		let arcs: Result<Vec<u32>, _> = s.split('.').map(|s| s.parse()).collect();
-		let arcs = arcs.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {s}") })?;
+		let arcs = arcs.map_err(|_| Asn1Error::invalid_oid_format(s))?;
 		ObjectIdentifier::new(arcs).ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Invalid OID: {s}") })
 	}
 

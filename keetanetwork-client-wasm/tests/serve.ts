@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const harnessRoot = resolve(here, '../../keetanetwork-utils/node-harness');
-const harnessScript = join(harnessRoot, 'dist/e2e_node.js');
+const harnessScript = join(harnessRoot, 'dist/e2e-node.js');
 const nodeDist = join(harnessRoot, 'node_modules/@keetanetwork/keetanet-node/dist');
 const staticRoot = resolve(here, '..');
 

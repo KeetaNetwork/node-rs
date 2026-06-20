@@ -15,7 +15,7 @@ use keetanetwork_account::cert::CertSigner;
 use keetanetwork_block::{AccountRef, Block, BlockHash, BlockTime};
 use num_bigint::BigInt;
 
-use crate::error::VoteError;
+use crate::error::{VoteError, VoteField};
 use crate::fee::Fees;
 use crate::staple::VoteStaple;
 use crate::validation::ValidationConfig;
@@ -95,14 +95,18 @@ impl VoteBuilder {
 	/// Build an unsigned vote, validating that all required fields were
 	/// populated.
 	pub fn build_unsigned(self) -> Result<UnsignedVote, VoteError> {
-		let serial = self.serial.ok_or(VoteError::BuilderInvalidSerial)?;
-		let issuer = self.issuer.ok_or(VoteError::BuilderInvalidConstruction)?;
+		let serial = self
+			.serial
+			.ok_or(VoteError::BuilderMissingField { field: VoteField::Serial })?;
+		let issuer = self
+			.issuer
+			.ok_or(VoteError::BuilderMissingField { field: VoteField::Issuer })?;
 		let from = self
 			.validity_from
-			.ok_or(VoteError::BuilderInvalidValidToFrom)?;
+			.ok_or(VoteError::BuilderMissingField { field: VoteField::Validity })?;
 		let to = self
 			.validity_to
-			.ok_or(VoteError::BuilderInvalidValidToFrom)?;
+			.ok_or(VoteError::BuilderMissingField { field: VoteField::Validity })?;
 		let validity = Validity::try_new(from, to)?;
 
 		UnsignedVote::try_new(serial, issuer, validity, self.blocks, self.fees)
@@ -267,7 +271,7 @@ mod tests {
 			.validity(from, to)
 			.add_block(BlockHash::from([1u8; 32]))
 			.build_unsigned();
-		assert!(matches!(result, Err(VoteError::BuilderInvalidSerial)));
+		assert!(matches!(result, Err(VoteError::BuilderMissingField { field: VoteField::Serial })));
 	}
 
 	#[test]

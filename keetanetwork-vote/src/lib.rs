@@ -83,7 +83,7 @@ mod vote;
 pub mod testing;
 
 pub use builder::{VoteBuilder, VoteQuoteBuilder, VoteStapleBuilder};
-pub use error::VoteError;
+pub use error::{VoteError, VoteField};
 pub use fee::{Fee, Fees};
 pub use hash::{Hashable, VoteBlockHash, VoteHash, VoteStapleHash};
 pub use keetanetwork_block::{AccountRef, Amount};

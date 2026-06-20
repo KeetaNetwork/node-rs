@@ -11,7 +11,7 @@ import type * as VoteModule from '@keetanetwork/keetanet-node/dist/lib/vote';
 
 import { loadModule, resolveDist } from './dist';
 
-const dist = resolveDist(process.argv[2], 'usage: ts_vote_verify.js <path-to-node-dist>');
+const dist = resolveDist(process.argv[2], 'usage: ts-vote-verify.js <path-to-node-dist>');
 const { Vote, VoteQuote } = loadModule<typeof VoteModule>(dist, 'lib/vote.js');
 
 interface KeetaPublicKeyHolder {

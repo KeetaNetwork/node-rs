@@ -143,6 +143,12 @@ pub(crate) trait BlockOperation: Into<Operation> {
 	fn validate(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError>;
 }
 
+/// Borrowed downcast from the unifying [`Operation`] enum to one variant.
+pub(crate) trait FromOperationRef<'a>: Sized {
+	/// Borrow `operation` as this variant, or `None` for any other variant.
+	fn from_operation_ref(operation: &'a Operation) -> Option<Self>;
+}
+
 /// A block operation.
 #[derive(Debug, Clone)]
 pub enum Operation {
@@ -174,6 +180,15 @@ macro_rules! dispatch_operations {
 			impl From<$variant> for Operation {
 				fn from(operation: $variant) -> Self {
 					Operation::$variant(operation)
+				}
+			}
+
+			impl<'a> FromOperationRef<'a> for &'a $variant {
+				fn from_operation_ref(operation: &'a Operation) -> Option<Self> {
+					match operation {
+						Operation::$variant(inner) => Some(inner),
+						_ => None,
+					}
 				}
 			}
 		)+
@@ -226,7 +241,17 @@ pub(crate) struct OperationContext<'a> {
 	pub operation_index: usize,
 }
 
-impl OperationContext<'_> {
+impl<'a> OperationContext<'a> {
+	/// Iterate over the block operations that are the concrete variant `T`.
+	fn iter_type<T: 'a>(&self) -> impl Iterator<Item = &'a T>
+	where
+		&'a T: FromOperationRef<'a>,
+	{
+		self.operations
+			.iter()
+			.filter_map(<&'a T>::from_operation_ref)
+	}
+
 	fn config(&self) -> Result<&ValidationConfig, BlockError> {
 		self.config.ok_or(BlockError::UnknownNetwork)
 	}

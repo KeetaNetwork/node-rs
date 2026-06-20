@@ -110,10 +110,10 @@ HARNESS_SOURCES := $(wildcard $(HARNESS_DIR)/src/*.ts) $(HARNESS_DIR)/tsconfig.j
 $(HARNESS_DIR)/node_modules/.package-lock.json: $(HARNESS_DIR)/package-lock.json
 	cd $(HARNESS_DIR) && npm ci
 
-$(HARNESS_DIR)/dist/e2e_node.js: $(HARNESS_DIR)/node_modules/.package-lock.json $(HARNESS_SOURCES)
+$(HARNESS_DIR)/dist/e2e-node.js: $(HARNESS_DIR)/node_modules/.package-lock.json $(HARNESS_SOURCES)
 	cd $(HARNESS_DIR) && npm run build
 
-node-harness: $(HARNESS_DIR)/dist/e2e_node.js
+node-harness: $(HARNESS_DIR)/dist/e2e-node.js
 
 node-harness-lint: node-harness
 	cd $(HARNESS_DIR) && npm run lint

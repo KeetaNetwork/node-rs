@@ -63,6 +63,17 @@ impl_error_from_with_fields!(CertificateError, {
 	keetanetwork_asn1::error::Asn1Error => Asn1ParseError { message: |error: keetanetwork_asn1::error::Asn1Error| format!("ASN.1 error: {error}") },
 });
 
+/// Maps any backend error to [`CertificateError::InvalidCertificate`].
+pub(crate) trait OrInvalidCertificate<T> {
+	fn or_invalid_certificate(self) -> Result<T, CertificateError>;
+}
+
+impl<T, E> OrInvalidCertificate<T> for Result<T, E> {
+	fn or_invalid_certificate(self) -> Result<T, CertificateError> {
+		self.map_err(|_| CertificateError::InvalidCertificate)
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use der::Decode;

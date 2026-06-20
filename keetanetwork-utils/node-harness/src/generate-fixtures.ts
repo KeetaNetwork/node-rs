@@ -16,7 +16,7 @@ import type * as CertificateModule from '@keetanetwork/keetanet-node/dist/lib/ut
 
 import { loadModule, resolveDist, resolveOutputPath } from './dist';
 
-const USAGE = 'usage: generate_fixtures.js <path-to-node-dist> <output-json>';
+const USAGE = 'usage: generate-fixtures.js <path-to-node-dist> <output-json>';
 
 const dist = resolveDist(process.argv[2], USAGE);
 const outFile = resolveOutputPath(process.argv[3], USAGE);

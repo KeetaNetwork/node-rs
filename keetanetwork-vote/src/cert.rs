@@ -241,12 +241,12 @@ fn build_extension_list(blocks: &[BlockHash], fees: Option<&Fees>) -> Result<Vec
 		hashes: blocks.iter().map(|hash| hash.as_bytes().to_vec()).collect(),
 	};
 
-	let hash_data_value = transport::encode_hash_data(&hash_data).map_err(VoteError::from)?;
+	let hash_data_value = transport::encode_hash_data(&hash_data)?;
 	extensions.push(transport::Extension { oid: transport::oids::HASH_DATA, critical: true, value: hash_data_value });
 
 	if let Some(fees) = fees {
 		let fees_transport = fees.to_transport()?;
-		let fees_value = transport::encode_fees(&fees_transport).map_err(VoteError::from)?;
+		let fees_value = transport::encode_fees(&fees_transport)?;
 		extensions.push(transport::Extension { oid: transport::oids::FEES, critical: true, value: fees_value });
 	}
 

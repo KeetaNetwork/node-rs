@@ -63,6 +63,34 @@ pub enum CryptoError {
 	EncryptionNotSupported,
 }
 
+/// Combinations for discarding a source error in favor of a fixed [`CryptoError`].
+pub(crate) trait OrCryptoError<T> {
+	/// Map any error to [`CryptoError::EncryptionFailed`].
+	#[cfg(feature = "encryption")]
+	fn or_encryption_failed(self) -> Result<T, CryptoError>;
+	/// Map any error to [`CryptoError::DecryptionFailed`].
+	#[cfg(feature = "encryption")]
+	fn or_decryption_failed(self) -> Result<T, CryptoError>;
+	/// Map any error to [`CryptoError::InvalidPublicKey`].
+	fn or_invalid_public_key(self) -> Result<T, CryptoError>;
+}
+
+impl<T, E> OrCryptoError<T> for Result<T, E> {
+	#[cfg(feature = "encryption")]
+	fn or_encryption_failed(self) -> Result<T, CryptoError> {
+		self.map_err(|_| CryptoError::EncryptionFailed)
+	}
+
+	#[cfg(feature = "encryption")]
+	fn or_decryption_failed(self) -> Result<T, CryptoError> {
+		self.map_err(|_| CryptoError::DecryptionFailed)
+	}
+
+	fn or_invalid_public_key(self) -> Result<T, CryptoError> {
+		self.map_err(|_| CryptoError::InvalidPublicKey)
+	}
+}
+
 // Use macros for simple variant mappings
 impl_variant_error_from!(CryptoError, {
 	hkdf::InvalidLength => KeyDerivationFailed,

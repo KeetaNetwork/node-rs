@@ -8,7 +8,7 @@ use crate::error::BlockError;
 use crate::permissions::{BaseFlag, GroupKind, Permissions};
 use crate::signer::AccountRef;
 
-use super::{AdjustMethod, BlockOperation, Operation, OperationContext, OperationType};
+use super::{AdjustMethod, BlockOperation, OperationContext, OperationType};
 
 /// The principal of a MODIFY_PERMISSIONS operation.
 #[derive(Debug, Clone)]
@@ -103,11 +103,7 @@ impl ModifyPermissions {
 	/// principal/target pair within the same block.
 	fn reject_duplicate_set(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError> {
 		let mut found: BTreeMap<String, BTreeMap<String, AdjustMethod>> = BTreeMap::new();
-		for operation in ctx.operations {
-			let Operation::ModifyPermissions(other) = operation else {
-				continue;
-			};
-
+		for other in ctx.iter_type::<ModifyPermissions>() {
 			let principal_key = other.principal.dedup_key();
 			let target_key = match &other.target {
 				Some(target) => target.to_string(),
@@ -146,6 +142,7 @@ mod tests {
 
 	use super::*;
 	use crate::operation::harness::{assert_validation, modify_permissions, permissions, token, Harness};
+	use crate::operation::Operation;
 	use crate::testing::generate_ed25519_ref;
 
 	#[test]
