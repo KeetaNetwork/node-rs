@@ -449,15 +449,8 @@ fn create_identifier_from_transport(value: asn1::CreateIdentifierOp) -> Result<C
 // --- ManageCertificate --------------------------------------------------
 
 fn manage_certificate_to_transport(value: &ManageCertificate) -> asn1::ManageCertificateOp {
-	let certificate_or_hash = match &value.certificate_or_hash {
-		CertificateOrHash::Certificate(certificate) => {
-			// Removals always reference the certificate by hash.
-			if value.method == AdjustMethod::Subtract {
-				certificate.hash().to_vec()
-			} else {
-				certificate.as_bytes().to_vec()
-			}
-		}
+	let certificate_or_hash = match value.canonical_certificate_or_hash() {
+		CertificateOrHash::Certificate(certificate) => certificate.as_bytes().to_vec(),
 		CertificateOrHash::Hash(hash) => hash.to_vec(),
 	};
 

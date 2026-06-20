@@ -4,7 +4,7 @@ use crate::amount::Amount;
 use crate::error::BlockError;
 use crate::signer::AccountRef;
 
-use super::{require_token, AdjustMethod, BlockOperation, OperationContext, OperationType};
+use super::{AdjustMethod, BlockOperation, OperationContext, OperationType};
 
 /// TOKEN_ADMIN_MODIFY_BALANCE: adjust an account's token balance.
 #[derive(Debug, Clone)]
@@ -21,12 +21,8 @@ impl BlockOperation for TokenAdminModifyBalance {
 	const TYPE: OperationType = OperationType::TokenAdminModifyBalance;
 
 	fn validate(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError> {
-		require_token(&self.token)?;
-		ctx.validate_numeric(self.amount.as_bigint())?;
-
-		if ctx.account_is_token() {
-			return Err(BlockError::TokenOperationForbidden);
-		}
+		ctx.guard_token_amount(&self.token, self.amount.as_bigint())?;
+		ctx.reject_token_account()?;
 
 		Ok(())
 	}

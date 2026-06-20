@@ -11,8 +11,8 @@ use super::{AdjustMethod, BlockOperation, OperationContext, OperationType};
 
 /// DER bytes of an X.509 certificate.
 ///
-/// Stored as raw bytes for transport fidelity; with the `x509` feature the
-/// certificate can be parsed into a typed [`keetanetwork_x509`] certificate.
+/// Stored as raw bytes for transport fidelity; [`Self::to_certificate`] parses
+/// them into a typed [`keetanetwork_x509`] certificate on demand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertificateDer(Vec<u8>);
 
@@ -99,6 +99,22 @@ pub struct ManageCertificate {
 	pub intermediate_certificates: Option<IntermediateCertificates>,
 }
 
+impl ManageCertificate {
+	/// The certificate reference in canonical form.
+	///
+	/// Removals ([`AdjustMethod::Subtract`]) always reference a certificate by
+	/// hash; a full certificate supplied for a removal is normalized to its
+	/// hash. Additions keep the full certificate.
+	pub fn canonical_certificate_or_hash(&self) -> CertificateOrHash {
+		match (self.method, &self.certificate_or_hash) {
+			(AdjustMethod::Subtract, CertificateOrHash::Certificate(certificate)) => {
+				CertificateOrHash::Hash(certificate.hash())
+			}
+			(_, certificate_or_hash) => certificate_or_hash.clone(),
+		}
+	}
+}
+
 impl BlockOperation for ManageCertificate {
 	const TYPE: OperationType = OperationType::ManageCertificate;
 
@@ -125,6 +141,15 @@ impl BlockOperation for ManageCertificate {
 			let account_bytes = ctx.account.to_public_key_with_type();
 			if subject_key.raw_bytes() != &account_bytes[1..] {
 				return Err(BlockError::CertificateSubjectMismatch);
+			}
+
+			if let Some(IntermediateCertificates::Bundle(bundle)) = &self.intermediate_certificates {
+				let mut graph = BTreeSet::new();
+				for intermediate in bundle {
+					graph.insert(intermediate.to_certificate()?);
+				}
+
+				parsed.assert_can_construct_valid_graph(&graph)?;
 			}
 		}
 
@@ -153,6 +178,26 @@ mod tests {
 		let certificate = CertificateDer::from(Vec::from([1u8, 2, 3]));
 		assert!(matches!(CertificateOrHash::from(certificate), CertificateOrHash::Certificate(_)));
 		assert!(matches!(CertificateOrHash::from([7u8; 32]), CertificateOrHash::Hash(_)));
+	}
+
+	#[test]
+	fn test_canonical_certificate_or_hash_normalizes_subtract() {
+		let certificate = CertificateDer::from(Vec::from([1u8, 2, 3]));
+		let expected = certificate.hash();
+
+		let subtract = ManageCertificate {
+			method: AdjustMethod::Subtract,
+			certificate_or_hash: CertificateOrHash::Certificate(certificate.clone()),
+			intermediate_certificates: None,
+		};
+		assert!(matches!(subtract.canonical_certificate_or_hash(), CertificateOrHash::Hash(hash) if hash == expected));
+
+		let add = ManageCertificate {
+			method: AdjustMethod::Add,
+			certificate_or_hash: CertificateOrHash::Certificate(certificate),
+			intermediate_certificates: Some(IntermediateCertificates::None),
+		};
+		assert!(matches!(add.canonical_certificate_or_hash(), CertificateOrHash::Certificate(_)));
 	}
 
 	#[test]

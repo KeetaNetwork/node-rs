@@ -176,13 +176,25 @@ impl Vote {
 	}
 
 	/// Decode and verify the certificate's signature.
+	///
+	/// A confirmation vote must not carry quote fees; quote certificates are
+	/// surfaced exclusively through [`VoteQuote`].
 	pub fn verify(bytes: impl Into<Vec<u8>>) -> Result<Self, VoteError> {
 		let vote = Self::from_serialized(bytes)?;
-		vote.decoded
-			.issuer
-			.verify_for_cert(&vote.decoded.tbs_bytes, &vote.decoded.signature)?;
+		vote.verify_signature()?;
+		if vote.is_quote() {
+			return Err(VoteError::FeeIsQuote);
+		}
 
 		Ok(vote)
+	}
+
+	/// Verify the certificate signature against the issuer's public key.
+	fn verify_signature(&self) -> Result<(), VoteError> {
+		self.decoded
+			.issuer
+			.verify_for_cert(&self.decoded.tbs_bytes, &self.decoded.signature)?;
+		Ok(())
 	}
 
 	/// The serialized DER bytes.
@@ -299,8 +311,13 @@ impl VoteQuote {
 	}
 
 	/// Decode and verify the certificate, then enforce quote semantics.
+	///
+	/// Unlike [`Vote::verify`], this accepts quote certificates: the quote
+	/// invariant ([`VoteError::FeeNotQuote`] when absent) is enforced here.
 	pub fn verify(bytes: impl Into<Vec<u8>>) -> Result<Self, VoteError> {
-		Self::try_from_vote(Vote::verify(bytes)?)
+		let vote = Vote::from_serialized(bytes)?;
+		vote.verify_signature()?;
+		Self::try_from_vote(vote)
 	}
 
 	/// Reference to the underlying vote.
@@ -330,6 +347,22 @@ impl Hashable for VoteQuote {
 
 	fn hash(&self) -> Self::Digest {
 		self.0.hash()
+	}
+}
+
+impl TryFrom<Vec<u8>> for VoteQuote {
+	type Error = VoteError;
+
+	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		Self::try_from_vote(Vote::from_serialized(bytes)?)
+	}
+}
+
+impl TryFrom<&[u8]> for VoteQuote {
+	type Error = VoteError;
+
+	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+		Self::try_from_vote(Vote::from_serialized(bytes.to_vec())?)
 	}
 }
 
@@ -457,6 +490,27 @@ mod tests {
 		let other_vote = sign_simple_vote(&issuer, 12, *vote.validity(), vote.blocks().to_vec(), None);
 		assert!(matches!(VoteQuote::try_from_vote(other_vote), Err(VoteError::FeeNotQuote)));
 		Ok(())
+	}
+
+	#[test]
+	fn test_vote_quote_try_from_bytes() -> Result<(), VoteError> {
+		let quote_bytes =
+			sign_simple_vote(&alice(), DEFAULT_SERIAL, validity_seconds(0, 60), default_blocks(), Some(quote_fees(1)))
+				.into_bytes();
+		assert!(VoteQuote::try_from(quote_bytes.clone()).is_ok());
+		assert!(VoteQuote::try_from(quote_bytes.as_slice()).is_ok());
+
+		let plain_bytes = signed_alice_vote(None).into_bytes();
+		assert!(matches!(VoteQuote::try_from(plain_bytes), Err(VoteError::FeeNotQuote)));
+		Ok(())
+	}
+
+	#[test]
+	fn test_vote_verify_rejects_quote() {
+		let bytes = signed_alice_vote(Some(quote_fees(1))).into_bytes();
+		assert!(matches!(Vote::verify(bytes.clone()), Err(VoteError::FeeIsQuote)));
+		assert!(matches!(PossiblyExpiredVote::verify(bytes.clone()), Err(VoteError::FeeIsQuote)));
+		assert!(VoteQuote::verify(bytes).is_ok());
 	}
 
 	#[test]

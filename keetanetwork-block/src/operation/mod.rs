@@ -267,6 +267,22 @@ impl<'a> OperationContext<'a> {
 	fn account_is_token(&self) -> bool {
 		self.account.to_keypair_type() == KeyPairType::TOKEN
 	}
+
+	/// Require `token` to be a token identifier and validate `amount` against
+	/// the numeric rules. Shared entry guard for the token-bearing operations.
+	fn guard_token_amount(&self, token: &GenericAccount, amount: &BigInt) -> Result<(), BlockError> {
+		require_token(token)?;
+		self.validate_numeric(amount)
+	}
+
+	/// Reject the operation when the block account is itself a token.
+	fn reject_token_account(&self) -> Result<(), BlockError> {
+		if self.account_is_token() {
+			return Err(BlockError::TokenOperationForbidden);
+		}
+
+		Ok(())
+	}
 }
 
 /// Require the account to be a token identifier.

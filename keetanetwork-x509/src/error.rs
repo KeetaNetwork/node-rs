@@ -47,6 +47,9 @@ pub enum CertificateError {
 	/// Cycle detected in certificate chain
 	#[snafu(display("Cycle detected in certificate chain"))]
 	CertificateCycleFound,
+	/// Too many certificates in the graph
+	#[snafu(display("Certificate graph exceeds the maximum of {max} certificates"))]
+	CertificateInvalidGraphCount { max: usize },
 }
 
 // Use macros for simple variant mappings
@@ -96,6 +99,7 @@ mod tests {
 			CertificateError::CertificateDuplicateIncluded,
 			CertificateError::CertificateOrphanFound,
 			CertificateError::CertificateCycleFound,
+			CertificateError::CertificateInvalidGraphCount { max: 10 },
 		]
 	}
 

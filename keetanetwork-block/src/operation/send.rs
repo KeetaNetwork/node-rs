@@ -10,7 +10,7 @@ use crate::error::BlockError;
 use crate::signer::AccountRef;
 use crate::validation::TextRuleViolation;
 
-use super::{require_token, BlockOperation, OperationContext, OperationType};
+use super::{BlockOperation, OperationContext, OperationType};
 
 /// SEND: transfer tokens to another account.
 #[derive(Debug, Clone)]
@@ -29,8 +29,7 @@ impl BlockOperation for Send {
 	const TYPE: OperationType = OperationType::Send;
 
 	fn validate(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError> {
-		require_token(&self.token)?;
-		ctx.validate_numeric(self.amount.as_bigint())?;
+		ctx.guard_token_amount(&self.token, self.amount.as_bigint())?;
 
 		if ctx.account_is_token() && !accounts_equal(&self.token, ctx.account) {
 			return Err(BlockError::TokenOperationForbidden);

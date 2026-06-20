@@ -93,7 +93,7 @@ pub(crate) fn build_tbs(
 
 /// Encode a TBS certificate body for a vote (the bytes signed by the issuer).
 pub(crate) fn encode_tbs(tbs: &transport::TbsCertificate) -> Result<Vec<u8>, VoteError> {
-	transport::encode_tbs(tbs).map_err(VoteError::from)
+	Ok(transport::encode_tbs(tbs)?)
 }
 
 /// Encode a complete signed vote (TBS + signature wrapper).
@@ -103,7 +103,7 @@ pub(crate) fn encode_vote(
 	signature: Vec<u8>,
 ) -> Result<Vec<u8>, VoteError> {
 	let value = transport::VoteCertificate { tbs, signature_algo: signature_algo.to_transport(), signature };
-	transport::encode_vote(&value).map_err(VoteError::from)
+	Ok(transport::encode_vote(&value)?)
 }
 
 /// Decode a vote wrapper into its constituent fields.
@@ -327,4 +327,106 @@ fn bigint_to_lower_hex(value: &BigInt) -> String {
 
 fn parse_lower_hex_bigint(value: &str) -> Result<BigInt, num_bigint::ParseBigIntError> {
 	BigInt::from_str_radix(value, 16)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::testing::{
+		ed25519_issuer, secp256k1_issuer, secp256r1_issuer, sign_simple_vote, single_fees, token_account,
+		validity_millis,
+	};
+
+	#[test]
+	fn test_signature_algo_from_issuer() {
+		assert!(matches!(SignatureAlgo::from_issuer(ed25519_issuer(b"a").as_ref()), Ok(SignatureAlgo::Ed25519)));
+		assert!(matches!(
+			SignatureAlgo::from_issuer(secp256k1_issuer(b"a").as_ref()),
+			Ok(SignatureAlgo::EcdsaWithSha3_256)
+		));
+		assert!(matches!(
+			SignatureAlgo::from_issuer(secp256r1_issuer(b"a").as_ref()),
+			Ok(SignatureAlgo::EcdsaWithSha3_256)
+		));
+		assert!(matches!(
+			SignatureAlgo::from_issuer(token_account(b"a").as_ref()),
+			Err(VoteError::MalformedVoteSignatureSchemeDoesNotMatchIssuer)
+		));
+	}
+
+	#[test]
+	fn test_build_tbs_rejects_algo_issuer_mismatch() {
+		let issuer = secp256k1_issuer(b"a");
+		let result = build_tbs(
+			&BigInt::from(1u8),
+			SignatureAlgo::Ed25519,
+			&issuer,
+			validity_millis(0, 60_000),
+			&[BlockHash::from([1u8; 32])],
+			None,
+		);
+		assert!(matches!(result, Err(VoteError::MalformedVoteSignatureSchemeDoesNotMatchIssuer)));
+	}
+
+	#[test]
+	fn test_bigint_hex_round_trip() {
+		assert_eq!(bigint_to_lower_hex(&BigInt::from(255u16)), "ff");
+		assert!(matches!(parse_lower_hex_bigint("ff"), Ok(value) if value == BigInt::from(255u16)));
+		assert!(parse_lower_hex_bigint("zz").is_err());
+	}
+
+	#[test]
+	fn test_take_dn_value() {
+		let dn = dn_with_attribute(transport::oids::COMMON_NAME, "hello".to_string());
+		assert_eq!(take_dn_value(&dn, &transport::oids::COMMON_NAME), Some("hello".to_string()));
+		assert_eq!(take_dn_value(&dn, &transport::oids::SERIAL_NUMBER), None);
+	}
+
+	#[test]
+	fn test_subject_public_key_round_trip() -> Result<(), VoteError> {
+		for issuer in [ed25519_issuer(b"k"), secp256k1_issuer(b"k"), secp256r1_issuer(b"k")] {
+			let encoded = subject_public_key_for_issuer(&issuer)?;
+			let decoded = decode_subject_public_key(&encoded)?;
+			assert!(accounts_match(&decoded, &issuer), "decoded subject public key must match issuer");
+		}
+		Ok(())
+	}
+
+	#[test]
+	fn test_extension_list_round_trip() -> Result<(), VoteError> {
+		let blocks = vec![BlockHash::from([1u8; 32]), BlockHash::from([2u8; 32])];
+		let fees = single_fees(7);
+		let extensions = build_extension_list(&blocks, Some(&fees))?;
+		let (decoded_blocks, decoded_fees) = collect_extensions(&extensions)?;
+		assert_eq!(decoded_blocks, blocks, "round-tripped block hashes must match");
+		assert!(decoded_fees.is_some(), "round-tripped fees must be present");
+		Ok(())
+	}
+
+	#[test]
+	fn test_collect_extensions_requires_blocks() {
+		let result = collect_extensions(&[]);
+		assert!(matches!(result, Err(VoteError::MalformedVoteNoBlocksFound)));
+	}
+
+	#[test]
+	fn test_decode_wrapper_round_trip() -> Result<(), VoteError> {
+		let issuer = ed25519_issuer(b"alice");
+		let blocks = vec![BlockHash::from([3u8; 32])];
+		let vote = sign_simple_vote(&issuer, 9, validity_millis(0, 60_000), blocks.clone(), None);
+		let decoded = decode_wrapper(vote.as_bytes())?;
+		assert_eq!(decoded.serial, BigInt::from(9u8), "decoded serial must match");
+		assert_eq!(decoded.blocks, blocks, "decoded blocks must match");
+		assert!(accounts_match(&decoded.issuer, &issuer), "decoded issuer must match");
+		assert!(decoded.fees.is_none(), "fee-free vote must decode without fees");
+		Ok(())
+	}
+
+	#[test]
+	fn test_decode_error_to_vote_maps_version() {
+		assert!(matches!(
+			decode_error_to_vote(keetanetwork_asn1::Asn1Error::InvalidVoteVersion),
+			VoteError::InvalidVersion
+		));
+	}
 }

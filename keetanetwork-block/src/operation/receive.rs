@@ -7,7 +7,7 @@ use crate::amount::Amount;
 use crate::error::BlockError;
 use crate::signer::AccountRef;
 
-use super::{require_token, BlockOperation, OperationContext, OperationType};
+use super::{BlockOperation, OperationContext, OperationType};
 
 /// RECEIVE: receive tokens from a send.
 #[derive(Debug, Clone)]
@@ -28,12 +28,8 @@ impl BlockOperation for Receive {
 	const TYPE: OperationType = OperationType::Receive;
 
 	fn validate(&self, ctx: &OperationContext<'_>) -> Result<(), BlockError> {
-		require_token(&self.token)?;
-		ctx.validate_numeric(self.amount.as_bigint())?;
-
-		if ctx.account_is_token() {
-			return Err(BlockError::TokenOperationForbidden);
-		}
+		ctx.guard_token_amount(&self.token, self.amount.as_bigint())?;
+		ctx.reject_token_account()?;
 
 		if let Some(forward) = &self.forward {
 			if accounts_equal(forward, ctx.account) {

@@ -1,13 +1,11 @@
 //! CREATE_IDENTIFIER operation: create a derived identifier account.
 
-use alloc::collections::BTreeSet;
-use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use keetanetwork_account::KeyPairType;
 use num_bigint::BigInt;
 
-use crate::account_util::accounts_equal;
+use crate::account_util::{accounts_equal, unique_account_count};
 use crate::error::BlockError;
 use crate::signer::AccountRef;
 
@@ -86,16 +84,12 @@ impl BlockOperation for CreateIdentifier {
 			ctx.config()?
 				.validate_signer_count(arguments.signers.len() as u64)?;
 
-			let unique: BTreeSet<String> = arguments
-				.signers
-				.iter()
-				.map(|signer| signer.to_string())
-				.collect();
-			if unique.len() != arguments.signers.len() {
+			let unique = unique_account_count(&arguments.signers);
+			if unique != arguments.signers.len() {
 				return Err(BlockError::MultisigSignerDuplicate);
 			}
 
-			if arguments.quorum < BigInt::from(1u8) || arguments.quorum > BigInt::from(unique.len()) {
+			if arguments.quorum < BigInt::from(1u8) || arguments.quorum > BigInt::from(unique) {
 				return Err(BlockError::MultisigQuorumInvalid);
 			}
 		}

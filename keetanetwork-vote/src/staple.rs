@@ -178,6 +178,12 @@ fn validate_vote_invariants(votes: &[Vote], config: ValidationConfig, moment: Bl
 
 	let mut seen_issuers: Vec<Vec<u8>> = Vec::with_capacity(votes.len());
 	for vote in votes {
+		// Quote certificates are non-binding; a staple endorses confirmed
+		// work and must not bundle them.
+		if vote.is_quote() {
+			return Err(VoteError::FeeIsQuote);
+		}
+
 		if vote.blocks().len() != expected_blocks.len() {
 			return Err(VoteError::StapleBlockCountMismatch);
 		}
@@ -188,8 +194,15 @@ fn validate_vote_invariants(votes: &[Vote], config: ValidationConfig, moment: Bl
 			}
 		}
 
-		if vote.is_permanent_at(moment, config) != representative_permanent {
+		let vote_permanent = vote.is_permanent_at(moment, config);
+		if vote_permanent != representative_permanent {
 			return Err(VoteError::StaplePermanenceMismatch);
+		}
+
+		// Permanent votes are forever-viable endorsements and may not carry
+		// fees.
+		if vote_permanent && vote.fees().is_some() {
+			return Err(VoteError::MalformedFeesInPermanentVote);
 		}
 
 		let issuer_bytes = vote.issuer().to_public_key_with_type();
@@ -276,7 +289,7 @@ fn encode_canonical(blocks: &[Block], votes: &[Vote]) -> Result<Vec<u8>, VoteErr
 			.collect(),
 		votes: votes.iter().map(|vote| vote.as_bytes().to_vec()).collect(),
 	};
-	transport::encode_vote_staple(&bundle).map_err(VoteError::from)
+	Ok(transport::encode_vote_staple(&bundle)?)
 }
 
 fn decode_canonical(bytes: &[u8]) -> Result<(Vec<Block>, Vec<Vote>), VoteError> {
@@ -324,7 +337,9 @@ fn inflate(input: &[u8]) -> Result<Vec<u8>, VoteError> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::testing::{block_hash, ed25519_issuer, moment, opening_block, sign_simple_vote, validity_millis};
+	use crate::testing::{
+		block_hash, ed25519_issuer, moment, opening_block, quote_fees, sign_simple_vote, single_fees, validity_millis,
+	};
 
 	#[test]
 	fn test_deflate_inflate_round_trip() -> Result<(), VoteError> {
@@ -354,5 +369,25 @@ mod tests {
 		let decoded = <VoteStaple as Verifiable>::verify(staple.as_bytes().to_vec(), (config, at))?;
 		assert_eq!(decoded.hash(), staple.hash());
 		Ok(())
+	}
+
+	#[test]
+	fn test_staple_rejects_quote_vote() {
+		let issuer = ed25519_issuer(b"rep");
+		let block = opening_block(&ed25519_issuer(b"owner"), &ed25519_issuer(b"to"));
+		let validity = validity_millis(0, 60_000);
+		let vote = sign_simple_vote(&issuer, 1, validity, [block_hash(&block)], Some(quote_fees(1)));
+		let result = VoteStaple::try_new([block], [vote], ValidationConfig::default(), moment(0));
+		assert!(matches!(result, Err(VoteError::FeeIsQuote)));
+	}
+
+	#[test]
+	fn test_staple_rejects_permanent_vote_with_fees() {
+		let issuer = ed25519_issuer(b"rep");
+		let block = opening_block(&ed25519_issuer(b"owner"), &ed25519_issuer(b"to"));
+		let validity = validity_millis(0, ValidationConfig::DEFAULT_PERMANENT_THRESHOLD_MS + 1_000);
+		let vote = sign_simple_vote(&issuer, 1, validity, [block_hash(&block)], Some(single_fees(5)));
+		let result = VoteStaple::try_new([block], [vote], ValidationConfig::default(), moment(0));
+		assert!(matches!(result, Err(VoteError::MalformedFeesInPermanentVote)));
 	}
 }
