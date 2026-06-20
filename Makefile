@@ -85,6 +85,8 @@ test-feat:
 	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn,der
 	cargo check -p keetanetwork-x509 --no-default-features --features alloc,rasn
 	cargo check -p keetanetwork-x509 --no-default-features --features alloc,der
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,rasn,serde
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,der,serde
 	cargo check -p keetanetwork-account --no-default-features --features alloc,rasn
 	cargo check -p keetanetwork-account --no-default-features --features alloc,der
 	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn

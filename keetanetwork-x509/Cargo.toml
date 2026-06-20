@@ -46,11 +46,15 @@ features = ["alloc"]
 
 # Serialization (optional)
 [dependencies.serde]
-workspace = true
+version = "1.0.219"
+default-features = false
+features = ["derive", "alloc"]
 optional = true
 
 [dependencies.serde_json]
-workspace = true
+version = "1.0.143"
+default-features = false
+features = ["alloc"]
 optional = true
 
 # Local dependencies
@@ -77,6 +81,8 @@ std = [
 	"snafu/std",
 	"base64/std",
 	"hex/std",
+	"serde?/std",
+	"serde_json?/std",
 	"keetanetwork-utils/std",
 	"keetanetwork-error/std",
 	"keetanetwork-crypto/std",
@@ -90,7 +96,7 @@ alloc = [
 	"keetanetwork-asn1/alloc",
 	"keetanetwork-account/alloc",
 ]
-serde = ["dep:serde", "dep:serde_json"]
+serde = ["alloc", "dep:serde", "dep:serde_json"]
 der = [
 	"alloc",
 	"keetanetwork-asn1/der",
