@@ -3,7 +3,12 @@
 //! This module provides functionality for creating, parsing, signing, and
 //! validating X.509 certificates.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
 pub mod asn1;
+#[cfg(feature = "std")]
 pub mod builder;
 pub mod certificates;
 pub mod error;
@@ -18,6 +23,7 @@ pub use x509_cert::serial_number::SerialNumber;
 pub use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned};
 pub use x509_cert::time::{Time, Validity};
 
+#[cfg(feature = "std")]
 #[doc(hidden)]
 pub mod doc_utils;
 #[cfg(feature = "serde")]

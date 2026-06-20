@@ -1,6 +1,6 @@
 mod common;
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use keetanetwork_x509::certificates::*;
 
@@ -34,7 +34,7 @@ fn test_certificate_bundle_with_chain() {
 	let cert_moment = test_moment();
 
 	// Test bundle can find chains properly
-	let mut root_store = HashSet::new();
+	let mut root_store = BTreeSet::new();
 	root_store.insert(ca_cert.clone());
 
 	// This should find a chain from user cert to CA
@@ -45,7 +45,7 @@ fn test_certificate_bundle_with_chain() {
 		certificate: user_cert.clone(),
 		options: CertificateOptions { moment: Some(cert_moment), ..Default::default() },
 		root: root_store.clone(),
-		intermediate: HashSet::new(),
+		intermediate: BTreeSet::new(),
 	};
 	assert_eq!(user_bundle.to_chain_length(), 1);
 	// Ensure the returned chain only has the user certificate
@@ -57,7 +57,7 @@ fn test_certificate_bundle_with_chain() {
 		certificate: user_cert.clone(),
 		options: CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) },
 		root: root_store.clone(),
-		intermediate: HashSet::new(),
+		intermediate: BTreeSet::new(),
 	};
 	assert!(trusted_user_bundle.is_trusted());
 }
@@ -84,9 +84,9 @@ fn test_certificate_bundle_stores() -> Result<(), Box<dyn core::error::Error>> {
 	let cert_moment = test_moment();
 
 	// Test certificate store operations
-	let mut root_certs = HashSet::new();
+	let mut root_certs = BTreeSet::new();
 	root_certs.insert(ca_cert.clone());
-	let mut intermediate_certs = HashSet::new();
+	let mut intermediate_certs = BTreeSet::new();
 	intermediate_certs.insert(user_cert.clone());
 
 	// Test that certificate with stores but no trusted root option is not trusted by default

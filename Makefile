@@ -65,10 +65,10 @@ test-feat:
 	cargo check -p keetanetwork-crypto --no-default-features --features signature
 	cargo check -p keetanetwork-crypto --no-default-features --features encryption
 	cargo check -p keetanetwork-crypto --no-default-features --features signature,encryption,rasn
-	cargo test -p keetanetwork-x509 --no-default-features --features der
-	cargo test -p keetanetwork-x509 --no-default-features --features rasn
-	cargo test -p keetanetwork-x509 --no-default-features --features der, serde
-	cargo test -p keetanetwork-x509 --no-default-features --features rasn, serde
+	cargo test -p keetanetwork-x509 --no-default-features --features std,der
+	cargo test -p keetanetwork-x509 --no-default-features --features std,rasn
+	cargo test -p keetanetwork-x509 --no-default-features --features std,der,serde
+	cargo test -p keetanetwork-x509 --no-default-features --features std,rasn,serde
 	cargo test -p keetanetwork-asn1 --no-default-features --features std,der
 	cargo test -p keetanetwork-asn1 --no-default-features --features std,rasn
 	cargo test -p keetanetwork-asn1 --no-default-features --features std,der,serde
@@ -83,6 +83,10 @@ test-feat:
 	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn
 	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,der
 	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn,der
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,der
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,rasn,serde
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,der,serde
 	cargo check -p keetanetwork-account --no-default-features --features alloc,rasn
 	cargo check -p keetanetwork-account --no-default-features --features alloc,der
 	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn

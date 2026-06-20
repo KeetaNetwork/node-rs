@@ -1,7 +1,7 @@
 mod common;
 
 #[cfg(feature = "serde")]
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use keetanetwork_x509::certificates::Extension;
 use keetanetwork_x509::oids;
@@ -20,8 +20,8 @@ fn test_json_serialization() -> Result<(), Box<dyn core::error::Error>> {
 	let bundle = CertificateBundle {
 		certificate: cert.clone(),
 		options: CertificateOptions::default(),
-		root: HashSet::new(),
-		intermediate: HashSet::new(),
+		root: BTreeSet::new(),
+		intermediate: BTreeSet::new(),
 	};
 
 	// Test that JSON contains hash field

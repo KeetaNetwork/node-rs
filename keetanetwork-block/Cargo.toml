@@ -23,16 +23,17 @@ std = [
 	"keetanetwork-asn1/std",
 	"keetanetwork-account/std",
 	"keetanetwork-crypto/std",
+	"keetanetwork-x509/std",
 ]
 alloc = [
 	"chrono/alloc",
 	"keetanetwork-error/alloc",
 	"keetanetwork-asn1/alloc",
 	"keetanetwork-account/alloc",
+	"keetanetwork-x509/alloc",
 ]
-der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der"]
-rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn"]
-x509 = ["dep:keetanetwork-x509"]
+der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der", "keetanetwork-x509/der"]
+rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn", "keetanetwork-x509/rasn"]
 testing = []
 
 [dependencies]
@@ -41,7 +42,7 @@ keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", defaul
 keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
 keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
 keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
-keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", optional = true }
+keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", default-features = false }
 snafu = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }

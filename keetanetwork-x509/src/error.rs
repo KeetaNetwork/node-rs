@@ -1,3 +1,6 @@
+use alloc::format;
+use alloc::string::String;
+
 use keetanetwork_utils::{impl_error_from_with_fields, impl_variant_error_from};
 use snafu::Snafu;
 
@@ -44,6 +47,18 @@ pub enum CertificateError {
 	/// Cycle detected in certificate chain
 	#[snafu(display("Cycle detected in certificate chain"))]
 	CertificateCycleFound,
+}
+
+/// Maps any backend error to [`CertificateError::InvalidCertificate`],
+/// collapsing the repeated discard closure at call sites.
+pub(crate) trait OrInvalidCertificate<T> {
+	fn or_invalid_certificate(self) -> Result<T, CertificateError>;
+}
+
+impl<T, E> OrInvalidCertificate<T> for Result<T, E> {
+	fn or_invalid_certificate(self) -> Result<T, CertificateError> {
+		self.map_err(|_| CertificateError::InvalidCertificate)
+	}
 }
 
 // Use macros for simple variant mappings
