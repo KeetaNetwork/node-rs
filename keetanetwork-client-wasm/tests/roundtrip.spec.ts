@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import type * as Keeta from '../../pkg/keetanetwork_client_wasm';
+import type * as Keeta from '../pkg/keetanetwork_client_wasm';
 
 interface NodeInfo {
 	api: string;
@@ -64,6 +64,9 @@ const RECIPIENT_SEED_HEX = '22'.repeat(32);
 // A recipient reserved for the external-data send so its credited balance is
 // the sole consequence of that one transfer.
 const EXTERNAL_RECIPIENT_SEED_HEX = '55'.repeat(32);
+
+// The certificate authority that issues the leaf in the certificate lifecycle.
+const CA_SEED_HEX = '66'.repeat(32);
 
 async function loadNodeInfo(request: {
 	get: (url: string) => Promise<{ json: () => Promise<NodeInfo> }>;
@@ -555,6 +558,93 @@ test.describe('extended client and user surface', () => {
 
 		expect(result.missing, 'an unknown certificate hash must resolve to nothing').toBe(true);
 		expect(result.listed, 'certificates must return a list').toBe(true);
+	});
+
+	test('a certificate is built, attached with intermediates, parsed, and removed', async ({ page }) => {
+		const result: {
+			attached: boolean;
+			foundAfterAttach: boolean;
+			intermediateCount: number;
+			parsedSubject: string;
+			parsedIssuer: string;
+			parsedSerial: string;
+			parsedIntermediateSubject: string;
+			chainLength: number;
+			validityOrdered: boolean;
+			removed: boolean;
+			goneAfterRemoval: boolean;
+		} = await page.evaluate(
+			async (cfg: NodeInfo & { caSeedHex: string }) => {
+				const { KeetaClient, UserClient, Account, X509CertificateBuilder, X509Certificate, ManageCertificate } = (
+					window as unknown as { keeta: typeof Keeta }
+				).keeta;
+
+				const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
+				const ca = Account.fromSeed(cfg.caSeedHex, 0, 'ed25519');
+				const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
+				const user = UserClient.fromClient(client, trusted);
+
+				// Self-signed certificate authority.
+				const caBuilder = X509CertificateBuilder.forCa();
+				caBuilder.withSubjectCommonName('Keeta WASM Test CA');
+				caBuilder.asSelfSigned();
+				caBuilder.withSubjectPublicKeyFromAccount(ca);
+				caBuilder.withSerialNumber(1n);
+				const caDer = caBuilder.build(ca);
+
+				// Leaf certifying the trusted account's own key, issued by the CA.
+				const leafBuilder = X509CertificateBuilder.forClient();
+				leafBuilder.withSubjectCommonName('keeta-account-leaf');
+				leafBuilder.withIssuerCommonName('Keeta WASM Test CA');
+				leafBuilder.withSubjectPublicKeyFromAccount(trusted);
+				leafBuilder.withSerialNumber(2n);
+				const leafDer = leafBuilder.build(ca);
+
+				const change = ManageCertificate.add(leafDer);
+				change.addIntermediate(caDer);
+				const hash = change.hash;
+
+				const attached = await user.modifyCertificate(change);
+				const found = await user.certificate(hash);
+
+				const parsed = X509Certificate.parse(leafDer);
+				const parsedIntermediate = X509Certificate.parse(caDer);
+				const chain = X509Certificate.parseChain(leafDer, [caDer]);
+
+				const removed = await user.modifyCertificate(ManageCertificate.remove(hash));
+				const afterRemoval = await user.certificate(hash);
+
+				return {
+					attached,
+					foundAfterAttach: found !== undefined && found !== null,
+					intermediateCount: found?.intermediates.length ?? 0,
+					parsedSubject: parsed.subject,
+					parsedIssuer: parsed.issuer,
+					parsedSerial: parsed.serialNumber,
+					parsedIntermediateSubject: parsedIntermediate.subject,
+					chainLength: chain.chainLength,
+					validityOrdered: parsed.notAfterMilliseconds > parsed.notBeforeMilliseconds,
+					removed,
+					goneAfterRemoval: afterRemoval === undefined || afterRemoval === null,
+				};
+			},
+			{ ...info, caSeedHex: CA_SEED_HEX },
+		);
+
+		expect(result.attached, 'the node must accept the certificate attachment').toBe(true);
+		expect(result.foundAfterAttach, 'the attached certificate must be retrievable by its hash').toBe(true);
+		expect(result.intermediateCount, 'the attached certificate must carry the issuing CA as an intermediate').toBe(1);
+		expect(result.parsedSubject, 'the parsed subject must carry the leaf common name').toContain('keeta-account-leaf');
+		expect(result.parsedIssuer, 'the parsed issuer must carry the CA common name').toContain('Keeta WASM Test CA');
+		expect(result.parsedSerial, 'the parsed serial must echo the value set at build time').toBe('02');
+		expect(
+			result.parsedIntermediateSubject,
+			'the intermediate must parse as the self-signed CA',
+		).toContain('Keeta WASM Test CA');
+		expect(result.chainLength, 'the leaf must link to its issuing CA as a two-certificate chain').toBe(2);
+		expect(result.validityOrdered, 'the parsed validity window must end after it begins').toBe(true);
+		expect(result.removed, 'the node must accept the certificate removal').toBe(true);
+		expect(result.goneAfterRemoval, 'the removed certificate must no longer resolve by its hash').toBe(true);
 	});
 
 	test('sendExternal transfers and credits the recipient', async ({ page }) => {

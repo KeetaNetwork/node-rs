@@ -2407,6 +2407,16 @@ impl CertificateBuilder {
 			}
 		}
 
+		// Drop any auto-injected extension whose OID the caller already supplied,
+		// so explicit extensions take precedence and no duplicate OID is emitted
+		// (RFC 5280 section 4.2 forbids duplicate extensions).
+		let caller_supplied: Vec<String> = self
+			.extensions
+			.iter()
+			.map(|extension| extension.extn_id.to_string())
+			.collect();
+		extensions.retain(|extension| !caller_supplied.contains(&extension.extn_id.to_string()));
+
 		Ok(extensions)
 	}
 }

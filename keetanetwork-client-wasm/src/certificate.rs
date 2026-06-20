@@ -1,28 +1,35 @@
-//! JS `CertificateChange`: input for MANAGE_CERTIFICATE (add or remove).
+//! JS `ManageCertificate`: input for a MANAGE_CERTIFICATE operation (add or
+//! remove).
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use keetanetwork_block::{
-	AdjustMethod, CertificateDer, CertificateOrHash, IntermediateCertificates, ManageCertificate,
+	AdjustMethod, CertificateDer, CertificateOrHash, IntermediateCertificates,
+	ManageCertificate as CoreManageCertificate,
 };
+use keetanetwork_x509::certificates::CertificateHash;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use crate::convert::{coded_error, parse_hash32, JsResult};
+use crate::convert::{coded_error, JsResult};
 
-/// A MANAGE_CERTIFICATE change. Build with `add` (then optional intermediates)
-/// or `remove`.
+/// A certificate hash is the lowercase hex of its 32-byte SHA3-256 digest.
+#[wasm_bindgen(typescript_custom_section)]
+const CERTIFICATE_HASH_TS: &str = "export type CertificateHash = string;";
+
+/// A MANAGE_CERTIFICATE operation. Build with `add` (then optional
+/// intermediates) or `remove`.
 #[wasm_bindgen]
-pub struct CertificateChange {
-	inner: ManageCertificate,
+pub struct ManageCertificate {
+	inner: CoreManageCertificate,
 }
 
 #[wasm_bindgen]
-impl CertificateChange {
+impl ManageCertificate {
 	/// Add the X.509 `certificate` given as hex DER bytes.
-	pub fn add(certificate: String) -> JsResult<CertificateChange> {
+	pub fn add(certificate: String) -> JsResult<ManageCertificate> {
 		Ok(Self {
-			inner: ManageCertificate {
+			inner: CoreManageCertificate {
 				method: AdjustMethod::Add,
 				certificate_or_hash: CertificateOrHash::Certificate(decode_der(&certificate)?),
 				intermediate_certificates: Some(IntermediateCertificates::Bundle(Vec::new())),
@@ -43,20 +50,35 @@ impl CertificateChange {
 		}
 	}
 
+	/// The certificate hash as a [`CertificateHash`] (hex), as used to look up
+	/// or remove it. For an `add` this is `SHA3-256` of the certificate DER; for
+	/// a `remove` it is the supplied hash.
+	#[wasm_bindgen(getter)]
+	pub fn hash(&self) -> String {
+		hex::encode(self.inner.certificate_or_hash.hash())
+	}
+
 	/// Remove the certificate identified by its 32-byte hex `hash`.
-	pub fn remove(hash: String) -> JsResult<CertificateChange> {
+	pub fn remove(hash: String) -> JsResult<ManageCertificate> {
+		let parsed: CertificateHash = hash
+			.parse()
+			.map_err(|_| coded_error("INVALID_CERTIFICATE_HASH", "certificate hash must be hex"))?;
+		let digest: [u8; 32] = parsed
+			.as_ref()
+			.try_into()
+			.map_err(|_| coded_error("INVALID_CERTIFICATE_HASH", "certificate hash must be 32 bytes"))?;
 		Ok(Self {
-			inner: ManageCertificate {
+			inner: CoreManageCertificate {
 				method: AdjustMethod::Subtract,
-				certificate_or_hash: CertificateOrHash::Hash(parse_hash32(&hash, "certificate hash")?),
+				certificate_or_hash: CertificateOrHash::Hash(digest),
 				intermediate_certificates: None,
 			},
 		})
 	}
 }
 
-impl CertificateChange {
-	pub(crate) fn to_core(&self) -> ManageCertificate {
+impl ManageCertificate {
+	pub(crate) fn to_core(&self) -> CoreManageCertificate {
 		self.inner.clone()
 	}
 }

@@ -1270,12 +1270,15 @@ dependencies = [
 name = "keetanetwork-client-wasm"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "hex",
  "js-sys",
  "keetanetwork-account",
+ "keetanetwork-asn1",
  "keetanetwork-block",
  "keetanetwork-client",
  "keetanetwork-crypto",
+ "keetanetwork-x509",
  "num-bigint",
  "serde",
  "serde-wasm-bindgen",
@@ -1388,6 +1391,8 @@ dependencies = [
  "base64",
  "chrono",
  "der",
+ "getrandom 0.2.16",
+ "getrandom 0.3.3",
  "hex",
  "hex-literal",
  "keetanetwork-account",
