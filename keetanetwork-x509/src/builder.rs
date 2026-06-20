@@ -62,13 +62,17 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use std::collections::BTreeSet;
-use std::time::SystemTime;
+use alloc::borrow::ToOwned;
+use alloc::collections::BTreeSet;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use core::time::Duration as CoreDuration;
 
 use chrono::{DateTime, Duration, Utc};
-use der::asn1::ObjectIdentifier;
+use der::asn1::{GeneralizedTime, ObjectIdentifier};
 use der::Encode;
 // Needed only when `asn1::BitString` resolves to the rasn type; under
 // feature unification `der` may win and make these methods inherent, so
@@ -148,6 +152,14 @@ macro_rules! include_extension {
 			self
 		}
 	};
+}
+
+/// Convert a chrono `DateTime<Utc>` to a DER [`Time`] without depending on
+/// `std::time::SystemTime`, keeping the builder usable in `no_std` builds.
+fn der_time_from_datetime(value: DateTime<Utc>) -> Result<Time, CertificateError> {
+	let seconds = u64::try_from(value.timestamp()).map_err(|_| CertificateError::InvalidCertificate)?;
+	let duration = CoreDuration::new(seconds, value.timestamp_subsec_nanos());
+	Ok(GeneralizedTime::from_unix_duration(duration)?.into())
 }
 
 /// Builder for creating X.509 certificate extensions with fluent API.
@@ -2209,8 +2221,8 @@ impl CertificateBuilder {
 			},
 			issuer: issuer_dn.clone(),
 			validity: Validity {
-				not_before: Time::try_from(SystemTime::from(valid_from))?,
-				not_after: Time::try_from(SystemTime::from(valid_to))?,
+				not_before: der_time_from_datetime(valid_from)?,
+				not_after: der_time_from_datetime(valid_to)?,
 			},
 			subject: subject_dn.clone(),
 			subject_public_key_info: subject_public_key,

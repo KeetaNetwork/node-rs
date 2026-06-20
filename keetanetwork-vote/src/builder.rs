@@ -207,7 +207,14 @@ impl VoteQuoteBuilder {
 	}
 
 	/// Build and sign the quote in a single call.
+	///
+	/// A quote negotiates fees, so omitting the fee schedule is a builder
+	/// error rather than a fee-less vote.
 	pub fn build(self, signer: &(impl CertSigner + ?Sized)) -> Result<VoteQuote, VoteError> {
+		if self.inner.fees.is_none() {
+			return Err(VoteError::FeeQuoteMissingFees);
+		}
+
 		let vote = self.inner.build_signed(signer)?;
 		VoteQuote::try_from_vote(vote)
 	}
@@ -332,6 +339,19 @@ mod tests {
 			.build(issuer.as_ref())?;
 		assert!(quote.as_vote().is_quote());
 		Ok(())
+	}
+
+	#[test]
+	fn test_vote_quote_builder_rejects_missing_fees() {
+		let issuer = ed25519_issuer(b"alice");
+		let (from, to) = one_minute_validity();
+		let result = VoteQuoteBuilder::new()
+			.serial(BigInt::from(7u8))
+			.issuer(issuer.clone())
+			.validity(from, to)
+			.add_block(BlockHash::from([1u8; 32]))
+			.build(issuer.as_ref());
+		assert!(matches!(result, Err(VoteError::FeeQuoteMissingFees)));
 	}
 
 	#[test]

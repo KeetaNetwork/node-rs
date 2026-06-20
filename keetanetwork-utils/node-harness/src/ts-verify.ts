@@ -8,31 +8,16 @@
 
 import type * as BlockModule from '@keetanetwork/keetanet-node/dist/lib/block/index';
 
-import { loadModule, resolveDist } from './dist';
+import { forEachHexLine, loadModule, resolveDist } from './dist';
 
 const dist = resolveDist(process.argv[2], 'usage: ts-verify.js <path-to-node-dist>');
 const { Block } = loadModule<typeof BlockModule>(dist, 'lib/block/index.js');
 
-let input = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', function(chunk: string) {
-	input += chunk;
-});
+forEachHexLine(function(arrayBuffer) {
+	const block = new Block(arrayBuffer);
 
-process.stdin.on('end', function() {
-	for (const line of input.split('\n')) {
-		const hexBytes = line.trim();
-		if (hexBytes === '') {
-			continue;
-		}
-
-		const buffer = Buffer.from(hexBytes, 'hex');
-		const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-		const block = new Block(arrayBuffer);
-
-		console.log(JSON.stringify({
-			hash: block.hash.toString(),
-			bytes: Buffer.from(block.toBytes()).toString('hex').toUpperCase()
-		}));
-	}
+	console.log(JSON.stringify({
+		hash: block.hash.toString(),
+		bytes: Buffer.from(block.toBytes()).toString('hex').toUpperCase()
+	}));
 });

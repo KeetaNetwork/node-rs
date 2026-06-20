@@ -84,6 +84,15 @@ impl BlockOperation for CreateIdentifier {
 			ctx.config()?
 				.validate_signer_count(arguments.signers.len() as u64)?;
 
+			// Each multisig signer must itself be a keyed account or a
+			// nested multisig.
+			for signer in &arguments.signers {
+				let signer_type = signer.to_keypair_type();
+				if !signer_type.supports_crypto() && signer_type != KeyPairType::MULTISIG {
+					return Err(BlockError::InvalidCreateIdentifierArguments);
+				}
+			}
+
 			let unique = unique_account_count(&arguments.signers);
 			if unique != arguments.signers.len() {
 				return Err(BlockError::MultisigSignerDuplicate);
@@ -163,6 +172,20 @@ mod tests {
 					.into(),
 				)
 			} => Err(BlockError::MultisigQuorumInvalid),
+			"rejects_non_keyed_signer": {
+				let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
+					signers: vec![generate_ed25519_ref(2), token(0)],
+					quorum: BigInt::from(1u8),
+				});
+				(
+					Harness::new(generate_ed25519_ref(1)),
+					CreateIdentifier {
+						identifier: generate_identifier_ref(1, KeyPairType::MULTISIG, 0),
+						create_arguments: Some(arguments),
+					}
+					.into(),
+				)
+			} => Err(BlockError::InvalidCreateIdentifierArguments),
 			"rejects_duplicate_signers": {
 				let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments {
 					signers: vec![generate_ed25519_ref(2), generate_ed25519_ref(2)],

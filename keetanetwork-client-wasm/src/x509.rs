@@ -447,6 +447,7 @@ fn certificate_error(error: CertificateError) -> JsValue {
 		CertificateError::CertificateDuplicateIncluded => "CERTIFICATE_DUPLICATE",
 		CertificateError::CertificateOrphanFound => "CERTIFICATE_ORPHAN",
 		CertificateError::CertificateCycleFound => "CERTIFICATE_CYCLE",
+		CertificateError::CertificateInvalidGraphCount { .. } => "CERTIFICATE_INVALID_GRAPH_COUNT",
 	};
 	coded_error(code, &error.to_string())
 }

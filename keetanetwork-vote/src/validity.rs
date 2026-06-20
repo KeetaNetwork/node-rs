@@ -79,6 +79,22 @@ impl Validity {
 				.saturating_sub(config.allowed_slop_ms)
 	}
 
+	/// Assert the vote is active at `moment` under `config`, distinguishing a
+	/// not-yet-valid (future) vote from an expired one.
+	///
+	/// Returns [`VoteError::MomentBeforeValidityFrom`] when the moment lands
+	/// before `validity_from` (after slop) and [`VoteError::Expired`] when it
+	/// lands past `validity_to` (after slop).
+	pub fn ensure_active_at(&self, moment: BlockTime, config: ValidationConfig) -> Result<(), VoteError> {
+		if self.moment_is_before_from(moment, config) {
+			return Err(VoteError::MomentBeforeValidityFrom);
+		}
+		if self.is_expired_at(moment, config) {
+			return Err(VoteError::Expired);
+		}
+		Ok(())
+	}
+
 	/// Whether the vote should be considered permanent at `moment` under the
 	/// supplied configuration.
 	pub fn is_permanent_at(&self, moment: BlockTime, config: ValidationConfig) -> bool {
@@ -137,6 +153,15 @@ mod tests {
 		let config = ValidationConfig::default();
 		assert!(!v.moment_is_before_from(moment(0), config));
 		assert!(v.moment_is_before_from(moment(-1_000), config));
+	}
+
+	#[test]
+	fn test_ensure_active_at_distinguishes_future_and_expired() {
+		let config = ValidationConfig::default();
+		let v = validity(60_000, 120_000);
+		assert!(matches!(v.ensure_active_at(moment(90_000), config), Ok(())));
+		assert!(matches!(v.ensure_active_at(moment(200_000), config), Err(VoteError::Expired)));
+		assert!(matches!(v.ensure_active_at(moment(-1_000), config), Err(VoteError::MomentBeforeValidityFrom)));
 	}
 
 	#[test]

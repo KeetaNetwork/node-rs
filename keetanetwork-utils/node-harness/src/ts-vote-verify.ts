@@ -9,7 +9,7 @@
 
 import type * as VoteModule from '@keetanetwork/keetanet-node/dist/lib/vote';
 
-import { loadModule, resolveDist } from './dist';
+import { forEachHexLine, loadModule, resolveDist } from './dist';
 
 const dist = resolveDist(process.argv[2], 'usage: ts-vote-verify.js <path-to-node-dist>');
 const { Vote, VoteQuote } = loadModule<typeof VoteModule>(dist, 'lib/vote.js');
@@ -72,44 +72,28 @@ function parseVote(arrayBuffer: ArrayBuffer): VoteModule.Vote | VoteModule.VoteQ
 	}
 }
 
-let input = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', function(chunk: string) {
-	input += chunk;
-});
+forEachHexLine(function(arrayBuffer) {
+	const vote = parseVote(arrayBuffer);
+	const blocks: string[] = vote.blocks.map(function(blockHash) {
+		return(blockHash.toString());
+	});
 
-process.stdin.on('end', function() {
-	for (const line of input.split('\n')) {
-		const hexBytes = line.trim();
-		if (hexBytes === '') {
-			continue;
-		}
+	const result: { [key: string]: unknown } = {
+		hash: vote.hash.toString(),
+		bytes: Buffer.from(vote.toBytes()).toString('hex').toUpperCase(),
+		serial: vote.serial.toString(),
+		issuer: vote.issuer.publicKeyString.get(),
+		blocks: blocks,
+		validityFrom: vote.validityFrom.toISOString(),
+		validityTo: vote.validityTo.toISOString()
+	};
 
-		const buffer = Buffer.from(hexBytes, 'hex');
-		const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-
-		const vote = parseVote(arrayBuffer);
-		const blocks: string[] = vote.blocks.map(function(blockHash) {
-			return(blockHash.toString());
-		});
-
-		const result: { [key: string]: unknown } = {
-			hash: vote.hash.toString(),
-			bytes: Buffer.from(vote.toBytes()).toString('hex').toUpperCase(),
-			serial: vote.serial.toString(),
-			issuer: vote.issuer.publicKeyString.get(),
-			blocks: blocks,
-			validityFrom: vote.validityFrom.toISOString(),
-			validityTo: vote.validityTo.toISOString()
-		};
-
-		if (vote.fee !== undefined) {
-			result['fee'] = serializeFee(vote.fee);
-		}
-		if (vote.quote !== undefined) {
-			result['quote'] = vote.quote;
-		}
-
-		console.log(JSON.stringify(result));
+	if (vote.fee !== undefined) {
+		result['fee'] = serializeFee(vote.fee);
 	}
+	if (vote.quote !== undefined) {
+		result['quote'] = vote.quote;
+	}
+
+	console.log(JSON.stringify(result));
 });
