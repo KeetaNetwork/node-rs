@@ -62,6 +62,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -514,7 +515,7 @@ impl ExtensionBuilder {
 	pub fn for_subject_key_identifier<T: AsRef<[u8]>>(key_id: T) -> Extension {
 		Self::new()
 			.with_oid(oids::SUBJECT_KEY_IDENTIFIER)
-			.with_value(key_id)
+			.with_subject_key_identifier_value(key_id)
 			.as_non_critical()
 			.build()
 			.expect("invariant: valid subject key identifier extension")
@@ -1137,14 +1138,30 @@ impl ExtensionBuilder {
 		self
 	}
 
+	/// Set subject key identifier extension value.
+	///
+	/// Per RFC 5280 Section 4.2.1.2 the value is `KeyIdentifier ::= OCTET
+	/// STRING`, so the raw identifier must be wrapped in a DER OCTET STRING
+	/// before the certificate encoder adds the outer `extnValue` wrapper.
+	fn with_subject_key_identifier_value<T: AsRef<[u8]>>(mut self, key_id: T) -> Self {
+		let key_id = key_id.as_ref();
+		let mut value = vec![0x04]; // OCTET STRING
+		value.push(key_id.len() as u8);
+		value.extend_from_slice(key_id);
+
+		self.set_value(value);
+		self
+	}
+
 	/// Set authority key identifier extension value.
 	fn with_authority_key_identifier_value<T: AsRef<[u8]>>(mut self, key_id: T) -> Self {
 		let key_id = key_id.as_ref();
-		let mut auth_key_id_der = vec![0x30]; // SEQUENCE
-		let key_id_with_tag = [&[0x80], key_id].concat(); // [0] IMPLICIT
+		let mut key_id_field = vec![0x80, key_id.len() as u8]; // [0] IMPLICIT KeyIdentifier, length
+		key_id_field.extend_from_slice(key_id);
 
-		auth_key_id_der.push(key_id_with_tag.len() as u8);
-		auth_key_id_der.extend_from_slice(&key_id_with_tag);
+		let mut auth_key_id_der = vec![0x30]; // SEQUENCE
+		auth_key_id_der.push(key_id_field.len() as u8);
+		auth_key_id_der.extend_from_slice(&key_id_field);
 
 		self.set_value(auth_key_id_der);
 		self
@@ -2407,15 +2424,22 @@ impl CertificateBuilder {
 			}
 		}
 
+		// Drop any auto-injected extension whose OID the caller already supplied,
+		// so explicit extensions take precedence and no duplicate OID is emitted
+		// (RFC 5280 section 4.2 forbids duplicate extensions).
+		let caller_supplied: BTreeSet<ObjectIdentifier> = self
+			.extensions
+			.iter()
+			.map(|extension| extension.extn_id)
+			.collect();
+		extensions.retain(|extension| !caller_supplied.contains(&extension.extn_id));
+
 		Ok(extensions)
 	}
 }
 
 #[cfg(test)]
 mod tests {
-	#[cfg(not(all(feature = "rasn", not(feature = "der"))))]
-	use core::str::FromStr;
-
 	use chrono::Utc;
 	use der::Decode;
 
@@ -2516,6 +2540,8 @@ mod tests {
 
 	#[test]
 	fn test_certificate_builder_basic() -> Result<(), CertificateError> {
+		use core::str::FromStr;
+
 		// Test each algorithm in our test certificate sets
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
 			let algorithm_name = test_set.algorithm.to_string();
@@ -2574,6 +2600,8 @@ mod tests {
 
 	#[test]
 	fn test_certificate_builder_build_functionality() -> Result<(), CertificateError> {
+		use core::str::FromStr;
+
 		for test_set in TEST_CERTIFICATE_SETS.iter() {
 			let subject_dn = utils::create_dn(&[(oids::CN, "Test Certificate")])?;
 			let issuer_dn = utils::create_dn(&[(oids::CN, "Test CA")])?;
@@ -2765,7 +2793,7 @@ mod tests {
 				expected_critical: false,
 				validation_fn: Box::new(|ext| {
 					let value = ext.extn_value.as_bytes();
-					value == [0x01, 0x02, 0x03, 0x04]
+					value == [0x04, 0x04, 0x01, 0x02, 0x03, 0x04] // OCTET STRING { key id }
 				}),
 			},
 			ExtensionTestCase {

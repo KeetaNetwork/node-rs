@@ -81,3 +81,5 @@ mod swap;
 mod user;
 #[cfg(target_family = "wasm")]
 mod vote;
+#[cfg(target_family = "wasm")]
+mod x509;

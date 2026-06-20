@@ -16,7 +16,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use crate::account::Account;
 use crate::block::{Block, VoteStaple};
 use crate::builder::Builder;
-use crate::certificate::CertificateChange;
+use crate::certificate::ManageCertificate;
 use crate::client::KeetaClient;
 use crate::convert::{
 	amount_to_string, client_error, parse_adjust_method, parse_amount, parse_identifier_type, parse_ledger_side,
@@ -365,7 +365,7 @@ impl UserClient {
 
 	/// Add or remove a certificate on the operating account via `change`.
 	#[wasm_bindgen(js_name = modifyCertificate)]
-	pub async fn modify_certificate(&self, change: &CertificateChange) -> JsResult<bool> {
+	pub async fn modify_certificate(&self, change: &ManageCertificate) -> JsResult<bool> {
 		self.inner
 			.modify_certificate(change.to_core())
 			.await

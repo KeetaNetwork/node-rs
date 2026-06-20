@@ -12,7 +12,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::account::Account;
 use crate::block::Block;
-use crate::certificate::CertificateChange;
+use crate::certificate::ManageCertificate;
 use crate::convert::{
 	client_error, coded_error, parse_adjust_method, parse_amount, parse_identifier_type, parse_purpose, JsResult,
 };
@@ -151,7 +151,7 @@ impl Builder {
 
 	/// Append a MANAGE_CERTIFICATE block from `change`.
 	#[wasm_bindgen(js_name = manageCertificate)]
-	pub fn manage_certificate(&mut self, change: &CertificateChange) {
+	pub fn manage_certificate(&mut self, change: &ManageCertificate) {
 		self.inner.manage_certificate(change.to_core());
 	}
 

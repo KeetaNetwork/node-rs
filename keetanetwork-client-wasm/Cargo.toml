@@ -19,6 +19,9 @@ num-bigint = { workspace = true }
 [target.'cfg(target_family = "wasm")'.dependencies]
 keetanetwork-client = { version = "0.1.0", path = "../keetanetwork-client", default-features = false, features = ["wasm"] }
 keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
+keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", default-features = false, features = ["rasn"] }
+keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false, features = ["alloc", "rasn"] }
+chrono = { workspace = true }
 hex = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6"
