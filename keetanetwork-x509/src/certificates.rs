@@ -3,17 +3,27 @@
 //! This module provides functionality for working with X.509 certificates,
 //! including parsing, validation, and generation of certificate requests.
 
+#[cfg(feature = "std")]
 pub use crate::builder::{CertificateBuilder, ExtensionBuilder};
 
-use std::collections::HashSet;
-use std::iter::once;
+use alloc::borrow::ToOwned;
+use alloc::collections::BTreeSet;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+
+use core::cmp::Ordering;
+use core::iter::once;
 
 use core::fmt::{Display, Error as FmtError, Formatter, Result as FmtResult};
 use core::hash::{Hash, Hasher};
 use core::str::{from_utf8, FromStr};
 
 use base64::{engine::general_purpose, Engine as _};
-use chrono::{DateTime, Duration, Utc};
+#[cfg(feature = "std")]
+use chrono::Duration;
+use chrono::{DateTime, Utc};
 use der::asn1::{ObjectIdentifier, OctetString};
 use der::{Decode, Encode, Sequence, ValueOrd};
 use keetanetwork_asn1::SubjectPublicKeyInfo;
@@ -40,7 +50,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::CertificateError;
 use crate::oids;
 use crate::utils::{self, parse_authority_key_identifier, parse_key_identifier};
-use crate::utils::{dn_to_string, parse_der_length};
+use crate::utils::{dn_to_string, parse_der_length, time_to_utc};
 
 /// Basic Constraints extension according to RFC 5280 Section 4.2.1.9.
 /// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
@@ -447,9 +457,9 @@ pub struct CertificateBundle {
 	/// Certificate options for validation and trust
 	pub options: CertificateOptions,
 	/// Trusted root certificates
-	pub root: HashSet<Certificate>,
+	pub root: BTreeSet<Certificate>,
 	/// Trusted intermediate certificates
-	pub intermediate: HashSet<Certificate>,
+	pub intermediate: BTreeSet<Certificate>,
 }
 
 impl CertificateBundle {
@@ -457,8 +467,8 @@ impl CertificateBundle {
 	pub fn new(
 		pem_data: &str,
 		opts: Option<CertificateOptions>,
-		root: Option<HashSet<Certificate>>,
-		intermediate: Option<HashSet<Certificate>>,
+		root: Option<BTreeSet<Certificate>>,
+		intermediate: Option<BTreeSet<Certificate>>,
 	) -> Result<Self, CertificateError> {
 		let certificate = pem_data.parse()?;
 		let options = opts.unwrap_or_default();
@@ -564,7 +574,7 @@ macro_rules! impl_into_iterator_for_certificate_bundle {
 	($self_type:ty) => {
 		impl IntoIterator for $self_type {
 			type Item = Certificate;
-			type IntoIter = std::vec::IntoIter<Certificate>;
+			type IntoIter = alloc::vec::IntoIter<Certificate>;
 
 			fn into_iter(self) -> Self::IntoIter {
 				let all_certs: Vec<Certificate> = self.clone().into();
@@ -614,7 +624,7 @@ impl FromStr for CertificateBundle {
 		let options = CertificateOptions::default();
 
 		// For PEM string input, we can't determine trust without a store
-		Ok(Self { certificate, options, root: HashSet::new(), intermediate: HashSet::new() })
+		Ok(Self { certificate, options, root: BTreeSet::new(), intermediate: BTreeSet::new() })
 	}
 }
 
@@ -625,7 +635,7 @@ impl TryFrom<Certificate> for CertificateBundle {
 		let options = CertificateOptions::default();
 
 		// For direct Certificate input, default trust to false
-		Ok(Self { certificate, options, root: HashSet::new(), intermediate: HashSet::new() })
+		Ok(Self { certificate, options, root: BTreeSet::new(), intermediate: BTreeSet::new() })
 	}
 }
 
@@ -636,8 +646,8 @@ impl TryFrom<Vec<Certificate>> for CertificateBundle {
 		let mut iter = certificates.into_iter();
 		if let Some(certificate) = iter.next() {
 			let options = CertificateOptions::default();
-			let mut root = HashSet::new();
-			let mut intermediate = HashSet::new();
+			let mut root = BTreeSet::new();
+			let mut intermediate = BTreeSet::new();
 
 			for cert in iter {
 				// Put self-signed certificates (CAs) in root store,
@@ -719,7 +729,7 @@ impl From<CertificateBundle> for Vec<Certificate> {
 }
 
 /// Certificate hash wrapper
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CertificateHash {
 	hash: Vec<u8>,
@@ -848,7 +858,7 @@ impl core::str::FromStr for CertificateHash {
 /// Certificate hash set for managing collections of hashes
 #[derive(Debug, Clone, Default)]
 pub struct CertificateHashSet {
-	certificates: HashSet<Certificate>,
+	certificates: BTreeSet<Certificate>,
 }
 
 impl CertificateHashSet {
@@ -887,7 +897,7 @@ impl TryFrom<&[String]> for CertificateHashSet {
 
 	fn try_from(_hash_strings: &[String]) -> Result<Self, Self::Error> {
 		// Since we're eliminating hash-based operations, return empty set
-		Ok(Self { certificates: HashSet::new() })
+		Ok(Self { certificates: BTreeSet::new() })
 	}
 }
 
@@ -996,12 +1006,13 @@ fn apply_base_extension(base_extensions: &mut BaseExtensions, ext: &Extension) {
 
 /// Reject duplicate extension OIDs per RFC 5280 section 4.2.
 fn check_duplicate_extensions(extensions: &[Extension]) -> Result<(), CertificateError> {
-	let mut seen_oids = HashSet::new();
+	let mut seen_oids = BTreeSet::new();
 	for extension in extensions {
 		let oid_str = extension.extn_id.to_string();
 		if seen_oids.contains(&oid_str) {
 			return Err(CertificateError::ValidationFailed { reason: format!("Duplicate extension OID: {oid_str}") });
 		}
+
 		seen_oids.insert(oid_str);
 	}
 
@@ -1012,10 +1023,10 @@ impl Certificate {
 	/// Check if the certificate is valid at a specific time
 	pub fn is_valid_at(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
 		let validity = &self.tbs_certificate.validity;
-		if time < DateTime::<Utc>::from(validity.not_before.to_system_time()) {
+		if time < time_to_utc(validity.not_before) {
 			return Ok(false);
 		}
-		if time > DateTime::<Utc>::from(validity.not_after.to_system_time()) {
+		if time > time_to_utc(validity.not_after) {
 			return Ok(false);
 		}
 
@@ -1023,17 +1034,20 @@ impl Certificate {
 	}
 
 	/// Check if the certificate is currently valid
+	#[cfg(feature = "std")]
 	pub fn is_currently_valid(&self) -> Result<bool, CertificateError> {
 		self.is_valid_at(Utc::now())
 	}
 
 	/// Check if the certificate will expire within the given duration
+	#[cfg(feature = "std")]
 	pub fn is_expiring_within(&self, duration: Duration) -> bool {
 		let now = Utc::now();
 		self.to_not_after() <= now + duration
 	}
 
 	/// Check if the certificate has been valid for at least the given duration
+	#[cfg(feature = "std")]
 	pub fn is_valid_for_at_least(&self, duration: Duration) -> bool {
 		self.to_age() >= duration
 	}
@@ -1045,21 +1059,23 @@ impl Certificate {
 
 	/// Get the not_before time as chrono DateTime
 	pub fn to_not_before(&self) -> DateTime<Utc> {
-		DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time())
+		time_to_utc(self.tbs_certificate.validity.not_before)
 	}
 
 	/// Get the not_after time as chrono DateTime
 	pub fn to_not_after(&self) -> DateTime<Utc> {
-		DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time())
+		time_to_utc(self.tbs_certificate.validity.not_after)
 	}
 
 	/// Get the certificate's age (how long it has been valid)
+	#[cfg(feature = "std")]
 	pub fn to_age(&self) -> Duration {
 		let now = Utc::now();
 		now - self.to_not_before()
 	}
 
 	/// Get the remaining validity period of the certificate
+	#[cfg(feature = "std")]
 	pub fn to_remaining_validity(&self) -> Duration {
 		let now = Utc::now();
 		self.to_not_after() - now
@@ -1226,11 +1242,11 @@ impl Certificate {
 
 	/// Validate the certificate at a specific time
 	pub fn validate_at(&self, time: DateTime<Utc>) -> Result<(), CertificateError> {
-		if time < DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time()) {
+		if time < time_to_utc(self.tbs_certificate.validity.not_before) {
 			return Err(CertificateError::NotYetValid);
 		}
 
-		if time > DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time()) {
+		if time > time_to_utc(self.tbs_certificate.validity.not_after) {
 			return Err(CertificateError::Expired);
 		}
 
@@ -1432,7 +1448,7 @@ impl Certificate {
 		let self_clone = self.clone();
 		let mut ordered_chain = vec![self_clone.clone()];
 
-		let mut chain_set = HashSet::new();
+		let mut chain_set = BTreeSet::new();
 		chain_set.insert(self_clone);
 
 		// Build the chain by following issuer certificates
@@ -1467,6 +1483,7 @@ impl Certificate {
 	}
 
 	/// Check if this certificate is trusted given certificate collections.
+	#[cfg(feature = "std")]
 	pub fn is_trusted<I>(&self, certificates: I, moment: Option<DateTime<Utc>>) -> bool
 	where
 		I: IntoIterator<Item = Certificate>,
@@ -1479,7 +1496,7 @@ impl Certificate {
 
 		// Convert certificates to Vec for use in both checks
 		let certificates: Vec<Certificate> = certificates.into_iter().collect();
-		let cert_set: HashSet<Certificate> = certificates.iter().cloned().collect();
+		let cert_set: BTreeSet<Certificate> = certificates.iter().cloned().collect();
 		if cert_set.contains(self) {
 			// If this is directly in the trusted certificates, it's trusted
 			return true;
@@ -1503,12 +1520,12 @@ impl Certificate {
 	/// - No cycles exist in the certificate chain
 	pub fn assert_can_construct_valid_graph(
 		&self,
-		certificates: &HashSet<Certificate>,
+		certificates: &BTreeSet<Certificate>,
 	) -> Result<(), CertificateError> {
-		// Check for duplicates - this is automatically handled by HashSet,
+		// Check for duplicates - this is automatically handled by BTreeSet,
 		// but we need to ensure no certificates contain same content but are
 		// different objects.
-		let mut seen_hashes = HashSet::new();
+		let mut seen_hashes = BTreeSet::new();
 		for cert in certificates {
 			let cert_hash = CertificateHash::try_from(cert)?;
 			if !seen_hashes.insert(cert_hash) {
@@ -1531,10 +1548,10 @@ impl Certificate {
 	}
 
 	/// Find all certificates connected to this certificate.
-	fn find_connected_certificates(&self, certificates: &HashSet<Certificate>) -> HashSet<Certificate> {
-		let mut connected = HashSet::new();
+	fn find_connected_certificates(&self, certificates: &BTreeSet<Certificate>) -> BTreeSet<Certificate> {
+		let mut connected = BTreeSet::new();
 		let mut to_visit = vec![self.clone()];
-		let mut visited = HashSet::new();
+		let mut visited = BTreeSet::new();
 
 		while let Some(current) = to_visit.pop() {
 			if visited.contains(&current) {
@@ -1562,9 +1579,9 @@ impl Certificate {
 	}
 
 	/// Detect cycles in the certificate graph using depth-first search.
-	fn detect_cycles(&self, certificates: &HashSet<Certificate>) -> Result<(), CertificateError> {
-		let mut visited = HashSet::new();
-		let mut rec_stack = HashSet::new();
+	fn detect_cycles(&self, certificates: &BTreeSet<Certificate>) -> Result<(), CertificateError> {
+		let mut visited = BTreeSet::new();
+		let mut rec_stack = BTreeSet::new();
 
 		// Start DFS from the subject certificate
 		self.dfs_cycle_detection(&mut visited, &mut rec_stack, certificates)?;
@@ -1582,9 +1599,9 @@ impl Certificate {
 	/// Depth-first search for cycle detection.
 	fn dfs_cycle_detection(
 		&self,
-		visited: &mut HashSet<Certificate>,
-		rec_stack: &mut HashSet<Certificate>,
-		certificates: &HashSet<Certificate>,
+		visited: &mut BTreeSet<Certificate>,
+		rec_stack: &mut BTreeSet<Certificate>,
+		certificates: &BTreeSet<Certificate>,
 	) -> Result<(), CertificateError> {
 		visited.insert(self.clone());
 		rec_stack.insert(self.clone());
@@ -1642,6 +1659,19 @@ impl Hash for Certificate {
 		if let Ok(der_bytes) = self.to_der() {
 			der_bytes.hash(state);
 		}
+	}
+}
+
+impl PartialOrd for Certificate {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl Ord for Certificate {
+	fn cmp(&self, other: &Self) -> Ordering {
+		// Order by DER encoding, consistent with the content-based `Eq`/`Hash`.
+		self.to_der().ok().cmp(&other.to_der().ok())
 	}
 }
 
@@ -1790,8 +1820,8 @@ mod tests {
 		pub ca_cert: Certificate,
 		pub intermediate_cert: Certificate,
 		pub client_cert: Certificate,
-		pub root_certs: HashSet<Certificate>,
-		pub intermediate_certs: HashSet<Certificate>,
+		pub root_certs: BTreeSet<Certificate>,
+		pub intermediate_certs: BTreeSet<Certificate>,
 	}
 
 	/// Test data for certificate hash testing
@@ -1827,8 +1857,8 @@ mod tests {
 		let client_cert: Certificate = chain.client.parse()?;
 
 		Ok(CertificateTestBundle {
-			root_certs: HashSet::from([ca_cert.clone()]),
-			intermediate_certs: HashSet::from([intermediate_cert.clone()]),
+			root_certs: BTreeSet::from([ca_cert.clone()]),
+			intermediate_certs: BTreeSet::from([intermediate_cert.clone()]),
 			ca_cert,
 			intermediate_cert,
 			client_cert,
@@ -2008,8 +2038,8 @@ mod tests {
 			let client_with_no_chain = CertificateBundle {
 				certificate: client_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 
 			assert!(client_with_no_chain.to_issuer_certificate().is_none());
@@ -2138,8 +2168,8 @@ mod tests {
 			let mut cert_with_options = CertificateBundle {
 				certificate: client_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 			assert_eq!(cert_with_options.root.len(), 0);
 			assert_eq!(cert_with_options.intermediate.len(), 0);
@@ -2169,8 +2199,8 @@ mod tests {
 			let mut cert_bundle = CertificateBundle {
 				certificate: user_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 
 			// Add root and intermediate certificates
@@ -2278,9 +2308,9 @@ mod tests {
 			assert!(!chain.is_empty());
 
 			// Test with CertificateWithOptions for getting issuer and root
-			let mut root_certs = HashSet::new();
+			let mut root_certs = BTreeSet::new();
 			root_certs.insert(ca_cert.clone());
-			let mut intermediate_certs = HashSet::new();
+			let mut intermediate_certs = BTreeSet::new();
 			intermediate_certs.insert(intermediate_cert.clone());
 
 			let user_with_chain = CertificateBundle {
@@ -2337,8 +2367,8 @@ mod tests {
 			let cert_with_no_roots = CertificateBundle {
 				certificate: ca_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 
 			// Verify that the certificate returns empty chain without roots
@@ -2807,7 +2837,7 @@ mod tests {
 			];
 
 			let cert_set = CertificateHashSet::from(certs_with_duplicates);
-			// HashSet should automatically deduplicate
+			// BTreeSet should automatically deduplicate
 			assert_eq!(cert_set.certificates.len(), 2);
 			assert!(cert_set.has(&bundle.ca_cert));
 			assert!(cert_set.has(&bundle.intermediate_cert));
@@ -3063,7 +3093,7 @@ mod tests {
 
 		// Test with empty set (should pass)
 		assert!(subject_cert
-			.assert_can_construct_valid_graph(&HashSet::new())
+			.assert_can_construct_valid_graph(&BTreeSet::new())
 			.is_ok());
 
 		// Test with just intermediate (should pass)

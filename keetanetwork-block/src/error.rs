@@ -86,7 +86,6 @@ pub enum BlockError {
 		source: CryptoError,
 	},
 	/// X.509 certificate handling failed
-	#[cfg(feature = "x509")]
 	#[snafu(display("certificate error: {source}"))]
 	Certificate {
 		/// Underlying certificate error
@@ -337,7 +336,6 @@ impl_source_error_from!(BlockError, {
 	CryptoError => Crypto,
 });
 
-#[cfg(feature = "x509")]
 impl_source_error_from!(BlockError, {
 	keetanetwork_x509::error::CertificateError => Certificate,
 });

@@ -10,7 +10,7 @@ use der::asn1::{ObjectIdentifier, OctetString};
 use serde::ser::SerializeStruct;
 
 use crate::certificates::{Certificate, CertificateBundle, CertificateHash, CertificateOptions, Extension};
-use crate::utils::dn_to_name_value_pairs;
+use crate::utils::{dn_to_name_value_pairs, time_to_utc};
 
 /// Name-value pair for Distinguished Names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,10 +50,8 @@ impl Serialize for Certificate {
 		let serial_hex = hex::encode(serial_bytes);
 
 		// Convert Time to DateTime<Utc> for RFC3339 formatting
-		let not_before_dt: DateTime<Utc> =
-			DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time());
-		let not_after_dt: DateTime<Utc> =
-			DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time());
+		let not_before_dt: DateTime<Utc> = time_to_utc(self.tbs_certificate.validity.not_before);
+		let not_after_dt: DateTime<Utc> = time_to_utc(self.tbs_certificate.validity.not_after);
 
 		let mut state = serializer.serialize_struct("Certificate", 14)?;
 		state.serialize_field("serial", &serial_hex)?;
@@ -114,7 +112,7 @@ impl Serialize for CertificateBundle {
 		state.serialize_field("certificate", &self.certificate)?;
 		state.serialize_field("options", &self.options)?;
 
-		// Convert HashSet to Vec for serialization
+		// Convert the certificate set to Vec for serialization
 		let root_certs: Vec<&Certificate> = self.root.iter().collect();
 		let intermediate_certs: Vec<&Certificate> = self.intermediate.iter().collect();
 
@@ -130,8 +128,9 @@ impl<'de> Deserialize<'de> for CertificateBundle {
 	where
 		D: Deserializer<'de>,
 	{
+		use alloc::collections::BTreeSet;
+
 		use serde::de::Error;
-		use std::collections::HashSet;
 
 		let value: Value = Value::deserialize(deserializer)?;
 		let obj = value
@@ -161,7 +160,7 @@ impl<'de> Deserialize<'de> for CertificateBundle {
 				.clone(),
 		)
 		.map_err(|e| D::Error::custom(format!("Failed to deserialize root certificates: {e}")))?;
-		let root: HashSet<Certificate> = root_vec.into_iter().collect();
+		let root: BTreeSet<Certificate> = root_vec.into_iter().collect();
 
 		// Extract intermediate certificates
 		let intermediate_vec: Vec<Certificate> = serde_json::from_value(
@@ -170,7 +169,7 @@ impl<'de> Deserialize<'de> for CertificateBundle {
 				.clone(),
 		)
 		.map_err(|e| D::Error::custom(format!("Failed to deserialize intermediate certificates: {e}")))?;
-		let intermediate: HashSet<Certificate> = intermediate_vec.into_iter().collect();
+		let intermediate: BTreeSet<Certificate> = intermediate_vec.into_iter().collect();
 
 		Ok(CertificateBundle { certificate, options, root, intermediate })
 	}

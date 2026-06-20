@@ -29,7 +29,6 @@ impl CertificateDer {
 	}
 
 	/// Parse into a typed certificate.
-	#[cfg(feature = "x509")]
 	pub fn to_certificate(&self) -> Result<keetanetwork_x509::certificates::Certificate, BlockError> {
 		Ok(keetanetwork_x509::certificates::Certificate::try_from(self.0.as_slice())?)
 	}
@@ -41,7 +40,6 @@ impl From<Vec<u8>> for CertificateDer {
 	}
 }
 
-#[cfg(feature = "x509")]
 impl TryFrom<&keetanetwork_x509::certificates::Certificate> for CertificateDer {
 	type Error = BlockError;
 
@@ -118,21 +116,15 @@ impl BlockOperation for ManageCertificate {
 				return Err(BlockError::InvalidCertificateValue);
 			};
 
-			#[cfg(feature = "x509")]
-			{
-				let parsed = certificate.to_certificate()?;
-				let subject_key = &parsed
-					.tbs_certificate
-					.subject_public_key_info
-					.subject_public_key;
-				let account_bytes = ctx.account.to_public_key_with_type();
-				if subject_key.raw_bytes() != &account_bytes[1..] {
-					return Err(BlockError::CertificateSubjectMismatch);
-				}
-			}
-			#[cfg(not(feature = "x509"))]
-			{
-				let _ = certificate;
+			let parsed = certificate.to_certificate()?;
+			let subject_key = &parsed
+				.tbs_certificate
+				.subject_public_key_info
+				.subject_public_key;
+
+			let account_bytes = ctx.account.to_public_key_with_type();
+			if subject_key.raw_bytes() != &account_bytes[1..] {
+				return Err(BlockError::CertificateSubjectMismatch);
 			}
 		}
 

@@ -1,7 +1,14 @@
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+
+use chrono::{DateTime, Utc};
 use der::asn1::{Any, Ia5String, ObjectIdentifier, OctetString};
 use der::{Decode, Header, Reader, SliceReader, Tag, TagNumber, Tagged};
 use x509_cert::attr::AttributeTypeAndValue;
 use x509_cert::name::{DistinguishedName, RdnSequence, RelativeDistinguishedName};
+use x509_cert::time::Time;
 
 use keetanetwork_crypto::algorithms::ed25519::{Ed25519PublicKey, Ed25519Signature};
 use keetanetwork_crypto::algorithms::secp256k1::{Secp256k1PublicKey, Secp256k1Signature};
@@ -15,6 +22,16 @@ use crate::error::CertificateError;
 use crate::oids;
 #[cfg(feature = "serde")]
 use crate::serde::NameValuePair;
+
+/// Convert a DER `Time` to a chrono `DateTime<Utc>`.
+///
+/// Certificate validity fields encode instants representable as a
+/// chrono `DateTime<Utc>`.
+pub(crate) fn time_to_utc(time: Time) -> DateTime<Utc> {
+	let since_epoch = time.to_unix_duration();
+	DateTime::from_timestamp(since_epoch.as_secs() as i64, since_epoch.subsec_nanos())
+		.expect("invariant: certificate validity time within DateTime range")
+}
 
 /// Create a Distinguished Name from name-value pairs.
 ///

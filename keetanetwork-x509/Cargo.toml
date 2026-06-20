@@ -14,37 +14,35 @@ path = "src/lib.rs"
 # X.509 certificate parsing
 [dependencies.x509-cert]
 version = "0.2.5"
-features = ["std", "pem"]
+default-features = false
+features = ["pem"]
 
 # ASN.1 and DER encoding
 [dependencies.der]
 workspace = true
-features = ["std"]
 
 [dependencies.rasn]
 workspace = true
 optional = true
-features = ["std", "bytes"]
+features = ["bytes"]
 
 # Date/time handling
 [dependencies.chrono]
 workspace = true
-features = ["now", "std"]
 
 # Error handling
 [dependencies.snafu]
 workspace = true
-features = ["std"]
 
 # Encoding utilities
 [dependencies.base64]
 workspace = true
-features = ["std"]
+features = ["alloc"]
 
 # Hex encoding/decoding
 [dependencies.hex]
 workspace = true
-features = ["std"]
+features = ["alloc"]
 
 # Serialization (optional)
 [dependencies.serde]
@@ -57,11 +55,11 @@ optional = true
 
 # Local dependencies
 [dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
-keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1" }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
+keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
+keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false }
+keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -69,14 +67,38 @@ getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 chrono = { workspace = true, features = ["wasmbind"] }
 
 [features]
-default = ["serde", "rasn"]
+default = ["std", "serde", "rasn"]
+std = [
+	"alloc",
+	"x509-cert/std",
+	"der/std",
+	"chrono/std",
+	"chrono/clock",
+	"snafu/std",
+	"base64/std",
+	"hex/std",
+	"keetanetwork-utils/std",
+	"keetanetwork-error/std",
+	"keetanetwork-crypto/std",
+	"keetanetwork-asn1/std",
+	"keetanetwork-account/std",
+]
+alloc = [
+	"der/alloc",
+	"chrono/alloc",
+	"keetanetwork-error/alloc",
+	"keetanetwork-asn1/alloc",
+	"keetanetwork-account/alloc",
+]
 serde = ["dep:serde", "dep:serde_json"]
 der = [
+	"alloc",
 	"keetanetwork-asn1/der",
 	"keetanetwork-crypto/der",
 	"keetanetwork-account/der",
 ]
 rasn = [
+	"alloc",
 	"dep:rasn",
 	"keetanetwork-asn1/rasn",
 	"keetanetwork-crypto/rasn",
