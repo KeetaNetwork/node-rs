@@ -177,7 +177,19 @@ fn subject_public_key(account: &Account) -> JsResult<SubjectPublicKeyInfo> {
 
 /// Convert a Unix-millisecond timestamp into a UTC instant.
 fn timestamp(millis: f64, label: &str) -> JsResult<DateTime<Utc>> {
-	DateTime::from_timestamp_millis(millis as i64)
+	if !millis.is_finite() {
+		return Err(coded_error("INVALID_DATE", &alloc::format!("{label} unix milliseconds must be finite")));
+	}
+
+	let millis_i64 = millis as i64;
+	if millis_i64 as f64 != millis {
+		return Err(coded_error(
+			"INVALID_DATE",
+			&alloc::format!("{label} unix milliseconds must be an integer within i64 range"),
+		));
+	}
+
+	DateTime::from_timestamp_millis(millis_i64)
 		.ok_or_else(|| coded_error("INVALID_DATE", &alloc::format!("{label} unix milliseconds out of range")))
 }
 

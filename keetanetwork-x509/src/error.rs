@@ -52,6 +52,18 @@ pub enum CertificateError {
 	CertificateInvalidGraphCount { max: usize },
 }
 
+/// Maps any backend error to [`CertificateError::InvalidCertificate`],
+/// collapsing the repeated discard closure at call sites.
+pub(crate) trait OrInvalidCertificate<T> {
+	fn or_invalid_certificate(self) -> Result<T, CertificateError>;
+}
+
+impl<T, E> OrInvalidCertificate<T> for Result<T, E> {
+	fn or_invalid_certificate(self) -> Result<T, CertificateError> {
+		self.map_err(|_| CertificateError::InvalidCertificate)
+	}
+}
+
 // Use macros for simple variant mappings
 impl_variant_error_from!(CertificateError, {
 	der::oid::Error => InvalidCertificate,

@@ -673,11 +673,10 @@ pub fn verify_ed25519_signature(
 		return Ok(false);
 	}
 
-	let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_ref()).or_invalid_certificate()?;
-
 	let sig_array: [u8; 64] = signature_bytes.try_into().or_invalid_certificate()?;
 	let signature = Ed25519Signature::from_bytes(&sig_array);
 
+	let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_ref()).or_invalid_certificate()?;
 	let options = SigningOptions::raw();
 	public_key
 		.verify_with_options(tbs_der.as_ref(), &signature, options)
