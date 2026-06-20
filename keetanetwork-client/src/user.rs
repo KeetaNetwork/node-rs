@@ -20,19 +20,16 @@ use crate::model::{
 use crate::swap::{AcceptSwapRequest, CreateSwapRequest, SwapTokenAmount};
 use crate::transport::LedgerSide;
 
+#[cfg(feature = "http")]
+use {crate::config::ClientConfig, crate::network::Network, crate::rep::RepEndpoint, num_bigint::BigInt};
+
 #[cfg(feature = "std")]
-use {
-	crate::config::ClientConfig,
-	crate::genesis::{generate_initial_vote_staple, InitializeNetwork},
-	crate::network::Network,
-	crate::rep::RepEndpoint,
-	num_bigint::BigInt,
-};
+use crate::genesis::{generate_initial_vote_staple, InitializeNetwork};
 
 /// A [`KeetaClient`] bound to a signer (and optionally a distinct operating
 /// account), exposing account-scoped reads and convenience writes.
 ///
-/// Reads default to the bound account; writes originate blocks for the bound
+/// Reads default to the bound account. Writes originate blocks for the bound
 /// account, signed and fee-paid by the bound signer. Constructed read-only
 /// (no signer) it answers queries but rejects writes with
 /// [`ClientError::SignerRequired`].
@@ -89,7 +86,7 @@ impl UserClient {
 	///
 	/// - [`ClientError::Account`] -- a representative key in the network
 	///   registry fails to parse.
-	#[cfg(feature = "std")]
+	#[cfg(feature = "http")]
 	pub fn from_network(network: Network, signer: Option<AccountRef>) -> Result<Self, ClientError> {
 		let client = KeetaClient::try_from(network)?;
 		Ok(Self::from_parts(client, signer))
@@ -97,7 +94,7 @@ impl UserClient {
 
 	/// Bind a client targeting a single representative reachable at `hostname`
 	/// (TLS when `ssl`), stamping `network_id` onto originated blocks.
-	#[cfg(feature = "std")]
+	#[cfg(feature = "http")]
 	pub fn from_single_rep(
 		hostname: impl AsRef<str>,
 		ssl: bool,
@@ -167,7 +164,7 @@ impl UserClient {
 
 	/// A builder for the operating account, signed by the bound signer. Writes
 	/// require a signer, so this errors when none is provided.
-	fn signed_builder(&self) -> Result<TransactionBuilder<'_>, ClientError> {
+	fn signed_builder(&self) -> Result<TransactionBuilder, ClientError> {
 		let signer = self.signer()?;
 		let account = self.account_or(None)?;
 		let mut builder = self.client.builder(&account);
@@ -333,7 +330,7 @@ impl UserClient {
 	/// # Errors
 	///
 	/// - [`ClientError::SignerRequired`] -- no signer is bound.
-	pub fn init_builder(&self) -> Result<TransactionBuilder<'_>, ClientError> {
+	pub fn init_builder(&self) -> Result<TransactionBuilder, ClientError> {
 		self.signed_builder()
 	}
 
@@ -628,7 +625,7 @@ impl UserClient {
 	/// staple was reassembled, re-render the operations against the advanced
 	/// head and republish. `assemble` can be invoked multiple times, so it must
 	/// not consume its captured operands.
-	async fn build_and_publish(&self, assemble: impl Fn(&mut TransactionBuilder<'_>)) -> Result<bool, ClientError> {
+	async fn build_and_publish(&self, assemble: impl Fn(&mut TransactionBuilder)) -> Result<bool, ClientError> {
 		let mut attempt = 0u32;
 		loop {
 			let mut builder = self.signed_builder()?;

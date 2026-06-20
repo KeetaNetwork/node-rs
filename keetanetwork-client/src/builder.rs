@@ -90,8 +90,8 @@ struct AggregatedSend {
 ///
 /// Create one with [`KeetaClient::builder`].
 #[must_use = "a TransactionBuilder does nothing until `build` is called"]
-pub struct TransactionBuilder<'a> {
-	client: &'a KeetaClient,
+pub struct TransactionBuilder {
+	client: KeetaClient,
 	primary: AccountRef,
 	groups: Vec<Group>,
 	current: Group,
@@ -100,10 +100,9 @@ pub struct TransactionBuilder<'a> {
 	date: Option<BlockTime>,
 }
 
-impl<'a> TransactionBuilder<'a> {
-	/// Start a transaction whose default group is originated and signed by
-	/// `account`.
-	pub(crate) fn new(client: &'a KeetaClient, account: AccountRef) -> Self {
+impl TransactionBuilder {
+	/// Start a transaction whose default group is signed by `account`.
+	pub(crate) fn new(client: KeetaClient, account: AccountRef) -> Self {
 		Self {
 			client,
 			primary: Arc::clone(&account),
@@ -114,9 +113,7 @@ impl<'a> TransactionBuilder<'a> {
 			date: None,
 		}
 	}
-}
 
-impl TransactionBuilder<'_> {
 	/// Switch the active group to `account`, signed by itself. Subsequent
 	/// operations render into a new block for `account`.
 	pub fn for_account(&mut self, account: &AccountRef) -> &mut Self {

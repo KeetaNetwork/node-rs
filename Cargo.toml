@@ -12,6 +12,7 @@ members = [
 	"keetanetwork-ledger",
 	"keetanetwork-node",
 	"keetanetwork-client",
+	"keetanetwork-client-wasm",
 ]
 
 [workspace.package]

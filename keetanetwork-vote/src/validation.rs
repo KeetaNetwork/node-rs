@@ -3,7 +3,7 @@
 //! [`ValidationConfig`] holds the two tunable parameters that vote
 //! validation consults at every check:
 //!
-//! * `allowed_slop_ms` - symmetric wall-clock skew tolerance applied at
+//! * `allowed_slop_ms` - symmetric clock skew tolerance applied at
 //!   both ends of a vote's validity window. Defaults to 60 seconds.
 //! * `permanent_vote_threshold_ms` - if `validity_to` exceeds the check
 //!   moment by more than this, the vote is treated as permanent. Permanent
@@ -19,7 +19,7 @@ pub use keetanetwork_block::Network;
 /// Per-network parameters for vote validation.
 #[derive(Debug, Clone, Copy)]
 pub struct ValidationConfig {
-	/// Wall-clock skew tolerance, in milliseconds.
+	/// Clock skew tolerance, in milliseconds.
 	pub allowed_slop_ms: i64,
 	/// Threshold beyond which a vote is treated as permanent, in milliseconds.
 	pub permanent_vote_threshold_ms: i64,

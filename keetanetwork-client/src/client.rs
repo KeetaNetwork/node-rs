@@ -38,10 +38,12 @@ use crate::runtime::{Runtime, TaskHandle};
 use crate::sync::{Mutex, RwLock};
 use crate::transport::{LedgerSide, NodeTransport, TransportFactory};
 
+#[cfg(feature = "http")]
+use {crate::network::Network, crate::rep::RepEndpoint, crate::transport::GeneratedTransportFactory};
+
 #[cfg(feature = "std")]
 use {
-	crate::generated::Client as Transport, crate::model::RepStatus, crate::network::Network, crate::rep::RepEndpoint,
-	crate::runtime::TokioRuntime, crate::transport::GeneratedTransportFactory, std::sync::OnceLock,
+	crate::generated::Client as Transport, crate::model::RepStatus, crate::runtime::TokioRuntime, std::sync::OnceLock,
 };
 
 /// Bookkeeping for the background representative-refresh task.
@@ -161,7 +163,7 @@ pub struct KeetaClient {
 /// # let _ = client;
 /// # Ok::<(), keetanetwork_client::ClientError>(())
 /// ```
-#[cfg(feature = "std")]
+#[cfg(feature = "http")]
 impl TryFrom<Network> for KeetaClient {
 	type Error = ClientError;
 
@@ -172,10 +174,24 @@ impl TryFrom<Network> for KeetaClient {
 	}
 }
 
+/// The default [`Runtime`] for the convenience constructors: `tokio` on native
+/// targets, browser timers and micro-tasks on wasm.
+#[cfg(feature = "http")]
+fn default_runtime() -> Arc<dyn Runtime> {
+	#[cfg(all(feature = "std", not(target_family = "wasm")))]
+	{
+		Arc::new(TokioRuntime)
+	}
+	#[cfg(all(feature = "wasm", target_family = "wasm"))]
+	{
+		Arc::new(crate::runtime::WasmRuntime)
+	}
+}
+
 impl KeetaClient {
 	/// Create a single-representative client targeting `base_url`.
 	/// Uses [`ClientConfig::default`].
-	#[cfg(feature = "std")]
+	#[cfg(feature = "http")]
 	pub fn new(base_url: impl AsRef<str>) -> Self {
 		let http = reqwest::Client::new();
 		Self::single(base_url.as_ref(), http, ClientConfig::default())
@@ -183,7 +199,7 @@ impl KeetaClient {
 
 	/// Create a single-representative client over a pre-configured
 	/// [`reqwest::Client`], allowing custom timeouts, TLS, or proxy settings.
-	#[cfg(feature = "std")]
+	#[cfg(feature = "http")]
 	pub fn with_client(base_url: impl AsRef<str>, http: reqwest::Client) -> Self {
 		Self::single(base_url.as_ref(), http, ClientConfig::default())
 	}
@@ -191,7 +207,7 @@ impl KeetaClient {
 	/// Create a multi-representative client over `reps`, fanning votes and
 	/// publishes across them and selecting reps for reads by weighted
 	/// reliability.
-	#[cfg(feature = "std")]
+	#[cfg(feature = "http")]
 	pub fn with_representatives(reps: impl IntoIterator<Item = RepEndpoint>, config: ClientConfig) -> Self {
 		let http = reqwest::Client::new();
 		let factory = Arc::new(GeneratedTransportFactory::new(http));
@@ -201,17 +217,17 @@ impl KeetaClient {
 			weight: rep.weight().clone(),
 		});
 
-		Self::with_parts(parts, factory, Arc::new(TokioRuntime), config, false)
+		Self::with_parts(parts, factory, default_runtime(), config, false)
 	}
 
-	#[cfg(feature = "std")]
+	#[cfg(feature = "http")]
 	fn single(base_url: &str, http: reqwest::Client, config: ClientConfig) -> Self {
 		let factory = Arc::new(GeneratedTransportFactory::new(http));
 		// An anonymous single-rep client has no account, so it keys the rep by
 		// its API URL; the weight is moot with a single representative.
 		let part = RepPart { key: base_url.to_owned(), url: base_url.to_owned(), weight: BigInt::from(1u8) };
 
-		Self::with_parts([part], factory, Arc::new(TokioRuntime), config, true)
+		Self::with_parts([part], factory, default_runtime(), config, true)
 	}
 
 	/// Construct a client from explicit [`RepPart`] representatives, an
@@ -305,7 +321,7 @@ impl KeetaClient {
 		self.inner.subnet.read().clone()
 	}
 
-	/// The current wall-clock moment from the runtime, falling back to the
+	/// The current clock moment from the runtime, falling back to the
 	/// epoch if the clock is out of [`BlockTime`]'s representable range.
 	fn now_moment(&self) -> BlockTime {
 		let millis = self.inner.runtime.unix_millis();
@@ -1255,8 +1271,8 @@ impl KeetaClient {
 	/// synchronously; [`build`](TransactionBuilder::build) then resolves the
 	/// block context (`previous` from the ledger head, network/subnet from
 	/// this client) and seals the block.
-	pub fn builder(&self, account: &AccountRef) -> TransactionBuilder<'_> {
-		TransactionBuilder::new(self, Arc::clone(account))
+	pub fn builder(&self, account: &AccountRef) -> TransactionBuilder {
+		TransactionBuilder::new(self.clone(), Arc::clone(account))
 	}
 
 	/// Publish a single block built via [`builder`](Self::builder).
@@ -1820,9 +1836,11 @@ impl KeetaClient {
 		if let Some(purpose) = purpose {
 			builder = builder.with_purpose(purpose);
 		}
-		if let Some(date) = date {
-			builder = builder.with_date(date);
-		}
+
+		// Stamp the date from the runtime clock when the caller gave none; the
+		// `no_std` block builder has no clock of its own to default it.
+		let date = date.unwrap_or_else(|| self.now_moment());
+		builder = builder.with_date(date);
 
 		builder = match previous {
 			Some(prev) => builder.with_previous(prev),

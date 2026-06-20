@@ -2725,6 +2725,26 @@ impl GenericAccount {
 	) -> Result<GenericAccount, AccountError> {
 		delegate_to_variants!(self, generate_identifier, identifier_type, block_hash, operation_index)
 	}
+
+	/// Verify `signature` over `message` using the account's public key.
+	pub fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
+		&self,
+		message: T,
+		signature: S,
+		options: Option<SigningOptions>,
+	) -> Result<(), AccountError> {
+		delegate_to_variants!(self, verify, message, signature, options)
+	}
+
+	/// Encrypt `plaintext` to the account's public key.
+	pub fn encrypt<T: AsRef<[u8]>>(&self, plaintext: T) -> Result<Vec<u8>, AccountError> {
+		delegate_to_variants!(self, encrypt, plaintext)
+	}
+
+	/// Decrypt `ciphertext` with the account's private key.
+	pub fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
+		delegate_to_variants!(self, decrypt, ciphertext)
+	}
 }
 
 impl Display for GenericAccount {
@@ -3459,6 +3479,26 @@ mod tests {
 		};
 
 		Account::<T>::try_from(Accountable::KeyAndType(keyable, T::keypair_type()))
+	}
+
+	#[test]
+	fn generic_account_signs_verifies_and_round_trips_encryption() -> Result<(), AccountError> {
+		let account = GenericAccount::EcdsaSecp256k1(create_test_account::<KeyECDSASECP256K1>(None)?);
+		let message: &[u8] = b"generic account behavioral round-trip";
+		let other: &[u8] = b"a different message entirely";
+
+		let signature = account.sign(message, None)?;
+		assert!(account.verify(message, &signature, None).is_ok(), "a fresh signature must verify");
+		assert!(
+			account.verify(other, &signature, None).is_err(),
+			"verification must reject a signature over a different message"
+		);
+
+		let ciphertext = account.encrypt(message)?;
+		let plaintext = account.decrypt(&ciphertext)?;
+		assert_eq!(plaintext.as_slice(), message, "decrypt must recover the encrypted plaintext");
+
+		Ok(())
 	}
 
 	/// Test helper function to create an account from a public key string.

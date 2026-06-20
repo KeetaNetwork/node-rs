@@ -165,8 +165,7 @@ pub struct ChainQuery {
 	pub limit: Option<i64>,
 }
 
-/// A single page of an account's chain together with the cursor for the next
-/// page, mirroring the node's `nextKey` pagination contract.
+/// A single page of an account's chain together with the cursor for the next page.
 #[derive(Debug, Clone, Default)]
 pub struct ChainPage {
 	/// The blocks in this page, most recent first.

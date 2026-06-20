@@ -38,7 +38,7 @@ impl BlockTime {
 
 impl Default for BlockTime {
 	/// The Unix epoch, used as a panic-free fallback moment in `no_std`
-	/// contexts that lack a wall clock.
+	/// contexts that lack a clock.
 	fn default() -> Self {
 		Self::from(DateTime::<Utc>::UNIX_EPOCH)
 	}

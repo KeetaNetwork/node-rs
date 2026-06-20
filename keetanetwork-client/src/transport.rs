@@ -14,6 +14,7 @@ use keetanetwork_block::{Amount, Block};
 use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
 
 use crate::error::ClientError;
+use crate::marker::{MaybeSend, MaybeSync};
 use crate::model::{
 	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
 	TokenBalance,
@@ -35,8 +36,9 @@ pub enum LedgerSide {
 /// Every method maps to one node endpoint and yields decoded domain values.
 /// The orchestrator fans these out, scores reps, and aggregates by quorum
 /// without depending on the underlying transport.
-#[async_trait]
-pub trait NodeTransport: core::fmt::Debug + Send + Sync {
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+pub trait NodeTransport: core::fmt::Debug + MaybeSend + MaybeSync {
 	/// The node software version string.
 	async fn node_version(&self) -> Result<String, ClientError>;
 	/// The settled balance of `token` held by `account`.
@@ -115,16 +117,16 @@ pub trait NodeTransport: core::fmt::Debug + Send + Sync {
 /// Builds a [`NodeTransport`] for a representative reachable at `url`. Lets the
 /// orchestrator bind transports to representatives it discovers at runtime
 /// without naming a concrete transport.
-pub trait TransportFactory: core::fmt::Debug + Send + Sync {
+pub trait TransportFactory: core::fmt::Debug + MaybeSend + MaybeSync {
 	/// Create a transport targeting the representative at `url`.
 	fn create(&self, url: &str) -> Arc<dyn NodeTransport>;
 }
 
-#[cfg(feature = "std")]
+#[cfg(feature = "http")]
 pub use backend::{ApiError, GeneratedTransport, GeneratedTransportFactory};
 
 /// Production transport backend over the OpenAPI-generated `reqwest` client.
-#[cfg(feature = "std")]
+#[cfg(feature = "http")]
 mod backend {
 	use alloc::boxed::Box;
 	use alloc::string::String;
@@ -241,7 +243,8 @@ mod backend {
 		}
 	}
 
-	#[async_trait]
+	#[cfg_attr(not(target_family = "wasm"), async_trait)]
+	#[cfg_attr(target_family = "wasm", async_trait(?Send))]
 	impl NodeTransport for GeneratedTransport {
 		async fn node_version(&self) -> Result<String, ClientError> {
 			self.client
@@ -429,6 +432,7 @@ mod backend {
 				.collect())
 		}
 
+		#[cfg(feature = "std")]
 		async fn acls_by_principal_with_info(&self, account: &str) -> Result<serde_json::Value, ClientError> {
 			let response = self.client.list_acls_additional(account).await?;
 			Ok(serde_json::Value::Object(response.into_inner()))
@@ -456,11 +460,13 @@ mod backend {
 			}))
 		}
 
+		#[cfg(feature = "std")]
 		async fn node_stats(&self) -> Result<serde_json::Value, ClientError> {
 			let response = self.client.get_node_stats().await?;
 			Ok(serde_json::Value::Object(response.into_inner()))
 		}
 
+		#[cfg(feature = "std")]
 		async fn node_peers(&self) -> Result<serde_json::Value, ClientError> {
 			let response = self.client.get_peers().await?;
 			Ok(serde_json::Value::Object(response.into_inner()))
@@ -538,6 +544,18 @@ mod backend {
 		Ok(Some(decoded))
 	}
 
+	/// The current moment used to bound staple temporal validity. `tokio`
+	/// targets read the system clock; the browser reads `Date.now()`.
+	#[cfg(not(target_family = "wasm"))]
+	fn verify_moment() -> BlockTime {
+		BlockTime::now()
+	}
+
+	#[cfg(target_family = "wasm")]
+	fn verify_moment() -> BlockTime {
+		BlockTime::from_unix_millis(js_sys::Date::now() as i64).unwrap_or_default()
+	}
+
 	/// Decode and verify an optional transport vote staple.
 	fn decode_staple(staple: Option<types::VoteStaple>) -> Result<Option<VoteStaple>, ClientError> {
 		let Some(encoded) = staple.and_then(|staple| staple.binary) else {
@@ -545,7 +563,7 @@ mod backend {
 		};
 
 		let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-		let staple = VoteStaple::verify(bytes, ValidationConfig::default(), BlockTime::now()).context(VoteSnafu)?;
+		let staple = VoteStaple::verify(bytes, ValidationConfig::default(), verify_moment()).context(VoteSnafu)?;
 
 		Ok(Some(staple))
 	}
