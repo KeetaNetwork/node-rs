@@ -19,11 +19,8 @@ export function resolveDist(argument: string | undefined, usage: string): string
  * Output writes are confined to the current working directory or the OS temp
  * directory. Anything resolving outside those bases is rejected as traversal.
  */
-function isWithinAllowedBases(resolved: string): boolean {
-	const allowedBases = [path.resolve(process.cwd()), path.resolve(os.tmpdir())];
-	return(allowedBases.some(function(base) {
-		return(resolved === base || resolved.startsWith(base + path.sep));
-	}));
+function allowedOutputBases(): string[] {
+	return([path.resolve(process.cwd()), path.resolve(os.tmpdir())]);
 }
 
 /*
@@ -37,7 +34,10 @@ export function resolveOutputPath(argument: string | undefined, usage: string): 
 	}
 
 	const resolved = path.resolve(argument);
-	if (!isWithinAllowedBases(resolved)) {
+	const permitted = allowedOutputBases().some(function(base) {
+		return(resolved === base || resolved.startsWith(base + path.sep));
+	});
+	if (!permitted) {
 		console.error(`refusing to write outside permitted directories: ${argument}`);
 		process.exit(1);
 	}
@@ -52,7 +52,10 @@ export function resolveOutputPath(argument: string | undefined, usage: string): 
  */
 export function writeOutputFile(outFile: string, contents: string): void {
 	const resolved = path.resolve(outFile);
-	if (!isWithinAllowedBases(resolved)) {
+	const permitted = allowedOutputBases().some(function(base) {
+		return(resolved === base || resolved.startsWith(base + path.sep));
+	});
+	if (!permitted) {
 		throw(new Error(`refusing to write outside permitted directories: ${outFile}`));
 	}
 

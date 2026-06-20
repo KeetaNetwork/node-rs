@@ -77,34 +77,47 @@ impl BlockOperation for CreateIdentifier {
 		}
 
 		if let Some(IdentifierCreateArguments::Multisig(arguments)) = &self.create_arguments {
-			if created_type != KeyPairType::MULTISIG {
-				return Err(BlockError::InvalidCreateIdentifierArguments);
-			}
-
-			ctx.config()?
-				.validate_signer_count(arguments.signers.len() as u64)?;
-
-			// Each multisig signer must itself be a keyed account or a
-			// nested multisig.
-			for signer in &arguments.signers {
-				let signer_type = signer.to_keypair_type();
-				if !signer_type.supports_crypto() && signer_type != KeyPairType::MULTISIG {
-					return Err(BlockError::InvalidCreateIdentifierArguments);
-				}
-			}
-
-			let unique = unique_account_count(&arguments.signers);
-			if unique != arguments.signers.len() {
-				return Err(BlockError::MultisigSignerDuplicate);
-			}
-
-			if arguments.quorum < BigInt::from(1u8) || arguments.quorum > BigInt::from(unique) {
-				return Err(BlockError::MultisigQuorumInvalid);
-			}
+			validate_multisig_arguments(arguments, created_type, ctx)?;
 		}
 
 		Ok(())
 	}
+}
+
+/// Validate the arguments of a multisig CREATE_IDENTIFIER: the created type
+/// must be multisig, the signer count must be permitted, every signer must be
+/// a keyed account or nested multisig, signers must be unique, and the quorum
+/// must fall within `1..=unique`.
+fn validate_multisig_arguments(
+	arguments: &MultisigCreateArguments,
+	created_type: KeyPairType,
+	ctx: &OperationContext<'_>,
+) -> Result<(), BlockError> {
+	if created_type != KeyPairType::MULTISIG {
+		return Err(BlockError::InvalidCreateIdentifierArguments);
+	}
+
+	let signer_count = arguments.signers.len();
+
+	ctx.config()?.validate_signer_count(signer_count as u64)?;
+
+	for signer in &arguments.signers {
+		let signer_type = signer.to_keypair_type();
+		if !signer_type.supports_crypto() && signer_type != KeyPairType::MULTISIG {
+			return Err(BlockError::InvalidCreateIdentifierArguments);
+		}
+	}
+
+	let unique = unique_account_count(&arguments.signers);
+	if unique != signer_count {
+		return Err(BlockError::MultisigSignerDuplicate);
+	}
+
+	if arguments.quorum < BigInt::from(1u8) || arguments.quorum > BigInt::from(unique) {
+		return Err(BlockError::MultisigQuorumInvalid);
+	}
+
+	Ok(())
 }
 
 #[cfg(test)]
