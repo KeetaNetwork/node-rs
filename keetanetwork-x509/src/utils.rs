@@ -16,7 +16,7 @@ use keetanetwork_crypto::algorithms::secp256r1::{Secp256r1PublicKey, Secp256r1Si
 use keetanetwork_crypto::prelude::{CryptoVerifierWithOptions, HashAlgorithm, SigningOptions};
 use keetanetwork_crypto::utils::{encode_ecdsa_signature_to_der, parse_der_ecdsa_signature};
 
-use crate::error::CertificateError;
+use crate::error::{CertificateError, OrInvalidCertificate};
 
 #[cfg(feature = "serde")]
 use crate::oids;
@@ -676,14 +676,10 @@ pub fn verify_ed25519_signature(
 		return Ok(false);
 	}
 
-	let public_key =
-		Ed25519PublicKey::try_from(public_key_bytes.as_ref()).map_err(|_| CertificateError::InvalidCertificate)?;
-
-	let sig_array: [u8; 64] = signature_bytes
-		.try_into()
-		.map_err(|_| CertificateError::InvalidCertificate)?;
+	let sig_array: [u8; 64] = signature_bytes.try_into().or_invalid_certificate()?;
 	let signature = Ed25519Signature::from_bytes(&sig_array);
 
+	let public_key = Ed25519PublicKey::try_from(public_key_bytes.as_ref()).or_invalid_certificate()?;
 	let options = SigningOptions::raw();
 	public_key
 		.verify_with_options(tbs_der.as_ref(), &signature, options)
