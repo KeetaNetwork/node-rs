@@ -266,6 +266,7 @@ const IDENTIFIER_KEY_TYPES: &[KeyPairType] =
 /// - [`STORAGE`](KeyPairType::STORAGE) - Storage resource identification
 /// - [`MULTISIG`](KeyPairType::MULTISIG) - Multi-signature wallet identification
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Display, EnumString, EnumIter)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum KeyPairType {
 	/// ECDSA over secp256k1 curve
 	ECDSASECP256K1 = 0,

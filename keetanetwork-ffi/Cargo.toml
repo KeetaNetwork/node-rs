@@ -1,0 +1,24 @@
+[package]
+name = "keetanetwork-ffi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Native FFI bindings (UniFFI) for the KeetaNet pure value types"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", features = ["uniffi"] }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", features = ["uniffi"] }
+keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote" }
+keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", features = ["uniffi"] }
+hex = { workspace = true, features = ["std"] }
+uniffi = { version = "0.31.2", features = ["cli"] }
+
+[dev-dependencies]
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", features = ["testing"] }
+keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote", features = ["testing"] }

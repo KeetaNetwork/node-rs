@@ -14,6 +14,7 @@ use crate::error::CryptoError;
 
 /// Supported hash algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum HashAlgorithm {
 	/// SHA3-256 (default for KeetaNet)
 	Sha3_256,

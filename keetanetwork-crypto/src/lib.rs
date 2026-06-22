@@ -10,6 +10,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
+
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;

@@ -4,6 +4,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
+
 use alloc::string::String;
 use alloc::vec::Vec;
 

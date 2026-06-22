@@ -148,6 +148,10 @@ features = ["serde", "alloc"]
 workspace = true
 optional = true
 
+[dependencies.uniffi]
+version = "0.31.2"
+optional = true
+
 # Local dependencies
 [dependencies.keetanetwork-error]
 version = "0.1.0"
@@ -201,6 +205,7 @@ encryption = [
 ]
 der = ["keetanetwork-asn1/der"]
 rasn = ["keetanetwork-asn1/rasn"]
+uniffi = ["dep:uniffi", "std"]
 
 [dev-dependencies]
 hex-literal.workspace = true

@@ -42,6 +42,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
+
 mod account_util;
 mod amount;
 mod block;

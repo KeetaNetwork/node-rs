@@ -25,6 +25,7 @@ strum.workspace = true
 strum_macros.workspace = true
 zeroize = { version = "1.8.1", default-features = false, features = ["derive"] }
 rand_core = { workspace = true, features = ["os_rng"] }
+uniffi = { version = "0.31.2", optional = true }
 
 [dev-dependencies]
 base64.workspace = true
@@ -45,3 +46,4 @@ std = [
 alloc = ["keetanetwork-error/alloc", "zeroize/alloc"]
 der = ["keetanetwork-asn1/der", "keetanetwork-crypto/der"]
 rasn = ["keetanetwork-asn1/rasn", "keetanetwork-crypto/rasn"]
+uniffi = ["dep:uniffi", "std", "keetanetwork-crypto/uniffi"]

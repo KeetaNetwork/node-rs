@@ -34,6 +34,7 @@ alloc = [
 ]
 der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der", "keetanetwork-x509/der"]
 rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn", "keetanetwork-x509/rasn"]
+uniffi = ["dep:uniffi", "std"]
 testing = []
 
 [dependencies]
@@ -46,6 +47,7 @@ keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", default-
 snafu = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
+uniffi = { version = "0.31.2", optional = true }
 
 [dependencies.num-bigint]
 workspace = true

@@ -13,6 +13,7 @@ members = [
 	"keetanetwork-node",
 	"keetanetwork-client",
 	"keetanetwork-client-wasm",
+	"keetanetwork-ffi",
 ]
 
 [workspace.package]

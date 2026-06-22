@@ -22,6 +22,7 @@ pub(crate) const MAX_PARSE_SIGNER_DEPTH: usize = 3;
 
 /// Supported block versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 pub enum BlockVersion {
 	/// Version 1: single signer, generic purpose only
 	V1,
@@ -31,6 +32,7 @@ pub enum BlockVersion {
 
 /// The declared purpose of a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[repr(u8)]
 pub enum BlockPurpose {
 	/// A regular block
