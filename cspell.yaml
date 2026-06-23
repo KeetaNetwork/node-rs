@@ -79,6 +79,7 @@ words:
   - Sha3_256
   - spki
   - tlsv
+  - tsify
   - TKNM
   - tyblocks
   - unpad

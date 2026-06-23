@@ -8,7 +8,7 @@ use keetanetwork_client::{
 	AccountInfo, AccountState, Acl, Certificate, HistoryEntry, LedgerChecksum, Representative, TokenBalance,
 };
 use serde::Serialize;
-use tsify_next::Tsify;
+use tsify::Tsify;
 
 use crate::convert::amount_to_string;
 
