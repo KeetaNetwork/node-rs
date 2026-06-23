@@ -207,7 +207,7 @@ fn permissions(handle: i32) -> Option<Permissions> {
 }
 
 /// Apply a consuming transform to a builder handle, returning a fresh handle
-/// (the prior handle is always consumed). Mirrors the JNI rebox pattern.
+/// (the prior handle is always consumed).
 fn rebox_builder(handle: i32, apply: impl FnOnce(BlockBuilder) -> Option<BlockBuilder>) -> i32 {
 	let Some(builder) = take::<BlockBuilder>(handle) else {
 		return 0;

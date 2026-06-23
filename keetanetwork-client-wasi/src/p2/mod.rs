@@ -9,8 +9,9 @@ use keetanetwork_account::KeyPairType;
 use keetanetwork_bindings::client::ledger_side;
 use keetanetwork_bindings::parse::{amount as parse_amount, amount_to_string};
 use keetanetwork_block::{
-	AccountRef, AdjustMethod, CertificateDer, CertificateOrHash, IdentifierCreateArguments, IntermediateCertificates,
-	ManageCertificate, ModifyPermissions, ModifyPermissionsPrincipal, MultisigCreateArguments, SetInfo,
+	AccountRef, AdjustMethod, BlockBuilder, BlockHash, CertificateDer, CertificateOrHash, IdentifierCreateArguments,
+	IntermediateCertificates, ManageCertificate, ModifyPermissions, ModifyPermissionsPrincipal,
+	MultisigCreateArguments, SetInfo,
 };
 use keetanetwork_client::{
 	AcceptSwapRequest, AccountInfo as CoreInfo, AccountState as CoreState, Acl as CoreAcl,
@@ -30,10 +31,10 @@ wit_bindgen::generate!({
 });
 
 use exports::keeta::client::node::{
-	AccountInfo, AccountState, Acl, AdjustMethod as WitAdjustMethod, Certificate, ChainPage,
-	ChainQuery as WitChainQuery, CodedError, Guest, GuestClient, GuestTransaction, GuestUserClient, HeadInfo,
-	HistoryEntry, HistoryQuery as WitHistoryQuery, LedgerChecksum, Representative,
-	SwapExpectation as WitSwapExpectation, SwapTokenAmount as WitSwapTokenAmount, TokenBalance,
+	AccountInfo, AccountState, Acl, AdjustMethod as WitAdjustMethod, BlockBuilder as BlockBuilderResource, Certificate,
+	ChainPage, ChainQuery as WitChainQuery, CodedError, Guest, GuestBlockBuilder, GuestClient, GuestTransaction,
+	GuestUserClient, HeadInfo, HistoryEntry, HistoryQuery as WitHistoryQuery, LedgerChecksum, Representative,
+	SignerSpec, SwapExpectation as WitSwapExpectation, SwapTokenAmount as WitSwapTokenAmount, TokenBalance,
 	Transaction as TransactionResource, UserClient as UserClientResource,
 };
 
@@ -64,6 +65,35 @@ impl Guest for Component {
 	type Client = NodeClient;
 	type UserClient = AccountClient;
 	type Transaction = TransactionState;
+	type BlockBuilder = BuilderState;
+
+	fn derive_identifier(
+		spec: SignerSpec,
+		kind: String,
+		previous: Option<String>,
+		op_index: u32,
+	) -> Result<String, CodedError> {
+		let account = account_from_spec(&spec)?;
+		let kind = derivable_identifier_kind(&kind)?;
+		let previous = previous.map(|hash| decode_hash(&hash)).transpose()?;
+		let identifier = pure::generate_identifier(&account, kind, previous, op_index)?;
+		Ok(pure::account_address(&identifier))
+	}
+}
+
+/// Derive the signing account described by `spec`.
+fn account_from_spec(spec: &SignerSpec) -> Result<AccountRef, CodedError> {
+	Ok(pure::account_from_seed(&spec.seed, spec.index, &spec.algorithm)?)
+}
+
+/// Parse an identifier kind for local derivation. Unlike the shared parser
+/// (which reserves multisig for the publishing path that supplies its create
+/// arguments), local address derivation accepts every identifier type.
+fn derivable_identifier_kind(kind: &str) -> Result<KeyPairType, CodedError> {
+	match kind {
+		"multisig" => Ok(KeyPairType::MULTISIG),
+		other => Ok(keetanetwork_bindings::parse::identifier_type(other)?),
+	}
 }
 
 /// A single-representative KeetaNet client backed by the WASI transport.
@@ -531,6 +561,12 @@ impl GuestUserClient for AccountClient {
 		Ok(pure::account_address(&identifier))
 	}
 
+	fn generate_identifier(&self, kind: String) -> Result<String, CodedError> {
+		let kind = keetanetwork_bindings::parse::identifier_type(&kind)?;
+		let identifier = run(self.inner.generate_identifier(kind, None))?;
+		Ok(pure::account_address(&identifier))
+	}
+
 	fn create_swap(
 		&self,
 		counterparty: String,
@@ -677,6 +713,130 @@ impl GuestTransaction for TransactionState {
 		}
 
 		Ok(blocks.iter().map(pure::block_to_hex).collect())
+	}
+}
+
+/// A low-level, offline block assembler. `BlockBuilder` mutators consume `self`,
+/// so the staged builder is held in an `Option` and threaded through each step;
+/// `build-and-sign` takes it out and consumes it.
+struct BuilderState {
+	builder: RefCell<Option<BlockBuilder>>,
+}
+
+impl BuilderState {
+	/// Apply `change` to the staged builder, threading ownership back in.
+	fn stage(&self, change: impl FnOnce(BlockBuilder) -> BlockBuilder) -> Result<(), CodedError> {
+		let mut slot = self.builder.borrow_mut();
+		let builder = slot.take().ok_or_else(builder_consumed)?;
+		*slot = Some(change(builder));
+		Ok(())
+	}
+}
+
+/// The builder has already produced its block and can no longer be mutated.
+fn builder_consumed() -> CodedError {
+	CodedError { code: "BUILDER_CONSUMED".into(), message: "the block has already been built".into() }
+}
+
+impl GuestBlockBuilder for BuilderState {
+	fn new(network: u64, account: String) -> Result<BlockBuilderResource, CodedError> {
+		let account = pure::account_from_address(&account)?;
+		let builder = BlockBuilder::default()
+			.with_network(network)
+			.with_account(account);
+		Ok(BlockBuilderResource::new(Self { builder: RefCell::new(Some(builder)) }))
+	}
+
+	fn version(&self, version: u32) -> Result<(), CodedError> {
+		let version = pure::block_version(version)?;
+		self.stage(|builder| builder.with_version(version))
+	}
+
+	fn previous(&self, previous: String) -> Result<(), CodedError> {
+		let previous = BlockHash::from(decode_hash(&previous)?);
+		self.stage(|builder| builder.with_previous(previous))
+	}
+
+	fn opening(&self) -> Result<(), CodedError> {
+		self.stage(BlockBuilder::as_opening)
+	}
+
+	fn date(&self, unix_millis: i64) -> Result<(), CodedError> {
+		let date = pure::block_time(unix_millis)?;
+		self.stage(|builder| builder.with_date(date))
+	}
+
+	fn signer_single(&self, spec: SignerSpec) -> Result<(), CodedError> {
+		let signer = pure::signer_single(account_from_spec(&spec)?);
+		self.stage(|builder| builder.with_signer(signer))
+	}
+
+	fn signer_multisig(&self, multisig: String, members: Vec<SignerSpec>) -> Result<(), CodedError> {
+		let multisig = pure::account_from_address(&multisig)?;
+		let members = members
+			.iter()
+			.map(account_from_spec)
+			.collect::<Result<Vec<_>, _>>()?;
+		let signer = pure::signer_multisig(multisig, members);
+		self.stage(|builder| builder.with_signer(signer))
+	}
+
+	fn op_create_multisig(&self, multisig: String, signers: Vec<String>, quorum: u32) -> Result<(), CodedError> {
+		let multisig = pure::account_from_address(&multisig)?;
+		let signers = signers
+			.iter()
+			.map(|signer| pure::account_from_address(signer))
+			.collect::<Result<Vec<_>, _>>()?;
+		let operation = pure::op_create_multisig(multisig, signers, quorum);
+		self.stage(|builder| builder.with_operation(operation))
+	}
+
+	fn op_modify_permissions(
+		&self,
+		principal: String,
+		permissions: Vec<String>,
+		method: WitAdjustMethod,
+		target: Option<String>,
+	) -> Result<(), CodedError> {
+		let principal = pure::account_from_address(&principal)?;
+		let permissions = pure::permissions_from_flags(&permissions, &[])?;
+		let target = target
+			.map(|target| pure::account_from_address(&target))
+			.transpose()?;
+		let operation = pure::op_modify_permissions(principal, permissions, AdjustMethod::from(method), target);
+		self.stage(|builder| builder.with_operation(operation))
+	}
+
+	fn op_set_info(
+		&self,
+		name: String,
+		description: String,
+		metadata: String,
+		default_permission: Vec<String>,
+	) -> Result<(), CodedError> {
+		let default_permission = match default_permission.is_empty() {
+			true => None,
+			false => Some(pure::permissions_from_flags(&default_permission, &[])?),
+		};
+		let operation = pure::op_set_info(name, description, metadata, default_permission);
+		self.stage(|builder| builder.with_operation(operation))
+	}
+
+	fn op_set_rep(&self, rep: String) -> Result<(), CodedError> {
+		let rep = pure::account_from_address(&rep)?;
+		let operation = pure::op_set_rep(rep);
+		self.stage(|builder| builder.with_operation(operation))
+	}
+
+	fn build_and_sign(&self) -> Result<String, CodedError> {
+		let builder = self
+			.builder
+			.borrow_mut()
+			.take()
+			.ok_or_else(builder_consumed)?;
+		let unsigned = pure::build_unsigned(builder)?;
+		let signed = pure::sign_unsigned(unsigned)?;
+		Ok(pure::block_to_hex(&signed))
 	}
 }
 

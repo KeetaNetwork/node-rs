@@ -37,6 +37,7 @@ words:
   - extn
   - FAXX
   - FIPS
+  - funder
   - github
   - hexdigit
   - hexseed
@@ -52,6 +53,7 @@ words:
   - keypair
   - keystream
   - KEYTYPE
+  - millis
   - MIKS
   - MSRV
   - ocsp
@@ -77,6 +79,7 @@ words:
   - Sha3_256
   - spki
   - tlsv
+  - TKNM
   - tyblocks
   - unpad
   - uper

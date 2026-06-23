@@ -7,11 +7,11 @@ use core::str::FromStr;
 
 use keetanetwork_account::account::AccountSigner;
 use keetanetwork_account::{Account as CoreAccount, GenericAccount, KeyED25519, Keyable};
-use keetanetwork_block::AccountRef;
+use keetanetwork_block::{AccountRef, BlockHash};
 use keetanetwork_crypto::prelude::{ExposeSecret, IntoSecret};
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use crate::convert::{coded, coded_error, JsResult};
+use crate::convert::{coded, coded_error, parse_identifier_type, JsResult};
 
 /// A KeetaNet account: a signing key pair when built from a seed or private
 /// key, or a read-only handle when built from an address or public key.
@@ -99,6 +99,28 @@ impl Account {
 	#[wasm_bindgen(getter, js_name = publicKey)]
 	pub fn public_key(&self) -> String {
 		hex::encode(self.inner.to_public_key_with_type())
+	}
+
+	/// Derive an identifier account of `kind` relative to this account.
+	#[wasm_bindgen(js_name = generateIdentifier)]
+	pub fn generate_identifier(
+		&self,
+		kind: String,
+		previous: Option<String>,
+		op_index: Option<u32>,
+	) -> JsResult<Account> {
+		let kind = parse_identifier_type(&kind)?;
+		let previous = previous
+			.map(|hash| {
+				BlockHash::from_str(&hash).map_err(|_| coded_error("INVALID_BLOCK_HASH", "block hash must be hex"))
+			})
+			.transpose()?;
+		let identifier = self
+			.inner
+			.generate_identifier(kind, previous.as_ref(), op_index.unwrap_or(0))
+			.map_err(|error| coded_error("IDENTIFIER", error.as_ref()))?;
+
+		Ok(Self { inner: Arc::new(identifier) })
 	}
 
 	/// Sign `message`, returning the raw signature bytes. Errors when the

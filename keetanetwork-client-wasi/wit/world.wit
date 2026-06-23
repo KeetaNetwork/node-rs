@@ -2,8 +2,8 @@ package keeta:client@0.1.0;
 
 /// Shared value types crossing the component boundary.
 interface types {
-	/// A stable, machine-readable error mirroring the binding crates'
-	/// `CodedError`: a programmatic `code` plus a human-readable `message`.
+	/// A stable, machine-readable error: a programmatic `code` plus a
+	/// human-readable `message`.
 	record coded-error {
 		code: string,
 		message: string,
@@ -119,6 +119,15 @@ interface types {
 		receive: option<swap-token-amount>,
 		send: option<swap-token-amount>,
 	}
+
+	/// A signing account, derived from `seed` at `index` under `algorithm`
+	/// (e.g. `ed25519`, `ecdsa_secp256k1`). Used to reconstruct private keys
+	/// for low-level block signing.
+	record signer-spec {
+		seed: string,
+		index: u32,
+		algorithm: string,
+	}
 }
 
 /// The networked KeetaNet node surface. Outbound calls are made over
@@ -127,8 +136,14 @@ interface node {
 	use types.{
 		coded-error, token-balance, representative, ledger-checksum, account-info, account-state, history-entry,
 		chain-query, chain-page, head-info, adjust-method, history-query, acl, certificate,
-		swap-token-amount, swap-expectation,
+		swap-token-amount, swap-expectation, signer-spec,
 	};
+
+	/// Locally derive an identifier address relative to the account derived
+	/// from `spec`, an optional `previous` block hash (hex; the opening hash
+	/// when absent), and operation `op-index`. `kind` is an identifier key
+	/// type (`network`/`token`/`storage`/`multisig`).
+	derive-identifier: func(spec: signer-spec, kind: string, previous: option<string>, op-index: u32) -> result<string, coded-error>;
 
 	/// A client bound to a single representative endpoint.
 	resource client {
@@ -246,6 +261,10 @@ interface node {
 		/// Create an on-chain multisig identifier requiring `quorum` of
 		/// `signers`; returns the new identifier address. Requires a signer.
 		generate-multisig: func(signers: list<string>, quorum: u32) -> result<string, coded-error>;
+		/// Create an on-chain identifier of `kind`
+		/// (`network`/`token`/`storage`/`multisig`); builds and publishes,
+		/// returning the new identifier address. Requires a signer.
+		generate-identifier: func(kind: string) -> result<string, coded-error>;
 		/// Build (without publishing) a swap offer sending `send-amount` of
 		/// `send-token` to `counterparty` against `receive-amount` of
 		/// `receive-token`; returns the offer block (hex) for the counterparty
@@ -285,6 +304,42 @@ interface node {
 		/// Build, sign, and publish all staged operations as one atomic
 		/// transaction over `wasi:http`; returns the published block(s) as hex.
 		commit: func() -> result<list<string>, coded-error>;
+	}
+
+	/// A low-level, offline block assembler: stage operations on an operating
+	/// account, attach a single or multisig signer, then build-and-sign into a
+	/// transport block (hex). The signed block settles via
+	/// `user-client.transmit`.
+	resource block-builder {
+		/// Start a block for operating `account` (address) on `network`.
+		new: static func(network: u64, account: string) -> result<block-builder, coded-error>;
+		/// Set the block version (1 or 2).
+		version: func(version: u32) -> result<_, coded-error>;
+		/// Chain onto `previous` (block hash hex).
+		previous: func(previous: string) -> result<_, coded-error>;
+		/// Mark this as the account's opening block (no previous).
+		opening: func() -> result<_, coded-error>;
+		/// Set the block timestamp (Unix milliseconds). Required: the component
+		/// has no ambient clock, so the caller stamps the block.
+		date: func(unix-millis: s64) -> result<_, coded-error>;
+		/// Sign with a single account derived from `spec`.
+		signer-single: func(spec: signer-spec) -> result<_, coded-error>;
+		/// Sign with `multisig` (address) using the member accounts derived
+		/// from `members` (a quorum subset is allowed).
+		signer-multisig: func(multisig: string, members: list<signer-spec>) -> result<_, coded-error>;
+		/// Stage a CREATE_IDENTIFIER for a multisig requiring `quorum` of
+		/// `signers` (addresses).
+		op-create-multisig: func(multisig: string, signers: list<string>, quorum: u32) -> result<_, coded-error>;
+		/// Stage a MODIFY_PERMISSIONS for `principal` granting/clearing
+		/// `permissions` (flag names), optionally scoped to `target`.
+		op-modify-permissions: func(principal: string, permissions: list<string>, method: adjust-method, target: option<string>) -> result<_, coded-error>;
+		/// Stage a SET_INFO; an empty `default-permission` leaves it unset.
+		op-set-info: func(name: string, description: string, metadata: string, default-permission: list<string>) -> result<_, coded-error>;
+		/// Stage a SET_REP delegating voting weight to `rep` (address).
+		op-set-rep: func(rep: string) -> result<_, coded-error>;
+		/// Build and sign the staged block, returning it as transport hex.
+		/// Consumes the builder.
+		build-and-sign: func() -> result<string, coded-error>;
 	}
 }
 

@@ -56,6 +56,7 @@ extern crate alloc;
 
 mod account;
 mod block;
+mod block_builder;
 mod builder;
 mod certificate;
 mod client;

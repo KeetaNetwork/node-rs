@@ -22,7 +22,7 @@ mod bindings {
 	});
 }
 
-use bindings::exports::keeta::client::node::{AdjustMethod, ChainQuery, CodedError, HistoryQuery};
+use bindings::exports::keeta::client::node::{AdjustMethod, ChainQuery, CodedError, HistoryQuery, SignerSpec};
 use bindings::KeetaClient;
 
 /// Host state granting the component WASI + outbound `wasi:http`.
@@ -672,8 +672,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.map_err(coded)?;
 	let maker_before_value = maker_before.parse::<u128>().unwrap_or_default();
 	let taker_before_value = taker_before.parse::<u128>().unwrap_or_default();
-	// Both legs settle in the one staple: the maker nets receive minus send and
-	// the taker nets the mirror, send minus receive.
+	// Both legs settle in the one staple
 	assert_eq!(
 		maker_after,
 		(maker_before_value - SWAP_SEND + SWAP_RECV).to_string(),
@@ -684,6 +683,262 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		(taker_before_value + SWAP_SEND - SWAP_RECV).to_string(),
 		"the taker must net send minus receive"
 	);
+
+	harness.shutdown()?;
+	Ok(())
+}
+
+/// Port of `accounts-multisig-signer.ts`: proves the low-level P2 surface the
+/// high-level builder cannot reach — `derive-identifier`, generic
+/// `generate-identifier`, and a `block-builder` block signed by a 2-of-3
+/// `Signer::Multisig` that the node accepts on-chain.
+#[tokio::test]
+#[ignore = "requires `make node-harness` and the built wasm32-wasip2 component"]
+async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> {
+	let mut harness = E2eNode::start()?;
+	let api = ready_field(&harness, "api");
+	let network = ready_field(&harness, "network");
+	let network_id: u64 = network
+		.parse()
+		.map_err(|_| wasmtime::Error::msg("the harness must advertise a numeric network id"))?;
+
+	// Give the node live ledger state to read; the harness charges no fee.
+	harness.request("init_supply", serde_json::json!({ "amount": "1000000" }))?;
+
+	let (mut store, bindings) = instantiate().await?;
+	let node = bindings.keeta_client_node();
+	let client = node.client().call_constructor(&mut store, &api).await?;
+
+	// The component has no ambient clock; the host stamps each block.
+	let now_millis = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map(|elapsed| elapsed.as_millis() as i64)
+		.unwrap_or_default();
+
+	let seed = "33".repeat(32);
+	let spec = |index: u32| SignerSpec { seed: seed.clone(), index, algorithm: "ed25519".to_string() };
+
+	let user = node
+		.user_client()
+		.call_with_signer(&mut store, &api, &seed, 0, "ed25519", &network)
+		.await?
+		.map_err(coded)?;
+	let user_address = node
+		.user_client()
+		.call_address(&mut store, user)
+		.await?
+		.map_err(coded)?;
+
+	// Fund the user so it has a settled balance and a head to chain onto.
+	let base_token = ready_field(&harness, "baseToken");
+	let funder = node
+		.user_client()
+		.call_with_signer(&mut store, &api, &trusted_seed(), 0, "ed25519", &network)
+		.await?
+		.map_err(coded)?;
+	let funded = node
+		.user_client()
+		.call_send(&mut store, funder, &user_address, &base_token, "1000")
+		.await?
+		.map_err(coded)?;
+	assert!(funded, "the user funding send must settle");
+
+	let mut signers = Vec::new();
+	for index in 1..=3u32 {
+		let signer = node
+			.user_client()
+			.call_with_signer(&mut store, &api, &seed, index, "ed25519", &network)
+			.await?
+			.map_err(coded)?;
+		let address = node
+			.user_client()
+			.call_address(&mut store, signer)
+			.await?
+			.map_err(coded)?;
+		signers.push(address);
+	}
+
+	// Local, deterministic multisig address (kind MULTISIG, op index 0).
+	let multisig = node
+		.call_derive_identifier(&mut store, &spec(0), "multisig", None, 0)
+		.await?
+		.map_err(coded)?;
+	assert!(!multisig.is_empty(), "the multisig identifier address must derive");
+
+	// User block: create the 2-of-3 multisig and grant it ADMIN over the user.
+	let user_head = node
+		.client()
+		.call_account_state(&mut store, client, &user_address)
+		.await?
+		.map_err(coded)?
+		.head;
+	let identifier_block = {
+		let builder = node
+			.block_builder()
+			.call_new(&mut store, network_id, &user_address)
+			.await?
+			.map_err(coded)?;
+		match &user_head {
+			Some(head) => node
+				.block_builder()
+				.call_previous(&mut store, builder, head)
+				.await?
+				.map_err(coded)?,
+			None => node
+				.block_builder()
+				.call_opening(&mut store, builder)
+				.await?
+				.map_err(coded)?,
+		}
+		node.block_builder()
+			.call_date(&mut store, builder, now_millis)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_op_create_multisig(&mut store, builder, &multisig, &signers, 2)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_op_modify_permissions(&mut store, builder, &multisig, &["admin".to_string()], AdjustMethod::Set, None)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_signer_single(&mut store, builder, &spec(0))
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_build_and_sign(&mut store, builder)
+			.await?
+			.map_err(coded)?
+	};
+	let published = node
+		.user_client()
+		.call_transmit(&mut store, user, &[identifier_block])
+		.await?
+		.map_err(coded)?;
+	assert!(published, "the multisig-creation block must settle");
+
+	// Generic identifier creation; the trusted client owns the token (see fn doc).
+	let custom_token = node
+		.user_client()
+		.call_generate_identifier(&mut store, funder, "token")
+		.await?
+		.map_err(coded)?;
+	assert!(!custom_token.is_empty(), "the custom token address must be returned");
+
+	// Grant the multisig ADMIN on the token's own chain (the entity whose ACL
+	// changes), signed by the trusted creator. The high-level update-permissions
+	// can only touch its operating account's ACL, so the builder is the path.
+	let trusted_spec = SignerSpec { seed: trusted_seed(), index: 0, algorithm: "ed25519".to_string() };
+	let grant_block = {
+		let builder = node
+			.block_builder()
+			.call_new(&mut store, network_id, &custom_token)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_opening(&mut store, builder)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_date(&mut store, builder, now_millis)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_op_modify_permissions(&mut store, builder, &multisig, &["admin".to_string()], AdjustMethod::Set, None)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_signer_single(&mut store, builder, &trusted_spec)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_build_and_sign(&mut store, builder)
+			.await?
+			.map_err(coded)?
+	};
+	let granted = node
+		.user_client()
+		.call_transmit(&mut store, funder, &[grant_block])
+		.await?
+		.map_err(coded)?;
+	assert!(granted, "the ADMIN grant on the custom token must settle");
+
+	// The proof: SET_INFO on the token signed by a 2-of-3 quorum subset.
+	let token_head = node
+		.client()
+		.call_account_state(&mut store, client, &custom_token)
+		.await?
+		.map_err(coded)?
+		.head;
+	let multisig_block = {
+		let builder = node
+			.block_builder()
+			.call_new(&mut store, network_id, &custom_token)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_version(&mut store, builder, 2)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_date(&mut store, builder, now_millis)
+			.await?
+			.map_err(coded)?;
+		match token_head {
+			Some(head) => node
+				.block_builder()
+				.call_previous(&mut store, builder, &head)
+				.await?
+				.map_err(coded)?,
+			None => node
+				.block_builder()
+				.call_opening(&mut store, builder)
+				.await?
+				.map_err(coded)?,
+		}
+		node.block_builder()
+			.call_op_set_info(
+				&mut store,
+				builder,
+				"TKNM",
+				"Test Multisig Token Example",
+				"eyJkZWNpbWFsUGxhY2VzIjo2fQ==",
+				&["access".to_string()],
+			)
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_signer_multisig(&mut store, builder, &multisig, &[spec(1), spec(2)])
+			.await?
+			.map_err(coded)?;
+		node.block_builder()
+			.call_build_and_sign(&mut store, builder)
+			.await?
+			.map_err(coded)?
+	};
+	let settled = node
+		.user_client()
+		.call_transmit(&mut store, funder, std::slice::from_ref(&multisig_block))
+		.await?
+		.map_err(coded)?;
+	assert!(settled, "the 2-of-3 multisig-signed token block must settle");
+
+	// The node accepted a multisig-signed block: it set the info and is the head.
+	let token_state = node
+		.client()
+		.call_account_state(&mut store, client, &custom_token)
+		.await?
+		.map_err(coded)?;
+	let token_name = token_state.info.and_then(|info| info.name);
+	assert_eq!(token_name.as_deref(), Some("TKNM"), "the multisig-signed SET_INFO must apply to the token");
+
+	let token_head_block = node
+		.client()
+		.call_head_block(&mut store, client, &custom_token)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(token_head_block.as_ref(), Some(&multisig_block), "the multisig-signed block must be the token's head");
 
 	harness.shutdown()?;
 	Ok(())

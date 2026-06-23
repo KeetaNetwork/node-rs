@@ -215,8 +215,8 @@ pub fn staple_to_hex(staple: &VoteStaple) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Offline block building (the `p1` host-transmit path, mirroring the JNI
-// example). The networked `TransactionBuilder` lives in the `p2` component.
+// Offline block building (the `p1` host-transmit path). The networked
+// `TransactionBuilder` lives in the `p2` component.
 // ---------------------------------------------------------------------------
 
 /// A single-account signer.
