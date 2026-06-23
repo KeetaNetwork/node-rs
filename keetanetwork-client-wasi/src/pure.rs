@@ -595,15 +595,21 @@ mod tests {
 	#[test]
 	fn malformed_inputs_are_rejected_with_stable_codes() {
 		assert_eq!(
-			account_from_private_key("zz", DEFAULT_ALGORITHM).expect_err("bad key must fail").code,
+			account_from_private_key("zz", DEFAULT_ALGORITHM)
+				.expect_err("bad key must fail")
+				.code,
 			"INVALID_PRIVATE_KEY"
 		);
 		assert_eq!(
-			account_from_public_key("zz", DEFAULT_ALGORITHM).expect_err("bad key must fail").code,
+			account_from_public_key("zz", DEFAULT_ALGORITHM)
+				.expect_err("bad key must fail")
+				.code,
 			"INVALID_PUBLIC_KEY"
 		);
 		assert_eq!(
-			account_from_address("not-an-address").expect_err("bad address must fail").code,
+			account_from_address("not-an-address")
+				.expect_err("bad address must fail")
+				.code,
 			"INVALID_ADDRESS"
 		);
 		assert_eq!(block_from_hex("zz").expect_err("bad block must fail").code, "INVALID_BLOCK");
