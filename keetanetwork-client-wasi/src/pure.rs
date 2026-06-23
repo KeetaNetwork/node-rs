@@ -19,7 +19,7 @@ use keetanetwork_block::{
 	SetInfo, SetRep, Signer, UnsignedBlock,
 };
 use keetanetwork_crypto::prelude::{ExposeSecret, IntoSecret};
-use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
+use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
 
 /// The default signing algorithm, matching the browser binding.
 pub const DEFAULT_ALGORITHM: &str = "ecdsa_secp256k1";
@@ -120,6 +120,7 @@ pub fn generate_identifier(
 	let identifier = account
 		.generate_identifier(kind, previous.as_ref(), index)
 		.map_err(|error| CodedError::new("IDENTIFIER", error.as_ref()))?;
+
 	Ok(Arc::new(identifier))
 }
 
@@ -214,6 +215,21 @@ pub fn staple_to_hex(staple: &VoteStaple) -> String {
 	hex::encode(staple.as_bytes())
 }
 
+/// Verify and decode a representative [`Vote`] from its wire `bytes`. The host
+/// sources these over its own transport.
+pub fn vote_from_bytes(bytes: impl Into<Vec<u8>>) -> Result<Vote, CodedError> {
+	Vote::verify(bytes).map_err(CodedError::from)
+}
+
+/// Assemble a publishable [`VoteStaple`] from signed `blocks` and the `votes`
+/// endorsing them, enforcing the staple invariants at `moment_millis`.
+pub fn vote_staple_build(blocks: Vec<Block>, votes: Vec<Vote>, moment_millis: i64) -> Result<Vec<u8>, CodedError> {
+	let staple = VoteStaple::try_new(blocks, votes, ValidationConfig::default(), block_time(moment_millis)?)
+		.map_err(CodedError::from)?;
+
+	Ok(staple.as_bytes().to_vec())
+}
+
 // ---------------------------------------------------------------------------
 // Offline block building (the `p1` host-transmit path). The networked
 // `TransactionBuilder` lives in the `p2` component.
@@ -229,6 +245,12 @@ pub fn signer_single(account: AccountRef) -> Signer {
 pub fn signer_multisig(address: AccountRef, signers: Vec<AccountRef>) -> Signer {
 	let signers = signers.into_iter().map(Signer::Single).collect();
 	Signer::Multisig { address, signers }
+}
+
+/// A `CREATE_IDENTIFIER` operation for a plain (non-multisig) identifier such
+/// as a token, storage, or network address.
+pub fn op_create_identifier(identifier: AccountRef) -> Operation {
+	CreateIdentifier { identifier, create_arguments: None }.into()
 }
 
 /// A `CREATE_IDENTIFIER` operation for a multisig identifier requiring `quorum`
@@ -445,9 +467,19 @@ mod tests {
 		let multisig = generate_identifier(&user, KeyPairType::MULTISIG, None, 0).expect("identifier must derive");
 
 		// Construction must not panic; signing validity is exercised end-to-end
-		// in the host capstone (which supplies real ledger heads).
+		// in the host example (which supplies real ledger heads).
 		let _ = op_create_multisig(multisig.clone(), vec![s1.clone(), s2.clone(), s3.clone()], 2);
 		let _ = signer_multisig(multisig, vec![s1, s2]);
+	}
+
+	#[test]
+	fn plain_identifier_create_operation_assembles() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let owner = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&owner, KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let operation = op_create_identifier(token);
+		assert!(matches!(operation, Operation::CreateIdentifier(_)));
 	}
 
 	#[test]
@@ -456,6 +488,7 @@ mod tests {
 		let hash = certificate_hash(certificate).expect("der must hash");
 		assert_eq!(hash.len(), 64);
 		assert_eq!(certificate_hash(certificate).expect("der must hash"), hash);
+
 		op_manage_certificate_add(certificate, &[]).expect("add must build");
 		op_manage_certificate_remove(&hash).expect("remove must accept a 32-byte hash");
 	}
@@ -464,5 +497,23 @@ mod tests {
 	fn certificate_remove_rejects_a_short_hash() {
 		let error = op_manage_certificate_remove("abcd").expect_err("short hash must fail");
 		assert_eq!(error.code, "INVALID_CERTIFICATE_HASH");
+	}
+
+	#[test]
+	fn malformed_vote_bytes_are_rejected() {
+		let error = vote_from_bytes([0u8, 1, 2, 3]).expect_err("garbage must not decode");
+		assert!(!error.code.is_empty());
+	}
+
+	#[test]
+	fn staple_without_votes_is_rejected() {
+		let result = vote_staple_build(Vec::new(), Vec::new(), 1_700_000_000_000);
+		assert!(matches!(result, Err(error) if !error.code.is_empty()));
+	}
+
+	#[test]
+	fn staple_with_an_out_of_range_moment_is_rejected() {
+		let error = vote_staple_build(Vec::new(), Vec::new(), i64::MAX).expect_err("moment must be in range");
+		assert_eq!(error.code, "INVALID_DATE");
 	}
 }

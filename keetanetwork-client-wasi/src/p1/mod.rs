@@ -1,32 +1,18 @@
 //! WASI Preview 1 core-module ABI: a flat, handle-based C ABI over the shared
-//! [`crate::pure`] surface, modeled on the JNI binding (opaque integer handles
-//! into a registry, `alloc`/`dealloc` for guest memory, length-prefixed byte
-//! transfers). Standard WASI P1 has sockets only over host-provided fds and no
-//! outbound `connect` (nor `wasi:http`), so only the pure/offline surface is
-//! exposed here; the host does any outbound dialing.
-//!
-//! ## Calling convention
-//!
-//! - The host calls [`keeta_alloc`] to reserve guest memory, writes input
-//!   bytes/UTF-8 there, and passes `(ptr, len)` pairs.
-//! - Object-producing calls return an `i32` handle (`0` on error; the failure
-//!   detail is then available via [`keeta_last_error_code`] /
-//!   [`keeta_last_error_message`]).
-//! - Variable-length results are returned as a *bytes handle*; the host reads
-//!   [`keeta_bytes_ptr`]/[`keeta_bytes_len`] then calls [`keeta_bytes_free`].
-//! - Object handles are released with the matching `*_free`.
+//! [`crate::pure`] surface, modeled on the JNI binding.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use keetanetwork_account::KeyPairType;
 use keetanetwork_bindings::error::CodedError;
 use keetanetwork_bindings::parse::adjust_method;
 use keetanetwork_block::{AccountRef, Block, BlockBuilder, Operation, Permissions, UnsignedBlock};
+use keetanetwork_vote::Vote;
 
 use crate::pure;
 
-/// Registry of live handles plus the last error, behind a single lock (the
-/// WASI P1 guest is single-threaded, so contention never occurs).
+/// Registry of live handles plus the last error, behind a single lock.
 #[derive(Default)]
 struct State {
 	next: i32,
@@ -37,6 +23,7 @@ struct State {
 	operations: HashMap<i32, Operation>,
 	builders: HashMap<i32, BlockBuilder>,
 	unsigned: HashMap<i32, UnsignedBlock>,
+	votes: HashMap<i32, Vote>,
 	last_error: Option<CodedError>,
 }
 
@@ -70,9 +57,7 @@ fn store_bytes(bytes: Vec<u8>) -> i32 {
 	handle
 }
 
-/// A value kind tracked in the handle registry. Centralizes the otherwise
-/// per-type store/resolve/take/release boilerplate behind one set of generics:
-/// each kind only names its registry table and its label for error messages.
+/// A value kind tracked in the handle registry.
 trait Registered: Clone + Sized {
 	/// Handle-kind label used in `INVALID_HANDLE` messages.
 	const KIND: &'static str;
@@ -126,6 +111,14 @@ impl Registered for UnsignedBlock {
 
 	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
 		&mut state.unsigned
+	}
+}
+
+impl Registered for Vote {
+	const KIND: &'static str = "vote";
+
+	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+		&mut state.votes
 	}
 }
 
@@ -206,8 +199,7 @@ fn permissions(handle: i32) -> Option<Permissions> {
 	resolve(handle)
 }
 
-/// Apply a consuming transform to a builder handle, returning a fresh handle
-/// (the prior handle is always consumed).
+/// Apply a consuming transform to a builder handle, returning a fresh handle.
 fn rebox_builder(handle: i32, apply: impl FnOnce(BlockBuilder) -> Option<BlockBuilder>) -> i32 {
 	let Some(builder) = take::<BlockBuilder>(handle) else {
 		return 0;
@@ -219,11 +211,12 @@ fn rebox_builder(handle: i32, apply: impl FnOnce(BlockBuilder) -> Option<BlockBu
 	}
 }
 
-/// Read a buffer of little-endian `i32` account handles and resolve each.
+/// Read a buffer of little-endian `i32` handles of kind `T` and resolve each
+/// to a clone, recording an error on a misaligned buffer or an unknown handle.
 ///
 /// # Safety
 /// See [`bytes_in`].
-unsafe fn account_handles(ptr: i32, len: i32) -> Option<Vec<AccountRef>> {
+unsafe fn resolve_handles<T: Registered>(ptr: i32, len: i32) -> Option<Vec<T>> {
 	let bytes = bytes_in(ptr, len);
 	if !bytes.len().is_multiple_of(4) {
 		fail(CodedError::new("INVALID_HANDLE_LIST", "handle list must be 4-byte aligned"));
@@ -232,8 +225,16 @@ unsafe fn account_handles(ptr: i32, len: i32) -> Option<Vec<AccountRef>> {
 
 	bytes
 		.chunks_exact(4)
-		.map(|chunk| account(i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])))
+		.map(|chunk| resolve::<T>(i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])))
 		.collect()
+}
+
+/// Read a buffer of little-endian `i32` account handles and resolve each.
+///
+/// # Safety
+/// See [`bytes_in`].
+unsafe fn account_handles(ptr: i32, len: i32) -> Option<Vec<AccountRef>> {
+	resolve_handles(ptr, len)
 }
 
 /// Read a `(ptr, len)` guest buffer into an owned byte vector.
@@ -558,6 +559,32 @@ pub unsafe extern "C" fn keeta_generate_identifier(
 	}
 }
 
+/// Derive a multisig identifier account; returns an account handle. A
+/// zero-length `prev` selects the account opening hash.
+///
+/// # Safety
+/// See [`bytes_in`].
+#[no_mangle]
+pub unsafe extern "C" fn keeta_generate_multisig_identifier(
+	handle: i32,
+	prev_ptr: i32,
+	prev_len: i32,
+	index: i32,
+) -> i32 {
+	let Some(account) = account(handle) else {
+		return 0;
+	};
+	let previous = match identifier_previous(prev_ptr, prev_len) {
+		Ok(previous) => previous,
+		Err(error) => return fail(error),
+	};
+
+	match pure::generate_identifier(&account, KeyPairType::MULTISIG, previous, index as u32) {
+		Ok(identifier) => store_account(identifier),
+		Err(error) => fail(error),
+	}
+}
+
 /// Release an account handle.
 #[no_mangle]
 pub extern "C" fn keeta_account_free(handle: i32) {
@@ -714,6 +741,13 @@ pub unsafe extern "C" fn keeta_op_set_info(
 	};
 
 	store_operation(pure::op_set_info(name, description, metadata, default_permission))
+}
+
+/// A `CREATE_IDENTIFIER` operation for a plain (non-multisig) identifier;
+/// returns an operation handle.
+#[no_mangle]
+pub extern "C" fn keeta_op_create_identifier(identifier: i32) -> i32 {
+	account(identifier).map_or(0, |identifier| store_operation(pure::op_create_identifier(identifier)))
 }
 
 /// A `CREATE_IDENTIFIER` multisig operation; `signers` is a buffer of
@@ -894,6 +928,7 @@ pub extern "C" fn keeta_builder_build(handle: i32) -> i32 {
 	let Some(builder) = take::<BlockBuilder>(handle) else {
 		return 0;
 	};
+
 	match pure::build_unsigned(builder) {
 		Ok(unsigned) => store(unsigned),
 		Err(error) => fail(error),
@@ -925,6 +960,7 @@ pub extern "C" fn keeta_unsigned_sign(handle: i32) -> i32 {
 	let Some(unsigned) = take::<UnsignedBlock>(handle) else {
 		return 0;
 	};
+
 	match pure::sign_unsigned(unsigned) {
 		Ok(block) => store_block(block),
 		Err(error) => fail(error),
@@ -941,6 +977,51 @@ pub extern "C" fn keeta_unsigned_free(handle: i32) {
 #[no_mangle]
 pub extern "C" fn keeta_block_to_bytes(handle: i32) -> i32 {
 	block(handle).map_or(0, |block| store_bytes(pure::block_to_bytes(&block)))
+}
+
+// ---------------------------------------------------------------------------
+// Vote staples (the host-transmit publish path)
+// ---------------------------------------------------------------------------
+
+/// Verify and register a representative vote from its transport bytes; returns a
+/// vote handle. The host sources the bytes over its own transport.
+///
+/// # Safety
+/// See [`bytes_in`].
+#[no_mangle]
+pub unsafe extern "C" fn keeta_vote_from_bytes(ptr: i32, len: i32) -> i32 {
+	match pure::vote_from_bytes(bytes_in(ptr, len)) {
+		Ok(vote) => store(vote),
+		Err(error) => fail(error),
+	}
+}
+
+/// Release a vote handle.
+#[no_mangle]
+pub extern "C" fn keeta_vote_free(handle: i32) {
+	release::<Vote>(handle);
+}
+
+/// Assemble a publishable vote staple from buffers of little-endian `i32` block
+/// and vote handles, validated at `moment_millis` (Unix milliseconds).
+///
+/// # Safety
+/// See [`bytes_in`]; both buffers must be `(ptr, len)` pairs of `i32` handles.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_vote_staple_build(
+	blocks_ptr: i32,
+	blocks_len: i32,
+	votes_ptr: i32,
+	votes_len: i32,
+	moment_millis: i64,
+) -> i32 {
+	let (Some(blocks), Some(votes)) =
+		(resolve_handles::<Block>(blocks_ptr, blocks_len), resolve_handles::<Vote>(votes_ptr, votes_len))
+	else {
+		return 0;
+	};
+
+	bytes_result(pure::vote_staple_build(blocks, votes, moment_millis))
 }
 
 // ---------------------------------------------------------------------------
