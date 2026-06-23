@@ -10,13 +10,13 @@ description = "Async REST client for transmitting vote staples to a KeetaNet nod
 
 [features]
 default = ["std"]
+codec = ["dep:serde", "dep:serde_json"]
 http = [
+	"codec",
 	"dep:reqwest",
 	"reqwest/json",
 	"reqwest/query",
 	"dep:progenitor-client",
-	"dep:serde",
-	"dep:serde_json",
 ]
 std = [
 	"http",
@@ -32,6 +32,7 @@ std = [
 	"keetanetwork-account/std",
 ]
 wasm = ["http"]
+wasi = ["codec"]
 testing = []
 
 [dependencies]
@@ -71,13 +72,17 @@ features = ["alloc"]
 [dependencies.snafu]
 workspace = true
 
-[target.'cfg(target_family = "wasm")'.dependencies]
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 gloo-timers = { version = "0.4", features = ["futures"] }
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Window", "Performance"] }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wstd = { version = "0.6", features = ["json"] }
+percent-encoding = { version = "2", default-features = false, features = ["alloc"] }
 
 [build-dependencies]
 progenitor = { workspace = true }

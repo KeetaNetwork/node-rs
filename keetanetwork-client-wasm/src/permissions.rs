@@ -1,15 +1,14 @@
 //! JS `Permissions` and `PermissionChange`: inputs for MODIFY_PERMISSIONS.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
+use keetanetwork_bindings::permissions as bindings_permissions;
 use keetanetwork_block::{ModifyPermissions, ModifyPermissionsPrincipal, Permissions as CorePermissions};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::account::Account;
-use crate::convert::{
-	base_flag_name, coded_error, parse_adjust_method, parse_base_flag, parse_bigint_hex, parse_hash32, JsResult,
-};
+use crate::convert::{coded, parse_adjust_method, parse_base_flag, parse_bigint_hex, parse_hash32, JsResult};
 
 /// A permission set: well-known base flags plus optional external bit offsets.
 #[wasm_bindgen]
@@ -28,8 +27,7 @@ impl Permissions {
 			.iter()
 			.map(|flag| parse_base_flag(flag))
 			.collect::<JsResult<Vec<_>>>()?;
-		let inner = CorePermissions::from_flags(&flags, &offsets)
-			.map_err(|error| coded_error("INVALID_PERMISSIONS", &error.to_string()))?;
+		let inner = bindings_permissions::from_flags(&flags, &offsets).map_err(coded)?;
 		Ok(Self { inner })
 	}
 
@@ -39,8 +37,7 @@ impl Permissions {
 	pub fn from_bitmaps(base: String, external: String) -> JsResult<Permissions> {
 		let base = parse_bigint_hex(&base, "base")?;
 		let external = parse_bigint_hex(&external, "external")?;
-		let inner = CorePermissions::from_bigints(base, external)
-			.map_err(|error| coded_error("INVALID_PERMISSIONS", &error.to_string()))?;
+		let inner = bindings_permissions::from_bigints(base, external).map_err(coded)?;
 		Ok(Self { inner })
 	}
 
@@ -48,22 +45,13 @@ impl Permissions {
 	/// subsume narrower flags).
 	#[wasm_bindgen(getter)]
 	pub fn flags(&self) -> Vec<String> {
-		self.inner
-			.base()
-			.flags()
-			.iter()
-			.map(|flag| String::from(base_flag_name(*flag)))
-			.collect()
+		bindings_permissions::flag_names(&self.inner)
 	}
 
 	/// The external bit offsets present, ascending.
 	#[wasm_bindgen(getter)]
 	pub fn offsets(&self) -> Vec<u8> {
-		let bits = self.inner.external().as_bigint();
-		(0..bits.bits())
-			.filter(|offset| bits.bit(*offset))
-			.map(|offset| offset as u8)
-			.collect()
+		bindings_permissions::offsets(&self.inner)
 	}
 
 	/// Whether every named base `flags` and external `offsets` is granted,
@@ -79,9 +67,7 @@ impl Permissions {
 	/// The `[base, external]` bitmaps as `0x`-prefixed hex.
 	#[wasm_bindgen(js_name = toBitmaps)]
 	pub fn to_bitmaps(&self) -> Vec<String> {
-		let base = self.inner.base().as_bigint().to_str_radix(16);
-		let external = self.inner.external().as_bigint().to_str_radix(16);
-		alloc::vec![alloc::format!("0x{base}"), alloc::format!("0x{external}")]
+		bindings_permissions::bitmaps(&self.inner)
 	}
 }
 

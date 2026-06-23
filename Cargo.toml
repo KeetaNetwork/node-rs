@@ -1,5 +1,9 @@
 [workspace]
 resolver = "2"
+exclude = [
+	# wasmtime host smoke tests
+	"keetanetwork-client-wasi/host-tests",
+]
 members = [
 	"keetanetwork-account",
 	"keetanetwork-error",
@@ -12,7 +16,9 @@ members = [
 	"keetanetwork-ledger",
 	"keetanetwork-node",
 	"keetanetwork-client",
+	"keetanetwork-bindings",
 	"keetanetwork-client-wasm",
+	"keetanetwork-client-wasi",
 ]
 
 [workspace.package]

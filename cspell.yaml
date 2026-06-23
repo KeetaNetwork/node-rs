@@ -16,6 +16,7 @@ words:
   - blockhash
   - blocktime
   - bip39
+  - bigints
   - chrono
   - ciphertext
   - ciphertexts
@@ -79,6 +80,24 @@ words:
   - tyblocks
   - unpad
   - uper
+  - bindgen
+  - cdylib
+  - codegen
+  - prettyplease
+  - progenitor
+  - unparse
+  - dealloc
+  - jni
+  - multisig
+  - rebox
+  - wasi
+  - wasip1
+  - wasip2
+  - wasix
+  - wasmedge
+  - wasmtime
+  - wit
+  - wstd
   - zeroization
   - Zeroize
   - zeroized

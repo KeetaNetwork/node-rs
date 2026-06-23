@@ -16,7 +16,8 @@ keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", de
 keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false, features = ["alloc", "rasn"] }
 num-bigint = { workspace = true }
 
-[target.'cfg(target_family = "wasm")'.dependencies]
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+keetanetwork-bindings = { version = "0.1.0", path = "../keetanetwork-bindings", default-features = false, features = ["client"] }
 keetanetwork-client = { version = "0.1.0", path = "../keetanetwork-client", default-features = false, features = ["wasm"] }
 keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
 keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", default-features = false, features = ["rasn"] }
@@ -30,5 +31,5 @@ js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 
-[target.'cfg(target_family = "wasm")'.dev-dependencies]
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen-test = "0.3"

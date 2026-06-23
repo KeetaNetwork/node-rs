@@ -100,7 +100,7 @@ impl Runtime for TokioRuntime {
 
 /// Production [`Runtime`] for the browser, backed by `setTimeout` for sleeps
 /// and the micro-task queue for spawned tasks.
-#[cfg(all(feature = "wasm", target_family = "wasm"))]
+#[cfg(all(feature = "wasm", target_family = "wasm", target_os = "unknown"))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WasmRuntime;
 
@@ -109,18 +109,18 @@ pub struct WasmRuntime;
 ///
 /// [`abort`]: TaskHandle::abort
 /// [`Abortable`]: futures::future::Abortable
-#[cfg(all(feature = "wasm", target_family = "wasm"))]
+#[cfg(all(feature = "wasm", target_family = "wasm", target_os = "unknown"))]
 #[derive(Debug)]
 struct WasmTask(futures::future::AbortHandle);
 
-#[cfg(all(feature = "wasm", target_family = "wasm"))]
+#[cfg(all(feature = "wasm", target_family = "wasm", target_os = "unknown"))]
 impl TaskHandle for WasmTask {
 	fn abort(&self) {
 		self.0.abort();
 	}
 }
 
-#[cfg(all(feature = "wasm", target_family = "wasm"))]
+#[cfg(all(feature = "wasm", target_family = "wasm", target_os = "unknown"))]
 #[async_trait(?Send)]
 impl Runtime for WasmRuntime {
 	async fn sleep(&self, duration: Duration) {
@@ -146,5 +146,53 @@ impl Runtime for WasmRuntime {
 
 	fn unix_millis(&self) -> i64 {
 		js_sys::Date::now() as i64
+	}
+}
+
+/// Production [`Runtime`] for WASI Preview 2 components: `wstd` timers for
+/// sleeps and the wasip2 system clocks (via `std::time`) for the monotonic clocks.
+#[cfg(all(feature = "wasi", target_os = "wasi"))]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WasiRuntime;
+
+/// WASI 0.2 has no guest threads, so the component runs request-scoped:
+/// [`spawn`](Runtime::spawn) drops the future and the background representative
+/// refresh simply never fires.
+#[cfg(all(feature = "wasi", target_os = "wasi"))]
+#[derive(Debug)]
+struct WasiTask;
+
+#[cfg(all(feature = "wasi", target_os = "wasi"))]
+impl TaskHandle for WasiTask {
+	fn abort(&self) {}
+}
+
+#[cfg(all(feature = "wasi", target_os = "wasi"))]
+#[async_trait(?Send)]
+impl Runtime for WasiRuntime {
+	async fn sleep(&self, duration: Duration) {
+		let millis = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+		wstd::task::sleep(wstd::time::Duration::from_millis(millis)).await;
+	}
+
+	fn spawn(&self, _future: BoxFuture) -> Box<dyn TaskHandle> {
+		Box::new(WasiTask)
+	}
+
+	fn now_millis(&self) -> u64 {
+		use std::sync::OnceLock;
+		use std::time::Instant;
+
+		static ORIGIN: OnceLock<Instant> = OnceLock::new();
+		ORIGIN.get_or_init(Instant::now).elapsed().as_millis() as u64
+	}
+
+	fn unix_millis(&self) -> i64 {
+		use std::time::{SystemTime, UNIX_EPOCH};
+
+		SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.map(|elapsed| elapsed.as_millis() as i64)
+			.unwrap_or_default()
 	}
 }

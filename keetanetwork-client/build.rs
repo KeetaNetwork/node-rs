@@ -23,8 +23,8 @@ const API_VERSION_HEADER: &str = "        let mut header_map = ::reqwest::header
 const EMPTY_HEADER_MAP: &str = "        let header_map = ::reqwest::header::HeaderMap::new();";
 
 /// Generate the raw progenitor transport client from the committed OpenAPI
-/// document. The output is written to `$OUT_DIR/codegen.rs` and included by
-/// the crate root, keeping the generated source visible for inspection.
+/// document, split into two included files so the serde transport types compile
+/// without the `reqwest` client.
 fn main() -> Result<(), Box<dyn Error>> {
 	let spec_path = "openapi/keetanet-node.yaml";
 	println!("cargo:rerun-if-changed={spec_path}");
@@ -36,14 +36,38 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 	let mut generator = progenitor::Generator::default();
 	let tokens = generator.generate_tokens(&spec)?;
-	let ast = syn::parse2(tokens)?;
-	let code = prettyplease::unparse(&ast);
-	let code = strip_browser_incompatible_headers(code);
+	let ast: syn::File = syn::parse2(tokens)?;
+
+	let mut types_items = Vec::new();
+	let mut client_items = Vec::new();
+	for item in ast.items {
+		match &item {
+			syn::Item::Mod(module) if module.ident == "types" => types_items.push(item),
+			_ => client_items.push(item),
+		}
+	}
+
+	assert!(
+		!types_items.is_empty(),
+		"progenitor output no longer contains a `types` module; update build.rs so the \
+		 codec half (`codegen_types.rs`) keeps compiling without the reqwest client"
+	);
+
+	let types_code = unparse_items(types_items);
+	let client_code = strip_browser_incompatible_headers(unparse_items(client_items));
 
 	let out_dir = std::env::var("OUT_DIR")?;
-	fs::write(Path::new(&out_dir).join("codegen.rs"), code)?;
+	fs::write(Path::new(&out_dir).join("codegen_types.rs"), types_code)?;
+	fs::write(Path::new(&out_dir).join("codegen_client.rs"), client_code)?;
 
 	Ok(())
+}
+
+/// Render a set of items as formatted Rust source. File-level attributes are
+/// dropped; the including `generated` module already carries the lint allows.
+fn unparse_items(items: Vec<syn::Item>) -> String {
+	let file = syn::File { shebang: None, attrs: Vec::new(), items };
+	prettyplease::unparse(&file)
 }
 
 /// On wasm targets, drop the `api-version` header so browser `fetch` does not

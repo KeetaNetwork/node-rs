@@ -1,9 +1,8 @@
-//! Pure parsing and rendering between JS-facing strings and the core domain
-//! types. Kept free of `wasm-bindgen` so it compiles and testing coverage
-//! can be properly computed.
+//! Pure parsing and rendering between boundary-facing strings and the core
+//! domain types. Free of any binding framework so it compiles for every target
+//! and its coverage can be measured natively.
 
-#![cfg_attr(not(target_family = "wasm"), allow(dead_code))]
-
+use alloc::format;
 use alloc::string::{String, ToString};
 use core::str::FromStr;
 
@@ -11,7 +10,9 @@ use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockPurpose};
 use num_bigint::BigInt;
 
-/// Canonical map from JS permission flag name to base flag.
+use crate::error::CodedError;
+
+/// Canonical map from permission flag name to base flag.
 pub const BASE_FLAGS: [(&str, BaseFlag); 15] = [
 	("access", BaseFlag::Access),
 	("owner", BaseFlag::Owner),
@@ -30,7 +31,7 @@ pub const BASE_FLAGS: [(&str, BaseFlag); 15] = [
 	("multisig_signer", BaseFlag::MultisigSigner),
 ];
 
-/// A rejected JS input, identified by the stable error code surfaced to JS.
+/// A rejected input from the fixed set of static-message parse failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
 	Amount,
@@ -41,7 +42,7 @@ pub enum ParseError {
 }
 
 impl ParseError {
-	/// The stable `error.code` value JS consumers branch on.
+	/// The stable code consumers branch on.
 	pub fn code(self) -> &'static str {
 		match self {
 			ParseError::Amount => "INVALID_AMOUNT",
@@ -58,11 +59,15 @@ impl ParseError {
 			ParseError::Amount => "amount must be a decimal integer",
 			ParseError::AdjustMethod => "method must be add, subtract, or set",
 			ParseError::Purpose => "purpose must be generic or fee",
-			ParseError::IdentifierType => {
-				"identifier type must be network, token, or storage (use the multisig path for multisig)"
-			}
+			ParseError::IdentifierType => "identifier type must be network, token, or storage",
 			ParseError::PermissionFlag => "unknown base permission flag",
 		}
+	}
+}
+
+impl From<ParseError> for CodedError {
+	fn from(error: ParseError) -> Self {
+		CodedError::new(error.code(), error.message())
 	}
 }
 
@@ -114,7 +119,7 @@ pub fn base_flag(flag: &str) -> Result<BaseFlag, ParseError> {
 		.ok_or(ParseError::PermissionFlag)
 }
 
-/// Render a base flag as its snake_case JS name.
+/// Render a base flag as its snake_case name.
 pub fn base_flag_name(flag: BaseFlag) -> &'static str {
 	BASE_FLAGS
 		.iter()
@@ -122,7 +127,24 @@ pub fn base_flag_name(flag: BaseFlag) -> &'static str {
 		.unwrap_or("unknown")
 }
 
-#[cfg(all(test, not(target_family = "wasm")))]
+/// Parse a 32-byte hex string into a fixed array. `label` names the field for
+/// the rejection message.
+pub fn hash32(value: &str, label: &str) -> Result<[u8; 32], CodedError> {
+	let mut bytes = [0u8; 32];
+	hex::decode_to_slice(value, &mut bytes)
+		.map(|()| bytes)
+		.map_err(|_| CodedError::new("INVALID_HASH", format!("{label} must be 32-byte hex")))
+}
+
+/// Parse a `0x`-prefixed (or bare) hexadecimal string into a [`BigInt`].
+/// `label` names the field for the rejection message.
+pub fn bigint_hex(value: &str, label: &str) -> Result<BigInt, CodedError> {
+	let digits = value.strip_prefix("0x").unwrap_or(value);
+	BigInt::parse_bytes(digits.as_bytes(), 16)
+		.ok_or_else(|| CodedError::new("INVALID_INTEGER", format!("{label} must be 0x-hex")))
+}
+
+#[cfg(test)]
 mod tests {
 	use super::*;
 
@@ -204,7 +226,23 @@ mod tests {
 			(ParseError::PermissionFlag, "INVALID_PERMISSION_FLAG"),
 		];
 		for (error, code) in cases {
-			assert_eq!(error.code(), code, "the {error:?} code must stay stable for JS consumers");
+			assert_eq!(error.code(), code, "the {error:?} code must stay stable for consumers");
 		}
+	}
+
+	#[test]
+	fn hash32_round_trips_valid_hex_and_rejects_bad_length() {
+		let valid = hash32(&"ab".repeat(32), "hash");
+		assert!(matches!(valid, Ok(bytes) if bytes == [0xabu8; 32]));
+		assert!(hash32("zz", "hash").is_err());
+	}
+
+	#[test]
+	fn bigint_hex_parses_prefixed_and_bare_input() {
+		let prefixed = bigint_hex("0xff", "value").expect("prefixed hex must parse");
+		let bare = bigint_hex("ff", "value").expect("bare hex must parse");
+		assert_eq!(prefixed, bare);
+		assert_eq!(prefixed, BigInt::from(255u8));
+		assert!(bigint_hex("xy", "value").is_err());
 	}
 }

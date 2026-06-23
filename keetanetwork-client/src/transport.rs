@@ -125,6 +125,9 @@ pub trait TransportFactory: core::fmt::Debug + MaybeSend + MaybeSync {
 #[cfg(feature = "http")]
 pub use backend::{ApiError, GeneratedTransport, GeneratedTransportFactory};
 
+#[cfg(all(feature = "wasi", target_os = "wasi"))]
+pub use wasi_backend::{WasiTransport, WasiTransportFactory};
+
 /// Production transport backend over the OpenAPI-generated `reqwest` client.
 #[cfg(feature = "http")]
 mod backend {
@@ -137,41 +140,24 @@ mod backend {
 	use base64::engine::general_purpose::STANDARD as B64;
 	use base64::Engine;
 	use keetanetwork_block::{Amount, Block, BlockTime};
-	use keetanetwork_error::{KeetaNetError, NodeErrorParts, NodeErrorType};
-	use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
-	use snafu::ResultExt;
+	use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
 
 	use super::{LedgerSide, NodeTransport, TransportFactory};
-	use crate::error::{AmountSnafu, BlockSnafu, ClientError, DecodeSnafu, VoteSnafu};
+	use crate::codec::{
+		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
+		decode_history, decode_node_error, decode_quote_binary, decode_representative, decode_staples,
+		decode_vote_binary, encode_blocks, encode_votes,
+	};
+	use crate::error::ClientError;
 	use crate::generated::{types, Client as Transport, Error as GeneratedError};
 	use crate::model::{
-		AccountInfo, AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
+		AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
 		Representative, TokenBalance,
 	};
 
 	/// Transport-layer error returned by the generated client: connection
 	/// failures, non-2xx responses, and payload decoding problems.
 	pub type ApiError = crate::generated::Error<types::Error>;
-
-	impl From<LedgerSide> for types::GetBlockSide {
-		fn from(side: LedgerSide) -> Self {
-			match side {
-				LedgerSide::Main => types::GetBlockSide::Main,
-				LedgerSide::Side => types::GetBlockSide::Side,
-				LedgerSide::Both => types::GetBlockSide::Both,
-			}
-		}
-	}
-
-	impl From<LedgerSide> for types::GetBlockVotesSide {
-		fn from(side: LedgerSide) -> Self {
-			match side {
-				LedgerSide::Side => types::GetBlockVotesSide::Side,
-				// Vote lookups have no "both"; main is the canonical side.
-				LedgerSide::Main | LedgerSide::Both => types::GetBlockVotesSide::Main,
-			}
-		}
-	}
 
 	impl From<ApiError> for ClientError {
 		fn from(error: ApiError) -> Self {
@@ -182,32 +168,6 @@ mod backend {
 				other => ClientError::Transport { source: Box::new(other) },
 			}
 		}
-	}
-
-	/// Decode a node error envelope into the unified [`KeetaNetError`],
-	/// promoting LEDGER errors to their typed variants and collapsing the rest
-	/// to a coded carrier.
-	fn decode_node_error(body: types::Error) -> KeetaNetError {
-		let kind = body
-			.type_
-			.as_deref()
-			.map(NodeErrorType::from)
-			.unwrap_or_default();
-		let idempotent_key = body.idempotent_key.and_then(|key| B64.decode(key).ok());
-
-		NodeErrorParts {
-			kind,
-			code: body.code.unwrap_or_default(),
-			message: body.message,
-			should_retry: body.should_retry.unwrap_or(false),
-			retry_delay: body.retry_delay.and_then(|delay| u64::try_from(delay).ok()),
-			accounts: body.accounts.unwrap_or_default(),
-			blockhash: body.blockhash,
-			existing_blockhash: body.existing_blockhash,
-			account: body.account,
-			idempotent_key,
-		}
-		.into()
 	}
 
 	/// Production [`NodeTransport`] over the OpenAPI-generated client.
@@ -366,7 +326,7 @@ mod backend {
 				.client
 				.get_account_history(account, query.limit, query.start.as_deref())
 				.await?;
-			decode_history(response.into_inner().history)
+			decode_history(response.into_inner().history, verify_moment())
 		}
 
 		async fn global_history_page(&self, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
@@ -374,12 +334,12 @@ mod backend {
 				.client
 				.get_global_history(query.limit, query.start.as_deref())
 				.await?;
-			decode_history(response.into_inner().history)
+			decode_history(response.into_inner().history, verify_moment())
 		}
 
 		async fn vote_staples_after(&self, start: &str, limit: Option<i64>) -> Result<Vec<VoteStaple>, ClientError> {
 			let response = self.client.get_vote_staples_after(limit, start).await?;
-			decode_staples(response.into_inner().vote_staples)
+			decode_staples(response.into_inner().vote_staples, verify_moment())
 		}
 
 		async fn node_representative(&self) -> Result<Representative, ClientError> {
@@ -500,165 +460,455 @@ mod backend {
 		}
 	}
 
-	/// Base64-encode each block's canonical bytes.
-	fn encode_blocks(blocks: &[Block]) -> Vec<String> {
-		blocks
-			.iter()
-			.map(|block| B64.encode(block.to_bytes()))
-			.collect()
-	}
-
-	/// Base64-encode a set of votes for a `createVote` request body.
-	fn encode_votes(votes: &[Vote]) -> Vec<String> {
-		votes
-			.iter()
-			.map(|vote| B64.encode(vote.as_bytes()))
-			.collect()
-	}
-
-	/// Decode and signature-verify a base64 vote from a node response, treating
-	/// an absent field as [`ClientError::MissingVote`].
-	fn decode_vote_binary(binary: Option<String>) -> Result<Vote, ClientError> {
-		let encoded = binary.ok_or(ClientError::MissingVote)?;
-		let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-		Vote::verify(bytes).context(VoteSnafu)
-	}
-
-	/// Decode and signature-verify a base64 vote quote from a node response,
-	/// treating an absent field as [`ClientError::MissingQuote`].
-	fn decode_quote_binary(binary: Option<String>) -> Result<VoteQuote, ClientError> {
-		let encoded = binary.ok_or(ClientError::MissingQuote)?;
-		let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-		VoteQuote::verify(bytes).context(VoteSnafu)
-	}
-
-	/// Decode an optional transport block into a domain block.
-	fn decode_block(block: Option<types::Block>) -> Result<Option<Block>, ClientError> {
-		let Some(encoded) = block.and_then(|block| block.binary) else {
-			return Ok(None);
-		};
-
-		let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-		let decoded = Block::try_from(bytes.as_slice()).context(BlockSnafu)?;
-
-		Ok(Some(decoded))
-	}
-
 	/// The current moment used to bound staple temporal validity. `tokio`
 	/// targets read the system clock; the browser reads `Date.now()`.
-	#[cfg(not(target_family = "wasm"))]
+	#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 	fn verify_moment() -> BlockTime {
 		BlockTime::now()
 	}
 
-	#[cfg(target_family = "wasm")]
+	#[cfg(all(target_family = "wasm", target_os = "unknown"))]
 	fn verify_moment() -> BlockTime {
 		BlockTime::from_unix_millis(js_sys::Date::now() as i64).unwrap_or_default()
 	}
+}
 
-	/// Decode and verify an optional transport vote staple.
-	fn decode_staple(staple: Option<types::VoteStaple>) -> Result<Option<VoteStaple>, ClientError> {
-		let Some(encoded) = staple.and_then(|staple| staple.binary) else {
-			return Ok(None);
-		};
+/// WASI Preview 2 transport backend over `wstd`'s outbound `wasi:http` client.
+#[cfg(all(feature = "wasi", target_os = "wasi"))]
+mod wasi_backend {
+	use alloc::boxed::Box;
+	use alloc::format;
+	use alloc::string::{String, ToString};
+	use alloc::sync::Arc;
+	use alloc::vec::Vec;
+	use core::fmt::Write as _;
 
-		let bytes = B64.decode(encoded).context(DecodeSnafu)?;
-		let staple = VoteStaple::verify(bytes, ValidationConfig::default(), verify_moment()).context(VoteSnafu)?;
+	use async_trait::async_trait;
+	use base64::engine::general_purpose::STANDARD as B64;
+	use base64::Engine;
+	use keetanetwork_block::{Amount, Block, BlockTime};
+	use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
+	use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+	use serde::de::DeserializeOwned;
+	use serde::Serialize;
+	use wstd::http::{Body, Client, Method, Request};
 
-		Ok(Some(staple))
+	use super::{LedgerSide, NodeTransport, TransportFactory};
+	use crate::codec::{
+		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
+		decode_history, decode_node_error, decode_quote_binary, decode_representative, decode_staples,
+		decode_vote_binary, encode_blocks, encode_votes,
+	};
+	use crate::error::ClientError;
+	use crate::generated::types;
+	use crate::model::{
+		AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
+		Representative, TokenBalance,
+	};
+
+	/// Bridges a foreign transport error (`wstd`/`http`, neither of which is a
+	/// `core::error::Error` we can box directly in every case) into the
+	/// [`ClientError::Transport`] source slot while preserving the original
+	/// value.
+	#[derive(Debug)]
+	struct WasiHttpError<E>(E);
+
+	impl<E: core::fmt::Display> core::fmt::Display for WasiHttpError<E> {
+		fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+			core::fmt::Display::fmt(&self.0, f)
+		}
 	}
 
-	/// Decode and verify a list of transport vote staples.
-	fn decode_staples(staples: Vec<types::VoteStaple>) -> Result<Vec<VoteStaple>, ClientError> {
-		staples
-			.into_iter()
-			.filter_map(|staple| decode_staple(Some(staple)).transpose())
-			.collect()
+	impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for WasiHttpError<E> {}
+
+	fn transport_error<E: core::fmt::Debug + core::fmt::Display + 'static>(error: E) -> ClientError {
+		ClientError::Transport { source: Box::new(WasiHttpError(error)) }
 	}
 
-	/// Decode transport history entries into verified domain entries.
-	fn decode_history(entries: Vec<types::HistoryEntry>) -> Result<Vec<HistoryEntry>, ClientError> {
-		entries
-			.into_iter()
-			.filter_map(|entry| match decode_staple(entry.vote_staple) {
-				Ok(None) => None,
-				Ok(Some(staple)) => Some(Ok(HistoryEntry { staple, id: entry.id, timestamp: entry.timestamp })),
-				Err(error) => Some(Err(error)),
+	/// Percent-encode a single URL path segment.
+	fn segment(value: &str) -> percent_encoding::PercentEncode<'_> {
+		utf8_percent_encode(value, NON_ALPHANUMERIC)
+	}
+
+	/// Builds an optional `?k=v&...` query string with percent-encoded values.
+	#[derive(Default)]
+	struct Query {
+		buffer: String,
+		started: bool,
+	}
+
+	impl Query {
+		fn push(&mut self, key: &str, value: &str) {
+			self.buffer.push(if self.started {
+				'&'
+			} else {
+				'?'
+			});
+			self.started = true;
+			let _ = write!(self.buffer, "{key}={}", utf8_percent_encode(value, NON_ALPHANUMERIC));
+		}
+
+		fn push_opt(&mut self, key: &str, value: Option<&str>) {
+			if let Some(value) = value {
+				self.push(key, value);
+			}
+		}
+
+		fn push_limit(&mut self, limit: Option<i64>) {
+			if let Some(limit) = limit {
+				self.push("limit", &limit.to_string());
+			}
+		}
+
+		fn finish(self) -> String {
+			self.buffer
+		}
+	}
+
+	/// The wire value for a block `side` query (`main`/`side`/`both`).
+	fn block_side(side: LedgerSide) -> &'static str {
+		match side {
+			LedgerSide::Main => "main",
+			LedgerSide::Side => "side",
+			LedgerSide::Both => "both",
+		}
+	}
+
+	/// The wire value for a vote `side` query; votes have no `both`, so it
+	/// collapses to the canonical `main`.
+	fn block_votes_side(side: LedgerSide) -> &'static str {
+		match side {
+			LedgerSide::Side => "side",
+			LedgerSide::Main | LedgerSide::Both => "main",
+		}
+	}
+
+	/// The moment used to bound staple temporal validity, read from the wasip2
+	/// clock via `std::time` (`BlockTime::now` is `std`-feature gated and
+	/// the `wasi` feature deliberately omits that feature).
+	fn now_moment() -> BlockTime {
+		use std::time::{SystemTime, UNIX_EPOCH};
+
+		let millis = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.map(|elapsed| elapsed.as_millis() as i64)
+			.unwrap_or_default();
+		BlockTime::from_unix_millis(millis).unwrap_or_default()
+	}
+
+	/// WASI Preview 2 [`NodeTransport`] over `wstd`'s outbound `wasi:http`.
+	#[derive(Clone, Debug)]
+	pub struct WasiTransport {
+		base_url: String,
+		client: Client,
+	}
+
+	impl WasiTransport {
+		fn new(base_url: &str) -> Self {
+			Self { base_url: base_url.trim_end_matches('/').to_string(), client: Client::new() }
+		}
+
+		/// GET `path` (query string already appended) and decode the JSON body.
+		async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
+			self.request_json(Method::GET, path, Body::empty()).await
+		}
+
+		/// POST a JSON `body` to `path` and decode the JSON response.
+		async fn post_json<B: Serialize, T: DeserializeOwned>(&self, path: &str, body: &B) -> Result<T, ClientError> {
+			let body = Body::from_json(body).map_err(transport_error)?;
+			self.request_json(Method::POST, path, body).await
+		}
+
+		/// Send a request and decode the JSON response, mapping a non-success
+		/// status to a node error envelope when the body carries one.
+		async fn request_json<T: DeserializeOwned>(
+			&self,
+			method: Method,
+			path: &str,
+			body: Body,
+		) -> Result<T, ClientError> {
+			let is_post = method == Method::POST;
+			let mut builder = Request::builder()
+				.method(method)
+				.uri(format!("{}{path}", self.base_url))
+				.header("accept", "application/json");
+			// `wstd`'s `Body::from_json` serializes without stamping a media
+			// type; a body sent without it is rejected by the node.
+			if is_post {
+				builder = builder.header("content-type", "application/json");
+			}
+			let request = builder.body(body).map_err(transport_error)?;
+
+			let mut response = self.client.send(request).await.map_err(transport_error)?;
+			let status = response.status();
+			let body = response.body_mut();
+
+			if status.is_success() {
+				return body.json::<T>().await.map_err(transport_error);
+			}
+
+			match body.json::<types::Error>().await {
+				Ok(envelope) => Err(ClientError::Node { source: Box::new(decode_node_error(envelope)) }),
+				Err(error) => Err(transport_error(error)),
+			}
+		}
+	}
+
+	/// Builds [`WasiTransport`]s for representatives discovered at runtime.
+	#[derive(Clone, Debug, Default)]
+	pub struct WasiTransportFactory;
+
+	impl TransportFactory for WasiTransportFactory {
+		fn create(&self, url: &str) -> Arc<dyn NodeTransport> {
+			Arc::new(WasiTransport::new(url))
+		}
+	}
+
+	#[async_trait(?Send)]
+	impl NodeTransport for WasiTransport {
+		async fn node_version(&self) -> Result<String, ClientError> {
+			let response: types::GetNodeVersionResponse = self.get_json("/node/version").await?;
+			response.node.ok_or(ClientError::MissingVersion)
+		}
+
+		async fn balance(&self, account: &str, token: &str) -> Result<Amount, ClientError> {
+			let path = format!("/node/ledger/account/{}/balance/{}", segment(account), segment(token));
+			let response: types::GetAccountBalanceResponse = self.get_json(&path).await?;
+			decode_amount(response.balance)
+		}
+
+		async fn balances(&self, account: &str) -> Result<Vec<TokenBalance>, ClientError> {
+			let path = format!("/node/ledger/account/{}/balance", segment(account));
+			let response: types::GetAccountBalancesResponse = self.get_json(&path).await?;
+			decode_balances(response.balances)
+		}
+
+		async fn account_state(&self, account: &str) -> Result<AccountState, ClientError> {
+			let path = format!("/node/ledger/account/{}", segment(account));
+			let state: types::GetAccountStateResponse = self.get_json(&path).await?;
+			decode_account_state(
+				state.representative,
+				state.current_head_block,
+				state.current_head_block_height,
+				state.info,
+				state.balances,
+			)
+		}
+
+		async fn account_states(&self, accounts: &str) -> Result<Vec<AccountState>, ClientError> {
+			let path = format!("/node/ledger/accounts/{}", segment(accounts));
+			let response: Vec<types::GetAccountStatesResponseItem> = self.get_json(&path).await?;
+			response
+				.into_iter()
+				.map(|item| {
+					decode_account_state(
+						item.representative,
+						item.current_head_block,
+						item.current_head_block_height,
+						item.info,
+						item.balances,
+					)
+				})
+				.collect()
+		}
+
+		async fn head_block(&self, account: &str) -> Result<Option<Block>, ClientError> {
+			let path = format!("/node/ledger/account/{}/head", segment(account));
+			let response: types::GetAccountHeadResponse = self.get_json(&path).await?;
+			decode_block(response.block)
+		}
+
+		async fn account_head_info(&self, account: &str) -> Result<Option<(Block, Amount)>, ClientError> {
+			let path = format!("/node/ledger/account/{}/head", segment(account));
+			let response: types::GetAccountHeadResponse = self.get_json(&path).await?;
+			let Some(block) = decode_block(response.block)? else {
+				return Ok(None);
+			};
+			let Some(height) = response.height else {
+				return Ok(None);
+			};
+
+			Ok(Some((block, decode_amount(Some(height))?)))
+		}
+
+		async fn pending_block(&self, account: &str) -> Result<Option<Block>, ClientError> {
+			let path = format!("/node/ledger/account/{}/pending", segment(account));
+			let response: types::GetPendingBlockResponse = self.get_json(&path).await?;
+			decode_block(response.block)
+		}
+
+		async fn block(&self, hash: &str, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError> {
+			let mut query = Query::default();
+			query.push_opt("side", side.map(block_side));
+			let path = format!("/node/ledger/block/{}{}", segment(hash), query.finish());
+			let response: types::GetBlockResponse = self.get_json(&path).await?;
+			decode_block(response.block)
+		}
+
+		async fn successor_block(&self, hash: &str) -> Result<Option<Block>, ClientError> {
+			let path = format!("/node/ledger/block/{}/successor", segment(hash));
+			let response: types::GetSuccessorBlockResponse = self.get_json(&path).await?;
+			decode_block(response.successor_block)
+		}
+
+		async fn block_by_idempotent(&self, account: &str, key: &str) -> Result<Option<Block>, ClientError> {
+			let path = format!("/node/ledger/account/{}/idempotent/{}", segment(account), segment(key));
+			let response: types::GetBlockFromIdempotentResponse = self.get_json(&path).await?;
+			decode_block(response.block)
+		}
+
+		async fn block_votes(&self, hash: &str, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError> {
+			let mut query = Query::default();
+
+			query.push("side", block_votes_side(side));
+
+			let path = format!("/vote/{}{}", segment(hash), query.finish());
+			let response: types::GetBlockVotesResponse = self.get_json(&path).await?;
+			let Some(list) = response.votes else {
+				return Ok(None);
+			};
+
+			let mut votes = Vec::with_capacity(list.len());
+			for entry in list {
+				votes.push(decode_vote_binary(entry.binary)?);
+			}
+
+			Ok(Some(votes))
+		}
+
+		async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<ChainPage, ClientError> {
+			let mut params = Query::default();
+			params.push_opt("end", query.end.as_deref());
+			params.push_limit(query.limit);
+			params.push_opt("start", query.start.as_deref());
+
+			let path = format!("/node/ledger/account/{}/chain{}", segment(account), params.finish());
+			let response: types::GetAccountChainResponse = self.get_json(&path).await?;
+			let blocks = response
+				.blocks
+				.into_iter()
+				.filter_map(|entry| decode_block(entry.block).transpose())
+				.collect::<Result<Vec<Block>, ClientError>>()?;
+
+			Ok(ChainPage { blocks, next_key: response.next_key })
+		}
+
+		async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
+			let mut params = Query::default();
+			params.push_limit(query.limit);
+			params.push_opt("start", query.start.as_deref());
+
+			let path = format!("/node/ledger/account/{}/history{}", segment(account), params.finish());
+			let response: types::GetAccountHistoryResponse = self.get_json(&path).await?;
+			decode_history(response.history, now_moment())
+		}
+
+		async fn global_history_page(&self, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
+			let mut params = Query::default();
+			params.push_limit(query.limit);
+			params.push_opt("start", query.start.as_deref());
+
+			let path = format!("/node/ledger/history{}", params.finish());
+			let response: types::GetGlobalHistoryResponse = self.get_json(&path).await?;
+			decode_history(response.history, now_moment())
+		}
+
+		async fn vote_staples_after(&self, start: &str, limit: Option<i64>) -> Result<Vec<VoteStaple>, ClientError> {
+			let mut params = Query::default();
+			params.push_limit(limit);
+			params.push("start", start);
+
+			let path = format!("/node/bootstrap/votes{}", params.finish());
+			let response: types::GetVoteStaplesAfterResponse = self.get_json(&path).await?;
+			decode_staples(response.vote_staples, now_moment())
+		}
+
+		async fn node_representative(&self) -> Result<Representative, ClientError> {
+			let response: types::Representative = self.get_json("/node/ledger/representative").await?;
+			decode_representative(response)
+		}
+
+		async fn representative(&self, rep: &str) -> Result<Representative, ClientError> {
+			let path = format!("/node/ledger/representative/{}", segment(rep));
+			let response: types::Representative = self.get_json(&path).await?;
+			decode_representative(response)
+		}
+
+		async fn representatives(&self) -> Result<Vec<Representative>, ClientError> {
+			let response: types::GetAllRepresentativesResponse = self.get_json("/node/ledger/representatives").await?;
+			response
+				.representatives
+				.into_iter()
+				.map(decode_representative)
+				.collect()
+		}
+
+		async fn ledger_checksum(&self) -> Result<LedgerChecksum, ClientError> {
+			let checksum: types::GetLedgerChecksumResponse = self.get_json("/node/ledger/checksum").await?;
+			Ok(LedgerChecksum {
+				checksum: decode_amount(checksum.checksum)?,
+				moment: checksum.moment,
+				moment_range: checksum.moment_range,
 			})
-			.collect()
-	}
+		}
 
-	/// Decode a transport representative entry.
-	fn decode_representative(rep: types::Representative) -> Result<Representative, ClientError> {
-		Ok(Representative {
-			account: rep.representative.unwrap_or_default(),
-			weight: decode_amount(rep.weight)?,
-			api_url: rep.endpoints.and_then(|endpoints| endpoints.api),
-		})
-	}
+		async fn acls_by_principal(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
+			let path = format!("/node/ledger/account/{}/acl", segment(account));
+			let response: types::ListAclsByPrincipalResponse = self.get_json(&path).await?;
+			Ok(response.permissions.into_iter().map(decode_acl).collect())
+		}
 
-	/// Map a transport ACL row into a domain [`Acl`].
-	fn decode_acl(row: types::AclRow) -> Acl {
-		Acl { principal: row.principal, entity: row.entity, target: row.target, permissions: row.permissions }
-	}
+		async fn acls_by_entity(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
+			let path = format!("/node/ledger/account/{}/acl/granted", segment(account));
+			let response: types::ListAclsByEntityResponse = self.get_json(&path).await?;
+			Ok(response.permissions.into_iter().map(decode_acl).collect())
+		}
 
-	/// Map a transport certificate into a domain [`Certificate`], dropping
-	/// entries with no certificate body (the "not found" shape).
-	fn decode_certificate(cert: types::Certificate) -> Option<Certificate> {
-		let certificate = cert.certificate?;
-		Some(Certificate { certificate, intermediates: cert.intermediates.unwrap_or_default() })
-	}
+		async fn certificates(&self, account: &str) -> Result<Vec<Certificate>, ClientError> {
+			let path = format!("/node/ledger/account/{}/certificates", segment(account));
+			let response: types::GetAccountCertificatesResponse = self.get_json(&path).await?;
+			Ok(response
+				.certificates
+				.into_iter()
+				.filter_map(decode_certificate)
+				.collect())
+		}
 
-	/// Map transport balance entries into domain [`TokenBalance`]s.
-	fn decode_balances(entries: Vec<types::BalanceEntry>) -> Result<Vec<TokenBalance>, ClientError> {
-		entries
-			.into_iter()
-			.map(|entry| {
-				Ok(TokenBalance { token: entry.token.unwrap_or_default(), balance: decode_amount(entry.balance)? })
-			})
-			.collect()
-	}
+		async fn certificate(&self, account: &str, hash: &str) -> Result<Option<Certificate>, ClientError> {
+			let path = format!("/node/ledger/account/{}/certificates/{}", segment(account), segment(hash));
+			let found: types::GetCertificateByHashResponse = self.get_json(&path).await?;
+			Ok(decode_certificate(types::Certificate {
+				certificate: found.certificate,
+				intermediates: found.intermediates,
+			}))
+		}
 
-	/// Map a transport account-info envelope into the domain [`AccountInfo`].
-	fn decode_account_info(info: types::AccountInfo) -> AccountInfo {
-		AccountInfo { name: info.name, description: info.description, metadata: info.metadata }
-	}
+		async fn create_vote(
+			&self,
+			blocks: &[Block],
+			prior: &[Vote],
+			quote: Option<&VoteQuote>,
+		) -> Result<Vote, ClientError> {
+			let body = types::CreateVoteBody {
+				blocks: encode_blocks(blocks),
+				votes: encode_votes(prior),
+				quote: quote.map(|quote| B64.encode(quote.as_vote().as_bytes())),
+			};
 
-	/// Assemble an [`AccountState`] from the transport fields shared by the
-	/// single- and batch-account state endpoints.
-	fn decode_account_state(
-		representative: Option<String>,
-		head: Option<String>,
-		height: Option<String>,
-		info: Option<types::AccountInfo>,
-		balances: Vec<types::BalanceEntry>,
-	) -> Result<AccountState, ClientError> {
-		let supply = info
-			.as_ref()
-			.and_then(|info| info.supply.clone())
-			.map(|supply| decode_amount(Some(supply)))
-			.transpose()?;
+			let response: types::CreateVoteResponse = self.post_json("/vote", &body).await?;
+			decode_vote_binary(response.vote.and_then(|vote| vote.binary))
+		}
 
-		Ok(AccountState {
-			representative,
-			head,
-			height: height
-				.map(|height| decode_amount(Some(height)))
-				.transpose()?,
-			info: info.map(decode_account_info),
-			supply,
-			balances: decode_balances(balances)?,
-		})
-	}
+		async fn create_vote_quote(&self, blocks: &[Block]) -> Result<VoteQuote, ClientError> {
+			let body = types::CreateVoteQuoteBody { blocks: encode_blocks(blocks) };
+			let response: types::CreateVoteQuoteResponse = self.post_json("/vote/quote", &body).await?;
+			decode_quote_binary(response.quote.and_then(|quote| quote.binary))
+		}
 
-	/// Parse an optional `0x`-hex balance string into an [`Amount`], treating
-	/// an absent field as zero.
-	fn decode_amount(balance: Option<String>) -> Result<Amount, ClientError> {
-		use core::str::FromStr;
-
-		match balance {
-			None => Ok(Amount::default()),
-			Some(value) => Amount::from_str(&value).context(AmountSnafu),
+		async fn publish_staple(&self, staple: &VoteStaple) -> Result<bool, ClientError> {
+			let body = types::PublishVoteStapleBody { votes_and_blocks: B64.encode(staple.as_bytes()) };
+			let _: types::PublishVoteStapleResponse = self.post_json("/node/publish", &body).await?;
+			Ok(true)
 		}
 	}
 }
