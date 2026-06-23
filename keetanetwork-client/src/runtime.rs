@@ -15,6 +15,27 @@ use async_trait::async_trait;
 
 use crate::marker::{MaybeSend, MaybeSync};
 
+/// Monotonic milliseconds from a process-fixed origin, backed by `std::time`.
+#[cfg(any(feature = "std", all(feature = "wasi", target_os = "wasi")))]
+fn monotonic_millis() -> u64 {
+	use std::sync::OnceLock;
+	use std::time::Instant;
+
+	static ORIGIN: OnceLock<Instant> = OnceLock::new();
+	ORIGIN.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// Milliseconds since the Unix epoch from the system clock, backed by `std::time`.
+#[cfg(any(feature = "std", all(feature = "wasi", target_os = "wasi")))]
+fn system_unix_millis() -> i64 {
+	use std::time::{SystemTime, UNIX_EPOCH};
+
+	SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.map(|elapsed| elapsed.as_millis() as i64)
+		.unwrap_or_default()
+}
+
 /// A boxed, detached future a [`Runtime`] can drive in the background. The
 /// `Send` bound is required on native targets (multi-threaded executors) and
 /// dropped on wasm, where spawned futures are single-threaded.
@@ -81,20 +102,11 @@ impl Runtime for TokioRuntime {
 	}
 
 	fn now_millis(&self) -> u64 {
-		use std::sync::OnceLock;
-		use std::time::Instant;
-
-		static ORIGIN: OnceLock<Instant> = OnceLock::new();
-		ORIGIN.get_or_init(Instant::now).elapsed().as_millis() as u64
+		monotonic_millis()
 	}
 
 	fn unix_millis(&self) -> i64 {
-		use std::time::{SystemTime, UNIX_EPOCH};
-
-		SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.map(|elapsed| elapsed.as_millis() as i64)
-			.unwrap_or(0)
+		system_unix_millis()
 	}
 }
 
@@ -180,19 +192,10 @@ impl Runtime for WasiRuntime {
 	}
 
 	fn now_millis(&self) -> u64 {
-		use std::sync::OnceLock;
-		use std::time::Instant;
-
-		static ORIGIN: OnceLock<Instant> = OnceLock::new();
-		ORIGIN.get_or_init(Instant::now).elapsed().as_millis() as u64
+		monotonic_millis()
 	}
 
 	fn unix_millis(&self) -> i64 {
-		use std::time::{SystemTime, UNIX_EPOCH};
-
-		SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.map(|elapsed| elapsed.as_millis() as i64)
-			.unwrap_or_default()
+		system_unix_millis()
 	}
 }

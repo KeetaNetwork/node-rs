@@ -516,4 +516,96 @@ mod tests {
 		let error = vote_staple_build(Vec::new(), Vec::new(), i64::MAX).expect_err("moment must be in range");
 		assert_eq!(error.code, "INVALID_DATE");
 	}
+
+	#[test]
+	fn passphrase_account_derives_and_exposes_transport_public_key() {
+		let words = generate_passphrase().expect("passphrase generation must succeed");
+		let account = account_from_passphrase(words, 0, DEFAULT_ALGORITHM).expect("passphrase derivation must succeed");
+		assert_eq!(account_algorithm(&account), DEFAULT_ALGORITHM);
+
+		let public_key = account_public_key(&account);
+		assert!(!public_key.is_empty());
+		assert!(hex::decode(&public_key).is_ok());
+	}
+
+	#[test]
+	fn encryption_round_trips_through_the_owning_account() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let account = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
+
+		let plaintext = b"keeta secret payload";
+		let ciphertext = account_encrypt(&account, plaintext).expect("encryption must succeed");
+		let recovered = account_decrypt(&account, &ciphertext).expect("decryption must succeed");
+		assert_eq!(recovered, plaintext);
+	}
+
+	#[test]
+	fn signed_block_round_trips_through_hex() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let user = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let rep = account_from_seed(&seed, 1, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let date = block_time(1_700_000_000_000).expect("timestamp must be in range");
+		let builder = BlockBuilder::default()
+			.with_network(0u64)
+			.with_account(user.clone())
+			.with_signer(signer_single(user))
+			.with_date(date)
+			.as_opening()
+			.with_operation(op_set_rep(rep));
+
+		let signed = sign_unsigned(build_unsigned(builder).expect("block must build")).expect("signing must succeed");
+		let decoded = block_from_hex(&block_to_hex(&signed)).expect("hex must decode");
+		assert_eq!(block_hash(&decoded), block_hash(&signed));
+	}
+
+	#[test]
+	fn identifier_accounts_report_the_other_algorithm() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let owner = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&owner, KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+		assert_eq!(account_algorithm(&token), "other");
+	}
+
+	#[test]
+	fn permissions_round_trip_external_offsets() {
+		let permissions = permissions_from_flags(&[], &[3, 7]).expect("offsets must build");
+		assert_eq!(permissions_offsets(&permissions), [3, 7]);
+	}
+
+	#[test]
+	fn permission_and_info_operations_assemble() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let principal = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let permissions = permissions_from_flags(&[String::from("access")], &[]).expect("flags must build");
+
+		let modify = op_modify_permissions(principal, permissions, AdjustMethod::Set, None);
+		assert!(matches!(modify, Operation::ModifyPermissions(_)));
+
+		let info = op_set_info(String::from("TKN"), String::from("Token"), String::new(), None);
+		assert!(matches!(info, Operation::SetInfo(_)));
+	}
+
+	#[test]
+	fn block_versions_parse_and_reject() {
+		assert!(matches!(block_version(1), Ok(BlockVersion::V1)));
+		assert!(matches!(block_version(2), Ok(BlockVersion::V2)));
+		assert_eq!(block_version(3).expect_err("version 3 must fail").code, "INVALID_BLOCK_VERSION");
+	}
+
+	#[test]
+	fn malformed_inputs_are_rejected_with_stable_codes() {
+		assert_eq!(
+			account_from_private_key("zz", DEFAULT_ALGORITHM).expect_err("bad key must fail").code,
+			"INVALID_PRIVATE_KEY"
+		);
+		assert_eq!(
+			account_from_public_key("zz", DEFAULT_ALGORITHM).expect_err("bad key must fail").code,
+			"INVALID_PUBLIC_KEY"
+		);
+		assert_eq!(
+			account_from_address("not-an-address").expect_err("bad address must fail").code,
+			"INVALID_ADDRESS"
+		);
+		assert_eq!(block_from_hex("zz").expect_err("bad block must fail").code, "INVALID_BLOCK");
+	}
 }
