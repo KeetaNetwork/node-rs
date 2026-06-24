@@ -39,6 +39,7 @@ words:
   - FIPS
   - funder
   - github
+  - gloo
   - hexdigit
   - hexseed
   - hkdf
@@ -94,6 +95,7 @@ words:
   - jni
   - multisig
   - rebox
+  - tungstenite
   - wasi
   - wasip1
   - wasip2

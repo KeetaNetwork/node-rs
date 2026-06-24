@@ -58,17 +58,25 @@ pub struct UserClient {
 	client: KeetaClient,
 	account: Option<AccountRef>,
 	signer: Option<AccountRef>,
+	#[cfg(feature = "subscribe")]
+	subscription: Option<crate::subscribe::Subscription>,
 }
 
 impl UserClient {
 	/// Upper bound on rebuild-and-republish attempts after a successor
-	/// conflict, matching the reference client's `send` retry ceiling.
+	/// conflict.
 	const MAX_REBUILD_RETRIES: u32 = 2;
 
 	/// Bind `client` to `signer` (the originator and fee payer for writes;
 	/// `None` for a read-only client).
 	pub fn from_parts(client: KeetaClient, signer: Option<AccountRef>) -> Self {
-		Self { client, account: None, signer }
+		Self {
+			client,
+			account: None,
+			signer,
+			#[cfg(feature = "subscribe")]
+			subscription: None,
+		}
 	}
 
 	/// Set a distinct operating account, used for reads and as the block
@@ -136,6 +144,63 @@ impl UserClient {
 	/// Whether this client has no signer and therefore rejects writes.
 	pub fn is_read_only(&self) -> bool {
 		self.signer.is_none()
+	}
+
+	/// Configure the account change subscription with a WebSocket `connector`
+	/// and the representative `p2p_url` to greet. Opt-in: without this, [`on`]
+	/// returns [`ClientError::SubscriptionUnavailable`].
+	///
+	/// [`on`]: Self::on
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::SignerRequired`] -- neither an operating account nor a
+	///   signer is bound, so there is no account to filter on.
+	#[cfg(feature = "subscribe")]
+	pub fn with_subscription(
+		mut self,
+		connector: Arc<dyn crate::WsConnector>,
+		p2p_url: impl Into<String>,
+	) -> Result<Self, ClientError> {
+		let account = self.account_or(None)?;
+		self.subscription =
+			Some(crate::subscribe::Subscription::new(self.client.clone(), connector, account, p2p_url.into()));
+		Ok(self)
+	}
+
+	/// Register `handler` for `event`. The first `change` listener opens the
+	/// filtered socket and starts the polling fallback; the returned
+	/// [`SubscriptionId`](crate::SubscriptionId) cancels it via [`off`].
+	///
+	/// [`off`]: Self::off
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::SubscriptionUnavailable`] -- no connector was
+	///   configured via [`with_subscription`](Self::with_subscription).
+	#[cfg(feature = "subscribe")]
+	pub fn on(
+		&self,
+		event: crate::UserEvent,
+		handler: impl Fn(&AccountState) + crate::MaybeSend + crate::MaybeSync + 'static,
+	) -> Result<crate::SubscriptionId, ClientError> {
+		let subscription = self
+			.subscription
+			.as_ref()
+			.ok_or(ClientError::SubscriptionUnavailable)?;
+
+		match event {
+			crate::UserEvent::Change => Ok(subscription.register(Arc::new(handler))),
+		}
+	}
+
+	/// Cancel a previously registered listener. Does nothing when no
+	/// subscription is configured or the id is unknown.
+	#[cfg(feature = "subscribe")]
+	pub fn off(&self, id: crate::SubscriptionId) {
+		if let Some(subscription) = &self.subscription {
+			subscription.unregister(id);
+		}
 	}
 
 	/// The operating account: `override`, then the configured account, then

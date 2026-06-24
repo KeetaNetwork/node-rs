@@ -264,6 +264,13 @@ impl KeetaClient {
 		}
 	}
 
+	/// The shared [`Runtime`], used by the change subscription to sleep
+	/// (backoff, fallback polling) and spawn its background listener.
+	#[cfg(feature = "subscribe")]
+	pub(crate) fn runtime(&self) -> Arc<dyn Runtime> {
+		Arc::clone(&self.inner.runtime)
+	}
+
 	/// Join scoring [`RepRef`]s against the transport registry, producing
 	/// fan-out targets. A ref whose transport is missing is skipped.
 	fn bind_transports(&self, refs: Vec<RepRef>) -> Vec<RepPick> {

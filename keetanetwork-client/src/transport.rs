@@ -565,7 +565,7 @@ mod wasi_backend {
 		}
 	}
 
-	/// The wire value for a block `side` query (`main`/`side`/`both`).
+	/// The transport value for a block `side` query (`main`/`side`/`both`).
 	fn block_side(side: LedgerSide) -> &'static str {
 		match side {
 			LedgerSide::Main => "main",
@@ -574,7 +574,7 @@ mod wasi_backend {
 		}
 	}
 
-	/// The wire value for a vote `side` query; votes have no `both`, so it
+	/// The transport value for a vote `side` query; votes have no `both`, so it
 	/// collapses to the canonical `main`.
 	fn block_votes_side(side: LedgerSide) -> &'static str {
 		match side {

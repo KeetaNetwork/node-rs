@@ -77,6 +77,12 @@ mod sync;
 mod transport;
 mod user;
 
+#[cfg(feature = "ws")]
+mod ws;
+
+#[cfg(feature = "subscribe")]
+mod subscribe;
+
 /// Transport-agnostic type encoding/decoding shared by the HTTP backends.
 #[cfg(feature = "codec")]
 mod codec;
@@ -112,6 +118,12 @@ pub use runtime::{BoxFuture, Runtime, TaskHandle};
 pub use swap::{AcceptSwapRequest, CreateSwapRequest, SwapExpectation, SwapTokenAmount};
 pub use transport::{LedgerSide, NodeTransport, TransportFactory};
 pub use user::UserClient;
+
+#[cfg(feature = "ws")]
+pub use ws::{WsConnection, WsConnector, WsError, WsMessage};
+
+#[cfg(feature = "subscribe")]
+pub use subscribe::{SubscriptionId, UserEvent};
 
 #[cfg(feature = "http")]
 pub use {

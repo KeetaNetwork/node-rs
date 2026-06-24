@@ -125,6 +125,13 @@ pub enum ClientError {
 	#[snafu(display("operation requires a signer but none is bound"))]
 	SignerRequired,
 
+	/// A subscription method was called but no WebSocket connector was
+	/// configured (see
+	/// [`UserClient::with_subscription`](crate::UserClient::with_subscription)).
+	#[cfg(feature = "subscribe")]
+	#[snafu(display("subscription requires a configured websocket connector"))]
+	SubscriptionUnavailable,
+
 	/// A swap-request block did not render to exactly one block.
 	#[snafu(display("swap request must render to exactly one block"))]
 	SwapMultiBlock,
@@ -185,6 +192,8 @@ impl ClientError {
 			Self::RecoverFailed => "RECOVER_FAILED",
 			Self::UnresolvedIdentifier => "UNRESOLVED_IDENTIFIER",
 			Self::SignerRequired => "SIGNER_REQUIRED",
+			#[cfg(feature = "subscribe")]
+			Self::SubscriptionUnavailable => "SUBSCRIPTION_UNAVAILABLE",
 			Self::SwapMultiBlock => "SWAP_MULTI_BLOCK",
 			Self::SwapMissingSend => "SWAP_MISSING_SEND",
 			Self::SwapMissingReceive => "SWAP_MISSING_RECEIVE",
