@@ -94,12 +94,10 @@ test-feat:
 	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn,der
 	cargo clippy -p keetanetwork-client --no-default-features -- -D warnings
 	# Browser wasm build: no_std orchestrator with the relaxed (!Send) traits.
-	rustup target add wasm32-unknown-unknown
 	cargo build -p keetanetwork-client --no-default-features --target wasm32-unknown-unknown
 	cargo build -p keetanetwork-client --no-default-features --features wasm --target wasm32-unknown-unknown
 
 build-wasm:
-	rustup target add wasm32-unknown-unknown
 	wasm-pack build keetanetwork-client-wasm --target web --out-dir pkg
 
 WASI_CRATE := keetanetwork-client-wasi
@@ -107,7 +105,6 @@ WASI_P1_WASM := target/wasm32-wasip1/debug/keetanetwork_client_wasi.wasm
 WASI_P2_WASM := target/wasm32-wasip2/debug/keetanetwork_client_wasi.wasm
 
 build-wasi:
-	rustup target add wasm32-wasip1 wasm32-wasip2
 	cargo build -p $(WASI_CRATE) --target wasm32-wasip1 --features p1
 	cargo build -p $(WASI_CRATE) --target wasm32-wasip2 --features p2
 
