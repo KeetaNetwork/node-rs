@@ -1,5 +1,9 @@
 [workspace]
 resolver = "2"
+exclude = [
+	# wasmtime host smoke tests
+	"keetanetwork-client-wasi/host-tests",
+]
 members = [
 	"keetanetwork-account",
 	"keetanetwork-error",
@@ -8,12 +12,17 @@ members = [
 	"keetanetwork-asn1",
 	"keetanetwork-utils",
 	"keetanetwork-block",
+	"keetanetwork-vote",
 	"keetanetwork-ledger",
 	"keetanetwork-node",
+	"keetanetwork-client",
+	"keetanetwork-bindings",
+	"keetanetwork-client-wasm",
+	"keetanetwork-client-wasi",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Tanveer Wahid <twahid@keeta.com>"]
 license = "MIT"
@@ -26,19 +35,23 @@ description = "Keetanetwork blockchain implementation in Rust"
 
 [workspace.dependencies.chrono]
 version = "0.4.41"
-features = ["serde", "now"]
+default-features = false
+features = ["serde"]
 
 [workspace.dependencies.base32]
 version = "0.5.1"
+default-features = false
 
 [workspace.dependencies.base64]
 version = "0.22.1"
+default-features = false
 
 [workspace.dependencies.bip39-dict]
 version = "0.1.3"
 
 [workspace.dependencies.hex]
 version = "0.4.3"
+default-features = false
 features = ["serde"]
 
 [workspace.dependencies.hex-literal]
@@ -46,15 +59,16 @@ version = "1.0.0"
 
 [workspace.dependencies.der]
 version = "0.7.10"
-features = ["std", "pem", "zeroize", "bytes", "oid", "derive"]
+default-features = false
+features = ["pem", "zeroize", "bytes", "oid", "derive"]
 
 [workspace.dependencies.rasn]
 version = "0.27.1"
-features = ["std"]
+default-features = false
 
 [workspace.dependencies.const-oid]
 version = "0.9.6"
-features = ["std"]
+default-features = false
 
 [workspace.dependencies.serde]
 version = "1.0.219"
@@ -69,7 +83,7 @@ features = ["serde"]
 
 [workspace.dependencies.snafu]
 version = "0.8.7"
-features = ["std"]
+default-features = false
 
 [workspace.dependencies.strum]
 version = "0.27.2"
@@ -79,6 +93,104 @@ version = "0.27.2"
 
 [workspace.dependencies.lazy_static]
 version = "1.5.0"
+
+[workspace.dependencies.spin]
+version = "0.9.8"
+default-features = false
+
+[workspace.dependencies.rand_core]
+version = "0.9.3"
+default-features = false
+
+[workspace.dependencies.rand]
+version = "0.9.2"
+
+[workspace.dependencies.num-bigint]
+version = "0.4.6"
+default-features = false
+
+[workspace.dependencies.futures]
+version = "0.3"
+default-features = false
+
+[workspace.dependencies.futures-core]
+version = "0.3"
+
+[workspace.dependencies.async-trait]
+version = "0.1"
+
+[workspace.dependencies.tokio]
+version = "1"
+
+[workspace.dependencies.reqwest]
+version = "0.13.4"
+default-features = false
+
+[workspace.dependencies.progenitor-client]
+version = "0.14.0"
+
+[workspace.dependencies.progenitor]
+version = "0.14.0"
+
+# Internal crates. Versions are centralized here (inheriting the workspace
+# version) so a release bump touches one place; members reference them with
+# `workspace = true`. `default-features = false` is set centrally because most
+# consumers are no_std/wasm; the few std consumers re-enable what they need via
+# `features`, since `default-features` cannot be overridden at the member site.
+[workspace.dependencies.keetanetwork-error]
+version = "0.2.0"
+path = "keetanetwork-error"
+default-features = false
+
+[workspace.dependencies.keetanetwork-utils]
+version = "0.2.0"
+path = "keetanetwork-utils"
+default-features = false
+
+[workspace.dependencies.keetanetwork-crypto]
+version = "0.2.0"
+path = "keetanetwork-crypto"
+default-features = false
+
+[workspace.dependencies.keetanetwork-asn1]
+version = "0.2.0"
+path = "keetanetwork-asn1"
+default-features = false
+
+[workspace.dependencies.keetanetwork-account]
+version = "0.2.0"
+path = "keetanetwork-account"
+default-features = false
+
+[workspace.dependencies.keetanetwork-x509]
+version = "0.2.0"
+path = "keetanetwork-x509"
+default-features = false
+
+[workspace.dependencies.keetanetwork-block]
+version = "0.2.0"
+path = "keetanetwork-block"
+default-features = false
+
+[workspace.dependencies.keetanetwork-vote]
+version = "0.2.0"
+path = "keetanetwork-vote"
+default-features = false
+
+[workspace.dependencies.keetanetwork-ledger]
+version = "0.2.0"
+path = "keetanetwork-ledger"
+default-features = false
+
+[workspace.dependencies.keetanetwork-client]
+version = "0.2.0"
+path = "keetanetwork-client"
+default-features = false
+
+[workspace.dependencies.keetanetwork-bindings]
+version = "0.2.0"
+path = "keetanetwork-bindings"
+default-features = false
 
 [profile.dev]
 opt-level = 0

@@ -9,13 +9,13 @@ homepage.workspace = true
 description = "X.509 certificate handling for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 # X.509 certificate parsing
 [dependencies.x509-cert]
 version = "0.2.5"
-features = ["std", "pem", "sha1"]
+default-features = false
+features = ["pem"]
 
 # ASN.1 and DER encoding
 [dependencies.der]
@@ -24,6 +24,7 @@ workspace = true
 [dependencies.rasn]
 workspace = true
 optional = true
+features = ["bytes"]
 
 # Date/time handling
 [dependencies.chrono]
@@ -36,37 +37,74 @@ workspace = true
 # Encoding utilities
 [dependencies.base64]
 workspace = true
+features = ["alloc"]
 
 # Hex encoding/decoding
 [dependencies.hex]
 workspace = true
+features = ["alloc"]
 
 # Serialization (optional)
 [dependencies.serde]
-workspace = true
+version = "1.0.219"
+default-features = false
+features = ["derive", "alloc"]
 optional = true
 
 [dependencies.serde_json]
-workspace = true
+version = "1.0.143"
+default-features = false
+features = ["alloc"]
 optional = true
 
 # Local dependencies
 [dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
-keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1" }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account" }
+keetanetwork-utils = { workspace = true }
+keetanetwork-error = { workspace = true }
+keetanetwork-crypto = { workspace = true }
+keetanetwork-asn1 = { workspace = true }
+keetanetwork-account = { workspace = true }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+chrono = { workspace = true, features = ["wasmbind"] }
 
 [features]
-default = ["serde", "rasn"]
-serde = ["dep:serde", "dep:serde_json"]
+default = ["std", "serde", "rasn"]
+std = [
+	"alloc",
+	"x509-cert/std",
+	"der/std",
+	"chrono/std",
+	"chrono/clock",
+	"snafu/std",
+	"base64/std",
+	"hex/std",
+	"serde?/std",
+	"serde_json?/std",
+	"keetanetwork-utils/std",
+	"keetanetwork-error/std",
+	"keetanetwork-crypto/std",
+	"keetanetwork-asn1/std",
+	"keetanetwork-account/std",
+]
+alloc = [
+	"der/alloc",
+	"chrono/alloc",
+	"keetanetwork-error/alloc",
+	"keetanetwork-asn1/alloc",
+	"keetanetwork-account/alloc",
+]
+serde = ["alloc", "dep:serde", "dep:serde_json"]
 der = [
+	"alloc",
 	"keetanetwork-asn1/der",
 	"keetanetwork-crypto/der",
 	"keetanetwork-account/der",
 ]
 rasn = [
+	"alloc",
 	"dep:rasn",
 	"keetanetwork-asn1/rasn",
 	"keetanetwork-crypto/rasn",
@@ -77,6 +115,4 @@ rasn = [
 hex-literal.workspace = true
 
 [build-dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = [
-	"build",
-] }
+keetanetwork-utils = { workspace = true, features = ["std", "build"] }

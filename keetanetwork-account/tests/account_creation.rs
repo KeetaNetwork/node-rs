@@ -2,7 +2,7 @@
 use std::string::ToString;
 
 use hex::{FromHex, ToHex};
-use keetanetwork_account::{Account, GenericAccount, KeyPairType};
+use keetanetwork_account::{Account, AccountError, GenericAccount, KeyPairType};
 use keetanetwork_account::{Accountable, Keyable};
 use keetanetwork_account::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
 use keetanetwork_account::{KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};
@@ -76,9 +76,9 @@ const ACCOUNT_PARSING_TEST_CASES: &[AccountParsingTestCase] = &[
 ];
 
 #[test]
-fn test_account_from_public_key_parsing() {
+fn test_account_from_public_key_parsing() -> Result<(), AccountError> {
 	for test_case in ACCOUNT_PARSING_TEST_CASES {
-		let account: GenericAccount = test_case.encoded_public_key.parse().unwrap();
+		let account: GenericAccount = test_case.encoded_public_key.parse()?;
 
 		// Extract account properties and verify them
 		let (actual_type, actual_is_identifier, actual_public_key) = match &account {
@@ -99,6 +99,8 @@ fn test_account_from_public_key_parsing() {
 		);
 		assert_eq!(actual_public_key, test_case.encoded_public_key, "Public key string mismatch");
 	}
+
+	Ok(())
 }
 
 #[test]
@@ -125,7 +127,7 @@ fn test_invalid_public_key_parsing() {
 }
 
 #[test]
-fn test_account_from_seed_creation() {
+fn test_account_from_seed_creation() -> Result<(), AccountError> {
 	// Data-driven test configuration
 	let seed_array = create_test_seed_array();
 
@@ -134,7 +136,7 @@ fn test_account_from_seed_creation() {
 		($index:expr, $key_type:expr, $account_type:ty, $expected_pubkey:expr, $signature_size:expr, $supports_encryption:expr) => {{
 			let seed = Keyable::Seed((seed_array.into_secret(), $index));
 			let accountable = Accountable::KeyAndType(seed, $key_type);
-			let account = Account::<$account_type>::try_from(accountable).unwrap();
+			let account = Account::<$account_type>::try_from(accountable)?;
 
 			assert_eq!(account.to_keypair_type(), $key_type, "Keypair type mismatch");
 			assert_eq!(account.to_string(), $expected_pubkey, "Public key string mismatch");
@@ -173,18 +175,19 @@ fn test_account_from_seed_creation() {
 			true
 		);
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_cross_platform_account_compatibility() {
+fn test_cross_platform_account_compatibility() -> Result<(), AccountError> {
 	// Macro to test account creation from seed and verify public key
 	macro_rules! test_seed_to_account {
 		($seed_array:expr, $index:expr, $key_type:expr, $account_type:ty, $expected_pubkey:expr) => {{
 			let account = Account::<$account_type>::try_from(Accountable::KeyAndType(
 				Keyable::Seed(($seed_array.into_secret(), $index)),
 				$key_type,
-			))
-			.unwrap();
+			))?;
 			assert_eq!(account.to_string(), $expected_pubkey);
 		}};
 	}
@@ -234,15 +237,17 @@ fn test_cross_platform_account_compatibility() {
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.token.encoded_public_key, KeyTOKEN);
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.storage.encoded_public_key, KeySTORAGE);
 	test_public_key_parsing!(TEST_PUBLIC_ACCOUNT.multisig.encoded_public_key, KeyMULTISIG);
+
+	Ok(())
 }
 
 #[test]
-fn test_hex_format_functionality() {
+fn test_hex_format_functionality() -> Result<(), AccountError> {
 	// Macro to test hex format round-trip for specific account types
 	macro_rules! test_hex_round_trip {
 		($encoded_key:expr, $account_type:ty, $expected_key_type:expr) => {{
 			// Parse from keeta format
-			let account: Account<$account_type> = $encoded_key.parse().unwrap();
+			let account: Account<$account_type> = $encoded_key.parse()?;
 			assert_eq!(account.to_keypair_type(), $expected_key_type);
 
 			// Convert to hex format
@@ -250,7 +255,7 @@ fn test_hex_format_functionality() {
 			assert!(!hex_string.is_empty());
 
 			// Parse back from hex
-			let account_from_hex = Account::<$account_type>::from_hex(&hex_string).unwrap();
+			let account_from_hex = Account::<$account_type>::from_hex(&hex_string)?;
 			assert_eq!(account_from_hex.to_string(), account.to_string());
 			assert_eq!(account_from_hex.to_keypair_type(), $expected_key_type);
 		}};
@@ -274,13 +279,15 @@ fn test_hex_format_functionality() {
 	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.token.encoded_public_key, KeyTOKEN, KeyPairType::TOKEN);
 	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.storage.encoded_public_key, KeySTORAGE, KeyPairType::STORAGE);
 	test_hex_round_trip!(TEST_PUBLIC_ACCOUNT.multisig.encoded_public_key, KeyMULTISIG, KeyPairType::MULTISIG);
+
+	Ok(())
 }
 
 #[test]
-fn test_generic_account_hex_format() {
+fn test_generic_account_hex_format() -> Result<(), AccountError> {
 	for test_case in ACCOUNT_PARSING_TEST_CASES {
 		// Parse as GenericAccount
-		let generic_account: GenericAccount = test_case.encoded_public_key.parse().unwrap();
+		let generic_account: GenericAccount = test_case.encoded_public_key.parse()?;
 		assert_eq!(generic_account.to_keypair_type(), test_case.expected_type);
 
 		// Convert to hex format
@@ -288,16 +295,18 @@ fn test_generic_account_hex_format() {
 		assert!(!hex_string.is_empty());
 
 		// Verify the type byte is correct (first byte should match the key type)
-		let hex_bytes = hex::decode(&hex_string).unwrap();
+		let hex_bytes = hex::decode(&hex_string).map_err(|_| AccountError::InvalidConstruction)?;
 		assert_eq!(hex_bytes[0], test_case.expected_type as u8);
 
 		// Parse back from hex
-		let generic_from_hex = GenericAccount::from_hex(&hex_string).unwrap();
+		let generic_from_hex = GenericAccount::from_hex(&hex_string)?;
 		assert_eq!(generic_from_hex.to_keypair_type(), test_case.expected_type);
 
 		// Round-trip should preserve the original public key string
 		assert_eq!(generic_from_hex.to_string(), test_case.encoded_public_key);
 	}
+
+	Ok(())
 }
 
 #[test]

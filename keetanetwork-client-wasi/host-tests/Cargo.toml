@@ -1,0 +1,18 @@
+# Standalone (own workspace) so it never joins the root workspace build.
+[workspace]
+
+[package]
+name = "keetanetwork-client-wasi-host-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "wasmtime host smoke tests for the keetanetwork-client-wasi P1/P2 artifacts"
+
+[dev-dependencies]
+wasmtime = "46"
+wasmtime-wasi = "46"
+wasmtime-wasi-http = "46"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+serde_json = "1"
+keetanetwork-utils = { path = "../../keetanetwork-utils", features = ["node-harness"] }
+hex = "0.4.3"

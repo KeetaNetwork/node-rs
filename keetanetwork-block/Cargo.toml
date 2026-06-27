@@ -8,12 +8,66 @@ repository.workspace = true
 homepage.workspace = true
 description = "Block structure and operations for Keetanetwork blockchain"
 
+[features]
+default = ["std", "rasn"]
+std = [
+	"alloc",
+	"chrono/std",
+	"chrono/clock",
+	"hex/std",
+	"snafu/std",
+	"num-bigint/std",
+	"num-traits/std",
+	"keetanetwork-error/std",
+	"keetanetwork-utils/std",
+	"keetanetwork-asn1/std",
+	"keetanetwork-account/std",
+	"keetanetwork-crypto/std",
+	"keetanetwork-x509/std",
+]
+alloc = [
+	"chrono/alloc",
+	"keetanetwork-error/alloc",
+	"keetanetwork-asn1/alloc",
+	"keetanetwork-account/alloc",
+	"keetanetwork-x509/alloc",
+]
+der = ["keetanetwork-asn1/der", "keetanetwork-account/der", "keetanetwork-crypto/der", "keetanetwork-x509/der"]
+rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-crypto/rasn", "keetanetwork-x509/rasn"]
+testing = []
+
 [dependencies]
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
+keetanetwork-error = { workspace = true }
+keetanetwork-utils = { workspace = true }
+keetanetwork-crypto = { workspace = true, features = ["signature"] }
+keetanetwork-account = { workspace = true }
+keetanetwork-asn1 = { workspace = true }
+keetanetwork-x509 = { workspace = true }
 snafu = { workspace = true }
+chrono = { workspace = true }
+hex = { workspace = true }
+
+[dependencies.num-bigint]
+workspace = true
+
+[dependencies.num-traits]
+version = "0.2.19"
+default-features = false
 
 [dev-dependencies]
+hex-literal = { workspace = true }
+keetanetwork-utils = { workspace = true, features = ["std", "node-harness"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lib]
 name = "keetanetwork_block"
 path = "src/lib.rs"
+
+[[test]]
+name = "e2e"
+required-features = ["testing"]
+
+[[test]]
+name = "typescript_compat"
+required-features = ["testing"]

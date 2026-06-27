@@ -1,19 +1,25 @@
 mod common;
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
+use chrono::{DateTime, Utc};
 use keetanetwork_x509::certificates::*;
 
 use common::*;
 
+fn trusted_options(moment: DateTime<Utc>) -> CertificateOptions {
+	CertificateOptions { moment: Some(moment), is_trusted_root: Some(true) }
+}
+
 #[test]
-fn test_certificate_bundle_creation() {
+fn test_certificate_bundle_creation() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
 	// Test basic bundle properties
-	let bundle = CertificateBundle::try_from(vec![ca_cert.clone(), user_cert.clone()]).unwrap();
-	assert_eq!(bundle.clone().into_iter().count(), 1); // Only returns valid chains
+	let bundle = CertificateBundle::try_from(vec![ca_cert.clone(), user_cert.clone()])?;
+	let chain_count = bundle.clone().into_iter().count();
+	assert_eq!(chain_count, 1); // Only returns valid chains
 
 	// Test that we can access all certificates through stores
 	let all_certificates = {
@@ -23,6 +29,8 @@ fn test_certificate_bundle_creation() {
 		all_certs
 	};
 	assert!(!all_certificates.is_empty());
+
+	Ok(())
 }
 
 #[test]
@@ -32,7 +40,7 @@ fn test_certificate_bundle_with_chain() {
 	let cert_moment = test_moment();
 
 	// Test bundle can find chains properly
-	let mut root_store = HashSet::new();
+	let mut root_store = BTreeSet::new();
 	root_store.insert(ca_cert.clone());
 
 	// This should find a chain from user cert to CA
@@ -43,47 +51,50 @@ fn test_certificate_bundle_with_chain() {
 		certificate: user_cert.clone(),
 		options: CertificateOptions { moment: Some(cert_moment), ..Default::default() },
 		root: root_store.clone(),
-		intermediate: HashSet::new(),
+		intermediate: BTreeSet::new(),
 	};
 	assert_eq!(user_bundle.to_chain_length(), 1);
 	// Ensure the returned chain only has the user certificate
 	assert_eq!(user_bundle.root.len(), 1);
-	assert!(user_bundle.verify_chain().all(|cert| cert == user_cert));
+	let chain_is_user_cert = user_bundle.verify_chain().all(|cert| cert == user_cert);
+	assert!(chain_is_user_cert);
 
 	// Test trusted bundle
 	let trusted_user_bundle = CertificateBundle {
 		certificate: user_cert.clone(),
-		options: CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) },
+		options: trusted_options(cert_moment),
 		root: root_store.clone(),
-		intermediate: HashSet::new(),
+		intermediate: BTreeSet::new(),
 	};
 	assert!(trusted_user_bundle.is_trusted());
 }
 
 #[test]
-fn test_certificate_bundle_operations() {
+fn test_certificate_bundle_operations() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 
 	// Test DER encoding/decoding round trip
-	let bundle = CertificateBundle::try_from(vec![ca_cert.clone()]).unwrap();
-	let der_buffer: Vec<u8> = (&bundle).try_into().unwrap();
+	let bundle = CertificateBundle::try_from(vec![ca_cert.clone()])?;
+	let der_buffer: Vec<u8> = (&bundle).try_into()?;
 	assert!(!der_buffer.is_empty());
 
 	// Test reconstruction from DER
-	let reconstructed_bundle = CertificateBundle::try_from(der_buffer.as_slice()).unwrap();
-	assert_eq!(reconstructed_bundle.into_iter().count(), 1);
+	let reconstructed_bundle = CertificateBundle::try_from(der_buffer.as_slice())?;
+	let reconstructed_chain_count = reconstructed_bundle.into_iter().count();
+	assert_eq!(reconstructed_chain_count, 1);
+	Ok(())
 }
 
 #[test]
-fn test_certificate_bundle_stores() {
+fn test_certificate_bundle_stores() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 	let cert_moment = test_moment();
 
 	// Test certificate store operations
-	let mut root_certs = HashSet::new();
+	let mut root_certs = BTreeSet::new();
 	root_certs.insert(ca_cert.clone());
-	let mut intermediate_certs = HashSet::new();
+	let mut intermediate_certs = BTreeSet::new();
 	intermediate_certs.insert(user_cert.clone());
 
 	// Test that certificate with stores but no trusted root option is not trusted by default
@@ -96,23 +107,27 @@ fn test_certificate_bundle_stores() {
 	assert!(!cert_with_options.is_trusted());
 
 	// Test trusted certificate creation
-	let options_trusted = CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) };
-	let ca_pem = ca_cert.to_pem().unwrap();
-	let trusted_cert = CertificateBundle::new(&ca_pem, Some(options_trusted), None, None).unwrap();
+	let options_trusted = trusted_options(cert_moment);
+	let ca_pem = ca_cert.to_pem()?;
+	let trusted_cert = CertificateBundle::new(&ca_pem, Some(options_trusted), None, None)?;
 	assert!(trusted_cert.is_trusted());
+
+	Ok(())
 }
 
 #[test]
-fn test_certificate_bundle_constructor() {
+fn test_certificate_bundle_constructor() -> Result<(), Box<dyn core::error::Error>> {
 	let cert_moment = test_moment();
 
 	// Test CertificateBundle constructor variants
-	let cert_with_opts = CertificateBundle::new(CA_CERT_PEM, None, None, None).unwrap();
+	let cert_with_opts = CertificateBundle::new(CA_CERT_PEM, None, None, None)?;
 	assert!(!cert_with_opts.is_trusted());
 	assert_eq!(cert_with_opts.to_chain_length(), 1);
 
 	// Test with trusted root option
-	let trusted_opts = CertificateOptions { moment: Some(cert_moment), is_trusted_root: Some(true) };
-	let trusted_bundle = CertificateBundle::new(CA_CERT_PEM, Some(trusted_opts), None, None).unwrap();
+	let trusted_opts = trusted_options(cert_moment);
+	let trusted_bundle = CertificateBundle::new(CA_CERT_PEM, Some(trusted_opts), None, None)?;
 	assert!(trusted_bundle.is_trusted());
+
+	Ok(())
 }

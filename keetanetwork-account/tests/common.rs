@@ -2,7 +2,7 @@
 
 use core::convert::TryFrom;
 
-use keetanetwork_account::{Account, Accountable, KeyPairType, Keyable};
+use keetanetwork_account::{Account, AccountError, Accountable, KeyPairType, Keyable};
 use keetanetwork_crypto::prelude::IntoSecret;
 
 #[allow(dead_code)]
@@ -130,34 +130,38 @@ pub const TEST_PRIVATE_ACCOUNT: PrivateAccountTestData = PrivateAccountTestData 
 /// Helper function to create a test seed array from the test data
 #[allow(dead_code)]
 pub fn create_test_seed_array() -> [u8; 32] {
-	let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).unwrap();
-	seed_bytes.try_into().unwrap()
+	let seed_bytes = hex::decode(TEST_PRIVATE_ACCOUNT.seed).expect("constant hex seed should decode");
+	seed_bytes.try_into().expect("seed should be 32 bytes")
 }
 
 /// Helper function to create an account from seed for different key types
 #[allow(dead_code)]
-pub fn create_account_from_seed<T>(key_type: KeyPairType, index: u32) -> Account<T>
+pub fn create_account_from_seed<T>(key_type: KeyPairType, index: u32) -> Result<Account<T>, AccountError>
 where
 	T: keetanetwork_account::KeyPair,
 	Account<T>: TryFrom<Accountable<T>, Error = keetanetwork_account::AccountError>,
 {
 	let seed_array = create_test_seed_array();
 	let keyable = Keyable::Seed((seed_array.into_secret(), index));
-	Account::<T>::try_from(Accountable::KeyAndType(keyable, key_type)).unwrap()
+	Account::<T>::try_from(Accountable::KeyAndType(keyable, key_type))
 }
 
 /// Helper function to create an account from a hex seed string for different key types
 #[allow(dead_code)]
-pub fn create_account_from_seed_hex<T>(key_type: KeyPairType, seed_hex: &str, index: u32) -> Account<T>
+pub fn create_account_from_seed_hex<T>(
+	key_type: KeyPairType,
+	seed_hex: &str,
+	index: u32,
+) -> Result<Account<T>, AccountError>
 where
 	T: keetanetwork_account::KeyPair,
 	Account<T>: TryFrom<Accountable<T>, Error = keetanetwork_account::AccountError>,
 {
 	// Convert hex string to bytes
-	let seed_bytes = hex::decode(seed_hex).expect("Invalid hex seed");
+	let seed_bytes = hex::decode(seed_hex).map_err(|_| AccountError::InvalidConstruction)?;
 	let mut seed_array = [0u8; 32];
 	seed_array.copy_from_slice(&seed_bytes[..32]);
 
 	let keyable = Keyable::Seed((seed_array.into_secret(), index));
-	Account::<T>::try_from(Accountable::KeyAndType(keyable, key_type)).unwrap()
+	Account::<T>::try_from(Accountable::KeyAndType(keyable, key_type))
 }

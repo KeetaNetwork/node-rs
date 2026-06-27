@@ -1,6 +1,12 @@
 //! Utilities for working with ASN.1 types
 
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
+#[cfg(feature = "serde")]
+use alloc::string::String;
 
 use crate::error::Asn1Error;
 
@@ -127,7 +133,7 @@ where
 }
 
 /// Get an OID string by algorithm name from an OID database
-pub fn get_oid(name: &str, oid_db: &HashMap<&str, &str>) -> Result<ObjectIdentifier, Asn1Error> {
+pub fn get_oid(name: &str, oid_db: &BTreeMap<&str, &str>) -> Result<ObjectIdentifier, Asn1Error> {
 	let oid_str = oid_db
 		.get(name)
 		.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Unknown algorithm: {name}") })?;
@@ -154,7 +160,7 @@ pub fn get_oid(name: &str, oid_db: &HashMap<&str, &str>) -> Result<ObjectIdentif
 }
 
 /// Look up an algorithm name by OID from an OID database.
-pub fn lookup_by_oid<'a>(oid: &str, oid_db: &'a HashMap<&'a str, &'a str>) -> Result<&'a str, Asn1Error> {
+pub fn lookup_by_oid<'a>(oid: &str, oid_db: &'a BTreeMap<&'a str, &'a str>) -> Result<&'a str, Asn1Error> {
 	oid_db
 		.iter()
 		.find(|(_, &o)| o == oid)
@@ -165,7 +171,7 @@ pub fn lookup_by_oid<'a>(oid: &str, oid_db: &'a HashMap<&'a str, &'a str>) -> Re
 /// Look up an algorithm name by ObjectIdentifier from an OID database.
 pub fn lookup_by_object_identifier<'a>(
 	oid: &ObjectIdentifier,
-	oid_db: &'a HashMap<&'a str, &'a str>,
+	oid_db: &'a BTreeMap<&'a str, &'a str>,
 ) -> Result<&'a str, Asn1Error> {
 	let oid_str = oid.to_string();
 	lookup_by_oid(&oid_str, oid_db)
@@ -175,18 +181,16 @@ pub fn lookup_by_object_identifier<'a>(
 pub fn parse_oid_string(oid_str: &str) -> Result<ObjectIdentifier, Asn1Error> {
 	#[cfg(feature = "der")]
 	{
-		ObjectIdentifier::new(oid_str)
-			.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {oid_str}") })
+		ObjectIdentifier::new(oid_str).map_err(|_| Asn1Error::invalid_oid_format(oid_str))
 	}
 
 	#[cfg(all(feature = "rasn", not(feature = "der")))]
 	{
 		// Parse OID string manually into numeric components for rasn
 		let arcs: Result<Vec<u32>, _> = oid_str.split('.').map(|s| s.parse::<u32>()).collect();
-		let arcs = arcs.map_err(|_| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {oid_str}") })?;
+		let arcs = arcs.map_err(|_| Asn1Error::invalid_oid_format(oid_str))?;
 
-		ObjectIdentifier::new(arcs)
-			.ok_or_else(|| Asn1Error::InvalidOid { reason: format!("Invalid OID format: {oid_str}") })
+		ObjectIdentifier::new(arcs).ok_or_else(|| Asn1Error::invalid_oid_format(oid_str))
 	}
 }
 
@@ -214,12 +218,13 @@ macro_rules! test_algorithm_identifier {
 		invalid: { $($invalid_oid:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_algorithm_identifier_valid_creation() {
+		fn test_algorithm_identifier_valid_creation() -> Result<(), Box<dyn core::error::Error>> {
 			$(
-				let alg_id = <$algorithm_identifier_type>::new($valid_oid).unwrap();
+				let alg_id = <$algorithm_identifier_type>::new($valid_oid)?;
 				assert_eq!(alg_id.algorithm.to_string(), $valid_oid);
 				assert!(alg_id.parameters.is_none());
 			)+
+			Ok(())
 		}
 
 		#[test]
@@ -241,16 +246,17 @@ macro_rules! test_subject_public_key_info {
 		test_cases: { $($oid:expr, $key_bytes:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_subject_public_key_info_creation() {
+		fn test_subject_public_key_info_creation() -> Result<(), Box<dyn core::error::Error>> {
 			let test_cases = [
 				$(($oid, $key_bytes)),+
 			];
 
 			for (oid, public_key_bytes) in test_cases {
-				let alg_id = <$algorithm_identifier_type>::new(oid).unwrap();
-				let spki = <$subject_public_key_info_type>::new(alg_id, &public_key_bytes).unwrap();
+				let alg_id = <$algorithm_identifier_type>::new(oid)?;
+				let spki = <$subject_public_key_info_type>::new(alg_id, &public_key_bytes)?;
 				assert_eq!(spki.subject_public_key.raw_bytes(), &public_key_bytes);
 			}
+			Ok(())
 		}
 	};
 }
@@ -263,19 +269,20 @@ macro_rules! test_algorithm_identifier_try_from {
 		invalid: { $($invalid_input:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_try_from_valid_oids() {
+		fn test_try_from_valid_oids() -> Result<(), Box<dyn core::error::Error>> {
 			$(
 				// Test &str conversion
-				let alg_id: $algorithm_identifier_type = $valid_input.parse().unwrap();
+				let alg_id: $algorithm_identifier_type = $valid_input.parse()?;
 				assert_eq!(alg_id.algorithm.to_string(), $valid_expected);
 				assert!(alg_id.parameters.is_none());
 
 				// Test String conversion
 				let oid_string = $valid_input.to_string();
-				let alg_id: $algorithm_identifier_type = oid_string.parse().unwrap();
+				let alg_id: $algorithm_identifier_type = oid_string.parse()?;
 				assert_eq!(alg_id.algorithm.to_string(), $valid_expected);
 				assert!(alg_id.parameters.is_none());
 			)+
+			Ok(())
 		}
 
 		#[test]
@@ -303,24 +310,29 @@ macro_rules! test_algorithm_identifier_with_params {
 		test_oids: { $($oid:expr),+ $(,)? }
 	) => {
 		#[test]
-		fn test_algorithm_identifier_with_params() {
+		fn test_algorithm_identifier_with_params() -> Result<(), Box<dyn core::error::Error>> {
 			let test_oids = [$($oid),+];
 
 			for oid in test_oids {
 				// Create a dummy Any parameter (NULL in this case)
-				let null_param = <$any_type>::from_der(&[0x05, 0x00]).unwrap(); // ASN.1 NULL
-				let alg_id = <$algorithm_identifier_type>::new_with_params(oid, null_param.clone()).unwrap();
+				let null_param = <$any_type>::from_der(&[0x05, 0x00])?; // ASN.1 NULL
+				let alg_id = <$algorithm_identifier_type>::new_with_params(oid, null_param.clone())?;
 				assert_eq!(alg_id.algorithm.to_string(), oid);
 				assert!(alg_id.parameters.is_some());
-				assert_eq!(alg_id.parameters.unwrap(), null_param);
+				assert_eq!(
+					alg_id.parameters.ok_or("expected parameters")?,
+					null_param
+				);
 			}
+			Ok(())
 		}
 
 		#[test]
-		fn test_algorithm_identifier_with_invalid_oid_in_new_with_params() {
-			let null_param = <$any_type>::from_der(&[0x05, 0x00]).unwrap();
+		fn test_algorithm_identifier_with_invalid_oid_in_new_with_params() -> Result<(), Box<dyn core::error::Error>> {
+			let null_param = <$any_type>::from_der(&[0x05, 0x00])?;
 			let result = <$algorithm_identifier_type>::new_with_params("invalid.oid", null_param);
 			assert!(result.is_err());
+			Ok(())
 		}
 	};
 }
@@ -334,9 +346,9 @@ macro_rules! test_subject_public_key_info_key_sizes {
 		test_oid: $test_oid:expr
 	) => {
 		#[test]
-		fn test_subject_public_key_info_with_various_key_sizes() {
+		fn test_subject_public_key_info_with_various_key_sizes() -> Result<(), Box<dyn core::error::Error>> {
 			// Test with empty key bytes
-			let alg_id = <$algorithm_identifier_type>::new($test_oid).unwrap();
+			let alg_id = <$algorithm_identifier_type>::new($test_oid)?;
 			let empty_key_result = <$subject_public_key_info_type>::new(alg_id.clone(), []);
 			assert!(empty_key_result.is_ok()); // Empty bytes should be valid for BitString
 
@@ -346,13 +358,10 @@ macro_rules! test_subject_public_key_info_key_sizes {
 				let key_bytes = vec![0x42; size];
 
 				// Test with valid key bytes
-				let spki_result = <$subject_public_key_info_type>::new(alg_id.clone(), &key_bytes);
-				assert!(spki_result.is_ok());
-
-				// Verify the created SubjectPublicKeyInfo
-				let spki = spki_result.unwrap();
+				let spki = <$subject_public_key_info_type>::new(alg_id.clone(), &key_bytes)?;
 				assert_eq!(spki.subject_public_key.raw_bytes(), &key_bytes);
 			}
+			Ok(())
 		}
 	};
 }
@@ -362,25 +371,26 @@ macro_rules! test_subject_public_key_info_key_sizes {
 macro_rules! test_der_round_trip {
 	($($struct_type:ty: $create_fn:expr),+ $(,)?) => {
 		#[test]
-		fn test_der_round_trip() {
+		fn test_der_round_trip() -> Result<(), Box<dyn core::error::Error>> {
 			$(
 				let original: $struct_type = $create_fn;
 
 				// Test encoding to DER bytes
-				let der_bytes: Vec<u8> = (&original).try_into().unwrap();
+				let der_bytes: Vec<u8> = (&original).try_into()?;
 				assert!(!der_bytes.is_empty());
 
 				// Test decoding from DER bytes
-				let decoded: $struct_type = der_bytes.as_slice().try_into().unwrap();
+				let decoded: $struct_type = der_bytes.as_slice().try_into()?;
 				// Verify round-trip equality
 				assert_eq!(original, decoded);
 
-				let der_bytes = original.to_der().unwrap();
+				let der_bytes = original.to_der()?;
 				assert!(!der_bytes.is_empty());
 
-				let decoded: $struct_type = <$struct_type>::from_der(&der_bytes).unwrap();
+				let decoded: $struct_type = <$struct_type>::from_der(&der_bytes)?;
 				assert_eq!(original, decoded);
 			)+
+			Ok(())
 		}
 	};
 }
@@ -394,11 +404,14 @@ pub fn get_oid_json() -> String {
 #[cfg(all(test, feature = "serde"))]
 mod tests {
 	use super::*;
+	use crate::error::Asn1Error;
 	use serde_json;
 
+	use crate::oids;
+
 	// Test data constants
-	const TEST_OID_STR: &str = "1.2.840.113549.1.1.1";
-	const TEST_OID_JSON: &str = r#""1.2.840.113549.1.1.1""#;
+	const TEST_OID_STR: &str = oids::RSA_ENCRYPTION;
+	const TEST_OID_JSON: &str = concat!('"', "1.2.840.113549.1.1.1", '"');
 
 	const TEST_OCTET_BYTES: &[u8] = &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
 	const TEST_OCTET_JSON: &str = r#""0123456789abcdef""#;
@@ -407,14 +420,15 @@ mod tests {
 	const TEST_BIT_JSON: &str = r#""fedcba98""#;
 
 	// Test OID database
+	// Note: SHA256 hash OID is kept hardcoded as it's not defined in keetanetwork-asn1::oids
 	const TEST_OID_DB: &[(&str, &str)] = &[
-		("RSA", "1.2.840.113549.1.1.1"),
+		("RSA", oids::RSA_ENCRYPTION),
 		("SHA256", "2.16.840.1.101.3.4.2.1"),
-		("Ed25519", "1.3.101.112"),
-		("ECDSA_P256", "1.2.840.10045.3.1.7"),
+		("Ed25519", oids::ED25519),
+		("ECDSA_P256", oids::SECP256R1),
 	];
 
-	fn get_test_oid_db() -> HashMap<&'static str, &'static str> {
+	fn get_test_oid_db() -> BTreeMap<&'static str, &'static str> {
 		TEST_OID_DB.iter().cloned().collect()
 	}
 
@@ -422,21 +436,24 @@ mod tests {
 	macro_rules! test_utility_functions {
 		($test_name:ident, $type:ty, $create_fn:expr, $serialize_fn:ident, $deserialize_fn:ident, $expected_json:expr) => {
 			#[test]
-			fn $test_name() {
+			fn $test_name() -> Result<(), Box<dyn core::error::Error>> {
 				let original: $type = $create_fn;
 
 				// Test serialization function
 				let mut serialized_output = Vec::new();
 				let mut serializer = serde_json::Serializer::new(&mut serialized_output);
-				$serialize_fn(&original, &mut serializer).expect("serialization failed");
-				let serialized = String::from_utf8(serialized_output).unwrap();
+
+				$serialize_fn(&original, &mut serializer)?;
+
+				let serialized = String::from_utf8(serialized_output)?;
 				assert_eq!(serialized, $expected_json);
 
 				// Test deserialization function
 				// Verify round-trip equality
 				let mut deserializer = serde_json::Deserializer::from_str(&serialized);
-				let deserialized = $deserialize_fn(&mut deserializer).expect("deserialization failed");
+				let deserialized = $deserialize_fn(&mut deserializer)?;
 				assert_eq!(original, deserialized);
+				Ok(())
 			}
 		};
 	}
@@ -447,11 +464,11 @@ mod tests {
 		{
 			#[cfg(feature = "der")]
 			{
-				ObjectIdentifier::new(TEST_OID_STR).unwrap()
+				ObjectIdentifier::new(TEST_OID_STR)?
 			}
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{
-				crate::utils::parse_oid_string(TEST_OID_STR).unwrap()
+				crate::utils::parse_oid_string(TEST_OID_STR)?
 			}
 		},
 		serialize_oid,
@@ -464,7 +481,7 @@ mod tests {
 		{
 			#[cfg(feature = "der")]
 			{
-				OctetString::new(TEST_OCTET_BYTES).unwrap()
+				OctetString::new(TEST_OCTET_BYTES)?
 			}
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{
@@ -481,7 +498,7 @@ mod tests {
 		{
 			#[cfg(feature = "der")]
 			{
-				BitString::from_bytes(TEST_BIT_BYTES).unwrap()
+				BitString::from_bytes(TEST_BIT_BYTES)?
 			}
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{
@@ -520,15 +537,19 @@ mod tests {
 	macro_rules! test_serialize_output {
 		($($create_fn:expr, $serialize_fn:ident => $expected:expr),+ $(,)?) => {
 			#[test]
-			fn test_serialize_outputs() {
+			fn test_serialize_outputs() -> Result<(), Box<dyn core::error::Error>> {
 				$(
 					let value = $create_fn;
 					let mut serialized_output = Vec::new();
 					let mut serializer = serde_json::Serializer::new(&mut serialized_output);
-					$serialize_fn(&value, &mut serializer).unwrap();
-					let serialized = String::from_utf8(serialized_output).unwrap();
+
+					$serialize_fn(&value, &mut serializer)?;
+
+					let serialized = String::from_utf8(serialized_output)?;
 					assert_eq!(serialized, $expected);
 				)+
+
+				Ok(())
 			}
 		};
 	}
@@ -536,33 +557,33 @@ mod tests {
 	test_serialize_output!(
 		{
 			#[cfg(feature = "der")]
-			{ OctetString::new([]).unwrap() }
+			{ OctetString::new([])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ OctetString::from_slice(&[]) }
 		}, serialize_octet_string => r#""""#,
 		{
 			#[cfg(feature = "der")]
-			{ BitString::from_bytes(&[]).unwrap() }
+			{ BitString::from_bytes(&[])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ BitString::from_vec(vec![]) }
 		}, serialize_bit_string => r#""""#,
 		{
 			#[cfg(feature = "der")]
-			{ OctetString::new([0xAB, 0xCD, 0xEF]).unwrap() }
+			{ OctetString::new([0xAB, 0xCD, 0xEF])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ OctetString::from_slice(&[0xAB, 0xCD, 0xEF]) }
 		}, serialize_octet_string => r#""abcdef""#,
 		{
 			#[cfg(feature = "der")]
-			{ BitString::from_bytes(&[0xFF, 0x00]).unwrap() }
+			{ BitString::from_bytes(&[0xFF, 0x00])? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
 			{ BitString::from_vec(vec![0xFF, 0x00]) }
 		}, serialize_bit_string => r#""ff00""#,
 		{
 			#[cfg(feature = "der")]
-			{ ObjectIdentifier::new("1.2.3.4.5").unwrap() }
+			{ ObjectIdentifier::new("1.2.3.4.5")? }
 			#[cfg(all(feature = "rasn", not(feature = "der")))]
-			{ crate::utils::parse_oid_string("1.2.3.4.5").unwrap() }
+			{ crate::utils::parse_oid_string("1.2.3.4.5")? }
 		}, serialize_oid => r#""1.2.3.4.5""#,
 	);
 
@@ -577,75 +598,83 @@ mod tests {
 	}
 
 	#[test]
-	fn test_get_oid() {
+	fn test_get_oid() -> Result<(), Asn1Error> {
 		let oid_db = get_test_oid_db();
 
 		// Test successful lookup
-		let result = get_oid("RSA", &oid_db).unwrap();
-		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
+		let result = get_oid("RSA", &oid_db)?;
+		assert_eq!(result.to_string(), oids::RSA_ENCRYPTION);
 
 		// Test unknown algorithm
 		let result = get_oid("UnknownAlgorithm", &oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
 
 		// Test invalid OID format in database
-		let mut invalid_oid_db = HashMap::new();
+		let mut invalid_oid_db = BTreeMap::new();
 		invalid_oid_db.insert("InvalidOID", "invalid.oid.format");
 		let result = get_oid("InvalidOID", &invalid_oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_lookup_by_oid() {
+	fn test_lookup_by_oid() -> Result<(), Asn1Error> {
 		let oid_db = get_test_oid_db();
 
 		// Test successful lookup
-		let result = lookup_by_oid("1.2.840.113549.1.1.1", &oid_db).unwrap();
+		let result = lookup_by_oid(oids::RSA_ENCRYPTION, &oid_db)?;
 		assert_eq!(result, "RSA");
 
 		// Test unknown OID (using a valid but non-existent OID)
 		let result = lookup_by_oid("1.2.3.4.5.6.7", &oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_lookup_by_object_identifier() {
+	fn test_lookup_by_object_identifier() -> Result<(), Asn1Error> {
 		let oid_db = get_test_oid_db();
 
 		// Test successful lookup
 		#[cfg(feature = "der")]
-		let oid = ObjectIdentifier::new("1.2.840.113549.1.1.1").unwrap();
+		let oid = ObjectIdentifier::new(oids::RSA_ENCRYPTION)?;
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
-		let oid = crate::utils::parse_oid_string("1.2.840.113549.1.1.1").unwrap();
+		let oid = crate::utils::parse_oid_string(oids::RSA_ENCRYPTION)?;
 
-		let result = lookup_by_object_identifier(&oid, &oid_db).unwrap();
+		let result = lookup_by_object_identifier(&oid, &oid_db)?;
 		assert_eq!(result, "RSA");
 
 		// Test unknown OID (using a valid but non-existent OID)
 		#[cfg(feature = "der")]
-		let unknown_oid = ObjectIdentifier::new("1.2.3.4.5.6.7").unwrap();
+		let unknown_oid = ObjectIdentifier::new("1.2.3.4.5.6.7")?;
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
-		let unknown_oid = crate::utils::parse_oid_string("1.2.3.4.5.6.7").unwrap();
+		let unknown_oid = crate::utils::parse_oid_string("1.2.3.4.5.6.7")?;
 
 		let result = lookup_by_object_identifier(&unknown_oid, &oid_db);
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_parse_oid_string() {
+	fn test_parse_oid_string() -> Result<(), Asn1Error> {
 		// Test successful parsing
-		let result = parse_oid_string("1.2.840.113549.1.1.1").unwrap();
-		assert_eq!(result.to_string(), "1.2.840.113549.1.1.1");
+		let result = parse_oid_string(oids::RSA_ENCRYPTION)?;
+		assert_eq!(result.to_string(), oids::RSA_ENCRYPTION);
 
 		// Test invalid OID format
 		let result = parse_oid_string("invalid.oid");
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_validate_oid_format() {
+	fn test_validate_oid_format() -> Result<(), Asn1Error> {
 		// Test successful validation
-		let result = validate_oid_format("1.2.840.113549.1.1.1").unwrap();
+		let result = validate_oid_format(oids::RSA_ENCRYPTION)?;
 		assert_eq!(result, vec![1, 2, 840, 113549, 1, 1, 1]);
 
 		// Test empty string
@@ -655,15 +684,19 @@ mod tests {
 		// Test invalid component
 		let result = validate_oid_format("1.invalid.3");
 		assert!(matches!(result, Err(Asn1Error::InvalidOid { .. })));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_get_oid_json() {
+	fn test_get_oid_json() -> Result<(), Box<dyn core::error::Error>> {
 		let json_content = get_oid_json();
 		assert!(!json_content.is_empty());
 
 		// Verify it's valid JSON
-		let parsed: serde_json::Value = serde_json::from_str(&json_content).unwrap();
+		let parsed: serde_json::Value = serde_json::from_str(&json_content)?;
 		assert!(parsed.is_object());
+
+		Ok(())
 	}
 }

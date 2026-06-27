@@ -3,13 +3,27 @@
 //! This module provides functionality for working with X.509 certificates,
 //! including parsing, validation, and generation of certificate requests.
 
+#[cfg(feature = "std")]
 pub use crate::builder::{CertificateBuilder, ExtensionBuilder};
 
-use std::collections::HashSet;
-use std::str::FromStr;
+use alloc::borrow::ToOwned;
+use alloc::collections::BTreeSet;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+
+use core::cmp::Ordering;
+use core::iter::once;
+
+use core::fmt::{Display, Error as FmtError, Formatter, Result as FmtResult};
+use core::hash::{Hash, Hasher};
+use core::str::{from_utf8, FromStr};
 
 use base64::{engine::general_purpose, Engine as _};
-use chrono::{DateTime, Duration, Utc};
+#[cfg(feature = "std")]
+use chrono::Duration;
+use chrono::{DateTime, Utc};
 use der::asn1::{ObjectIdentifier, OctetString};
 use der::{Decode, Encode, Sequence, ValueOrd};
 use keetanetwork_asn1::SubjectPublicKeyInfo;
@@ -24,13 +38,19 @@ use x509_cert::Version;
 
 #[cfg(feature = "serde")]
 use crate::serde::{deserialize_octet_string, deserialize_oid, serialize_octet_string, serialize_oid};
+// Needed only when `asn1::BitString` resolves to the rasn type; under
+// feature unification `der` may win and make these methods inherent, so
+// the import can appear unused.
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+#[allow(unused_imports)]
+use keetanetwork_asn1::BitStringExt;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::error::CertificateError;
 use crate::oids;
 use crate::utils::{self, parse_authority_key_identifier, parse_key_identifier};
-use crate::utils::{dn_to_string, parse_der_length};
+use crate::utils::{dn_to_string, parse_der_length, time_to_utc};
 
 /// Basic Constraints extension according to RFC 5280 Section 4.2.1.9.
 /// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
@@ -176,23 +196,27 @@ impl Extension {
 	}
 }
 
-impl From<x509_cert::ext::Extension> for Extension {
-	fn from(ext: x509_cert::ext::Extension) -> Self {
-		Self {
-			extn_id: ObjectIdentifier::new(&ext.extn_id.to_string()).unwrap(),
+impl TryFrom<x509_cert::ext::Extension> for Extension {
+	type Error = CertificateError;
+
+	fn try_from(ext: x509_cert::ext::Extension) -> Result<Self, Self::Error> {
+		Ok(Self {
+			extn_id: ObjectIdentifier::new(&ext.extn_id.to_string())?,
 			critical: ext.critical,
-			extn_value: OctetString::new(ext.extn_value.as_bytes()).unwrap(),
-		}
+			extn_value: OctetString::new(ext.extn_value.as_bytes())?,
+		})
 	}
 }
 
-impl From<Extension> for x509_cert::ext::Extension {
-	fn from(ext: Extension) -> Self {
-		Self {
-			extn_id: ObjectIdentifier::new(ext.extn_id.to_string().as_str()).unwrap(),
+impl TryFrom<Extension> for x509_cert::ext::Extension {
+	type Error = CertificateError;
+
+	fn try_from(ext: Extension) -> Result<Self, Self::Error> {
+		Ok(Self {
+			extn_id: ObjectIdentifier::new(ext.extn_id.to_string().as_str())?,
 			critical: ext.critical,
-			extn_value: OctetString::new(ext.extn_value.as_bytes()).unwrap(),
-		}
+			extn_value: OctetString::new(ext.extn_value.as_bytes())?,
+		})
 	}
 }
 
@@ -270,11 +294,22 @@ pub struct TbsCertificate {
 	pub extensions: Option<Extensions>,
 }
 
-impl<P: Profile> From<TbsCertificateInner<P>> for TbsCertificate {
-	fn from(tbs: TbsCertificateInner<P>) -> Self {
-		Self {
+impl<P: Profile> TryFrom<TbsCertificateInner<P>> for TbsCertificate {
+	type Error = CertificateError;
+
+	fn try_from(tbs: TbsCertificateInner<P>) -> Result<Self, Self::Error> {
+		let extensions = match tbs.extensions {
+			Some(ext_vec) => {
+				let converted: Result<Vec<Extension>, CertificateError> =
+					ext_vec.into_iter().map(Extension::try_from).collect();
+				Some(converted?)
+			}
+			None => None,
+		};
+
+		Ok(Self {
 			version: tbs.version,
-			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
+			serial_number: SerialNumber::new(tbs.serial_number.as_bytes())?,
 			signature_algorithm: tbs.signature,
 			issuer: tbs.issuer,
 			validity: tbs.validity,
@@ -282,18 +317,27 @@ impl<P: Profile> From<TbsCertificateInner<P>> for TbsCertificate {
 			subject_public_key_info: tbs.subject_public_key_info,
 			issuer_unique_id: tbs.issuer_unique_id,
 			subject_unique_id: tbs.subject_unique_id,
-			extensions: tbs
-				.extensions
-				.map(|ext_vec| ext_vec.into_iter().map(Extension::from).collect()),
-		}
+			extensions,
+		})
 	}
 }
 
-impl<P: Profile> From<TbsCertificate> for TbsCertificateInner<P> {
-	fn from(tbs: TbsCertificate) -> Self {
-		Self {
+impl<P: Profile> TryFrom<TbsCertificate> for TbsCertificateInner<P> {
+	type Error = CertificateError;
+
+	fn try_from(tbs: TbsCertificate) -> Result<Self, Self::Error> {
+		let extensions = match tbs.extensions {
+			Some(ext_vec) => {
+				let converted: Result<Vec<X509Extension>, CertificateError> =
+					ext_vec.into_iter().map(X509Extension::try_from).collect();
+				Some(converted?)
+			}
+			None => None,
+		};
+
+		Ok(Self {
 			version: tbs.version,
-			serial_number: SerialNumber::new(tbs.serial_number.as_bytes()).unwrap(),
+			serial_number: SerialNumber::new(tbs.serial_number.as_bytes())?,
 			signature: tbs.signature_algorithm,
 			issuer: tbs.issuer,
 			validity: tbs.validity,
@@ -301,10 +345,8 @@ impl<P: Profile> From<TbsCertificate> for TbsCertificateInner<P> {
 			subject_public_key_info: tbs.subject_public_key_info,
 			issuer_unique_id: tbs.issuer_unique_id,
 			subject_unique_id: tbs.subject_unique_id,
-			extensions: tbs
-				.extensions
-				.map(|ext_vec| ext_vec.into_iter().map(X509Extension::from).collect()),
-		}
+			extensions,
+		})
 	}
 }
 
@@ -415,9 +457,9 @@ pub struct CertificateBundle {
 	/// Certificate options for validation and trust
 	pub options: CertificateOptions,
 	/// Trusted root certificates
-	pub root: HashSet<Certificate>,
+	pub root: BTreeSet<Certificate>,
 	/// Trusted intermediate certificates
-	pub intermediate: HashSet<Certificate>,
+	pub intermediate: BTreeSet<Certificate>,
 }
 
 impl CertificateBundle {
@@ -425,8 +467,8 @@ impl CertificateBundle {
 	pub fn new(
 		pem_data: &str,
 		opts: Option<CertificateOptions>,
-		root: Option<HashSet<Certificate>>,
-		intermediate: Option<HashSet<Certificate>>,
+		root: Option<BTreeSet<Certificate>>,
+		intermediate: Option<BTreeSet<Certificate>>,
 	) -> Result<Self, CertificateError> {
 		let certificate = pem_data.parse()?;
 		let options = opts.unwrap_or_default();
@@ -477,7 +519,7 @@ impl CertificateBundle {
 	/// Get the issuer's public key from the chain.
 	pub fn to_issuer_public_key(&self) -> Option<SubjectPublicKeyInfo> {
 		self.to_issuer_certificate()
-			.map(|cert| cert.to_subject_public_key())
+			.and_then(|cert| cert.to_subject_public_key().ok())
 	}
 
 	/// Get chain length.
@@ -532,7 +574,7 @@ macro_rules! impl_into_iterator_for_certificate_bundle {
 	($self_type:ty) => {
 		impl IntoIterator for $self_type {
 			type Item = Certificate;
-			type IntoIter = std::vec::IntoIter<Certificate>;
+			type IntoIter = alloc::vec::IntoIter<Certificate>;
 
 			fn into_iter(self) -> Self::IntoIter {
 				let all_certs: Vec<Certificate> = self.clone().into();
@@ -582,7 +624,7 @@ impl FromStr for CertificateBundle {
 		let options = CertificateOptions::default();
 
 		// For PEM string input, we can't determine trust without a store
-		Ok(Self { certificate, options, root: HashSet::new(), intermediate: HashSet::new() })
+		Ok(Self { certificate, options, root: BTreeSet::new(), intermediate: BTreeSet::new() })
 	}
 }
 
@@ -593,7 +635,7 @@ impl TryFrom<Certificate> for CertificateBundle {
 		let options = CertificateOptions::default();
 
 		// For direct Certificate input, default trust to false
-		Ok(Self { certificate, options, root: HashSet::new(), intermediate: HashSet::new() })
+		Ok(Self { certificate, options, root: BTreeSet::new(), intermediate: BTreeSet::new() })
 	}
 }
 
@@ -604,8 +646,8 @@ impl TryFrom<Vec<Certificate>> for CertificateBundle {
 		let mut iter = certificates.into_iter();
 		if let Some(certificate) = iter.next() {
 			let options = CertificateOptions::default();
-			let mut root = HashSet::new();
-			let mut intermediate = HashSet::new();
+			let mut root = BTreeSet::new();
+			let mut intermediate = BTreeSet::new();
 
 			for cert in iter {
 				// Put self-signed certificates (CAs) in root store,
@@ -673,7 +715,7 @@ impl TryFrom<Vec<u8>> for CertificateBundle {
 
 impl From<&CertificateBundle> for Vec<Certificate> {
 	fn from(bundle: &CertificateBundle) -> Self {
-		std::iter::once(bundle.certificate.clone())
+		once(bundle.certificate.clone())
 			.chain(bundle.root.iter().cloned())
 			.chain(bundle.intermediate.iter().cloned())
 			.collect()
@@ -687,7 +729,7 @@ impl From<CertificateBundle> for Vec<Certificate> {
 }
 
 /// Certificate hash wrapper
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CertificateHash {
 	hash: Vec<u8>,
@@ -695,36 +737,24 @@ pub struct CertificateHash {
 }
 
 impl CertificateHash {
-	/// Create a new certificate hash with optional algorithm OID (defaults to SHA1)
+	/// Create a new certificate hash with optional algorithm OID (defaults to SHA3-256)
 	pub fn new<T: Into<Vec<u8>>, S: AsRef<str>>(hash: T, algorithm_oid: Option<S>) -> Self {
 		let algorithm_oid = algorithm_oid
 			.map(|s| s.as_ref().to_string())
-			.unwrap_or_else(|| oids::SHA1.to_string());
+			.unwrap_or_else(|| oids::SHA3_256.to_string());
 
 		Self { hash: hash.into(), algorithm_oid }
 	}
 
-	/// Create a standardized certificate hash using SHA-256
-	pub fn sha256<T: AsRef<[u8]>>(data: T) -> Self {
-		let hash_bytes = HashAlgorithm::Sha2_256.hash(data.as_ref());
-		Self::new(hash_bytes, Some(oids::SHA256))
+	/// Create a standardized certificate hash using SHA3-256
+	pub fn sha3_256<T: AsRef<[u8]>>(data: T) -> Self {
+		let hash_bytes = HashAlgorithm::Sha3_256.hash(data.as_ref());
+		Self::new(hash_bytes, Some(oids::SHA3_256))
 	}
 
-	/// Create a certificate hash using SHA-1 (for legacy compatibility)
-	pub fn sha1<T: AsRef<[u8]>>(data: T) -> Self {
-		let hash_bytes = HashAlgorithm::Sha1.hash(data.as_ref());
-		Self::new(hash_bytes, Some(oids::SHA1))
-	}
-
-	/// Create a certificate hash from a certificate's DER bytes
+	/// Create a certificate hash from a certificate's DER bytes (SHA3-256)
 	pub fn from_certificate_der<T: AsRef<[u8]>>(der_bytes: T) -> Self {
-		// Use SHA-1 for certificate hashing (standard for X.509 key identifiers)
-		Self::sha1(der_bytes)
-	}
-
-	/// Create a modernized certificate hash using SHA-256
-	pub fn from_certificate_der_sha256<T: AsRef<[u8]>>(der_bytes: T) -> Self {
-		Self::sha256(der_bytes)
+		Self::sha3_256(der_bytes)
 	}
 
 	/// Get the algorithm OID
@@ -735,7 +765,6 @@ impl CertificateHash {
 	/// Get the hash function name
 	pub fn hash_function_name(&self) -> &str {
 		match self.algorithm_oid.as_str() {
-			oids::SHA1 => "SHA1",
 			oids::SHA256 => "SHA256",
 			oids::SHA512 => "SHA512",
 			oids::SHA3_256 => "SHA3-256",
@@ -757,8 +786,10 @@ impl CertificateHash {
 	pub fn verify_certificate(&self, certificate: &Certificate) -> Result<bool, CertificateError> {
 		let der_bytes = certificate.to_der()?;
 		let computed_hash = match self.algorithm_oid.as_str() {
-			oids::SHA1 => Self::sha1(&der_bytes),
-			oids::SHA256 => Self::sha256(&der_bytes),
+			oids::SHA256 => {
+				let sha256_hash = HashAlgorithm::Sha2_256.hash(&der_bytes);
+				CertificateHash::new(sha256_hash, Some(oids::SHA256))
+			}
 			oids::SHA512 => {
 				let sha512_hash = HashAlgorithm::Sha2_512.hash(&der_bytes);
 				CertificateHash::new(sha512_hash, Some(oids::SHA512))
@@ -778,8 +809,8 @@ impl CertificateHash {
 	}
 }
 
-impl std::fmt::Display for CertificateHash {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for CertificateHash {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
 		write!(f, "{}", hex::encode(&self.hash))
 	}
 }
@@ -813,7 +844,7 @@ impl TryFrom<Certificate> for CertificateHash {
 	}
 }
 
-impl std::str::FromStr for CertificateHash {
+impl core::str::FromStr for CertificateHash {
 	type Err = CertificateError;
 
 	fn from_str(hex: &str) -> Result<Self, Self::Err> {
@@ -827,7 +858,7 @@ impl std::str::FromStr for CertificateHash {
 /// Certificate hash set for managing collections of hashes
 #[derive(Debug, Clone, Default)]
 pub struct CertificateHashSet {
-	certificates: HashSet<Certificate>,
+	certificates: BTreeSet<Certificate>,
 }
 
 impl CertificateHashSet {
@@ -866,7 +897,7 @@ impl TryFrom<&[String]> for CertificateHashSet {
 
 	fn try_from(_hash_strings: &[String]) -> Result<Self, Self::Error> {
 		// Since we're eliminating hash-based operations, return empty set
-		Ok(Self { certificates: HashSet::new() })
+		Ok(Self { certificates: BTreeSet::new() })
 	}
 }
 
@@ -948,16 +979,54 @@ pub struct Certificate {
 	pub signature: der::asn1::BitString,
 }
 
+/// Apply a single extension to the accumulated base extensions.
+fn apply_base_extension(base_extensions: &mut BaseExtensions, ext: &Extension) {
+	match ext.extn_id.to_string().as_str() {
+		// Basic Constraints
+		oids::BASIC_CONSTRAINTS => {
+			if let Ok(constraints) = BasicConstraints::from_der(ext.extn_value.as_bytes()) {
+				base_extensions.basic_constraints = Some(constraints);
+			}
+		}
+		// Subject Key Identifier is an OCTET STRING containing the key identifier
+		oids::SUBJECT_KEY_IDENTIFIER => {
+			if let Some(key_id) = parse_key_identifier(ext.extn_value.as_bytes()) {
+				base_extensions.subject_key_identifier = Some(hex::encode(key_id));
+			}
+		}
+		// Authority Key Identifier is a SEQUENCE with optional KeyIdentifier [0]
+		oids::AUTHORITY_KEY_IDENTIFIER => {
+			if let Some(key_id) = parse_authority_key_identifier(ext.extn_value.as_bytes()) {
+				base_extensions.authority_key_identifier = Some(hex::encode(key_id));
+			}
+		}
+		_ => {} // Ignore other extensions for base extensions
+	}
+}
+
+/// Reject duplicate extension OIDs per RFC 5280 section 4.2.
+fn check_duplicate_extensions(extensions: &[Extension]) -> Result<(), CertificateError> {
+	let mut seen_oids = BTreeSet::new();
+	for extension in extensions {
+		let oid_str = extension.extn_id.to_string();
+		if seen_oids.contains(&oid_str) {
+			return Err(CertificateError::ValidationFailed { reason: format!("Duplicate extension OID: {oid_str}") });
+		}
+
+		seen_oids.insert(oid_str);
+	}
+
+	Ok(())
+}
+
 impl Certificate {
 	/// Check if the certificate is valid at a specific time
 	pub fn is_valid_at(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
 		let validity = &self.tbs_certificate.validity;
-
-		if time < DateTime::<Utc>::from(validity.not_before.to_system_time()) {
+		if time < time_to_utc(validity.not_before) {
 			return Ok(false);
 		}
-
-		if time > DateTime::<Utc>::from(validity.not_after.to_system_time()) {
+		if time > time_to_utc(validity.not_after) {
 			return Ok(false);
 		}
 
@@ -965,17 +1034,20 @@ impl Certificate {
 	}
 
 	/// Check if the certificate is currently valid
+	#[cfg(feature = "std")]
 	pub fn is_currently_valid(&self) -> Result<bool, CertificateError> {
 		self.is_valid_at(Utc::now())
 	}
 
 	/// Check if the certificate will expire within the given duration
+	#[cfg(feature = "std")]
 	pub fn is_expiring_within(&self, duration: Duration) -> bool {
 		let now = Utc::now();
 		self.to_not_after() <= now + duration
 	}
 
 	/// Check if the certificate has been valid for at least the given duration
+	#[cfg(feature = "std")]
 	pub fn is_valid_for_at_least(&self, duration: Duration) -> bool {
 		self.to_age() >= duration
 	}
@@ -987,21 +1059,23 @@ impl Certificate {
 
 	/// Get the not_before time as chrono DateTime
 	pub fn to_not_before(&self) -> DateTime<Utc> {
-		DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time())
+		time_to_utc(self.tbs_certificate.validity.not_before)
 	}
 
 	/// Get the not_after time as chrono DateTime
 	pub fn to_not_after(&self) -> DateTime<Utc> {
-		DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time())
+		time_to_utc(self.tbs_certificate.validity.not_after)
 	}
 
 	/// Get the certificate's age (how long it has been valid)
+	#[cfg(feature = "std")]
 	pub fn to_age(&self) -> Duration {
 		let now = Utc::now();
 		now - self.to_not_before()
 	}
 
 	/// Get the remaining validity period of the certificate
+	#[cfg(feature = "std")]
 	pub fn to_remaining_validity(&self) -> Duration {
 		let now = Utc::now();
 		self.to_not_after() - now
@@ -1033,8 +1107,8 @@ impl Certificate {
 	}
 
 	/// Get the subject public key
-	pub fn to_subject_public_key(&self) -> SubjectPublicKeyInfo {
-		SubjectPublicKeyInfo::from(self.tbs_certificate.subject_public_key_info.clone())
+	pub fn to_subject_public_key(&self) -> Result<SubjectPublicKeyInfo, CertificateError> {
+		Ok(SubjectPublicKeyInfo::try_from(self.tbs_certificate.subject_public_key_info.clone())?)
 	}
 
 	/// Check if this is a self-signed certificate
@@ -1044,7 +1118,7 @@ impl Certificate {
 	}
 
 	/// Get an extension by OID
-	pub fn get_extension<S: AsRef<str>>(&self, oid: S) -> Option<&Extension> {
+	pub fn extension<S: AsRef<str>>(&self, oid: S) -> Option<&Extension> {
 		if let Some(ref extensions) = self.tbs_certificate.extensions {
 			let target_oid = ObjectIdentifier::new(oid.as_ref()).ok()?;
 			extensions.iter().find(|ext| ext.extn_id == target_oid)
@@ -1054,7 +1128,7 @@ impl Certificate {
 	}
 
 	/// Get all extensions from the certificate
-	pub fn get_extensions(&self) -> impl Iterator<Item = &Extension> {
+	pub fn extensions(&self) -> impl Iterator<Item = &Extension> {
 		self.tbs_certificate
 			.extensions
 			.iter()
@@ -1063,7 +1137,7 @@ impl Certificate {
 
 	/// Check if this is a CA certificate (has Basic Constraints CA=true)
 	pub fn is_ca(&self) -> bool {
-		if let Some(basic_constraints) = self.get_extension(oids::BASIC_CONSTRAINTS) {
+		if let Some(basic_constraints) = self.extension(oids::BASIC_CONSTRAINTS) {
 			match BasicConstraints::from_der(basic_constraints.extn_value.as_bytes()) {
 				Ok(constraints) => constraints.ca,
 				Err(_) => false, // Invalid extension, assume not a CA
@@ -1077,17 +1151,17 @@ impl Certificate {
 	/// Check if this certificate and another form a valid issuer-subject relationship
 	pub fn is_valid_issuer_subject_pair(&self, issuer: &Certificate) -> Result<bool, CertificateError> {
 		// Check DN matching
-		if !self.validate_issuer_subject_dn_match(issuer) {
+		if !self.has_matching_issuer_subject_dn(issuer) {
 			return Ok(false);
 		}
 
 		// Check Authority/Subject Key Identifier matching
-		if !self.validate_authority_key_identifier(issuer) {
+		if !self.has_valid_authority_key_identifier(issuer) {
 			return Ok(false);
 		}
 
 		// Check signature
-		let issuer_public_key = SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
+		let issuer_public_key = SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone())?;
 		if !self.verify_signature(&issuer_public_key)? {
 			return Ok(false);
 		}
@@ -1126,10 +1200,8 @@ impl Certificate {
 			.map_err(CertificateError::from)?;
 
 		let signature_bytes = self.signature.raw_bytes();
-
-		// Convert asn1 SubjectPublicKeyInfo back to spki for raw bytes access
-		let spki_public_key = SubjectPublicKeyInfoOwned::from(issuer_public_key.clone());
-		let public_key_bytes = spki_public_key.subject_public_key.raw_bytes();
+		// Get public key bytes directly from the subject public key info
+		let public_key_bytes = issuer_public_key.subject_public_key.raw_bytes();
 
 		// Dispatch to appropriate verification function based on signature algorithm
 		match cert_sig_oid.to_string().as_str() {
@@ -1156,29 +1228,7 @@ impl Certificate {
 		let mut base_extensions = BaseExtensions::default();
 		if let Some(extensions) = &self.tbs_certificate.extensions {
 			for ext in extensions {
-				match ext.extn_id.to_string().as_str() {
-					// Basic Constraints
-					oids::BASIC_CONSTRAINTS => {
-						if let Ok(constraints) = BasicConstraints::from_der(ext.extn_value.as_bytes()) {
-							base_extensions.basic_constraints = Some(constraints);
-						}
-					}
-					// Subject Key Identifier
-					oids::SUBJECT_KEY_IDENTIFIER => {
-						// Subject Key Identifier is an OCTET STRING containing the key identifier
-						if let Some(key_id) = parse_key_identifier(ext.extn_value.as_bytes()) {
-							base_extensions.subject_key_identifier = Some(hex::encode(key_id));
-						}
-					}
-					// Authority Key Identifier
-					oids::AUTHORITY_KEY_IDENTIFIER => {
-						// Authority Key Identifier is a SEQUENCE with optional KeyIdentifier [0]
-						if let Some(key_id) = parse_authority_key_identifier(ext.extn_value.as_bytes()) {
-							base_extensions.authority_key_identifier = Some(hex::encode(key_id));
-						}
-					}
-					_ => {} // Ignore other extensions for base extensions
-				}
+				apply_base_extension(&mut base_extensions, ext);
 			}
 		}
 
@@ -1192,11 +1242,11 @@ impl Certificate {
 
 	/// Validate the certificate at a specific time
 	pub fn validate_at(&self, time: DateTime<Utc>) -> Result<(), CertificateError> {
-		if time < DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time()) {
+		if time < time_to_utc(self.tbs_certificate.validity.not_before) {
 			return Err(CertificateError::NotYetValid);
 		}
 
-		if time > DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time()) {
+		if time > time_to_utc(self.tbs_certificate.validity.not_after) {
 			return Err(CertificateError::Expired);
 		}
 
@@ -1204,7 +1254,7 @@ impl Certificate {
 	}
 
 	/// Check if two certificates have the same public key
-	pub fn same_public_key(&self, other: &Certificate) -> bool {
+	pub fn has_same_public_key(&self, other: &Certificate) -> bool {
 		self.tbs_certificate.subject_public_key_info == other.tbs_certificate.subject_public_key_info
 	}
 
@@ -1239,10 +1289,14 @@ impl Certificate {
 	}
 
 	/// Check if this certificate was issued by the given issuer
-	pub fn check_issued(&self, issuer: &Certificate) -> bool {
-		let issuer_public_key = SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
-		self.validate_issuer_subject_dn_match(issuer)
-			&& self.validate_authority_key_identifier(issuer)
+	pub fn is_issued_by(&self, issuer: &Certificate) -> bool {
+		let issuer_public_key =
+			match SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone()) {
+				Ok(key) => key,
+				Err(_) => return false,
+			};
+		self.has_matching_issuer_subject_dn(issuer)
+			&& self.has_valid_authority_key_identifier(issuer)
 			&& self.verify_signature(&issuer_public_key).unwrap_or(false)
 	}
 
@@ -1266,45 +1320,29 @@ impl Certificate {
 
 	/// Validate that all critical extensions are properly handled
 	pub fn validate_critical_extensions(&self) -> Result<(), CertificateError> {
-		if let Some(extensions) = &self.tbs_certificate.extensions {
-			let known_critical_extensions = [
-				oids::BASIC_CONSTRAINTS,
-				oids::KEY_USAGE,
-				oids::CERTIFICATE_POLICIES,
-				oids::SUBJECT_ALT_NAME,
-				oids::NAME_CONSTRAINTS,
-			];
+		let Some(extensions) = &self.tbs_certificate.extensions else {
+			return Ok(());
+		};
 
-			for extension in extensions {
-				if extension.critical {
-					let oid_str = extension.extn_id.to_string();
+		let known_critical_extensions = [
+			oids::BASIC_CONSTRAINTS,
+			oids::KEY_USAGE,
+			oids::CERTIFICATE_POLICIES,
+			oids::SUBJECT_ALT_NAME,
+			oids::NAME_CONSTRAINTS,
+		];
 
-					// Check if this is a known critical extension
-					if !known_critical_extensions.contains(&oid_str.as_str()) {
-						return Err(CertificateError::ValidationFailed {
-							reason: format!("Unknown critical extension: {oid_str}"),
-						});
-					}
+		for extension in extensions {
+			if !extension.critical {
+				continue;
+			}
 
-					// Validate specific critical extensions
-					match oid_str.as_str() {
-						oids::BASIC_CONSTRAINTS => {
-							// Basic Constraints MUST be marked critical for CA certificates
-							if self.is_ca() {
-								// Extension is correctly marked critical for CA
-								continue;
-							}
-						}
-						oids::KEY_USAGE => {
-							// Key Usage should be critical per RFC 5280 recommendations
-							continue;
-						}
-						_ => {
-							// Other critical extensions are implementation-specific
-							continue;
-						}
-					}
-				}
+			// Reject any critical extension we do not recognize per RFC 5280.
+			let oid_str = extension.extn_id.to_string();
+			if !known_critical_extensions.contains(&oid_str.as_str()) {
+				return Err(CertificateError::ValidationFailed {
+					reason: format!("Unknown critical extension: {oid_str}"),
+				});
 			}
 		}
 
@@ -1313,30 +1351,31 @@ impl Certificate {
 
 	/// Validate extension consistency per RFC 5280
 	pub fn validate_extension_consistency(&self) -> Result<(), CertificateError> {
-		if let Some(extensions) = &self.tbs_certificate.extensions {
-			// Check for duplicate extensions (RFC 5280 section 4.2)
-			let mut seen_oids = HashSet::new();
-			for extension in extensions {
-				let oid_str = extension.extn_id.to_string();
-				if seen_oids.contains(&oid_str) {
-					return Err(CertificateError::ValidationFailed {
-						reason: format!("Duplicate extension OID: {oid_str}"),
-					});
-				}
-				seen_oids.insert(oid_str);
-			}
+		let Some(extensions) = &self.tbs_certificate.extensions else {
+			return Ok(());
+		};
 
-			// Validate Basic Constraints consistency
-			if let Some(basic_constraints_ext) = self.get_extension(oids::BASIC_CONSTRAINTS) {
-				if let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.extn_value.as_bytes()) {
-					// CA certificates MUST have Basic Constraints marked as critical
-					if basic_constraints.ca && !basic_constraints_ext.critical {
-						return Err(CertificateError::ValidationFailed {
-							reason: "CA certificates must have Basic Constraints marked as critical".to_string(),
-						});
-					}
-				}
-			}
+		// Check for duplicate extensions (RFC 5280 section 4.2)
+		check_duplicate_extensions(extensions)?;
+		// Validate Basic Constraints consistency
+		self.check_basic_constraints_consistency()?;
+
+		Ok(())
+	}
+
+	/// CA certificates MUST have Basic Constraints marked as critical (RFC 5280).
+	fn check_basic_constraints_consistency(&self) -> Result<(), CertificateError> {
+		let Some(basic_constraints_ext) = self.extension(oids::BASIC_CONSTRAINTS) else {
+			return Ok(());
+		};
+		let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.extn_value.as_bytes()) else {
+			return Ok(());
+		};
+
+		if basic_constraints.ca && !basic_constraints_ext.critical {
+			return Err(CertificateError::ValidationFailed {
+				reason: "CA certificates must have Basic Constraints marked as critical".to_string(),
+			});
 		}
 
 		Ok(())
@@ -1347,7 +1386,7 @@ impl Certificate {
 		// Validate subject DN
 		if self.tbs_certificate.subject.is_empty() {
 			// Subject can be empty only if Subject Alternative Name is present and marked critical
-			if let Some(san_ext) = self.get_extension(oids::SUBJECT_ALT_NAME) {
+			if let Some(san_ext) = self.extension(oids::SUBJECT_ALT_NAME) {
 				if !san_ext.critical {
 					return Err(CertificateError::ValidationFailed {
 						reason: "Empty subject DN requires critical Subject Alternative Name extension".to_string(),
@@ -1368,21 +1407,21 @@ impl Certificate {
 		Ok(())
 	}
 
-	/// Validate issuer/subject DN relationship per RFC 5280 section 4.1.2.4
+	/// Check issuer/subject DN relationship per RFC 5280 section 4.1.2.4
 	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.4>
-	pub fn validate_issuer_subject_dn_match(&self, issuer: &Certificate) -> bool {
+	pub fn has_matching_issuer_subject_dn(&self, issuer: &Certificate) -> bool {
 		// The issuer field of this certificate must match the subject field of the issuer certificate
 		self.tbs_certificate.issuer == issuer.tbs_certificate.subject
 	}
 
-	/// Validate Authority Key Identifier extension per RFC 5280 section 4.2.1.1
+	/// Check Authority Key Identifier extension per RFC 5280 section 4.2.1.1
 	/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.1>
 	///
 	/// TODO Make this more readable and verify
-	pub fn validate_authority_key_identifier(&self, issuer: &Certificate) -> bool {
+	pub fn has_valid_authority_key_identifier(&self, issuer: &Certificate) -> bool {
 		// If Authority Key Identifier is present, validate it matches the issuer's Subject Key Identifier
-		if let Some(auth_key_ext) = self.get_extension(oids::AUTHORITY_KEY_IDENTIFIER) {
-			if let Some(issuer_subject_key_ext) = issuer.get_extension(oids::SUBJECT_KEY_IDENTIFIER) {
+		if let Some(auth_key_ext) = self.extension(oids::AUTHORITY_KEY_IDENTIFIER) {
+			if let Some(issuer_subject_key_ext) = issuer.extension(oids::SUBJECT_KEY_IDENTIFIER) {
 				// Parse both key identifiers and compare
 				if let (Some(auth_key_id), Some(subject_key_id)) = (
 					utils::parse_authority_key_identifier(auth_key_ext.extn_value.as_bytes()),
@@ -1406,10 +1445,11 @@ impl Certificate {
 	{
 		let certificates: Vec<Certificate> = certificates.into_iter().collect();
 		let mut current = self;
-		let mut ordered_chain = vec![self.clone()];
+		let self_clone = self.clone();
+		let mut ordered_chain = vec![self_clone.clone()];
 
-		let mut chain_set = HashSet::new();
-		chain_set.insert(self.clone());
+		let mut chain_set = BTreeSet::new();
+		chain_set.insert(self_clone);
 
 		// Build the chain by following issuer certificates
 		loop {
@@ -1422,13 +1462,14 @@ impl Certificate {
 			// Skips certificates that are identical to self
 			let issuer = certificates
 				.iter()
-				.find(|cert| **cert != *self && current.check_issued(cert));
+				.find(|cert| **cert != *self && current.is_issued_by(cert));
 
 			if let Some(issuer_cert) = issuer {
 				// Only add if not already in the chain
 				if !chain_set.contains(issuer_cert) {
-					chain_set.insert(issuer_cert.clone());
-					ordered_chain.push(issuer_cert.clone());
+					let cloned = issuer_cert.clone();
+					chain_set.insert(cloned.clone());
+					ordered_chain.push(cloned);
 				}
 
 				current = issuer_cert;
@@ -1442,6 +1483,7 @@ impl Certificate {
 	}
 
 	/// Check if this certificate is trusted given certificate collections.
+	#[cfg(feature = "std")]
 	pub fn is_trusted<I>(&self, certificates: I, moment: Option<DateTime<Utc>>) -> bool
 	where
 		I: IntoIterator<Item = Certificate>,
@@ -1454,7 +1496,7 @@ impl Certificate {
 
 		// Convert certificates to Vec for use in both checks
 		let certificates: Vec<Certificate> = certificates.into_iter().collect();
-		let cert_set: HashSet<Certificate> = certificates.iter().cloned().collect();
+		let cert_set: BTreeSet<Certificate> = certificates.iter().cloned().collect();
 		if cert_set.contains(self) {
 			// If this is directly in the trusted certificates, it's trusted
 			return true;
@@ -1469,21 +1511,29 @@ impl Certificate {
 			.unwrap_or(false)
 	}
 
+	/// Maximum number of intermediate certificates permitted in a graph.
+	pub const MAX_GRAPH_CERTIFICATES: usize = 10;
+
 	/// Assert that a valid certificate graph can be constructed with the
 	/// given certificates.
 	///
 	/// This validates that:
+	/// - The graph does not exceed [`Self::MAX_GRAPH_CERTIFICATES`] intermediates
 	/// - No duplicate certificates exist
 	/// - No orphaned certificates exist
 	/// - No cycles exist in the certificate chain
 	pub fn assert_can_construct_valid_graph(
 		&self,
-		certificates: &HashSet<Certificate>,
+		certificates: &BTreeSet<Certificate>,
 	) -> Result<(), CertificateError> {
-		// Check for duplicates - this is automatically handled by HashSet,
+		if certificates.len() > Self::MAX_GRAPH_CERTIFICATES {
+			return Err(CertificateError::CertificateInvalidGraphCount { max: Self::MAX_GRAPH_CERTIFICATES });
+		}
+
+		// Check for duplicates - this is automatically handled by BTreeSet,
 		// but we need to ensure no certificates contain same content but are
 		// different objects.
-		let mut seen_hashes = HashSet::new();
+		let mut seen_hashes = BTreeSet::new();
 		for cert in certificates {
 			let cert_hash = CertificateHash::try_from(cert)?;
 			if !seen_hashes.insert(cert_hash) {
@@ -1506,10 +1556,10 @@ impl Certificate {
 	}
 
 	/// Find all certificates connected to this certificate.
-	fn find_connected_certificates(&self, certificates: &HashSet<Certificate>) -> HashSet<Certificate> {
-		let mut connected = HashSet::new();
+	fn find_connected_certificates(&self, certificates: &BTreeSet<Certificate>) -> BTreeSet<Certificate> {
+		let mut connected = BTreeSet::new();
 		let mut to_visit = vec![self.clone()];
-		let mut visited = HashSet::new();
+		let mut visited = BTreeSet::new();
 
 		while let Some(current) = to_visit.pop() {
 			if visited.contains(&current) {
@@ -1520,19 +1570,14 @@ impl Certificate {
 
 			// Find potential issuers of current certificate
 			for cert in certificates {
-				// Check if cert could be issuer of current
-				if current.tbs_certificate.issuer == cert.tbs_certificate.subject {
-					connected.insert(cert.clone());
-					if !visited.contains(cert) {
-						to_visit.push(cert.clone());
-					}
-				}
+				let is_potential_issuer = current.tbs_certificate.issuer == cert.tbs_certificate.subject;
+				let is_potential_subject = cert.tbs_certificate.issuer == current.tbs_certificate.subject;
 
-				// Check if current could be issuer of cert
-				if cert.tbs_certificate.issuer == current.tbs_certificate.subject {
-					connected.insert(cert.clone());
+				if is_potential_issuer || is_potential_subject {
+					let cloned = cert.clone();
+					connected.insert(cloned.clone());
 					if !visited.contains(cert) {
-						to_visit.push(cert.clone());
+						to_visit.push(cloned);
 					}
 				}
 			}
@@ -1542,9 +1587,9 @@ impl Certificate {
 	}
 
 	/// Detect cycles in the certificate graph using depth-first search.
-	fn detect_cycles(&self, certificates: &HashSet<Certificate>) -> Result<(), CertificateError> {
-		let mut visited = HashSet::new();
-		let mut rec_stack = HashSet::new();
+	fn detect_cycles(&self, certificates: &BTreeSet<Certificate>) -> Result<(), CertificateError> {
+		let mut visited = BTreeSet::new();
+		let mut rec_stack = BTreeSet::new();
 
 		// Start DFS from the subject certificate
 		self.dfs_cycle_detection(&mut visited, &mut rec_stack, certificates)?;
@@ -1562,9 +1607,9 @@ impl Certificate {
 	/// Depth-first search for cycle detection.
 	fn dfs_cycle_detection(
 		&self,
-		visited: &mut HashSet<Certificate>,
-		rec_stack: &mut HashSet<Certificate>,
-		certificates: &HashSet<Certificate>,
+		visited: &mut BTreeSet<Certificate>,
+		rec_stack: &mut BTreeSet<Certificate>,
+		certificates: &BTreeSet<Certificate>,
 	) -> Result<(), CertificateError> {
 		visited.insert(self.clone());
 		rec_stack.insert(self.clone());
@@ -1592,28 +1637,32 @@ impl Certificate {
 	}
 }
 
-impl<P: Profile> From<CertificateInner<P>> for Certificate {
-	fn from(cert: CertificateInner<P>) -> Self {
-		Self {
-			tbs_certificate: TbsCertificate::from(cert.tbs_certificate),
+impl<P: Profile> TryFrom<CertificateInner<P>> for Certificate {
+	type Error = CertificateError;
+
+	fn try_from(cert: CertificateInner<P>) -> Result<Self, Self::Error> {
+		Ok(Self {
+			tbs_certificate: TbsCertificate::try_from(cert.tbs_certificate)?,
 			signature_algorithm: cert.signature_algorithm,
-			signature: cert.signature.clone(),
-		}
+			signature: cert.signature,
+		})
 	}
 }
 
-impl<P: Profile> From<Certificate> for CertificateInner<P> {
-	fn from(cert: Certificate) -> Self {
-		Self {
-			tbs_certificate: TbsCertificateInner::from(cert.tbs_certificate),
+impl<P: Profile> TryFrom<Certificate> for CertificateInner<P> {
+	type Error = CertificateError;
+
+	fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
+		Ok(Self {
+			tbs_certificate: TbsCertificateInner::try_from(cert.tbs_certificate)?,
 			signature_algorithm: cert.signature_algorithm,
-			signature: cert.signature.clone(),
-		}
+			signature: cert.signature,
+		})
 	}
 }
 
-impl core::hash::Hash for Certificate {
-	fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+impl Hash for Certificate {
+	fn hash<H: Hasher>(&self, state: &mut H) {
 		// Hash based on the DER bytes of the certificate
 		if let Ok(der_bytes) = self.to_der() {
 			der_bytes.hash(state);
@@ -1621,16 +1670,29 @@ impl core::hash::Hash for Certificate {
 	}
 }
 
-impl std::fmt::Display for Certificate {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let der = self.to_der().map_err(|_| std::fmt::Error)?;
+impl PartialOrd for Certificate {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl Ord for Certificate {
+	fn cmp(&self, other: &Self) -> Ordering {
+		// Order by DER encoding, consistent with the content-based `Eq`/`Hash`.
+		self.to_der().ok().cmp(&other.to_der().ok())
+	}
+}
+
+impl Display for Certificate {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+		let der = self.to_der().map_err(|_| FmtError)?;
 		let base64_content = general_purpose::STANDARD.encode(&der);
 
 		// Write PEM format header
 		writeln!(f, "-----BEGIN CERTIFICATE-----")?;
 		// Split into 64-character lines
 		for chunk in base64_content.as_bytes().chunks(64) {
-			let chunk_str = core::str::from_utf8(chunk).map_err(|_| std::fmt::Error)?;
+			let chunk_str = from_utf8(chunk).map_err(|_| FmtError)?;
 			writeln!(f, "{chunk_str}")?;
 		}
 		// Write PEM format footer
@@ -1638,7 +1700,7 @@ impl std::fmt::Display for Certificate {
 	}
 }
 
-impl std::str::FromStr for Certificate {
+impl core::str::FromStr for Certificate {
 	type Err = CertificateError;
 
 	fn from_str(pem: &str) -> Result<Self, Self::Err> {
@@ -1743,20 +1805,21 @@ mod tests {
 	use keetanetwork_asn1::BitStringExt;
 
 	use super::*;
+	use crate::error::CertificateError;
 	use crate::testing::{CertificateChain, CERTIFICATE_TEST_SETS};
 	use crate::utils;
 
 	/// Get a moment that's always within the certificate validity period.
-	fn get_cert_moment() -> DateTime<Utc> {
+	fn get_cert_moment() -> Result<DateTime<Utc>, CertificateError> {
 		// Get the first test certificate and calculate a moment in the
 		// middle of its validity.
-		let cert: Certificate = CERTIFICATE_TEST_SETS[0].chain.root.parse().unwrap();
+		let cert: Certificate = CERTIFICATE_TEST_SETS[0].chain.root.parse()?;
 		let validity_start = cert.to_not_before();
 		let validity_end = cert.to_not_after();
 		let validity_duration = validity_end - validity_start;
 
 		// Use a moment that's 25% through the certificate's validity period
-		validity_start + validity_duration / 4
+		Ok(validity_start + validity_duration / 4)
 	}
 
 	/// Deconstruct certificate bundle for easy unpacking
@@ -1765,8 +1828,8 @@ mod tests {
 		pub ca_cert: Certificate,
 		pub intermediate_cert: Certificate,
 		pub client_cert: Certificate,
-		pub root_certs: HashSet<Certificate>,
-		pub intermediate_certs: HashSet<Certificate>,
+		pub root_certs: BTreeSet<Certificate>,
+		pub intermediate_certs: BTreeSet<Certificate>,
 	}
 
 	/// Test data for certificate hash testing
@@ -1782,20 +1845,12 @@ mod tests {
 	where
 		F: Fn(&HashTestCase, &[u8]),
 	{
-		let test_cases = vec![
-			HashTestCase {
-				hash_fn: |data| CertificateHash::sha1(data),
-				expected_algorithm_oid: crate::oids::SHA1,
-				expected_algorithm_name: "SHA1",
-				expected_length: 20,
-			},
-			HashTestCase {
-				hash_fn: |data| CertificateHash::sha256(data),
-				expected_algorithm_oid: crate::oids::SHA256,
-				expected_algorithm_name: "SHA256",
-				expected_length: 32,
-			},
-		];
+		let test_cases = vec![HashTestCase {
+			hash_fn: |data| CertificateHash::sha3_256(data),
+			expected_algorithm_oid: crate::oids::SHA3_256,
+			expected_algorithm_name: "SHA3-256",
+			expected_length: 32,
+		}];
 
 		let test_data = b"test certificate data for hashing";
 		for test_case in &test_cases {
@@ -1804,54 +1859,60 @@ mod tests {
 	}
 
 	/// Helper function to extract certificates from a certificate chain
-	fn extract_certificates(chain: &CertificateChain) -> CertificateTestBundle {
-		let ca_cert: Certificate = chain.root.parse().unwrap();
-		let intermediate_cert: Certificate = chain.intermediate.parse().unwrap();
-		let client_cert: Certificate = chain.client.parse().unwrap();
+	fn extract_certificates(chain: &CertificateChain) -> Result<CertificateTestBundle, CertificateError> {
+		let ca_cert: Certificate = chain.root.parse()?;
+		let intermediate_cert: Certificate = chain.intermediate.parse()?;
+		let client_cert: Certificate = chain.client.parse()?;
 
-		CertificateTestBundle {
-			root_certs: HashSet::from([ca_cert.clone()]),
-			intermediate_certs: HashSet::from([intermediate_cert.clone()]),
+		Ok(CertificateTestBundle {
+			root_certs: BTreeSet::from([ca_cert.clone()]),
+			intermediate_certs: BTreeSet::from([intermediate_cert.clone()]),
 			ca_cert,
 			intermediate_cert,
 			client_cert,
-		}
+		})
 	}
 
 	/// Helper to create dummy certificate builder with common settings
-	fn create_dummy_cert_builder(subject_cn: &str, issuer_cn: &str, serial: u32, is_ca: bool) -> CertificateBuilder {
-		let moment = get_cert_moment();
+	fn create_dummy_cert_builder(
+		subject_cn: &str,
+		issuer_cn: &str,
+		serial: u32,
+		is_ca: bool,
+	) -> Result<CertificateBuilder, CertificateError> {
+		let moment = get_cert_moment()?;
 		let valid_from = moment - chrono::Duration::hours(12);
 		let valid_to = moment + chrono::Duration::hours(12);
 		let public_key_bytes = vec![0u8; 32];
-		let algorithm = AlgorithmIdentifier::from_str(oids::ED25519).unwrap();
-		let subject_public_key = BitString::from_bytes(&public_key_bytes).unwrap();
+		let algorithm = AlgorithmIdentifier::from_str(oids::ED25519)?;
+		let subject_public_key = BitString::from_bytes(&public_key_bytes)?;
 		let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
-		let subject_dn = utils::create_dn(&[(oids::CN, subject_cn)]).unwrap();
-		let issuer_dn = utils::create_dn(&[(oids::CN, issuer_cn)]).unwrap();
+		let subject_dn = utils::create_dn(&[(oids::CN, subject_cn)])?;
+		let issuer_dn = utils::create_dn(&[(oids::CN, issuer_cn)])?;
 
-		CertificateBuilder::new()
+		Ok(CertificateBuilder::new()
 			.with_subject_public_key(public_key_info)
 			.with_subject_dn(subject_dn)
 			.with_issuer_dn(issuer_dn)
 			.with_validity(valid_from, valid_to)
 			.with_serial_number(SerialNumber::from(serial))
-			.with_is_ca(is_ca)
+			.with_is_ca(is_ca))
 	}
 
 	/// Helper to test all certificate sets with a given test function
-	fn test_all_certificate_sets<F>(test_fn: F)
+	fn test_all_certificate_sets<F>(test_fn: F) -> Result<(), CertificateError>
 	where
-		F: Fn(&CertificateTestBundle),
+		F: Fn(&CertificateTestBundle) -> Result<(), CertificateError>,
 	{
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
-			let bundle = extract_certificates(&test_set.chain);
-			test_fn(&bundle);
+			let bundle = extract_certificates(&test_set.chain)?;
+			test_fn(&bundle)?;
 		}
+		Ok(())
 	}
 
 	/// Helper to assert certificate properties
-	fn assert_cert_properties(cert: &Certificate, expected_ca: bool) {
+	fn assert_cert_properties(cert: &Certificate, expected_ca: bool) -> Result<(), CertificateError> {
 		assert!(!cert.to_issuer().is_empty());
 		assert!(!cert.to_subject().is_empty());
 
@@ -1859,53 +1920,57 @@ mod tests {
 			assert!(cert.is_ca());
 		}
 
-		let cert_moment = get_cert_moment();
-		assert!(cert.is_valid_at(cert_moment).unwrap());
+		let cert_moment = get_cert_moment()?;
+		assert!(cert.is_valid_at(cert_moment)?);
+		Ok(())
 	}
 
 	/// Helper to test DER/PEM roundtrip
-	fn test_cert_roundtrip(cert: &Certificate) {
-		let pem_output = cert.to_pem().unwrap();
-		let cert_re_parsed: Certificate = pem_output.parse().unwrap();
-		assert_eq!(cert.to_der().unwrap(), cert_re_parsed.to_der().unwrap());
+	fn test_cert_roundtrip(cert: &Certificate) -> Result<(), CertificateError> {
+		let pem_output = cert.to_pem()?;
+		let cert_re_parsed: Certificate = pem_output.parse()?;
+		assert_eq!(cert.to_der()?, cert_re_parsed.to_der()?);
 
-		let der_bytes = cert.to_der().unwrap();
-		let cert_from_der = Certificate::try_from(der_bytes.as_slice()).unwrap();
-		assert_eq!(cert.to_der().unwrap(), cert_from_der.to_der().unwrap());
+		let der_bytes = cert.to_der()?;
+		let cert_from_der = Certificate::try_from(der_bytes.as_slice())?;
+		assert_eq!(cert.to_der()?, cert_from_der.to_der()?);
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_parsing() {
+	fn test_certificate_parsing() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			// Test root CA certificate (should be CA)
-			assert_cert_properties(&bundle.ca_cert, true);
-			test_cert_roundtrip(&bundle.ca_cert);
+			assert_cert_properties(&bundle.ca_cert, true)?;
+			test_cert_roundtrip(&bundle.ca_cert)?;
 
 			// Test intermediate certificate (should be CA)
-			assert_cert_properties(&bundle.intermediate_cert, true);
-			test_cert_roundtrip(&bundle.intermediate_cert);
+			assert_cert_properties(&bundle.intermediate_cert, true)?;
+			test_cert_roundtrip(&bundle.intermediate_cert)?;
 
 			// Test client certificate (should not be CA)
-			assert_cert_properties(&bundle.client_cert, false);
-			test_cert_roundtrip(&bundle.client_cert);
-		});
+			assert_cert_properties(&bundle.client_cert, false)?;
+			test_cert_roundtrip(&bundle.client_cert)?;
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_validity() {
+	fn test_certificate_validity() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
-			let cert_moment = get_cert_moment();
+			let cert_moment = get_cert_moment()?;
 
 			for cert in [&bundle.ca_cert, &bundle.intermediate_cert, &bundle.client_cert] {
 				let not_before = cert.to_not_before();
 				let not_after = cert.to_not_after();
 				assert!(not_before < not_after);
-				assert!(cert.is_valid_at(cert_moment).unwrap());
+				assert!(cert.is_valid_at(cert_moment)?);
 
 				let before_valid = not_before - chrono::Duration::seconds(1);
 				let after_valid = not_after + chrono::Duration::seconds(1);
-				assert!(!cert.is_valid_at(before_valid).unwrap());
-				assert!(!cert.is_valid_at(after_valid).unwrap());
+				assert!(!cert.is_valid_at(before_valid)?);
+				assert!(!cert.is_valid_at(after_valid)?);
 
 				let validity_period = cert.to_validity_period();
 				let validity_not_before = DateTime::<Utc>::from(validity_period.not_before.to_system_time());
@@ -1918,12 +1983,18 @@ mod tests {
 				assert!(cert_age_at_moment > chrono::Duration::zero());
 				assert!(cert_remaining_at_moment > chrono::Duration::zero());
 			}
-		});
+
+			Ok(())
+		})
 	}
 
 	/// Helper to check certificate has expected extensions
-	fn assert_cert_extensions(cert: &Certificate, expected_oids: &[&str]) {
-		let extensions = cert.tbs_certificate.extensions.as_ref().unwrap();
+	fn assert_cert_extensions(cert: &Certificate, expected_oids: &[&str]) -> Result<(), CertificateError> {
+		let extensions = cert
+			.tbs_certificate
+			.extensions
+			.as_ref()
+			.ok_or_else(|| CertificateError::ValidationFailed { reason: "extensions not found".to_string() })?;
 		let found_oids: Vec<String> = extensions
 			.iter()
 			.map(|ext| ext.extn_id.to_string())
@@ -1932,16 +2003,17 @@ mod tests {
 		for expected_oid in expected_oids {
 			assert!(found_oids.contains(&expected_oid.to_string()));
 		}
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_extensions() {
+	fn test_certificate_extensions() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			// Test root certificate extensions
 			assert_cert_extensions(
 				&bundle.ca_cert,
 				&[oids::BASIC_CONSTRAINTS, oids::AUTHORITY_KEY_IDENTIFIER, oids::SUBJECT_KEY_IDENTIFIER],
-			);
+			)?;
 
 			// Test intermediate certificate extensions
 			assert_cert_extensions(
@@ -1952,18 +2024,20 @@ mod tests {
 					oids::AUTHORITY_KEY_IDENTIFIER,
 					oids::SUBJECT_KEY_IDENTIFIER,
 				],
-			);
+			)?;
 
 			// Test client certificate extensions
 			assert_cert_extensions(
 				&bundle.client_cert,
 				&[oids::AUTHORITY_KEY_IDENTIFIER, oids::SUBJECT_KEY_IDENTIFIER],
-			);
-		});
+			)?;
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_chain_traversal() {
+	fn test_chain_traversal() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, root_certs, intermediate_certs } =
 				bundle;
@@ -1972,8 +2046,8 @@ mod tests {
 			let client_with_no_chain = CertificateBundle {
 				certificate: client_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 
 			assert!(client_with_no_chain.to_issuer_certificate().is_none());
@@ -1998,20 +2072,26 @@ mod tests {
 				intermediate: intermediate_certs.clone(),
 			};
 
-			let issuer = user_with_chain.to_issuer_certificate().unwrap();
-			let root = user_with_chain.to_root_certificate().unwrap();
+			let issuer = user_with_chain
+				.to_issuer_certificate()
+				.ok_or_else(|| CertificateError::ValidationFailed { reason: "issuer not found".to_string() })?;
+			let root = user_with_chain
+				.to_root_certificate()
+				.ok_or_else(|| CertificateError::ValidationFailed { reason: "root not found".to_string() })?;
 
 			assert_eq!(issuer.to_subject(), intermediate_cert.to_subject());
 			assert_eq!(root.to_subject(), ca_cert.to_subject());
 			assert_eq!(user_with_chain.to_chain_length(), 3);
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_with_options_try_from() {
+	fn test_certificate_with_options_try_from() -> Result<(), CertificateError> {
 		macro_rules! test_certificate_with_options_basic {
 			($try_from_expr:expr, $expected_trusted:expr, $expected_chain_length:expr) => {
-				let cert_with_opts = $try_from_expr.unwrap();
+				let cert_with_opts = $try_from_expr?;
 				assert_eq!(cert_with_opts.is_trusted(), $expected_trusted);
 				assert_eq!(cert_with_opts.to_chain_length(), $expected_chain_length);
 			};
@@ -2020,7 +2100,7 @@ mod tests {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
 			// Test basic conversions
 			let pem_data = test_set.chain.root;
-			let base_cert: Certificate = test_set.chain.root.parse().unwrap();
+			let base_cert: Certificate = test_set.chain.root.parse()?;
 			test_certificate_with_options_basic!(pem_data.parse::<CertificateBundle>(), false, 1);
 			test_certificate_with_options_basic!(CertificateBundle::try_from(base_cert.clone()), false, 1);
 			test_certificate_with_options_basic!(CertificateBundle::try_from(vec![base_cert.clone()]), false, 1);
@@ -2030,7 +2110,7 @@ mod tests {
 			assert!(empty_result.is_err());
 
 			// Test chain functionality
-			let cert_with_opts = pem_data.parse::<CertificateBundle>().unwrap();
+			let cert_with_opts = pem_data.parse::<CertificateBundle>()?;
 			let cert_with_trust = cert_with_opts
 				.clone()
 				.as_trusted()
@@ -2042,25 +2122,32 @@ mod tests {
 			let cert_with_trust = cert_with_opts.as_untrusted();
 			assert!(!cert_with_trust.is_trusted());
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_with_options_bundle_functionality() {
+	fn test_certificate_with_options_bundle_functionality() -> Result<(), CertificateError> {
 		/// Helper to test bundle roundtrip
-		fn test_bundle_roundtrip(bundle: &CertificateBundle, expected_cert_count: usize) {
-			let der_bundle = bundle.to_der().unwrap();
+		fn test_bundle_roundtrip(
+			bundle: &CertificateBundle,
+			expected_cert_count: usize,
+		) -> Result<(), CertificateError> {
+			let der_bundle = bundle.to_der()?;
 			assert!(!der_bundle.is_empty());
 
-			let restored = CertificateBundle::try_from(der_bundle.as_slice()).unwrap();
+			let restored = CertificateBundle::try_from(der_bundle.as_slice())?;
 			let actual_count = restored.into_iter().count();
 			assert_eq!(actual_count, expected_cert_count);
+
+			Ok(())
 		}
 
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 
 			let chain = vec![client_cert.clone(), intermediate_cert.clone(), ca_cert.clone()];
-			let bundle = CertificateBundle::try_from(chain).unwrap();
+			let bundle = CertificateBundle::try_from(chain)?;
 			assert_eq!(bundle.certificate, *client_cert);
 			assert_eq!(bundle.to_chain_length(), 3);
 			assert_eq!(bundle.clone().into_iter().count(), 3);
@@ -2073,22 +2160,24 @@ mod tests {
 			assert!(issuer_public_key.is_some());
 
 			// Test bundle roundtrip
-			test_bundle_roundtrip(&bundle, 3);
-			let single_cert_bundle = CertificateBundle::try_from(vec![client_cert.clone()]).unwrap();
-			test_bundle_roundtrip(&single_cert_bundle, 1);
-		});
+			test_bundle_roundtrip(&bundle, 3)?;
+			let single_cert_bundle = CertificateBundle::try_from(vec![client_cert.clone()])?;
+			test_bundle_roundtrip(&single_cert_bundle, 1)?;
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_store_functionality() {
+	fn test_certificate_store_functionality() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 
 			let mut cert_with_options = CertificateBundle {
 				certificate: client_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 			assert_eq!(cert_with_options.root.len(), 0);
 			assert_eq!(cert_with_options.intermediate.len(), 0);
@@ -2104,11 +2193,13 @@ mod tests {
 			assert!(all_certs.contains(ca_cert));
 			assert!(all_certs.contains(intermediate_cert));
 			assert!(all_certs.contains(client_cert));
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_intermediate_certificate_functionality() {
+	fn test_intermediate_certificate_functionality() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
 
@@ -2116,8 +2207,8 @@ mod tests {
 			let mut cert_bundle = CertificateBundle {
 				certificate: user_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 
 			// Add root and intermediate certificates
@@ -2134,15 +2225,17 @@ mod tests {
 			// Test that intermediate certificate is properly stored
 			assert_eq!(cert_bundle.intermediate.len(), 1);
 			assert!(cert_bundle.intermediate.contains(intermediate_cert));
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_validation_methods() {
+	fn test_certificate_validation_methods() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let cert = &bundle.ca_cert;
-			let moment = get_cert_moment();
-			assert!(cert.is_valid_at(moment).unwrap());
+			let moment = get_cert_moment()?;
+			assert!(cert.is_valid_at(moment)?);
 			assert!(cert.assert_valid(moment).is_ok());
 			assert!(cert.validate_at(moment).is_ok());
 
@@ -2151,7 +2244,7 @@ mod tests {
 			assert!(now.is_ok() || now.is_err());
 
 			// Test current validity methods
-			assert!(cert.is_currently_valid().unwrap());
+			assert!(cert.is_currently_valid()?);
 
 			let subject = cert.to_subject();
 			let issuer = cert.to_issuer();
@@ -2197,17 +2290,19 @@ mod tests {
 			assert!(!subject_name.is_empty());
 			assert!(!issuer_name.is_empty());
 
-			let public_key = cert.to_subject_public_key();
+			let public_key = cert.to_subject_public_key()?;
 			let raw_bytes = public_key.subject_public_key.raw_bytes();
 			assert!(!raw_bytes.is_empty());
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_trust_and_verification() {
+	fn test_certificate_trust_and_verification() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } = bundle;
-			let moment = get_cert_moment();
+			let moment = get_cert_moment()?;
 
 			let empty_certificates: Vec<Certificate> = vec![];
 			assert!(!ca_cert.is_trusted(empty_certificates.clone(), Some(moment)));
@@ -2221,9 +2316,9 @@ mod tests {
 			assert!(!chain.is_empty());
 
 			// Test with CertificateWithOptions for getting issuer and root
-			let mut root_certs = HashSet::new();
+			let mut root_certs = BTreeSet::new();
 			root_certs.insert(ca_cert.clone());
-			let mut intermediate_certs = HashSet::new();
+			let mut intermediate_certs = BTreeSet::new();
 			intermediate_certs.insert(intermediate_cert.clone());
 
 			let user_with_chain = CertificateBundle {
@@ -2252,24 +2347,25 @@ mod tests {
 			assert_eq!(ca_cert.to_issuer(), ca_cert.to_subject()); // Self-signed
 
 			// Test cryptographic relationship
-			assert!(intermediate_cert.check_issued(ca_cert));
-			assert!(user_cert.check_issued(intermediate_cert));
-		});
+			assert!(intermediate_cert.is_issued_by(ca_cert));
+			assert!(user_cert.is_issued_by(intermediate_cert));
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_with_options_validation() {
+	fn test_certificate_with_options_validation() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
-			let moment = get_cert_moment();
+			let moment = get_cert_moment()?;
 			let CertificateTestBundle { ca_cert, root_certs, intermediate_certs, client_cert, .. } = bundle;
 
 			let cert_with_options = CertificateBundle::new(
-				&client_cert.to_pem().unwrap(),
+				&client_cert.to_pem()?,
 				Some(CertificateOptions { moment: Some(moment), is_trusted_root: Some(true) }),
 				Some(root_certs.clone()),
 				Some(intermediate_certs.clone()),
-			)
-			.unwrap();
+			)?;
 
 			// Test validation with certificate collections - verify_chain now returns iterator
 			let chain: Vec<Certificate> = cert_with_options.verify_chain().collect();
@@ -2279,8 +2375,8 @@ mod tests {
 			let cert_with_no_roots = CertificateBundle {
 				certificate: ca_cert.clone(),
 				options: CertificateOptions::default(),
-				root: HashSet::new(),
-				intermediate: HashSet::new(),
+				root: BTreeSet::new(),
+				intermediate: BTreeSet::new(),
 			};
 
 			// Verify that the certificate returns empty chain without roots
@@ -2288,46 +2384,48 @@ mod tests {
 			assert_eq!(chain.len(), 1); // Only the certificate itself
 
 			// Test DER conversion
-			let der_bytes = cert_with_options.to_der().unwrap();
+			let der_bytes = cert_with_options.to_der()?;
 			assert!(!der_bytes.is_empty());
 
 			// Test get_certificates
 			let all_certs = cert_with_options.into_iter();
 			assert_eq!(all_certs.count(), 3);
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_try_from_implementations() {
+	fn test_try_from_implementations() -> Result<(), CertificateError> {
 		macro_rules! test_certificate_conversion {
 			($source:expr, $target_type:ty, $test_condition:expr) => {
-				let converted: $target_type = $source.try_into().unwrap();
+				let converted: $target_type = $source.try_into()?;
 				assert!($test_condition(converted));
 			};
 		}
 
 		macro_rules! test_certificate_from {
 			($source:expr, $expected_hash:expr) => {
-				let cert = Certificate::try_from($source).unwrap();
-				assert_eq!($expected_hash, CertificateHash::try_from(&cert).unwrap());
+				let cert = Certificate::try_from($source)?;
+				assert_eq!($expected_hash, CertificateHash::try_from(&cert)?);
 			};
 		}
 
 		macro_rules! test_certificate_parse {
 			($source:expr, $expected_hash:expr) => {
-				let cert: Certificate = $source.parse().unwrap();
-				assert_eq!($expected_hash, CertificateHash::try_from(&cert).unwrap());
+				let cert: Certificate = $source.parse()?;
+				assert_eq!($expected_hash, CertificateHash::try_from(&cert)?);
 			};
 		}
 
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
-				extract_certificates(&test_set.chain);
+				extract_certificates(&test_set.chain)?;
 
 			// Test each certificate in the chain
 			for cert in [&ca_cert, &intermediate_cert, &user_cert] {
-				let der_bytes = cert.to_der().unwrap();
-				let expected_hash = CertificateHash::try_from(cert).unwrap();
+				let der_bytes = cert.to_der()?;
+				let expected_hash = CertificateHash::try_from(cert)?;
 
 				// Test Certificate from various sources
 				test_certificate_from!(der_bytes.as_slice(), expected_hash);
@@ -2338,92 +2436,89 @@ mod tests {
 				test_certificate_conversion!(cert.clone(), Vec<u8>, |v: Vec<u8>| v == der_bytes);
 
 				// Test CertificateWithOptions from single certificate DER
-				let cert_der = cert.to_der().unwrap();
-				let single_cert_bundle = CertificateBundle::try_from(cert_der).unwrap();
+				let cert_der = cert.to_der()?;
+				let single_cert_bundle = CertificateBundle::try_from(cert_der)?;
 				assert_eq!(single_cert_bundle.into_iter().count(), 1);
 			}
 
 			// Test Certificate from PEM strings (specific to each cert type)
-			test_certificate_parse!(test_set.chain.root, CertificateHash::try_from(&ca_cert).unwrap());
-			test_certificate_parse!(test_set.chain.root.to_string(), CertificateHash::try_from(&ca_cert).unwrap());
-			test_certificate_parse!(
-				test_set.chain.intermediate,
-				CertificateHash::try_from(&intermediate_cert).unwrap()
-			);
+			test_certificate_parse!(test_set.chain.root, CertificateHash::try_from(&ca_cert)?);
+			test_certificate_parse!(test_set.chain.root.to_string(), CertificateHash::try_from(&ca_cert)?);
+			test_certificate_parse!(test_set.chain.intermediate, CertificateHash::try_from(&intermediate_cert)?);
 			test_certificate_parse!(
 				test_set.chain.intermediate.to_string(),
-				CertificateHash::try_from(&intermediate_cert).unwrap()
+				CertificateHash::try_from(&intermediate_cert)?
 			);
-			test_certificate_parse!(test_set.chain.client, CertificateHash::try_from(&user_cert).unwrap());
-			test_certificate_parse!(test_set.chain.client.to_string(), CertificateHash::try_from(&user_cert).unwrap());
+			test_certificate_parse!(test_set.chain.client, CertificateHash::try_from(&user_cert)?);
+			test_certificate_parse!(test_set.chain.client.to_string(), CertificateHash::try_from(&user_cert)?);
 
 			// Test CertificateWithOptions from concatenated DER
-			let mut combined_der = ca_cert.to_der().unwrap();
-			combined_der.extend_from_slice(&user_cert.to_der().unwrap());
+			let mut combined_der = ca_cert.to_der()?;
+			combined_der.extend_from_slice(&user_cert.to_der()?);
 		}
+
+		Ok(())
 	}
 
 	// TODO Fix these issues
 	#[test]
-	fn test_verify_signature() {
+	fn test_verify_signature() -> Result<(), CertificateError> {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } =
-				extract_certificates(&test_set.chain);
+				extract_certificates(&test_set.chain)?;
 
 			// Get the correct signing keys for each certificate
-			let ca_key = &ca_cert.to_subject_public_key();
-			let intermediate_key = &intermediate_cert.to_subject_public_key();
+			let ca_key = ca_cert.to_subject_public_key()?;
+			let intermediate_key = intermediate_cert.to_subject_public_key()?;
 			// let client_key = &client_cert.tbs_certificate.subject_public_key_info;
 
 			// Test positive cases
 			// TODO Bug with verifying self-signed
-			// assert!(ca_cert.verify_signature(ca_key).unwrap());
-			assert!(intermediate_cert.verify_signature(ca_key).unwrap());
-			assert!(client_cert.verify_signature(intermediate_key).unwrap());
+			// assert!(ca_cert.verify_signature(&ca_key)?);
+			assert!(intermediate_cert.verify_signature(&ca_key)?);
+			assert!(client_cert.verify_signature(&intermediate_key)?);
 
-			// Test check_issued relationships
-			// assert!(ca_cert.check_issued(&ca_cert));
-			assert!(intermediate_cert.check_issued(&ca_cert));
-			assert!(client_cert.check_issued(&intermediate_cert));
+			// Test is_issued_by relationships
+			// assert!(ca_cert.is_issued_by(&ca_cert));
+			assert!(intermediate_cert.is_issued_by(&ca_cert));
+			assert!(client_cert.is_issued_by(&intermediate_cert));
 
 			// Test negative cases (wrong key usage)
-			// assert!(!client_cert.verify_signature(client_key).unwrap());
-			// assert!(!intermediate_cert.verify_signature(client_key).unwrap());
-			// assert!(!ca_cert.verify_signature(client_key).unwrap());
+			// assert!(!client_cert.verify_signature(client_key)?);
+			// assert!(!intermediate_cert.verify_signature(client_key)?);
+			// assert!(!ca_cert.verify_signature(client_key)?);
 
 			// Test certificate chain relationships (subject/issuer matching)
 			assert_eq!(client_cert.to_issuer(), intermediate_cert.to_subject());
 			assert_eq!(intermediate_cert.to_issuer(), ca_cert.to_subject());
 			assert_eq!(ca_cert.to_issuer(), ca_cert.to_subject());
 
-			// Test negative check_issued cases
-			assert!(!client_cert.check_issued(&client_cert));
-			assert!(!intermediate_cert.check_issued(&client_cert));
-			assert!(!ca_cert.check_issued(&client_cert));
+			// Test negative is_issued_by cases
+			assert!(!client_cert.is_issued_by(&client_cert));
+			assert!(!intermediate_cert.is_issued_by(&client_cert));
+			assert!(!ca_cert.is_issued_by(&client_cert));
 
 			// Verify signature and TBS data is present
 			assert!(!ca_cert.signature.raw_bytes().is_empty());
 			assert!(!intermediate_cert.signature.raw_bytes().is_empty());
 			assert!(!client_cert.signature.raw_bytes().is_empty());
-			assert!(!ca_cert.tbs_certificate.to_der().unwrap().is_empty());
-			assert!(!intermediate_cert
-				.tbs_certificate
-				.to_der()
-				.unwrap()
-				.is_empty());
-			assert!(!client_cert.tbs_certificate.to_der().unwrap().is_empty());
+			assert!(!ca_cert.tbs_certificate.to_der()?.is_empty());
+			assert!(!intermediate_cert.tbs_certificate.to_der()?.is_empty());
+			assert!(!client_cert.tbs_certificate.to_der()?.is_empty());
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_verify_signature_edge_cases() {
+	fn test_verify_signature_edge_cases() -> Result<(), CertificateError> {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
-				extract_certificates(&test_set.chain);
-			assert!(user_cert.check_issued(&intermediate_cert));
-			assert!(!user_cert.check_issued(&user_cert));
-			assert!(intermediate_cert.check_issued(&ca_cert));
-			assert!(!ca_cert.check_issued(&user_cert));
+				extract_certificates(&test_set.chain)?;
+			assert!(user_cert.is_issued_by(&intermediate_cert));
+			assert!(!user_cert.is_issued_by(&user_cert));
+			assert!(intermediate_cert.is_issued_by(&ca_cert));
+			assert!(!ca_cert.is_issued_by(&user_cert));
 
 			let verification_cases = [
 				//(&ca_cert, &ca_cert, true),
@@ -2435,18 +2530,20 @@ mod tests {
 			];
 			for (cert, issuer, expected) in verification_cases {
 				let issuer_public_key =
-					SubjectPublicKeyInfo::from(issuer.tbs_certificate.subject_public_key_info.clone());
+					SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone())?;
 				let result = cert.verify_signature(&issuer_public_key);
 				assert_eq!(result.unwrap_or(false), expected);
 			}
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_verify_signature_algorithm_detection() {
+	fn test_verify_signature_algorithm_detection() -> Result<(), CertificateError> {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert: user_cert, .. } =
-				extract_certificates(&test_set.chain);
+				extract_certificates(&test_set.chain)?;
 
 			// Verify signature algorithms are valid OIDs
 			let ca_sig_alg = &ca_cert.signature_algorithm;
@@ -2457,12 +2554,12 @@ mod tests {
 			assert!(!user_sig_alg.oid.to_string().is_empty());
 
 			// Verify signatures
-			let ca_public_key = &ca_cert.to_subject_public_key();
-			let intermediate_public_key = &intermediate_cert.to_subject_public_key();
-			let user_public_key = &user_cert.to_subject_public_key();
-			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
-			assert!(intermediate_cert.verify_signature(ca_public_key).unwrap());
-			assert!(user_cert.verify_signature(intermediate_public_key).unwrap());
+			let ca_public_key = ca_cert.to_subject_public_key()?;
+			let intermediate_public_key = intermediate_cert.to_subject_public_key()?;
+			let user_public_key = user_cert.to_subject_public_key()?;
+			assert!(user_cert.verify_signature(&intermediate_public_key)?);
+			assert!(intermediate_cert.verify_signature(&ca_public_key)?);
+			assert!(user_cert.verify_signature(&intermediate_public_key)?);
 
 			// Verify public key algorithms match the expected OID from key data
 			if let Some(key_data) = &test_set.key_data {
@@ -2479,19 +2576,21 @@ mod tests {
 			assert!(!intermediate_raw_key.is_empty());
 			assert!(!client_raw_key.is_empty());
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_verify_signature_with_store() {
+	fn test_verify_signature_with_store() -> Result<(), CertificateError> {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
-			let moment = get_cert_moment();
+			let moment = get_cert_moment()?;
 			let CertificateTestBundle {
 				ca_cert,
 				intermediate_cert,
 				client_cert: user_cert,
 				root_certs,
 				intermediate_certs,
-			} = extract_certificates(&test_set.chain);
+			} = extract_certificates(&test_set.chain)?;
 
 			let all_certificates: Vec<Certificate> = root_certs
 				.iter()
@@ -2516,14 +2615,18 @@ mod tests {
 				intermediate: intermediate_certs.clone(),
 			};
 
-			let user_issuer = user_with_chain.to_issuer_certificate();
-			assert!(user_issuer.is_some());
-			assert_eq!(CertificateHash::try_from(&user_issuer.unwrap()), CertificateHash::try_from(&intermediate_cert));
+			let user_issuer = user_with_chain
+				.to_issuer_certificate()
+				.ok_or_else(|| CertificateError::ValidationFailed { reason: "issuer not found".to_string() })?;
+			assert_eq!(CertificateHash::try_from(&user_issuer)?, CertificateHash::try_from(&intermediate_cert)?);
 
-			let user_root = user_with_chain.to_root_certificate();
-			assert!(user_root.is_some());
-			assert_eq!(CertificateHash::try_from(&user_root.unwrap()), CertificateHash::try_from(&ca_cert));
+			let user_root = user_with_chain
+				.to_root_certificate()
+				.ok_or_else(|| CertificateError::ValidationFailed { reason: "root not found".to_string() })?;
+			assert_eq!(CertificateHash::try_from(&user_root)?, CertificateHash::try_from(&ca_cert)?);
 		}
+
+		Ok(())
 	}
 
 	#[test]
@@ -2572,24 +2675,25 @@ mod tests {
 	}
 
 	#[test]
-	fn test_certificate_hash_conversions() {
+	fn test_certificate_hash_conversions() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			for cert in [&bundle.ca_cert, &bundle.intermediate_cert, &bundle.client_cert] {
 				// Test From<&Certificate>
-				let hash_from_ref = CertificateHash::try_from(cert).unwrap();
-				let hash_from_owned = CertificateHash::try_from(cert.clone()).unwrap();
+				let hash_from_ref = CertificateHash::try_from(cert)?;
+				let hash_from_owned = CertificateHash::try_from(cert.clone())?;
 				assert_eq!(hash_from_ref, hash_from_owned);
 
 				// Test From<&[u8]> via DER
-				let der_bytes = cert.to_der().unwrap();
+				let der_bytes = cert.to_der()?;
 				let hash_from_der = CertificateHash::from(der_bytes.as_slice());
 				assert_eq!(hash_from_ref, hash_from_der);
 
 				// Test from_certificate_der methods
-				let hash_sha1 = CertificateHash::from_certificate_der(&der_bytes);
-				let hash_sha256 = CertificateHash::from_certificate_der_sha256(&der_bytes);
-				assert_eq!(hash_from_ref, hash_sha1); // Default should be SHA1
-				assert_ne!(hash_sha1, hash_sha256); // Different algorithms should differ
+				let hash_default = CertificateHash::from_certificate_der(&der_bytes);
+				let hash_sha256 =
+					CertificateHash::new(HashAlgorithm::Sha2_256.hash(&der_bytes), Some(crate::oids::SHA256));
+				assert_eq!(hash_from_ref, hash_default); // Default should be SHA3-256
+				assert_ne!(hash_default, hash_sha256); // Different algorithms should differ
 
 				// Test Display trait
 				let hash_string = hash_from_ref.to_string();
@@ -2600,59 +2704,54 @@ mod tests {
 				let hash_bytes: &[u8] = hash_from_ref.as_ref();
 				assert_eq!(hash_bytes.len(), hash_from_ref.len());
 			}
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_hash_hex_conversions() {
+	fn test_certificate_hash_hex_conversions() -> Result<(), CertificateError> {
 		let test_data = b"test data for hex conversion";
-		let hash = CertificateHash::sha256(test_data);
+		let hash = CertificateHash::sha3_256(test_data);
 		let hex_string = hash.to_string();
 
 		// Test FromStr with String
-		let hash_from_string: CertificateHash = hex_string.parse().unwrap();
+		let hash_from_string: CertificateHash = hex_string.parse()?;
 		assert_eq!(hash_from_string.as_ref(), hash.as_ref());
 
 		// Test FromStr with &str
-		let hash_from_str: CertificateHash = hex_string.as_str().parse().unwrap();
+		let hash_from_str: CertificateHash = hex_string.as_str().parse()?;
 		assert_eq!(hash_from_str, hash_from_string);
 
 		// Test invalid hex strings
 		assert!("invalid_hex".parse::<CertificateHash>().is_err());
 		assert!("g1234567".parse::<CertificateHash>().is_err()); // Invalid hex character
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_hash_verification() {
+	fn test_certificate_hash_verification() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			for cert in [&bundle.ca_cert, &bundle.intermediate_cert, &bundle.client_cert] {
 				// Test verification with different algorithms
-				let der_bytes = cert.to_der().unwrap();
-
-				// Both should verify against the same certificate
-				let hash_sha1 = CertificateHash::sha1(&der_bytes);
-				let hash_sha256 = CertificateHash::sha256(&der_bytes);
-				assert!(hash_sha1.verify_certificate(cert).unwrap());
-				assert!(hash_sha256.verify_certificate(cert).unwrap());
+				let der_bytes = cert.to_der()?;
 
 				// Test SHA-512 and SHA3-256 verification
 				let hash_sha512 =
 					CertificateHash::new(HashAlgorithm::Sha2_512.hash(&der_bytes), Some(crate::oids::SHA512));
-				assert!(hash_sha512.verify_certificate(cert).unwrap());
+				assert!(hash_sha512.verify_certificate(cert)?);
 				let hash_sha3_256 =
 					CertificateHash::new(HashAlgorithm::Sha3_256.hash(&der_bytes), Some(crate::oids::SHA3_256));
-				assert!(hash_sha3_256.verify_certificate(cert).unwrap());
-
-				// Test verification fails with different certificate
-				if cert != &bundle.ca_cert {
-					assert!(!hash_sha1.verify_certificate(&bundle.ca_cert).unwrap());
-				}
+				assert!(hash_sha3_256.verify_certificate(cert)?);
 			}
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_hash_unknown_algorithm() {
+	fn test_certificate_hash_unknown_algorithm() -> Result<(), CertificateError> {
 		let _test_data = b"test data";
 		let unknown_hash = CertificateHash::new(vec![0x01, 0x02], Some("1.2.3.4.5.unknown"));
 		assert_eq!(unknown_hash.algorithm_oid(), "1.2.3.4.5.unknown");
@@ -2662,15 +2761,13 @@ mod tests {
 		test_all_certificate_sets(|bundle| {
 			let result = unknown_hash.verify_certificate(&bundle.ca_cert);
 			assert!(result.is_err());
-			assert!(result
-				.unwrap_err()
-				.to_string()
-				.contains("Unsupported hash algorithm"));
-		});
+			assert!(matches!(result, Err(ref e) if e.to_string().contains("Unsupported hash algorithm")));
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_hash_set_basic_operations() {
+	fn test_certificate_hash_set_basic_operations() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let certs = vec![bundle.ca_cert.clone(), bundle.intermediate_cert.clone()];
 
@@ -2688,11 +2785,13 @@ mod tests {
 			let initial_len = cert_set.certificates.len();
 			cert_set.insert(bundle.client_cert.clone());
 			assert_eq!(cert_set.certificates.len(), initial_len);
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_hash_set_conversions() {
+	fn test_certificate_hash_set_conversions() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let certs = vec![bundle.ca_cert.clone(), bundle.intermediate_cert.clone(), bundle.client_cert.clone()];
 
@@ -2701,7 +2800,7 @@ mod tests {
 			assert_eq!(cert_set_from_vec.certificates.len(), 3);
 
 			// Test TryFrom<&[Certificate]>
-			let cert_set_from_slice = CertificateHashSet::try_from(certs.as_slice()).unwrap();
+			let cert_set_from_slice = CertificateHashSet::try_from(certs.as_slice())?;
 			assert_eq!(cert_set_from_slice.certificates.len(), 3);
 
 			// Test conversions to Vec<String> (subject names)
@@ -2714,26 +2813,30 @@ mod tests {
 			// Test reference conversion
 			let subject_names_ref: Vec<String> = (&cert_set_from_vec).into();
 			assert_eq!(subject_names, subject_names_ref);
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_hash_set_default_and_empty() {
+	fn test_certificate_hash_set_default_and_empty() -> Result<(), CertificateError> {
 		let empty_set = CertificateHashSet::default();
 		assert_eq!(empty_set.certificates.len(), 0);
 
 		// Test TryFrom<&[String]> (legacy conversion - returns empty)
 		let hash_strings = vec!["abc123".to_string(), "def456".to_string()];
-		let cert_set = CertificateHashSet::try_from(hash_strings.as_slice()).unwrap();
+		let cert_set = CertificateHashSet::try_from(hash_strings.as_slice())?;
 		assert_eq!(cert_set.certificates.len(), 0); // Should be empty as documented
 
 		// Test empty conversions
 		let empty_subjects: Vec<String> = empty_set.into();
 		assert!(empty_subjects.is_empty());
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_hash_set_edge_cases() {
+	fn test_certificate_hash_set_edge_cases() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let certs_with_duplicates = vec![
 				bundle.ca_cert.clone(),
@@ -2742,36 +2845,40 @@ mod tests {
 			];
 
 			let cert_set = CertificateHashSet::from(certs_with_duplicates);
-			// HashSet should automatically deduplicate
+			// BTreeSet should automatically deduplicate
 			assert_eq!(cert_set.certificates.len(), 2);
 			assert!(cert_set.has(&bundle.ca_cert));
 			assert!(cert_set.has(&bundle.intermediate_cert));
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_hash_consistency_across_serialization() {
+	fn test_certificate_hash_consistency_across_serialization() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			for cert in [&bundle.ca_cert, &bundle.intermediate_cert, &bundle.client_cert] {
 				// Hash should be consistent across PEM/DER round-trips
-				let original_hash = CertificateHash::try_from(cert).unwrap();
+				let original_hash = CertificateHash::try_from(cert)?;
 
-				let pem = cert.to_pem().unwrap();
-				let cert_from_pem: Certificate = pem.parse().unwrap();
-				let hash_from_pem = CertificateHash::try_from(&cert_from_pem).unwrap();
+				let pem = cert.to_pem()?;
+				let cert_from_pem: Certificate = pem.parse()?;
+				let hash_from_pem = CertificateHash::try_from(&cert_from_pem)?;
 
-				let der = cert.to_der().unwrap();
-				let cert_from_der = Certificate::try_from(der).unwrap();
-				let hash_from_der = CertificateHash::try_from(&cert_from_der).unwrap();
+				let der = cert.to_der()?;
+				let cert_from_der = Certificate::try_from(der)?;
+				let hash_from_der = CertificateHash::try_from(&cert_from_der)?;
 				assert_eq!(original_hash, hash_from_pem);
 				assert_eq!(original_hash, hash_from_der);
 				assert_eq!(hash_from_pem, hash_from_der);
 			}
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_extension_creation_methods() {
+	fn test_extension_creation_methods() -> Result<(), CertificateError> {
 		struct ExtensionTest {
 			name: &'static str,
 			extension: Extension,
@@ -2818,7 +2925,7 @@ mod tests {
 			},
 			ExtensionTest {
 				name: "custom extension",
-				extension: Extension::new("1.2.3.4", [0x01, 0x02, 0x03], true).unwrap(),
+				extension: Extension::new("1.2.3.4", [0x01, 0x02, 0x03], true)?,
 				expected_oid: "1.2.3.4",
 				expected_critical: true,
 			},
@@ -2828,10 +2935,12 @@ mod tests {
 			assert_eq!(test.extension.extn_id.to_string(), test.expected_oid, "OID mismatch for {}", test.name);
 			assert_eq!(test.extension.critical, test.expected_critical, "Critical flag mismatch for {}", test.name);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_rfc5280_compliance_validation() {
+	fn test_rfc5280_compliance_validation() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let cert = &bundle.ca_cert;
 			// Test RFC 5280 compliance validation
@@ -2842,23 +2951,25 @@ mod tests {
 			assert!(cert.validate_extension_consistency().is_ok());
 			// Test DN validation
 			assert!(cert.validate_distinguished_names().is_ok());
-		});
+
+			Ok(())
+		})?;
 
 		// Test DN validation error cases
 		let dn_test_cases = [
-			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")]).unwrap(), Some(false)),
-			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")]).unwrap(), None),
-			(utils::create_dn(&[(oids::CN, "Test Subject")]).unwrap(), RdnSequence(Vec::new()), None),
+			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")])?, Some(false)),
+			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")])?, None),
+			(utils::create_dn(&[(oids::CN, "Test Subject")])?, RdnSequence(Vec::new()), None),
 		];
 
 		for (subject, issuer, san_critical) in dn_test_cases {
 			// Create a minimal public key info for Ed25519
-			let algorithm = oids::ED25519.parse().unwrap();
-			let subject_public_key = BitString::from_bytes(&[0u8; 32]).unwrap();
+			let algorithm = oids::ED25519.parse().expect("Invalid OID");
+			let subject_public_key = BitString::from_bytes(&[0u8; 32]).expect("Invalid bytes");
 			let public_key_info = SubjectPublicKeyInfo { algorithm, subject_public_key };
-			let oid = ObjectIdentifier::new(oids::ED25519).unwrap();
+			let oid = ObjectIdentifier::new(oids::ED25519).expect("Invalid OID");
 			let signature_algorithm = AlgorithmIdentifierOwned { oid, parameters: None };
-			let signature = der::asn1::BitString::from_bytes(&[0u8; 64]).unwrap();
+			let signature = der::asn1::BitString::from_bytes(&[0u8; 64]).expect("Invalid bytes");
 			let mut builder = CertificateBuilder::new()
 				.with_serial_number(SerialNumber::from(1u8))
 				.with_validity_days(365)
@@ -2882,108 +2993,103 @@ mod tests {
 				builder = builder.with_extension(san_ext);
 			}
 
-			let tbs_certificate = builder.build_tbs().unwrap();
+			let tbs_certificate = builder.build_tbs().expect("Failed to build TBS");
 			let cert = Certificate { tbs_certificate, signature_algorithm, signature };
 			let result = cert.validate_distinguished_names();
 			assert!(result.is_err());
 			assert!(matches!(result, Err(CertificateError::ValidationFailed { reason: _ })));
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_authority_subject_dn_validation() {
+	fn test_authority_subject_dn_validation() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 			// Test valid issuer-subject relationships
-			assert!(intermediate_cert.validate_issuer_subject_dn_match(ca_cert));
-			assert!(client_cert.validate_issuer_subject_dn_match(intermediate_cert));
+			assert!(intermediate_cert.has_matching_issuer_subject_dn(ca_cert));
+			assert!(client_cert.has_matching_issuer_subject_dn(intermediate_cert));
 			// Test self-signed certificate
-			assert!(ca_cert.validate_issuer_subject_dn_match(ca_cert));
+			assert!(ca_cert.has_matching_issuer_subject_dn(ca_cert));
 			// Test invalid relationships
-			assert!(!client_cert.validate_issuer_subject_dn_match(ca_cert));
-			assert!(!ca_cert.validate_issuer_subject_dn_match(client_cert));
-		});
+			assert!(!client_cert.has_matching_issuer_subject_dn(ca_cert));
+			assert!(!ca_cert.has_matching_issuer_subject_dn(client_cert));
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_authority_key_identifier_validation() {
+	fn test_authority_key_identifier_validation() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 			// Test Authority Key Identifier validation
-			assert!(intermediate_cert.validate_authority_key_identifier(ca_cert));
-			assert!(client_cert.validate_authority_key_identifier(intermediate_cert));
+			assert!(intermediate_cert.has_valid_authority_key_identifier(ca_cert));
+			assert!(client_cert.has_valid_authority_key_identifier(intermediate_cert));
 
 			// Self-signed certificates may or may not have AKI
-			if ca_cert
-				.get_extension(oids::AUTHORITY_KEY_IDENTIFIER)
-				.is_some()
-			{
-				assert!(ca_cert.validate_authority_key_identifier(ca_cert));
+			if ca_cert.extension(oids::AUTHORITY_KEY_IDENTIFIER).is_some() {
+				assert!(ca_cert.has_valid_authority_key_identifier(ca_cert));
 			}
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_enhanced_certificate_validation() {
+	fn test_enhanced_certificate_validation() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
-			// Test enhanced check_issued with RFC 5280 compliance
-			assert!(intermediate_cert.check_issued(ca_cert));
-			assert!(client_cert.check_issued(intermediate_cert));
-			assert!(!client_cert.check_issued(ca_cert));
+			// Test enhanced is_issued_by with RFC 5280 compliance
+			assert!(intermediate_cert.is_issued_by(ca_cert));
+			assert!(client_cert.is_issued_by(intermediate_cert));
+			assert!(!client_cert.is_issued_by(ca_cert));
 			// Test same public key comparison
-			assert!(ca_cert.same_public_key(ca_cert));
-			assert!(!ca_cert.same_public_key(client_cert));
+			assert!(ca_cert.has_same_public_key(ca_cert));
+			assert!(!ca_cert.has_same_public_key(client_cert));
 			// Test valid issuer-subject pair validation
-			assert!(intermediate_cert
-				.is_valid_issuer_subject_pair(ca_cert)
-				.unwrap());
-			assert!(client_cert
-				.is_valid_issuer_subject_pair(intermediate_cert)
-				.unwrap());
-			assert!(!client_cert.is_valid_issuer_subject_pair(ca_cert).unwrap());
-		});
+			assert!(intermediate_cert.is_valid_issuer_subject_pair(ca_cert)?);
+			assert!(client_cert.is_valid_issuer_subject_pair(intermediate_cert)?);
+			assert!(!client_cert.is_valid_issuer_subject_pair(ca_cert)?);
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_path_validation() {
+	fn test_certificate_path_validation() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let CertificateTestBundle { ca_cert, intermediate_cert, client_cert, .. } = bundle;
 
 			// Test valid certificate path
 			let valid_path = vec![client_cert.clone(), intermediate_cert.clone(), ca_cert.clone()];
-			assert!(client_cert.validate_certificate_path(&valid_path).unwrap());
+			assert!(client_cert.validate_certificate_path(&valid_path)?);
 
 			// Test invalid path (wrong order)
 			let invalid_path = vec![ca_cert.clone(), intermediate_cert.clone(), client_cert.clone()];
-			assert!(!ca_cert.validate_certificate_path(&invalid_path).unwrap());
+			assert!(!ca_cert.validate_certificate_path(&invalid_path)?);
 
 			// Test single certificate path (self-signed)
 			let self_signed_path = vec![ca_cert.clone()];
-			assert!(ca_cert
-				.validate_certificate_path(&self_signed_path)
-				.unwrap());
+			assert!(ca_cert.validate_certificate_path(&self_signed_path)?);
 
 			// Test empty path
-			assert!(!client_cert.validate_certificate_path(&[]).unwrap());
-		});
+			assert!(!client_cert.validate_certificate_path(&[])?);
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_certificate_graph_validation() {
+	fn test_certificate_graph_validation() -> Result<(), CertificateError> {
 		// Create test certificates for graph validation
-		let subject_cert = create_dummy_cert_builder("Subject", "Issuer", 1, false)
-			.build_test()
-			.unwrap();
-		let intermediate_cert = create_dummy_cert_builder("Issuer", "Intermediate", 2, true)
-			.build_test()
-			.unwrap();
-		let root_cert = create_dummy_cert_builder("Intermediate", "Intermediate", 3, true) // Self-signed
-			.build_test()
-			.unwrap();
-		let orphan_cert = create_dummy_cert_builder("Orphan", "Orphan", 4, true) // Self-signed orphan
-			.build_test()
-			.unwrap();
+		let subject_cert = create_dummy_cert_builder("Subject", "Issuer", 1, false)?.build_test()?;
+		let intermediate_cert = create_dummy_cert_builder("Issuer", "Intermediate", 2, true)?.build_test()?;
+		let root_cert = create_dummy_cert_builder("Intermediate", "Intermediate", 3, true)? // Self-signed
+			.build_test()?;
+		let orphan_cert = create_dummy_cert_builder("Orphan", "Orphan", 4, true)? // Self-signed orphan
+			.build_test()?;
 
 		// Test valid graph (no cycles, no orphans, no duplicates)
 		let valid_certificates = [intermediate_cert.clone(), root_cert.clone()]
@@ -2995,7 +3101,7 @@ mod tests {
 
 		// Test with empty set (should pass)
 		assert!(subject_cert
-			.assert_can_construct_valid_graph(&HashSet::new())
+			.assert_can_construct_valid_graph(&BTreeSet::new())
 			.is_ok());
 
 		// Test with just intermediate (should pass)
@@ -3013,51 +3119,63 @@ mod tests {
 		assert!(matches!(result.unwrap_err(), CertificateError::CertificateOrphanFound));
 
 		// Test cycle detection by creating certificates that form a cycle
-		let cycle_a_cert = create_dummy_cert_builder("CycleA", "CycleB", 5, true) // A issued by B
-			.build_test()
-			.unwrap();
-		let cycle_b_cert = create_dummy_cert_builder("CycleB", "CycleA", 6, true) // B issued by A
-			.build_test()
-			.unwrap();
-		let cycle_subject_cert = create_dummy_cert_builder("Subject", "CycleA", 7, false) // Subject issued by A
-			.build_test()
-			.unwrap();
+		let cycle_a_cert = create_dummy_cert_builder("CycleA", "CycleB", 5, true)? // A issued by B
+			.build_test()?;
+		let cycle_b_cert = create_dummy_cert_builder("CycleB", "CycleA", 6, true)? // B issued by A
+			.build_test()?;
+		let cycle_subject_cert = create_dummy_cert_builder("Subject", "CycleA", 7, false)? // Subject issued by A
+			.build_test()?;
 
 		// Test cycle detection
 		let certificates_with_cycle = [cycle_a_cert, cycle_b_cert].into_iter().collect();
 		let cycle_result = cycle_subject_cert.assert_can_construct_valid_graph(&certificates_with_cycle);
 		assert!(cycle_result.is_err());
-		assert!(matches!(cycle_result.unwrap_err(), CertificateError::CertificateCycleFound));
+		assert!(matches!(cycle_result, Err(CertificateError::CertificateCycleFound)));
+
+		// Test graph-count limit: more than MAX_GRAPH_CERTIFICATES intermediates
+		let mut oversized = BTreeSet::new();
+		for serial in 0..=Certificate::MAX_GRAPH_CERTIFICATES {
+			oversized.insert(create_dummy_cert_builder("Issuer", "Issuer", (serial + 10) as u32, true)?.build_test()?);
+		}
+		let count_result = subject_cert.assert_can_construct_valid_graph(&oversized);
+		assert!(matches!(
+			count_result,
+			Err(CertificateError::CertificateInvalidGraphCount { max }) if max == Certificate::MAX_GRAPH_CERTIFICATES
+		));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_tbs_certificate_macro_conversions() {
+	fn test_tbs_certificate_macro_conversions() -> Result<(), CertificateError> {
 		test_all_certificate_sets(|bundle| {
 			let cert = &bundle.ca_cert;
 			let tbs = &cert.tbs_certificate;
 
 			// Test TryFrom<&[u8]> for TbsCertificate (from impl_try_from_der_decode macro)
-			let tbs_der_bytes = tbs.to_der().unwrap();
-			let tbs_from_bytes = TbsCertificate::try_from(tbs_der_bytes.as_slice()).unwrap();
+			let tbs_der_bytes = tbs.to_der()?;
+			let tbs_from_bytes = TbsCertificate::try_from(tbs_der_bytes.as_slice())?;
 			assert_eq!(tbs.serial_number, tbs_from_bytes.serial_number);
 			assert_eq!(tbs.subject, tbs_from_bytes.subject);
 			assert_eq!(tbs.issuer, tbs_from_bytes.issuer);
 
 			// Test TryFrom<&TbsCertificate> for Vec<u8> (from impl_try_from_der_encode_trait macro)
-			let der_from_ref: Vec<u8> = tbs.try_into().unwrap();
+			let der_from_ref: Vec<u8> = tbs.try_into()?;
 			assert!(!der_from_ref.is_empty());
 			assert_eq!(der_from_ref, tbs_der_bytes);
 
 			// Test round-trip conversion
-			let tbs_roundtrip = TbsCertificate::try_from(der_from_ref.as_slice()).unwrap();
+			let tbs_roundtrip = TbsCertificate::try_from(der_from_ref.as_slice())?;
 			assert_eq!(tbs.serial_number, tbs_roundtrip.serial_number);
 			assert_eq!(tbs.subject, tbs_roundtrip.subject);
 			assert_eq!(tbs.issuer, tbs_roundtrip.issuer);
-		});
+
+			Ok(())
+		})
 	}
 
 	#[test]
-	fn test_x509_cert_converters_round_trip() {
+	fn test_x509_cert_converters_round_trip() -> Result<(), CertificateError> {
 		// Test Extension converters
 		let test_extensions = vec![
 			(oids::BASIC_CONSTRAINTS, b"\x30\x03\x01\x01\xff".to_vec(), true),
@@ -3066,34 +3184,51 @@ mod tests {
 		];
 
 		for (oid, value, critical) in test_extensions {
-			let original = Extension::new(oid, &value, critical).unwrap();
-			let x509_ext: X509Extension = original.clone().into();
-			let round_trip: Extension = x509_ext.into();
+			let original = Extension::new(oid, &value, critical)?;
+			let x509_ext: X509Extension = original
+				.clone()
+				.try_into()
+				.expect("valid extension should convert");
+			let round_trip: Extension = x509_ext
+				.try_into()
+				.expect("valid extension should convert back");
 			assert_eq!(original, round_trip);
 		}
 
 		// Test TbsCertificate converter with real test certificate
 		test_all_certificate_sets(|bundle| {
 			let original_tbs = &bundle.ca_cert.tbs_certificate;
-			let x509_tbs: TbsCertificateInner<x509_cert::certificate::Rfc5280> = original_tbs.clone().into();
-			let round_trip: TbsCertificate = x509_tbs.into();
+			let x509_tbs: TbsCertificateInner<x509_cert::certificate::Rfc5280> = original_tbs
+				.clone()
+				.try_into()
+				.expect("valid tbs should convert");
+			let round_trip: TbsCertificate = x509_tbs.try_into().expect("valid tbs should convert back");
 			assert_eq!(original_tbs.version, round_trip.version);
 			assert_eq!(original_tbs.serial_number, round_trip.serial_number);
 			assert_eq!(original_tbs.issuer, round_trip.issuer);
 			assert_eq!(original_tbs.subject, round_trip.subject);
 			assert_eq!(original_tbs.validity, round_trip.validity);
-		});
+
+			Ok(())
+		})?;
 
 		// Test Certificate converter with real test certificate
 		test_all_certificate_sets(|bundle| {
 			let original_cert = &bundle.ca_cert;
-			let x509_cert: CertificateInner<x509_cert::certificate::Rfc5280> = original_cert.clone().into();
-			let round_trip: Certificate = x509_cert.into();
+			let x509_cert: CertificateInner<x509_cert::certificate::Rfc5280> = original_cert
+				.clone()
+				.try_into()
+				.expect("valid certificate should convert");
+			let round_trip: Certificate = x509_cert
+				.try_into()
+				.expect("valid certificate should convert back");
 			assert_eq!(original_cert.tbs_certificate.version, round_trip.tbs_certificate.version);
 			assert_eq!(original_cert.tbs_certificate.serial_number, round_trip.tbs_certificate.serial_number);
 			assert_eq!(original_cert.tbs_certificate.issuer, round_trip.tbs_certificate.issuer);
 			assert_eq!(original_cert.tbs_certificate.subject, round_trip.tbs_certificate.subject);
 			assert_eq!(original_cert.signature, round_trip.signature);
-		});
+
+			Ok(())
+		})
 	}
 }

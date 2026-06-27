@@ -9,30 +9,39 @@ homepage.workspace = true
 description = "Account management and cryptographic identities for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-# Local crates
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto" }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
-keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", optional = true }
+keetanetwork-crypto = { workspace = true, features = ["signature", "encryption"] }
+keetanetwork-error = { workspace = true }
+keetanetwork-utils = { workspace = true }
+keetanetwork-asn1 = { workspace = true, optional = true }
 
-# External dependencies
 base32.workspace = true
 bip39-dict.workspace = true
-hex.workspace = true
-snafu.workspace = true
+hex = { workspace = true }
+snafu = { workspace = true }
 strum.workspace = true
 strum_macros.workspace = true
-zeroize = { version = "1.8.1", features = ["derive"] }
-rand_core = { version = "0.9.3", features = ["std", "os_rng"] }
+zeroize = { version = "1.8.1", default-features = false, features = ["derive"] }
+rand_core = { workspace = true, features = ["os_rng"] }
 
 [dev-dependencies]
 base64.workspace = true
 
 [features]
-default = ["rasn"]
+default = ["std", "rasn"]
+std = [
+	"alloc",
+	"keetanetwork-crypto/std",
+	"keetanetwork-error/std",
+	"keetanetwork-utils/std",
+	"keetanetwork-asn1?/std",
+	"hex/std",
+	"snafu/std",
+	"rand_core/std",
+	"zeroize/std",
+]
+alloc = ["keetanetwork-error/alloc", "zeroize/alloc"]
 der = ["keetanetwork-asn1/der", "keetanetwork-crypto/der"]
 rasn = ["keetanetwork-asn1/rasn", "keetanetwork-crypto/rasn"]

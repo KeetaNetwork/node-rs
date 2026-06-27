@@ -2,6 +2,10 @@
 //!
 //! This module provides ECIES encryption.
 
+use alloc::vec::Vec;
+
+use core::sync::atomic::{fence, Ordering};
+
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
@@ -12,7 +16,7 @@ use crate::algorithms::ed25519::{X25519PrivateKey, X25519PublicKey};
 use crate::algorithms::secp256k1::{Secp256k1PrivateKey, Secp256k1PublicKey};
 use crate::algorithms::secp256r1::{Secp256r1PrivateKey, Secp256r1PublicKey};
 use crate::algorithms::{PrivateKey, PublicKey};
-use crate::error::CryptoError;
+use crate::error::{CryptoError, OrCryptoError};
 use crate::hash::HashAlgorithm;
 use crate::operations::encryption::{KeyExchange, KeyGeneration, SymmetricEncryption};
 use crate::utils::generate_random_bytes;
@@ -67,7 +71,7 @@ impl EciesSecp256k1 {
 	/// This matches the ecies-geth implementation which uses a counter-based
 	/// KDF and then SHA-256 for the MAC key derivation.
 	fn derive_keys(shared_secret: impl AsRef<[u8]>) -> Result<([u8; 16], [u8; 32]), CryptoError> {
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// First derive 32 bytes using the KDF
 		let kdf_output = Self::kdf(shared_secret.as_ref(), 32)?;
@@ -79,7 +83,7 @@ impl EciesSecp256k1 {
 		// MAC key is SHA-256 of the last 16 bytes
 		let mac_key_hash = HashAlgorithm::Sha2_256.hash_array::<32>(&kdf_output[16..32])?;
 
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		Ok((encryption_key, mac_key_hash))
 	}
@@ -138,7 +142,7 @@ impl Ecies for EciesSecp256k1 {
 		// Derive keys using custom KDF (matches ecies-geth)
 		let (encryption_key, mac_key) = Self::derive_keys(&shared_secret)?;
 		// Generate IV for AES-128-CTR
-		let iv = Aes128CtrCipher::generate_iv();
+		let iv = Aes128CtrCipher::generate_iv()?;
 		// Encrypt with AES-128-CTR
 		let cipher = Aes128CtrCipher::new();
 		let ciphertext_only = cipher.encrypt_with_iv(encryption_key, iv, plaintext.as_ref())?;
@@ -149,7 +153,7 @@ impl Ecies for EciesSecp256k1 {
 		cipher_with_iv.extend_from_slice(&ciphertext_only);
 
 		// Calculate HMAC-SHA256 over cipher_with_iv (IV + ciphertext)
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::EncryptionFailed)?;
+		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).or_encryption_failed()?;
 		mac.update(&cipher_with_iv);
 		let hmac_result = mac.finalize().into_bytes();
 
@@ -188,13 +192,13 @@ impl Ecies for EciesSecp256k1 {
 		let (encryption_key, mac_key) = Self::derive_keys(&shared_secret)?;
 
 		// Verify HMAC before decryption (HMAC is over IV + ciphertext)
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::DecryptionFailed)?;
+		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).or_decryption_failed()?;
 		mac.update(cipher_with_iv);
 
 		let computed_hmac = mac.finalize().into_bytes();
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		let hmac_matches = computed_hmac.ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
@@ -202,7 +206,7 @@ impl Ecies for EciesSecp256k1 {
 		}
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// Extract IV and ciphertext
 		if cipher_with_iv.len() < 16 {
@@ -258,7 +262,7 @@ impl Ecies for EciesX25519 {
 		let ephemeral_public_bytes: Vec<u8> = ephemeral_public.into();
 
 		// Calculate HMAC-SHA256 over iv + ephemeral_public_key + ciphertext
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(mac_key).map_err(|_| CryptoError::EncryptionFailed)?;
+		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(mac_key).or_encryption_failed()?;
 		mac.update(&iv);
 		mac.update(&ephemeral_public_bytes);
 		mac.update(ciphertext);
@@ -304,13 +308,13 @@ impl Ecies for EciesX25519 {
 		let mac_key = &sha512_hash[32..]; // Remaining bytes
 
 		// Verify HMAC before decryption (HMAC is over iv + ephemeral_public_key + ciphertext)
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(mac_key).map_err(|_| CryptoError::DecryptionFailed)?;
+		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(mac_key).or_decryption_failed()?;
 		mac.update(iv);
 		mac.update(ephemeral_public_bytes);
 		mac.update(encrypted_data);
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		let computed_mac = mac.finalize().into_bytes();
 		let mac_matches = computed_mac.ct_eq(received_mac);
@@ -319,7 +323,7 @@ impl Ecies for EciesX25519 {
 		}
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// Decrypt with AES-CBC
 		let cipher = Aes256Cbc;
@@ -375,8 +379,7 @@ impl Ecies for EciesSecp256r1 {
 		let ciphertext_only = &iv_and_ciphertext[16..];
 
 		// Calculate HMAC-SHA512 over the ciphertext only
-		let mut mac =
-			<Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::EncryptionFailed)?;
+		let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).or_encryption_failed()?;
 		mac.update(ciphertext_only);
 		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
@@ -423,15 +426,14 @@ impl Ecies for EciesSecp256r1 {
 		let (encryption_key, mac_key) = Self::derive_keys(ephemeral_public_bytes, shared_secret_x)?;
 
 		// Verify HMAC before decryption (HMAC is over ciphertext + fixed IV length value)
-		let mut mac =
-			<Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).map_err(|_| CryptoError::DecryptionFailed)?;
+		let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).or_decryption_failed()?;
 		mac.update(encrypted_data);
 		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
 		let computed_hmac = mac.finalize().into_bytes();
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		let hmac_matches = computed_hmac.ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
@@ -439,7 +441,7 @@ impl Ecies for EciesSecp256r1 {
 		}
 
 		// Constant-time operation memory fence
-		core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+		fence(Ordering::SeqCst);
 
 		// Decrypt with AES-256-CBC
 		let cipher = Aes256Cbc;

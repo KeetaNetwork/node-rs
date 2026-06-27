@@ -23,7 +23,7 @@ pub const DOC_TEST_SEED: &[u8] = b"abandon abandon abandon abandon abandon aband
 /// components needed for certificate examples.
 pub fn create_test_keys(seed: Option<&[u8]>) -> (Ed25519PrivateKey, Ed25519PublicKey, Account<KeyED25519>) {
 	let seed = seed.unwrap_or(DOC_TEST_SEED).to_vec().into_secret();
-	let private_key = Ed25519Derivation::derive_from_seed(seed).expect("Failed to derive test private key");
+	let private_key = Ed25519Derivation::derive_from_seed(seed).expect("key derivation from constant seed");
 	let public_key = private_key.as_public_key();
 	let account = Account::from(private_key.clone());
 
@@ -43,7 +43,7 @@ pub fn create_test_certificate(subject_name: &str, signer: Option<Account<KeyED2
 	let public_key_info = account.keypair.to_public_key().into();
 
 	// Create a distinguished name
-	let subject_dn = utils::create_dn(&[(oids::CN, subject_name)]).expect("Failed to create subject DN");
+	let subject_dn = utils::create_dn(&[(oids::CN, subject_name)]).expect("DN creation from valid OID and name");
 
 	let builder = CertificateBuilder::new()
 		.with_subject_public_key(public_key_info)
@@ -57,7 +57,7 @@ pub fn create_test_certificate(subject_name: &str, signer: Option<Account<KeyED2
 		Some(custom_signer) => builder.build(&custom_signer),
 		None => builder.build(&account),
 	}
-	.expect("Failed to create test certificate")
+	.expect("certificate creation with valid builder state")
 }
 
 /// Create a certificate chain (root CA, intermediate CA, client certificate).
@@ -81,12 +81,12 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 			Some(custom_signer) => builder.build(custom_signer),
 			None => builder.build(account),
 		}
-		.expect("Failed to build certificate")
+		.expect("certificate build with valid builder state")
 	};
 
 	// Create root CA
 	let root_public_key_info = root_account.keypair.to_public_key().into();
-	let root_dn = utils::create_dn(&[(oids::CN, "Test Root CA")]).expect("Failed to create root DN");
+	let root_dn = utils::create_dn(&[(oids::CN, "Test Root CA")]).expect("DN creation from valid OID and name");
 
 	let root_cert = create_cert(
 		CertificateBuilder::new()
@@ -102,8 +102,8 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 	// Create intermediate CA signed by root
 	let intermediate_public_key_info = intermediate_account.keypair.to_public_key().into();
 	let intermediate_dn =
-		utils::create_dn(&[(oids::CN, "Test Intermediate CA")]).expect("Failed to create intermediate DN");
-	let root_dn = utils::create_dn(&[(oids::CN, "Test Root CA")]).expect("Failed to create root DN");
+		utils::create_dn(&[(oids::CN, "Test Intermediate CA")]).expect("DN creation from valid OID and name");
+	let root_dn = utils::create_dn(&[(oids::CN, "Test Root CA")]).expect("DN creation from valid OID and name");
 
 	let intermediate_cert = create_cert(
 		CertificateBuilder::new()
@@ -118,9 +118,9 @@ pub fn create_test_certificate_chain(signer: Option<&Account<KeyED25519>>) -> (C
 
 	// Create client certificate signed by intermediate
 	let client_public_key_info = client_account.keypair.to_public_key().into();
-	let client_dn = utils::create_dn(&[(oids::CN, "Test Client")]).expect("Failed to create client DN");
+	let client_dn = utils::create_dn(&[(oids::CN, "Test Client")]).expect("DN creation from valid OID and name");
 	let intermediate_dn =
-		utils::create_dn(&[(oids::CN, "Test Intermediate CA")]).expect("Failed to create intermediate DN");
+		utils::create_dn(&[(oids::CN, "Test Intermediate CA")]).expect("DN creation from valid OID and name");
 
 	let client_cert = create_cert(
 		CertificateBuilder::new()

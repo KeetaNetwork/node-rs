@@ -10,6 +10,10 @@
 // Re-export algorithm-specific signature types
 pub use p256::ecdsa::Signature as Secp256r1Signature;
 
+use alloc::vec::Vec;
+
+use core::fmt::{Debug, Formatter, Result as FmtResult};
+
 use p256::ecdsa::{Signature, SigningKey};
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::SecretKey as P256SecretKey;
@@ -17,8 +21,6 @@ use secrecy::SecretBox;
 
 #[cfg(feature = "signature")]
 use ::signature::{Keypair, Signer, Verifier};
-#[cfg(all(feature = "rasn", not(feature = "der")))]
-use keetanetwork_asn1::ObjectIdentifierExt;
 #[cfg(feature = "signature")]
 use p256::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
 #[cfg(feature = "signature")]
@@ -44,7 +46,7 @@ use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGenera
 use crate::utils::generate_random_seed;
 
 use crate::algorithms::{Algorithm, CryptoAlgorithm, KeyDerivation, PrivateKey, PublicKey};
-use crate::error::CryptoError;
+use crate::error::{CryptoError, OrCryptoError};
 use crate::kdf::KdfAlgorithm;
 use crate::IntoSecret;
 
@@ -116,8 +118,8 @@ impl TryFrom<&[u8]> for Secp256r1PrivateKey {
 
 /// Debug formatting will show "\[REDACTED\]" to prevent accidental
 /// key exposure.
-impl core::fmt::Debug for Secp256r1PrivateKey {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl Debug for Secp256r1PrivateKey {
+	fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
 		f.debug_struct("Secp256r1PrivateKey")
 			.field("inner", &"[REDACTED]")
 			.finish()
@@ -127,16 +129,13 @@ impl core::fmt::Debug for Secp256r1PrivateKey {
 #[cfg(any(feature = "der", feature = "rasn"))]
 impl From<Secp256r1PrivateKey> for keetanetwork_asn1::ObjectIdentifier {
 	fn from(_private_key: Secp256r1PrivateKey) -> Self {
-		// This should never fail as we are using a constant known OID
 		#[cfg(feature = "der")]
 		{
-			keetanetwork_asn1::ObjectIdentifier::new(keetanetwork_asn1::oids::SECP256R1)
-				.expect("Failed to create OID for secp256r1")
+			keetanetwork_asn1::oids::typed::SECP256R1
 		}
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
 		{
-			keetanetwork_asn1::ObjectIdentifier::from_str(keetanetwork_asn1::oids::SECP256R1)
-				.expect("Failed to create OID for secp256r1")
+			keetanetwork_asn1::oids::typed::SECP256R1.clone()
 		}
 	}
 }
@@ -291,7 +290,7 @@ impl TryFrom<&[u8]> for Secp256r1PublicKey {
 	type Error = CryptoError;
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-		let public_key = p256::PublicKey::from_sec1_bytes(bytes).map_err(|_| CryptoError::InvalidPublicKey)?;
+		let public_key = p256::PublicKey::from_sec1_bytes(bytes).or_invalid_public_key()?;
 		Ok(Secp256r1PublicKey { inner: public_key, bytes: bytes.to_vec() })
 	}
 }
@@ -305,16 +304,13 @@ impl AsRef<[u8]> for Secp256r1PublicKey {
 #[cfg(any(feature = "der", feature = "rasn"))]
 impl From<Secp256r1PublicKey> for keetanetwork_asn1::ObjectIdentifier {
 	fn from(_public_key: Secp256r1PublicKey) -> Self {
-		// This should never fail as we are using a constant known OID
 		#[cfg(feature = "der")]
 		{
-			keetanetwork_asn1::ObjectIdentifier::new(keetanetwork_asn1::oids::SECP256R1)
-				.expect("Failed to create OID for secp256r1")
+			keetanetwork_asn1::oids::typed::SECP256R1
 		}
 		#[cfg(all(feature = "rasn", not(feature = "der")))]
 		{
-			keetanetwork_asn1::ObjectIdentifier::from_str(keetanetwork_asn1::oids::SECP256R1)
-				.expect("Failed to create OID for secp256r1")
+			keetanetwork_asn1::oids::typed::SECP256R1.clone()
 		}
 	}
 }

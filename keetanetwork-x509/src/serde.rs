@@ -3,14 +3,18 @@
 pub(crate) use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub(crate) use serde_json::Value;
 
-use std::str::FromStr;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use core::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use der::asn1::{ObjectIdentifier, OctetString};
 use serde::ser::SerializeStruct;
 
 use crate::certificates::{Certificate, CertificateBundle, CertificateHash, CertificateOptions, Extension};
-use crate::utils::dn_to_name_value_pairs;
+use crate::utils::{dn_to_name_value_pairs, time_to_utc};
 
 /// Name-value pair for Distinguished Names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,7 +24,7 @@ pub struct NameValuePair {
 }
 
 impl Serialize for Certificate {
-	fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
 		S: Serializer,
 	{
@@ -50,10 +54,8 @@ impl Serialize for Certificate {
 		let serial_hex = hex::encode(serial_bytes);
 
 		// Convert Time to DateTime<Utc> for RFC3339 formatting
-		let not_before_dt: DateTime<Utc> =
-			DateTime::<Utc>::from(self.tbs_certificate.validity.not_before.to_system_time());
-		let not_after_dt: DateTime<Utc> =
-			DateTime::<Utc>::from(self.tbs_certificate.validity.not_after.to_system_time());
+		let not_before_dt: DateTime<Utc> = time_to_utc(self.tbs_certificate.validity.not_before);
+		let not_after_dt: DateTime<Utc> = time_to_utc(self.tbs_certificate.validity.not_after);
 
 		let mut state = serializer.serialize_struct("Certificate", 14)?;
 		state.serialize_field("serial", &serial_hex)?;
@@ -81,7 +83,7 @@ impl Serialize for Certificate {
 }
 
 impl<'de> Deserialize<'de> for Certificate {
-	fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
 	where
 		D: Deserializer<'de>,
 	{
@@ -106,7 +108,7 @@ impl<'de> Deserialize<'de> for Certificate {
 }
 
 impl Serialize for CertificateBundle {
-	fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 	where
 		S: Serializer,
 	{
@@ -114,7 +116,7 @@ impl Serialize for CertificateBundle {
 		state.serialize_field("certificate", &self.certificate)?;
 		state.serialize_field("options", &self.options)?;
 
-		// Convert HashSet to Vec for serialization
+		// Convert the certificate set to Vec for serialization
 		let root_certs: Vec<&Certificate> = self.root.iter().collect();
 		let intermediate_certs: Vec<&Certificate> = self.intermediate.iter().collect();
 
@@ -126,12 +128,13 @@ impl Serialize for CertificateBundle {
 }
 
 impl<'de> Deserialize<'de> for CertificateBundle {
-	fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
 	where
 		D: Deserializer<'de>,
 	{
+		use alloc::collections::BTreeSet;
+
 		use serde::de::Error;
-		use std::collections::HashSet;
 
 		let value: Value = Value::deserialize(deserializer)?;
 		let obj = value
@@ -161,7 +164,7 @@ impl<'de> Deserialize<'de> for CertificateBundle {
 				.clone(),
 		)
 		.map_err(|e| D::Error::custom(format!("Failed to deserialize root certificates: {e}")))?;
-		let root: HashSet<Certificate> = root_vec.into_iter().collect();
+		let root: BTreeSet<Certificate> = root_vec.into_iter().collect();
 
 		// Extract intermediate certificates
 		let intermediate_vec: Vec<Certificate> = serde_json::from_value(
@@ -170,7 +173,7 @@ impl<'de> Deserialize<'de> for CertificateBundle {
 				.clone(),
 		)
 		.map_err(|e| D::Error::custom(format!("Failed to deserialize intermediate certificates: {e}")))?;
-		let intermediate: HashSet<Certificate> = intermediate_vec.into_iter().collect();
+		let intermediate: BTreeSet<Certificate> = intermediate_vec.into_iter().collect();
 
 		Ok(CertificateBundle { certificate, options, root, intermediate })
 	}
@@ -216,41 +219,47 @@ mod tests {
 	use super::*;
 	use crate::testing::CERTIFICATE_TEST_SETS;
 
+	type TestResult = Result<(), Box<dyn std::error::Error>>;
+
 	#[test]
-	fn test_certificate_serialize() {
+	fn test_certificate_serialize() -> TestResult {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
-			let cert = Certificate::from_str(test_set.chain.root).unwrap();
+			let cert = Certificate::from_str(test_set.chain.root)?;
 			let json_result = serde_json::to_string_pretty(&cert);
 			assert!(json_result.is_ok(), "Failed to serialize {} certificate", test_set.algorithm);
 
-			let json_str = json_result.unwrap();
+			let json_str = json_result?;
 			assert!(json_str.contains("serial"));
 			assert!(json_str.contains("subject"));
 			assert!(json_str.contains("issuer"));
 			assert!(json_str.contains("pem"));
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_roundtrip() {
+	fn test_certificate_roundtrip() -> TestResult {
 		for test_set in CERTIFICATE_TEST_SETS.iter() {
-			let original_cert = Certificate::from_str(test_set.chain.root).unwrap();
+			let original_cert = Certificate::from_str(test_set.chain.root)?;
 
 			// Serialize and deserialize
-			let json_str = serde_json::to_string(&original_cert).unwrap();
+			let json_str = serde_json::to_string(&original_cert)?;
 			// Verify they are equivalent
-			let deserialized_cert: Certificate = serde_json::from_str(&json_str).unwrap();
+			let deserialized_cert: Certificate = serde_json::from_str(&json_str)?;
 			assert_eq!(original_cert, deserialized_cert, "Roundtrip failed for {} certificate", test_set.algorithm);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_json_fields() {
-		let cert = Certificate::from_str(CERTIFICATE_TEST_SETS[0].chain.root).unwrap();
-		let json_value: serde_json::Value = serde_json::to_value(&cert).unwrap();
+	fn test_certificate_json_fields() -> TestResult {
+		let cert = Certificate::from_str(CERTIFICATE_TEST_SETS[0].chain.root)?;
+		let json_value: serde_json::Value = serde_json::to_value(&cert)?;
 
 		// Verify all expected fields are present
-		let obj = json_value.as_object().unwrap();
+		let obj = json_value.as_object().ok_or("not an object")?;
 		assert!(obj.contains_key("serial"));
 		assert!(obj.contains_key("subject"));
 		assert!(obj.contains_key("issuer"));
@@ -265,35 +274,41 @@ mod tests {
 		assert!(obj.contains_key("base_extensions"));
 		assert!(obj.contains_key("pem"));
 		assert!(obj.contains_key("extensions"));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_bundle_serialize() {
-		let cert = Certificate::from_str(CERTIFICATE_TEST_SETS[0].chain.root).unwrap();
-		let bundle = CertificateBundle::try_from(cert).unwrap();
+	fn test_certificate_bundle_serialize() -> TestResult {
+		let cert = Certificate::from_str(CERTIFICATE_TEST_SETS[0].chain.root)?;
+		let bundle = CertificateBundle::try_from(cert)?;
 
 		let json_result = serde_json::to_string_pretty(&bundle);
 		assert!(json_result.is_ok(), "Failed to serialize certificate bundle");
 
-		let json_str = json_result.unwrap();
+		let json_str = json_result?;
 		assert!(json_str.contains("certificate"));
 		assert!(json_str.contains("options"));
 		assert!(json_str.contains("root"));
 		assert!(json_str.contains("intermediate"));
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_certificate_bundle_roundtrip() {
-		let cert = Certificate::from_str(CERTIFICATE_TEST_SETS[0].chain.root).unwrap();
-		let original_bundle = CertificateBundle::try_from(cert).unwrap();
+	fn test_certificate_bundle_roundtrip() -> TestResult {
+		let cert = Certificate::from_str(CERTIFICATE_TEST_SETS[0].chain.root)?;
+		let original_bundle = CertificateBundle::try_from(cert)?;
 
 		// Serialize and deserialize
-		let json_str = serde_json::to_string(&original_bundle).unwrap();
-		let deserialized_bundle: CertificateBundle = serde_json::from_str(&json_str).unwrap();
+		let json_str = serde_json::to_string(&original_bundle)?;
+		let deserialized_bundle: CertificateBundle = serde_json::from_str(&json_str)?;
 		assert_eq!(original_bundle.certificate, deserialized_bundle.certificate);
 		assert_eq!(original_bundle.options, deserialized_bundle.options);
 		assert_eq!(original_bundle.root, deserialized_bundle.root);
 		assert_eq!(original_bundle.intermediate, deserialized_bundle.intermediate);
+
+		Ok(())
 	}
 
 	#[test]

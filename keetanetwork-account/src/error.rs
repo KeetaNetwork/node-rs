@@ -1,3 +1,6 @@
+use alloc::format;
+use alloc::string::{String, ToString};
+
 use hex::FromHexError;
 use keetanetwork_error::KeetaNetError;
 use snafu::Snafu;
@@ -77,6 +80,17 @@ impl AccountError {
 	}
 }
 
+/// Maps any backend error to [`AccountError::InvalidConstruction`].
+pub(crate) trait OrInvalidConstruction<T> {
+	fn or_invalid_construction(self) -> Result<T, AccountError>;
+}
+
+impl<T, E> OrInvalidConstruction<T> for Result<T, E> {
+	fn or_invalid_construction(self) -> Result<T, AccountError> {
+		self.map_err(|_| AccountError::InvalidConstruction)
+	}
+}
+
 impl From<AccountError> for KeetaNetError {
 	fn from(err: AccountError) -> Self {
 		KeetaNetError::Code { code: err.error_code(), message: err.to_string() }
@@ -86,6 +100,7 @@ impl From<AccountError> for KeetaNetError {
 impl_variant_error_from!(AccountError, {
 	FromHexError => InvalidConstruction,
 	keetanetwork_crypto::operations::SignatureError => InvalidConstruction,
+	core::array::TryFromSliceError => InvalidConstruction,
 });
 
 #[cfg(any(feature = "der", feature = "rasn"))]
@@ -166,6 +181,13 @@ mod tests {
 	test_error_from_conversions! {
 		test_account_error_to_signature_error, keetanetwork_crypto::operations::SignatureError, [
 			AccountError::InvalidConstruction,
+		]
+	}
+
+	// Test From conversion for TryFromSliceError
+	test_error_from_conversions! {
+		test_try_from_slice_error_conversion, AccountError, [
+			<[u8; 32]>::try_from([1u8, 2, 3].as_slice()).unwrap_err(),
 		]
 	}
 

@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer release
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer node-harness node-harness-lint build-wasm test-wasm build-wasi test-wasi
 
 # Project name
 PROJ_NAME := node-rs
@@ -28,10 +28,6 @@ check:
 build:
 	cargo build $(release_flag)
 
-# Build for release
-release:
-	$(MAKE) build release=1
-
 # Clean build artifacts
 clean:
 	cargo clean
@@ -47,40 +43,106 @@ do-docs-ci:
 	cargo doc --no-deps --document-private-items --all-features
 
 # Lint code
-do-lint: do-docs-ci
-	cargo clippy --fix --allow-staged --allow-dirty
+do-lint: do-docs-ci node-harness-lint
+	cargo clippy --fix --allow-staged --allow-dirty --all-targets --all-features -- -D warnings
 	cargo fmt
 
 # Lint code for CI (check only, no fixes)
-do-lint-ci:
+do-lint-ci: node-harness-lint
 	cargo check --all-targets --all-features
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --all-features -- -D warnings
 
 # Test crate packages features
 test-feat:
-	cargo test -p keetanetwork-crypto --no-default-features --features signature
-	cargo test -p keetanetwork-crypto --no-default-features --features encryption
-	cargo test -p keetanetwork-crypto --no-default-features --features der
-	cargo test -p keetanetwork-account --no-default-features --features der
-	cargo test -p keetanetwork-account --no-default-features --features rasn
-	cargo test -p keetanetwork-x509 --no-default-features --features der
-	cargo test -p keetanetwork-x509 --no-default-features --features rasn
-	cargo test -p keetanetwork-x509 --no-default-features --features der, serde
-	cargo test -p keetanetwork-x509 --no-default-features --features rasn, serde
-	cargo test -p keetanetwork-asn1 --no-default-features --features der
-	cargo test -p keetanetwork-asn1 --no-default-features --features rasn
-	cargo test -p keetanetwork-asn1 --no-default-features --features der,serde
-	cargo test -p keetanetwork-asn1 --no-default-features --features rasn,serde
+	cargo test -p keetanetwork-crypto --no-default-features --features std,signature
+	cargo test -p keetanetwork-crypto --no-default-features --features std,encryption
+	cargo test -p keetanetwork-crypto --no-default-features --features std,der
+	cargo test -p keetanetwork-account --no-default-features --features std,der
+	cargo test -p keetanetwork-account --no-default-features --features std,rasn
+	cargo test -p keetanetwork-crypto --no-default-features --features std
+	cargo check -p keetanetwork-crypto --no-default-features
+	cargo check -p keetanetwork-crypto --no-default-features --features signature
+	cargo check -p keetanetwork-crypto --no-default-features --features encryption
+	cargo check -p keetanetwork-crypto --no-default-features --features signature,encryption,rasn
+	cargo test -p keetanetwork-x509 --no-default-features --features std,der
+	cargo test -p keetanetwork-x509 --no-default-features --features std,rasn
+	cargo test -p keetanetwork-x509 --no-default-features --features std,der,serde
+	cargo test -p keetanetwork-x509 --no-default-features --features std,rasn,serde
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,der
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,rasn
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,der,serde
+	cargo test -p keetanetwork-asn1 --no-default-features --features std,rasn,serde
+	cargo test -p keetanetwork-block --no-default-features --features std,der
+	cargo test -p keetanetwork-block --no-default-features --features std,rasn
+	cargo test -p keetanetwork-block --no-default-features --features std,der,rasn
 	cargo test -p keetanetwork-crypto -p keetanetwork-x509 --all-features
-	cargo test -p keetanetwork-crypto --no-default-features
+	# no_std builds (cargo check, since test harness needs std).
+	cargo check -p keetanetwork-error --no-default-features
+	cargo check -p keetanetwork-error --no-default-features --features alloc
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,der
+	cargo check -p keetanetwork-asn1 --no-default-features --features alloc,rasn,der
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,der
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,rasn,serde
+	cargo check -p keetanetwork-x509 --no-default-features --features alloc,der,serde
+	cargo check -p keetanetwork-account --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-account --no-default-features --features alloc,der
+	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn
+	cargo check -p keetanetwork-block --no-default-features --features alloc,der
+	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn,der
+	cargo clippy -p keetanetwork-client --no-default-features -- -D warnings
+	# Browser wasm build: no_std orchestrator with the relaxed (!Send) traits.
+	cargo build -p keetanetwork-client --no-default-features --target wasm32-unknown-unknown
+	cargo build -p keetanetwork-client --no-default-features --features wasm --target wasm32-unknown-unknown
+
+build-wasm:
+	wasm-pack build keetanetwork-client-wasm --target web --out-dir pkg
+
+WASI_CRATE := keetanetwork-client-wasi
+WASI_P1_WASM := target/wasm32-wasip1/debug/keetanetwork_client_wasi.wasm
+WASI_P2_WASM := target/wasm32-wasip2/debug/keetanetwork_client_wasi.wasm
+
+build-wasi:
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip1 --features p1
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip2 --features p2
+
+# Reference implementation harness (required by compatibility/e2e tests)
+HARNESS_DIR := keetanetwork-utils/node-harness
+HARNESS_SOURCES := $(wildcard $(HARNESS_DIR)/src/*.ts) $(HARNESS_DIR)/tsconfig.json
+
+$(HARNESS_DIR)/node_modules/.package-lock.json: $(HARNESS_DIR)/package-lock.json
+	cd $(HARNESS_DIR) && npm ci
+
+$(HARNESS_DIR)/dist/e2e-node.js: $(HARNESS_DIR)/node_modules/.package-lock.json $(HARNESS_SOURCES)
+	cd $(HARNESS_DIR) && npm run build
+
+node-harness: $(HARNESS_DIR)/dist/e2e-node.js
+
+node-harness-lint: node-harness
+	cd $(HARNESS_DIR) && npm run lint
 
 # Run tests with host system's default target
-test:
+test: node-harness
 	# Use a shell script to unset CARGO_BUILD_TARGET and run tests
 	sh -c 'unset CARGO_BUILD_TARGET; cargo test --all-features --workspace'
 
 test-all: test test-feat
+
+# Browser end-to-end test
+WASM_TEST_DIR := keetanetwork-client-wasm/tests
+
+test-wasm: node-harness build-wasm
+	wasm-pack test --node keetanetwork-client-wasm
+	cd $(WASM_TEST_DIR) && npm ci
+	cd $(WASM_TEST_DIR) && npx playwright install --with-deps chromium
+	cd $(WASM_TEST_DIR) && npx playwright test
+
+test-wasi: build-wasi node-harness
+	WASI_P1_MODULE=$(CURDIR)/$(WASI_P1_WASM) \
+	WASI_P2_COMPONENT=$(CURDIR)/$(WASI_P2_WASM) \
+		cargo test --manifest-path $(WASI_CRATE)/host-tests/Cargo.toml -- --include-ignored
 
 # Set up coverage tools (internal helper target)
 coverage-setup:
@@ -220,7 +282,7 @@ help:
 	@echo "  make help           - Show this help message"
 	@echo "  make developer      - Set up development environment (install Rust, tools, etc.)"
 	@echo "  make build          - Build in debug mode"
-	@echo "  make release        - Build in release mode"
+	@echo "  make build release=1 - Build in release mode"
 	@echo "  make clean          - Clean build artifacts"
 	@echo "  make check          - Check compilation without building"
 	@echo "  make do-docs        - Generate and open documentation"
@@ -228,6 +290,8 @@ help:
 	@echo "  make test           - Run tests (includes all crypto feature combinations)"
 	@echo "  make test-feat      - Run crypto crate tests with specific features"
 	@echo "  make test-all       - Run all tests including feature tests"
+	@echo "  make build-wasi     - Build the WASI P1 core module and P2 component"
+	@echo "  make test-wasi      - Build both WASI artifacts and run the wasmtime host smoke tests (P1 flat ABI + P2 networked over wasi:http)"
 	@echo "  make audit          - Run security audit"
 	@echo "  make docs           - Generate and open documentation"
 	@echo "  make coverage       - Generate code coverage report (HTML + LCOV)"

@@ -8,7 +8,7 @@ use common::*;
 fn create_trusted_ca_bundle() -> CertificateBundle {
 	let ca_cert = ca_certificate();
 	CertificateBundle::try_from(vec![ca_cert])
-		.unwrap()
+		.expect("test CA certificate should create valid bundle")
 		.as_trusted()
 }
 
@@ -16,7 +16,7 @@ fn create_trusted_ca_bundle() -> CertificateBundle {
 fn create_untrusted_user_bundle() -> CertificateBundle {
 	let user_cert = user_certificate();
 	CertificateBundle::try_from(vec![user_cert])
-		.unwrap()
+		.expect("test user certificate should create valid bundle")
 		.as_untrusted()
 }
 
@@ -26,7 +26,9 @@ fn create_user_bundle_with_ca_store() -> CertificateBundle {
 	let user_cert = user_certificate();
 	let chain = vec![user_cert, ca_cert];
 
-	CertificateBundle::try_from(chain).unwrap().as_trusted()
+	CertificateBundle::try_from(chain)
+		.expect("test certificate chain should create valid bundle")
+		.as_trusted()
 }
 
 #[test]
@@ -69,28 +71,34 @@ fn test_certificate_chain_verification() {
 }
 
 #[test]
-fn test_certificate_properties() {
+fn test_certificate_properties() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 	let cert_moment = test_moment();
 	// Test validity checking
-	assert!(ca_cert.is_valid_at(cert_moment).unwrap());
-	assert!(user_cert.is_valid_at(cert_moment).unwrap());
+	let ca_is_valid = ca_cert.is_valid_at(cert_moment)?;
+	let user_is_valid = user_cert.is_valid_at(cert_moment)?;
+	assert!(ca_is_valid);
+	assert!(user_is_valid);
 	// Test CA vs non-CA certificates
 	assert!(ca_cert.is_ca());
 	assert!(!user_cert.is_ca());
+
+	Ok(())
 }
 
 #[test]
-fn test_manual_bundle_construction() {
+fn test_manual_bundle_construction() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
 	// Test bundle construction from Vec<Certificate>
-	let untrusted_bundle = CertificateBundle::try_from(vec![user_cert.clone()]).unwrap();
+	let untrusted_bundle = CertificateBundle::try_from(vec![user_cert.clone()])?;
 	assert!(!untrusted_bundle.is_trusted());
 
 	let chain = vec![user_cert.clone(), ca_cert];
-	let trusted_bundle = CertificateBundle::try_from(chain).unwrap().as_trusted();
+	let trusted_bundle = CertificateBundle::try_from(chain)?.as_trusted();
 	assert!(trusted_bundle.is_trusted());
+
+	Ok(())
 }

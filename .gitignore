@@ -1,4 +1,6 @@
-/target
+target/
+dist/
+dist-src/
 *.lcov
 
 # Generated ASN.1 files
@@ -8,3 +10,6 @@ keetanetwork-asn1/generated/
 .env
 .env.local
 .env.*.local
+
+# Node.js files
+node_modules/

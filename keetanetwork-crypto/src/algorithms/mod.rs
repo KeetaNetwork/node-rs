@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use core::fmt::Debug;
 
 use secrecy::SecretBox;
@@ -193,6 +195,8 @@ macro_rules! impl_any_signature {
 
 		impl $any_signature_type {
 			pub fn to_bytes(&self) -> Vec<u8> {
+				#[allow(unused_imports)]
+				use ::signature::SignatureEncoding;
 				match self {
 					$(
 						$any_signature_type::$variant(sig) => sig.to_vec(),
@@ -221,44 +225,31 @@ impl_any_signature!(
 	(Secp256r1, crate::algorithms::secp256r1::Secp256r1Signature, Algorithm::Secp256r1),
 );
 
+/// Helper function to wrap an ObjectIdentifier in Any for parameters (rasn backend)
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+fn create_parameter_any(oid: ObjectIdentifier) -> Any {
+	let encoded_bytes = oid
+		.to_der()
+		.expect("invariant: valid OID always encodes to DER");
+	Any::from(encoded_bytes)
+}
+
+/// Helper function to wrap an ObjectIdentifier in Any for parameters (der backend)
+#[cfg(feature = "der")]
+fn create_parameter_any(oid: ObjectIdentifier) -> Any {
+	Any::from(oid)
+}
+
 #[cfg(any(feature = "der", feature = "rasn"))]
 macro_rules! impl_subject_public_key_info {
 	($(($variant:ident, $public_key_type:ty, $oid:expr, $params_oid:expr)),* $(,)?) => {
-		/// Helper function to create ObjectIdentifier from string with proper backend support
-		fn create_object_identifier(oid: &str) -> ObjectIdentifier {
-			#[cfg(feature = "der")]
-			{
-				ObjectIdentifier::new(oid).expect("Invalid OID")
-			}
-			#[cfg(all(feature = "rasn", not(feature = "der")))]
-			{
-				ObjectIdentifier::from_str(oid).expect("Invalid OID")
-			}
-		}
-
-		/// Helper function to create ObjectIdentifier wrapped in Any for parameters
-		fn create_parameter_any(param_oid: &str) -> Any {
-			#[cfg(feature = "der")]
-			{
-				Any::from(ObjectIdentifier::new(param_oid).expect("Invalid OID"))
-			}
-			#[cfg(all(feature = "rasn", not(feature = "der")))]
-			{
-				let oid = ObjectIdentifier::from_str(param_oid).expect("Invalid OID");
-				let encoded_bytes = oid.to_der().expect("Failed to encode OID");
-				Any::from(encoded_bytes)
-			}
-		}
-
 		impl From<Algorithm> for ObjectIdentifier {
 			fn from(algorithm: Algorithm) -> Self {
-				let oid = match algorithm {
+				match algorithm {
 					$(
 						Algorithm::$variant => $oid,
 					)*
-				};
-
-				create_object_identifier(oid)
+				}
 			}
 		}
 
@@ -266,10 +257,11 @@ macro_rules! impl_subject_public_key_info {
 			impl From<$public_key_type> for SubjectPublicKeyInfo {
 				fn from(public_key: $public_key_type) -> Self {
 					let algorithm = ObjectIdentifier::from(Algorithm::$variant);
-					let parameters = $params_oid.map(|param_oid| create_parameter_any(param_oid));
+					let parameters: Option<ObjectIdentifier> = $params_oid;
+					let parameters = parameters.map(create_parameter_any);
 					let algorithm_id = AlgorithmIdentifier { algorithm, parameters };
-					let public_key_bytes = Vec::from(public_key);
-					SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).expect("Failed to create SubjectPublicKeyInfo")
+				let public_key_bytes = Vec::from(public_key);
+				SubjectPublicKeyInfo::new(algorithm_id, &public_key_bytes).expect("invariant: valid algorithm and key bytes create SubjectPublicKeyInfo")
 				}
 			}
 		)*
@@ -287,23 +279,30 @@ macro_rules! impl_subject_public_key_info {
 		impl From<Algorithm> for AlgorithmIdentifier {
 			fn from(algorithm: Algorithm) -> Self {
 				let oid = ObjectIdentifier::from(algorithm);
-				let parameters = match algorithm {
+				let parameters: Option<ObjectIdentifier> = match algorithm {
 					$(
-						Algorithm::$variant => $params_oid.map(|param_oid| create_parameter_any(param_oid)),
+						Algorithm::$variant => $params_oid,
 					)*
 				};
-
+				let parameters = parameters.map(create_parameter_any);
 				AlgorithmIdentifier { algorithm: oid, parameters }
 			}
 		}
 	};
 }
 
-#[cfg(any(feature = "der", feature = "rasn"))]
+#[cfg(feature = "der")]
 impl_subject_public_key_info!(
-	(Secp256k1, Secp256k1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256K1)),
-	(Ed25519, Ed25519PublicKey, oids::ED25519, None::<&str>),
-	(Secp256r1, Secp256r1PublicKey, oids::EC_PUBLIC_KEY, Some(oids::SECP256R1)),
+	(Secp256k1, Secp256k1PublicKey, oids::typed::EC_PUBLIC_KEY, Some(oids::typed::SECP256K1)),
+	(Ed25519, Ed25519PublicKey, oids::typed::ED25519, None),
+	(Secp256r1, Secp256r1PublicKey, oids::typed::EC_PUBLIC_KEY, Some(oids::typed::SECP256R1)),
+);
+
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+impl_subject_public_key_info!(
+	(Secp256k1, Secp256k1PublicKey, oids::typed::EC_PUBLIC_KEY.clone(), Some(oids::typed::SECP256K1.clone())),
+	(Ed25519, Ed25519PublicKey, oids::typed::ED25519.clone(), None),
+	(Secp256r1, Secp256r1PublicKey, oids::typed::EC_PUBLIC_KEY.clone(), Some(oids::typed::SECP256R1.clone())),
 );
 
 /// Trait for key derivation algorithms
@@ -316,7 +315,7 @@ pub trait KeyDerivation {
 		T: IntoIterator<Item = u8> + AsRef<[u8]> + zeroize::Zeroize + Clone;
 
 	/// Validate that bytes represent valid key material
-	fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool;
+	fn is_valid_key_material<T: AsRef<[u8]>>(bytes: T) -> bool;
 
 	/// Get the expected key size in bytes
 	fn key_size() -> usize;
@@ -390,7 +389,7 @@ macro_rules! impl_constant_time_key_derivation {
 				}
 			}
 
-			fn validate_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
+			fn is_valid_key_material<T: AsRef<[u8]>>(bytes: T) -> bool {
 				let bytes = bytes.as_ref();
 				bytes.len() == 32 && <$secret_key_type>::from_slice(bytes).is_ok()
 			}
@@ -470,6 +469,7 @@ mod tests {
 	use crate::algorithms::ed25519::Ed25519Derivation;
 	use crate::algorithms::secp256k1::Secp256k1Derivation;
 	use crate::algorithms::secp256r1::Secp256r1Derivation;
+	use crate::error::CryptoError;
 	use crate::prelude::{ExposeSecret, IntoSecret};
 
 	#[cfg(feature = "signature")]
@@ -494,106 +494,108 @@ mod tests {
 			Self { algorithm: Algorithm::Secp256r1, seed_suffix: "secp256r1", expected_id: 6 },
 		];
 
-		fn create_any_private_key(&self, base_seed: &[u8]) -> AnyPrivateKey {
+		fn create_any_private_key(&self, base_seed: &[u8]) -> Result<AnyPrivateKey, CryptoError> {
 			let mut seed = base_seed.to_vec();
 			seed.extend_from_slice(self.seed_suffix.as_bytes());
 			let secret_seed = seed.into_secret();
 
 			match self.algorithm {
 				Algorithm::Secp256k1 => {
-					let key = Secp256k1Derivation::derive_from_seed(secret_seed).unwrap();
-					AnyPrivateKey::Secp256k1(key)
+					let key = Secp256k1Derivation::derive_from_seed(secret_seed)?;
+					Ok(AnyPrivateKey::Secp256k1(key))
 				}
 				Algorithm::Ed25519 => {
-					let key = Ed25519Derivation::derive_from_seed(secret_seed).unwrap();
-					AnyPrivateKey::Ed25519(key)
+					let key = Ed25519Derivation::derive_from_seed(secret_seed)?;
+					Ok(AnyPrivateKey::Ed25519(key))
 				}
 				Algorithm::Secp256r1 => {
-					let key = Secp256r1Derivation::derive_from_seed(secret_seed).unwrap();
-					AnyPrivateKey::Secp256r1(key)
+					let key = Secp256r1Derivation::derive_from_seed(secret_seed)?;
+					Ok(AnyPrivateKey::Secp256r1(key))
 				}
 			}
 		}
 
-		fn create_any_public_key(&self, base_seed: &[u8]) -> AnyPublicKey {
-			self.create_any_private_key(base_seed).derive_public_key()
+		fn create_any_public_key(&self, base_seed: &[u8]) -> Result<AnyPublicKey, CryptoError> {
+			Ok(self.create_any_private_key(base_seed)?.derive_public_key())
 		}
 
 		#[cfg(feature = "signature")]
-		fn create_any_signature(&self, base_seed: &[u8], message: &[u8]) -> AnySignature {
-			let private_key = self.create_any_private_key(base_seed);
+		fn create_any_signature(&self, base_seed: &[u8], message: &[u8]) -> Result<AnySignature, CryptoError> {
+			let private_key = self.create_any_private_key(base_seed)?;
 			match private_key {
 				AnyPrivateKey::Secp256k1(key) => {
-					let sig = key
-						.sign_with_options(message, SigningOptions::default())
-						.unwrap();
-					AnySignature::Secp256k1(sig)
+					let sig = key.sign_with_options(message, SigningOptions::default())?;
+					Ok(AnySignature::Secp256k1(sig))
 				}
 				AnyPrivateKey::Ed25519(key) => {
-					let sig = key
-						.sign_with_options(message, SigningOptions::default())
-						.unwrap();
-					AnySignature::Ed25519(sig)
+					let sig = key.sign_with_options(message, SigningOptions::default())?;
+					Ok(AnySignature::Ed25519(sig))
 				}
 				AnyPrivateKey::Secp256r1(key) => {
-					let sig = key
-						.sign_with_options(message, SigningOptions::default())
-						.unwrap();
-					AnySignature::Secp256r1(sig)
+					let sig = key.sign_with_options(message, SigningOptions::default())?;
+					Ok(AnySignature::Secp256r1(sig))
 				}
 			}
 		}
 	}
 
 	#[test]
-	fn test_to_algorithm() {
+	fn test_to_algorithm() -> Result<(), CryptoError> {
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes());
+			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes())?;
 			assert_eq!(any_private_key.to_algorithm(), test_case.algorithm);
 			assert_eq!(Algorithm::from(&any_private_key), test_case.algorithm);
 
-			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes());
+			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes())?;
 			assert_eq!(any_public_key.to_algorithm(), test_case.algorithm);
 			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_algorithm_from_any_private_key() {
+	fn test_algorithm_from_any_private_key() -> Result<(), CryptoError> {
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes());
+			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes())?;
 			assert_eq!(Algorithm::from(&any_private_key), test_case.algorithm);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_algorithm_from_any_public_key() {
+	fn test_algorithm_from_any_public_key() -> Result<(), CryptoError> {
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes());
+			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes())?;
 			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_any_private_key_operations() {
+	fn test_any_private_key_operations() -> Result<(), CryptoError> {
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes());
+			let any_private_key = test_case.create_any_private_key(TEST_SEED.as_bytes())?;
 
 			// Test derive_public_key preserves the key data
 			let derived_public = any_private_key.derive_public_key();
-			let expected_public = test_case.create_any_public_key(TEST_SEED.as_bytes());
+			let expected_public = test_case.create_any_public_key(TEST_SEED.as_bytes())?;
 			assert_eq!(derived_public.to_bytes(), expected_public.to_bytes());
 
 			// Test to_bytes returns non-empty secret data
 			let any_key_bytes = any_private_key.to_bytes();
 			assert!(!any_key_bytes.expose_secret().is_empty());
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_any_public_key_operations() {
+	fn test_any_public_key_operations() -> Result<(), CryptoError> {
 		for test_case in AlgorithmTestData::TEST_CASES {
-			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes());
+			let any_public_key = test_case.create_any_public_key(TEST_SEED.as_bytes())?;
 
 			// Test to_bytes returns non-empty public key data
 			let any_pub_bytes = any_public_key.to_bytes();
@@ -601,26 +603,28 @@ mod tests {
 			// Test algorithm detection
 			assert_eq!(Algorithm::from(&any_public_key), test_case.algorithm);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_any_public_key_conversions() {
+	fn test_any_public_key_conversions() -> Result<(), CryptoError> {
 		macro_rules! test_conversion {
 			($test_case:expr, $key_type:ty) => {{
 				// Create keys using existing test data
 				// Test From conversion (specific -> Any)
-				let any_key = $test_case.create_any_public_key(TEST_SEED.as_bytes());
+				let any_key = $test_case.create_any_public_key(TEST_SEED.as_bytes())?;
 				assert_eq!(any_key.to_algorithm(), $test_case.algorithm);
 
 				// Test round-trip conversion (Any -> specific -> Any)
-				let converted_specific: $key_type = any_key.clone().try_into().unwrap();
+				let converted_specific: $key_type = any_key.clone().try_into()?;
 				let converted_back: AnyPublicKey = converted_specific.into();
 				assert_eq!(converted_back, any_key);
 
 				// Test wrong type conversions fail
 				for other_case in AlgorithmTestData::TEST_CASES {
 					if other_case.algorithm != $test_case.algorithm {
-						let other_key = other_case.create_any_public_key(TEST_SEED.as_bytes());
+						let other_key = other_case.create_any_public_key(TEST_SEED.as_bytes())?;
 						let wrong_conversion: Result<$key_type, _> = other_key.try_into();
 						assert!(wrong_conversion.is_err());
 					}
@@ -635,29 +639,33 @@ mod tests {
 				Algorithm::Secp256r1 => test_conversion!(test_case, Secp256r1PublicKey),
 			}
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_algorithm_id_and_conversion() {
+	fn test_algorithm_id_and_conversion() -> Result<(), CryptoError> {
 		for test_case in AlgorithmTestData::TEST_CASES {
 			// Test algorithm ID
 			assert_eq!(test_case.algorithm.id(), test_case.expected_id);
 			// Test from_id
-			assert_eq!(Algorithm::from_id(test_case.expected_id).unwrap(), test_case.algorithm);
+			assert_eq!(Algorithm::from_id(test_case.expected_id)?, test_case.algorithm);
 			// Test u8 conversions
 			assert_eq!(u8::from(test_case.algorithm), test_case.expected_id);
 			// Test TryFrom<u8>
-			assert_eq!(Algorithm::try_from(test_case.expected_id).unwrap(), test_case.algorithm);
+			assert_eq!(Algorithm::try_from(test_case.expected_id)?, test_case.algorithm);
 		}
 
 		// Test invalid ID
 		assert!(Algorithm::from_id(99).is_err());
 		assert!(Algorithm::try_from(99u8).is_err());
+
+		Ok(())
 	}
 
 	#[cfg(any(feature = "der", feature = "rasn"))]
 	#[test]
-	fn test_any_public_key_to_subject_public_key_info() {
+	fn test_any_public_key_to_subject_public_key_info() -> Result<(), CryptoError> {
 		struct SubjectPublicKeyInfoTestCase {
 			algorithm: Algorithm,
 			expected_algorithm_oid: &'static str,
@@ -686,7 +694,7 @@ mod tests {
 			let test_data = AlgorithmTestData::TEST_CASES
 				.iter()
 				.find(|data| data.algorithm == test_case.algorithm)
-				.unwrap();
+				.expect("test case should exist in predefined list");
 
 			// Test ObjectIdentifier
 			let algorithm_oid = ObjectIdentifier::from(test_case.algorithm);
@@ -698,7 +706,7 @@ mod tests {
 			assert_eq!(algorithm_info.parameters.is_some(), test_case.has_parameters);
 
 			// Test data persistence
-			let any_public_key = test_data.create_any_public_key(TEST_SEED.as_bytes());
+			let any_public_key = test_data.create_any_public_key(TEST_SEED.as_bytes())?;
 			let subject_public_key_info = SubjectPublicKeyInfo::from(any_public_key.clone());
 			assert_eq!(subject_public_key_info.algorithm.algorithm.to_string(), test_case.expected_algorithm_oid);
 			assert_eq!(subject_public_key_info.algorithm.parameters.is_some(), test_case.has_parameters);
@@ -708,15 +716,17 @@ mod tests {
 			let spki_bytes = subject_public_key_info.subject_public_key.raw_bytes();
 			assert_eq!(original_bytes, spki_bytes);
 		}
+
+		Ok(())
 	}
 
 	#[cfg(feature = "signature")]
 	#[test]
-	fn test_any_signature_operations() {
+	fn test_any_signature_operations() -> Result<(), CryptoError> {
 		const TEST_MESSAGE: &[u8] = b"test message for signing";
 		for test_case in AlgorithmTestData::TEST_CASES {
 			// Test algorithm detection
-			let any_signature = test_case.create_any_signature(TEST_SEED.as_bytes(), TEST_MESSAGE);
+			let any_signature = test_case.create_any_signature(TEST_SEED.as_bytes(), TEST_MESSAGE)?;
 			assert_eq!(any_signature.to_algorithm(), test_case.algorithm);
 			assert_eq!(Algorithm::from(&any_signature), test_case.algorithm);
 
@@ -724,5 +734,7 @@ mod tests {
 			let signature_bytes = any_signature.to_bytes();
 			assert!(!signature_bytes.is_empty());
 		}
+
+		Ok(())
 	}
 }

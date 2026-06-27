@@ -1,3 +1,7 @@
+use alloc::string::String;
+#[cfg(all(not(feature = "std"), feature = "encryption"))]
+use alloc::string::ToString;
+
 use keetanetwork_utils::impl_variant_error_from;
 use snafu::Snafu;
 
@@ -59,11 +63,48 @@ pub enum CryptoError {
 	EncryptionNotSupported,
 }
 
+/// Combinations for discarding a source error in favor of a fixed [`CryptoError`].
+pub(crate) trait OrCryptoError<T> {
+	/// Map any error to [`CryptoError::EncryptionFailed`].
+	#[cfg(feature = "encryption")]
+	fn or_encryption_failed(self) -> Result<T, CryptoError>;
+	/// Map any error to [`CryptoError::DecryptionFailed`].
+	#[cfg(feature = "encryption")]
+	fn or_decryption_failed(self) -> Result<T, CryptoError>;
+	/// Map any error to [`CryptoError::InvalidPublicKey`].
+	fn or_invalid_public_key(self) -> Result<T, CryptoError>;
+}
+
+impl<T, E> OrCryptoError<T> for Result<T, E> {
+	#[cfg(feature = "encryption")]
+	fn or_encryption_failed(self) -> Result<T, CryptoError> {
+		self.map_err(|_| CryptoError::EncryptionFailed)
+	}
+
+	#[cfg(feature = "encryption")]
+	fn or_decryption_failed(self) -> Result<T, CryptoError> {
+		self.map_err(|_| CryptoError::DecryptionFailed)
+	}
+
+	fn or_invalid_public_key(self) -> Result<T, CryptoError> {
+		self.map_err(|_| CryptoError::InvalidPublicKey)
+	}
+}
+
 // Use macros for simple variant mappings
 impl_variant_error_from!(CryptoError, {
 	hkdf::InvalidLength => KeyDerivationFailed,
 	hkdf::InvalidPrkLength => KeyDerivationFailed,
+	core::array::TryFromSliceError => InvalidKeySize,
+	hex::FromHexError => InvalidInput,
 });
+
+#[cfg(feature = "encryption")]
+impl From<rand_core::OsError> for CryptoError {
+	fn from(error: rand_core::OsError) -> Self {
+		CryptoError::InternalError { message: error.to_string() }
+	}
+}
 
 #[cfg(feature = "encryption")]
 impl_variant_error_from!(CryptoError, {
@@ -133,6 +174,13 @@ mod tests {
 		test_hkdf_error_conversions, CryptoError, [
 			hkdf::InvalidLength,
 			hkdf::InvalidPrkLength,
+		]
+	}
+
+	// Test From conversion for TryFromSliceError
+	test_error_from_conversions! {
+		test_try_from_slice_error_conversion, CryptoError, [
+			<[u8; 32]>::try_from([1u8, 2, 3].as_slice()).unwrap_err(),
 		]
 	}
 

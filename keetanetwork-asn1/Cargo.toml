@@ -9,12 +9,12 @@ homepage.workspace = true
 description = "ASN.1 definitions and utilities for Keetanetwork"
 
 [lib]
-crate-type = ["staticlib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies.spki]
 version = "0.7.3"
-features = ["std"]
+default-features = false
+features = ["alloc"]
 
 [dependencies.der]
 workspace = true
@@ -22,6 +22,7 @@ workspace = true
 [dependencies.rasn]
 workspace = true
 optional = true
+features = ["bytes"]
 
 [dependencies.const-oid]
 workspace = true
@@ -29,6 +30,7 @@ optional = true
 
 [dependencies.hex]
 workspace = true
+features = ["alloc"]
 
 [dependencies.snafu]
 workspace = true
@@ -43,23 +45,44 @@ optional = true
 
 [dependencies.lazy_static]
 workspace = true
+features = ["spin_no_std"]
+
+[dependencies.num-bigint]
+workspace = true
 
 [dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils" }
+keetanetwork-utils = { workspace = true }
 
 [build-dependencies]
 serde_json = "1.0"
 rasn-compiler = "0.14.2"
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = [
-	"build",
-] }
+keetanetwork-utils = { workspace = true, features = ["std", "build"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+hex = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true }
+num-bigint = { workspace = true }
 
 [features]
-default = ["serde", "rasn", "chrono"]
-der = ["dep:const-oid"]
-rasn = ["dep:rasn"]
+default = ["std", "serde", "rasn"]
+std = [
+	"alloc",
+	"snafu/std",
+	"hex/std",
+	"der/std",
+	"rasn?/std",
+	"const-oid?/std",
+	"spki/std",
+	"chrono?/std",
+	"chrono?/clock",
+	"num-bigint/std",
+	"keetanetwork-utils/std",
+	"serde?/std",
+]
+alloc = ["chrono?/alloc"]
+der = ["dep:const-oid", "chrono"]
+rasn = ["dep:rasn", "chrono"]
 serde = ["dep:serde"]
 chrono = ["dep:chrono"]
+testing = []

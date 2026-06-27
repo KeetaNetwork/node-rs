@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::Path;
 
@@ -6,16 +7,25 @@ use serde_json::Value;
 use keetanetwork_utils::build::{compile_asn1_directory_with_full_config, Asn1CompileConfig};
 
 fn main() {
+	// Get OUT_DIR for generated files (required by cargo for publishable crates)
+	let out_dir = env::var("OUT_DIR").expect("OUT_DIR must be set by cargo");
+	let generated_dir = Path::new(&out_dir).join("generated");
+
 	// Ensure the generated directory exists
-	fs::create_dir_all("generated").expect("Failed to create generated directory");
+	fs::create_dir_all(&generated_dir).expect("Failed to create generated directory");
+
+	let generated_dir_str = generated_dir
+		.to_str()
+		.expect("OUT_DIR path must be valid UTF-8");
 
 	// Generate OID schema tokens
 	generate_schema();
 	// Generate OIDs from JSON
-	generate_oids_from_json("generated");
+	generate_oids_from_json(generated_dir_str);
 
-	let config = Asn1CompileConfig::new("asn1", "generated")
-		.with_generated_rs_path("src/generated.rs")
+	// Use OUT_DIR includes pattern for cargo publish compatibility
+	let config = Asn1CompileConfig::new("asn1", generated_dir_str)
+		.with_out_dir_includes(true)
 		.with_strip_prebuilt_methods(true)
 		.with_methods_to_strip("algorithm_identifier_definitions", vec!["new"])
 		.with_methods_to_strip("subject_public_key_info_definitions", vec!["new"])
@@ -25,8 +35,27 @@ fn main() {
 		panic!("Failed to compile ASN.1 files: {e}");
 	}
 
+	// Substitute the canonical-DER `GeneralizedTime` type in block.rs and
+	// vote.rs with `Asn1Time`, which preserves trailing zeros to match
+	// the reference TypeScript transport format.
+	rewrite_generalized_time(generated_dir_str, "block.rs");
+	rewrite_generalized_time(generated_dir_str, "vote.rs");
+
 	// Generate From implementations for wrapper types
-	generate_from_implementations("generated");
+	generate_from_implementations(generated_dir_str);
+}
+
+fn rewrite_generalized_time(generated_dir: &str, file_name: &str) {
+	let path = Path::new(generated_dir).join(file_name);
+	let Ok(original) = fs::read_to_string(&path) else {
+		return;
+	};
+
+	let imports_replacement = "use rasn::prelude::*;\nuse crate::Asn1Time as GeneralizedTime;";
+	let rewritten = original.replace("use rasn::prelude::*;", imports_replacement);
+	if rewritten != original {
+		fs::write(&path, rewritten).expect("post-process generated module must succeed");
+	}
 }
 
 fn generate_sequence_fields_with_context_tags(
@@ -383,198 +412,222 @@ fn generate_oids_from_json(path: &str) {
 	// Add imports and header
 	generated_code.push_str(
 		r#"
-use std::borrow::Cow;
-use std::collections::HashMap;
+use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
 use rasn::types::ObjectIdentifier;
 
 "#,
 	);
 
-	// Generate algorithm constants
-	if let Some(algorithms) = oids["algorithms"].as_object() {
-		generated_code.push_str("// Algorithm OID constants\n");
-		for (name, oid_array) in algorithms {
-			let const_name = name.to_uppercase().replace('-', "_");
-			let oid_values = format_oid_array(oid_array);
-			generated_code.push_str(&format!(
-				"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-			));
-		}
-		generated_code.push('\n');
+	emit_algorithm_constants(&oids, &mut generated_code);
+	emit_crypto_typed_module(&oids, &mut generated_code);
+	emit_plain_attribute_constants(&oids, &mut generated_code);
+	emit_keeta_module(&oids, &mut generated_code);
+	emit_algorithm_attributes_map(&oids, &mut generated_code);
+	emit_plain_attributes_map(&oids, &mut generated_code);
+
+	ensure_single_newline_ending(&mut generated_code);
+	fs::write(&dest_path, generated_code).expect("OUT_DIR must be writable during build");
+}
+
+/// Resolve the constant name used for a plain certificate attribute.
+fn plain_attr_const_name(name: &str) -> String {
+	match name {
+		"postalCode" => "ADDRESS_POSTAL_CODE".to_string(),
+		_ => format!("ADDRESS_{}", name.to_uppercase()),
 	}
+}
 
-	// Generate plain attribute constants
-	if let Some(plain_attrs) = oids["plain_attributes"].as_object() {
-		generated_code.push_str("// Plain attribute OID constants\n");
-		for (name, attr_info) in plain_attrs {
-			if let Some(oid_array) = attr_info["oid"].as_array() {
-				let const_name = match name.as_str() {
-					"postalCode" => "ADDRESS_POSTAL_CODE",
-					_ => &format!("ADDRESS_{}", name.to_uppercase()),
-				};
-				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+fn emit_algorithm_constants(oids: &Value, generated_code: &mut String) {
+	let Some(algorithms) = oids["algorithms"].as_object() else {
+		return;
+	};
 
-				if let Some(description) = attr_info["description"].as_str() {
-					generated_code.push_str(&format!("/// {description}\n"));
-				}
-				if let Some(reference) = attr_info["reference"].as_str() {
-					generated_code.push_str(&format!("/// # References\n/// - [{reference}]({reference})\n"));
-				}
-
-				generated_code.push_str(&format!(
-					"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-				));
-			}
-		}
-		generated_code.push('\n');
+	generated_code.push_str("// Algorithm OID constants\n");
+	for (name, oid_array) in algorithms {
+		let const_name = name.to_uppercase().replace('-', "_");
+		let oid_values = format_oid_array(oid_array);
+		generated_code.push_str(&format!(
+			"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
 	}
+	generated_code.push('\n');
+}
 
-	// Generate Keeta module
+fn emit_crypto_typed_module(oids: &Value, generated_code: &mut String) {
+	let Some(crypto) = oids["crypto"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("/// Typed OID constants for the rasn backend.\n");
+	generated_code.push_str("/// These are const-evaluated at compile time, avoiding runtime panics.\n");
+	generated_code.push_str("pub mod typed {\n");
+	generated_code.push_str("    use super::*;\n\n");
+	for (name, crypto_info) in crypto {
+		let Some(oid_array) = crypto_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = name.to_uppercase().replace('-', "_");
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+
+		if let Some(description) = crypto_info["description"].as_str() {
+			generated_code.push_str(&format!("    /// {description}\n"));
+		}
+
+		generated_code.push_str(&format!(
+			"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
+	}
+	generated_code.push_str("}\n\n");
+}
+
+fn emit_plain_attribute_constants(oids: &Value, generated_code: &mut String) {
+	let Some(plain_attrs) = oids["plain_attributes"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("// Plain attribute OID constants\n");
+	for (name, attr_info) in plain_attrs {
+		let Some(oid_array) = attr_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = plain_attr_const_name(name);
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+
+		if let Some(description) = attr_info["description"].as_str() {
+			generated_code.push_str(&format!("/// {description}\n"));
+		}
+		if let Some(reference) = attr_info["reference"].as_str() {
+			generated_code.push_str(&format!("/// # References\n/// - [{reference}]({reference})\n"));
+		}
+
+		generated_code.push_str(&format!(
+			"pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
+	}
+	generated_code.push('\n');
+}
+
+fn emit_keeta_module(oids: &Value, generated_code: &mut String) {
 	generated_code.push_str("pub mod keeta {\n");
 	generated_code.push_str("    use super::*;\n\n");
 
-	// Generate extension constants
-	if let Some(extensions) = oids["extensions"].as_object() {
-		generated_code.push_str("    // Extension OID constants\n");
-		for (name, ext_info) in extensions {
-			if let Some(oid_array) = ext_info["oid"].as_array() {
-				let const_name = match name.as_str() {
-					"kycAttributes" => "KYC_ATTRIBUTES",
-					_ => &name.to_uppercase(),
-				};
-				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
-				generated_code.push_str(&format!(
-					"    pub const {const_name}_EXTENSION: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-				));
-			}
-		}
-		generated_code.push('\n');
-	}
-
-	// Generate sensitive attribute constants
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		generated_code.push_str("    // Sensitive attribute OID constants\n");
-		for (name, attr_info) in sensitive_attrs {
-			if let Some(oid_array) = attr_info["oid"].as_array() {
-				let const_name = camel_to_snake_upper(name);
-				let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
-
-				if let Some(description) = attr_info["description"].as_str() {
-					generated_code.push_str(&format!("    /// {description}\n"));
-				}
-
-				generated_code.push_str(&format!(
-					"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
-				));
-			}
-		}
-		generated_code.push('\n');
-	}
-
-	// Generate sensitive attributes HashMap
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		generated_code.push_str("    lazy_static::lazy_static! {\n");
-		generated_code.push_str("        /// OID database for sensitive certificate attributes.\n");
-		generated_code
-			.push_str("        pub static ref SENSITIVE_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
-		generated_code.push_str("            [\n");
-		for name in sensitive_attrs.keys() {
-			let const_name = camel_to_snake_upper(name);
-			generated_code.push_str(&format!("                (\"{name}\", {const_name}),\n"));
-		}
-		generated_code.push_str("            ]\n");
-		generated_code.push_str("            .iter()\n");
-		generated_code.push_str("            .cloned()\n");
-		generated_code.push_str("            .collect()\n");
-		generated_code.push_str("        };\n");
-		generated_code.push_str("    }\n");
-	}
+	emit_extension_constants(oids, generated_code);
+	emit_sensitive_attribute_constants(oids, generated_code);
+	emit_sensitive_attributes_map(oids, generated_code);
 
 	generated_code.push_str("}\n\n");
-
-	// Generate algorithm attributes HashMap
-	if let Some(algorithms) = oids["algorithms"].as_object() {
-		generated_code.push_str("lazy_static::lazy_static! {\n");
-		generated_code.push_str("    /// OID database for sensitive attribute algorithms.\n");
-		generated_code
-			.push_str("    pub static ref ALGORITHM_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
-		generated_code.push_str("        [\n");
-		for name in algorithms.keys() {
-			let const_name = name.to_uppercase().replace('-', "_");
-			generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
-		}
-		generated_code.push_str("        ]\n");
-		generated_code.push_str("        .iter()\n");
-		generated_code.push_str("        .cloned()\n");
-		generated_code.push_str("        .collect()\n");
-		generated_code.push_str("    };\n");
-		generated_code.push_str("}\n\n");
-	}
-
-	// Generate plain attributes HashMap
-	if let Some(plain_attrs) = oids["plain_attributes"].as_object() {
-		generated_code.push_str("lazy_static::lazy_static! {\n");
-		generated_code.push_str("    /// OID database for plain certificate attributes.\n");
-		generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: HashMap<&'static str, ObjectIdentifier> = {\n");
-		generated_code.push_str("        [\n");
-		for name in plain_attrs.keys() {
-			let const_name = match name.as_str() {
-				"postalCode" => "ADDRESS_POSTAL_CODE",
-				_ => &format!("ADDRESS_{}", name.to_uppercase()),
-			};
-			generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
-		}
-		generated_code.push_str("        ]\n");
-		generated_code.push_str("        .iter()\n");
-		generated_code.push_str("        .cloned()\n");
-		generated_code.push_str("        .collect()\n");
-		generated_code.push_str("    };\n");
-		generated_code.push_str("}\n");
-	}
-
-	ensure_single_newline_ending(&mut generated_code);
-	fs::write(&dest_path, generated_code).unwrap();
 }
 
-fn update_generated_rs_with_from_imp(filename: &str) {
-	let module = filename.replace(".rs", "");
-	let generated_rs_path = Path::new("src/generated.rs");
-	let current_content = fs::read_to_string(generated_rs_path).expect("Failed to read generated.rs");
-	if current_content.contains("mod from_imp;") {
-		return; // Already updated
+fn emit_extension_constants(oids: &Value, generated_code: &mut String) {
+	let Some(extensions) = oids["extensions"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("    // Extension OID constants\n");
+	for (name, ext_info) in extensions {
+		let Some(oid_array) = ext_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = camel_to_snake_upper(name);
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+		generated_code.push_str(&format!(
+			"    pub const {const_name}_EXTENSION: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
 	}
+	generated_code.push('\n');
+}
 
-	// Find the insertion point
-	let lines: Vec<&str> = current_content.lines().collect();
-	let mut updated_lines = Vec::new();
-	let mut inserted = false;
+fn emit_sensitive_attribute_constants(oids: &Value, generated_code: &mut String) {
+	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
+		return;
+	};
 
-	for line in lines {
-		// Insert before the first re-export line (which starts with "// Re-export" or "pub use")
-		if (line.starts_with("// Re-export") || line.starts_with("pub use")) && !inserted {
-			updated_lines.push(format!("#[path = \"../generated/{filename}\"]"));
-			updated_lines.push(format!("mod {module};"));
-			updated_lines.push("".to_string()); // Add empty line before re-exports
-			inserted = true;
+	generated_code.push_str("    // Sensitive attribute OID constants\n");
+	for (name, attr_info) in sensitive_attrs {
+		let Some(oid_array) = attr_info["oid"].as_array() else {
+			continue;
+		};
+
+		let const_name = camel_to_snake_upper(name);
+		let oid_values = format_oid_array(&Value::Array(oid_array.clone()));
+
+		if let Some(description) = attr_info["description"].as_str() {
+			generated_code.push_str(&format!("    /// {description}\n"));
 		}
 
-		updated_lines.push(line.to_string());
+		generated_code.push_str(&format!(
+			"    pub const {const_name}: ObjectIdentifier = ObjectIdentifier::new_unchecked(Cow::Borrowed(&{oid_values}));\n"
+		));
 	}
+	generated_code.push('\n');
+}
 
-	// If we didn't find re-exports, append at the end
-	if !inserted {
-		updated_lines.push("".to_string());
-		updated_lines.push(format!("#[path = \"generated/{filename}\"]"));
-		updated_lines.push(format!("mod {module};"));
+fn emit_sensitive_attributes_map(oids: &Value, generated_code: &mut String) {
+	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("    lazy_static::lazy_static! {\n");
+	generated_code.push_str("        /// OID database for sensitive certificate attributes.\n");
+	generated_code
+		.push_str("        pub static ref SENSITIVE_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
+	generated_code.push_str("            [\n");
+	for name in sensitive_attrs.keys() {
+		let const_name = camel_to_snake_upper(name);
+		generated_code.push_str(&format!("                (\"{name}\", {const_name}),\n"));
 	}
+	generated_code.push_str("            ]\n");
+	generated_code.push_str("            .iter()\n");
+	generated_code.push_str("            .cloned()\n");
+	generated_code.push_str("            .collect()\n");
+	generated_code.push_str("        };\n");
+	generated_code.push_str("    }\n");
+}
 
-	// Write the updated content back
-	let mut updated_content = updated_lines.join("\n");
+fn emit_algorithm_attributes_map(oids: &Value, generated_code: &mut String) {
+	let Some(algorithms) = oids["algorithms"].as_object() else {
+		return;
+	};
 
-	// Ensure proper file ending
-	ensure_single_newline_ending(&mut updated_content);
+	generated_code.push_str("lazy_static::lazy_static! {\n");
+	generated_code.push_str("    /// OID database for sensitive attribute algorithms.\n");
+	generated_code.push_str("    pub static ref ALGORITHM_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
+	generated_code.push_str("        [\n");
+	for name in algorithms.keys() {
+		let const_name = name.to_uppercase().replace('-', "_");
+		generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
+	}
+	generated_code.push_str("        ]\n");
+	generated_code.push_str("        .iter()\n");
+	generated_code.push_str("        .cloned()\n");
+	generated_code.push_str("        .collect()\n");
+	generated_code.push_str("    };\n");
+	generated_code.push_str("}\n\n");
+}
 
-	fs::write(generated_rs_path, updated_content).expect("Failed to update generated.rs");
+fn emit_plain_attributes_map(oids: &Value, generated_code: &mut String) {
+	let Some(plain_attrs) = oids["plain_attributes"].as_object() else {
+		return;
+	};
+
+	generated_code.push_str("lazy_static::lazy_static! {\n");
+	generated_code.push_str("    /// OID database for plain certificate attributes.\n");
+	generated_code.push_str("    pub static ref PLAIN_ATTRIBUTES: BTreeMap<&'static str, ObjectIdentifier> = {\n");
+	generated_code.push_str("        [\n");
+	for name in plain_attrs.keys() {
+		let const_name = plain_attr_const_name(name);
+		generated_code.push_str(&format!("            (\"{name}\", {const_name}),\n"));
+	}
+	generated_code.push_str("        ]\n");
+	generated_code.push_str("        .iter()\n");
+	generated_code.push_str("        .cloned()\n");
+	generated_code.push_str("        .collect()\n");
+	generated_code.push_str("    };\n");
+	generated_code.push_str("}\n");
 }
 
 #[derive(Debug)]
@@ -727,31 +780,8 @@ fn generate_default_impl(oids: &Value, generated_code: &mut String) {
 fn collect_wrapper_types(oids: &Value) -> std::collections::HashMap<String, Vec<String>> {
 	let mut wrapper_types: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
-	// Add primitive types
-	if let Some(primitives) = oids["iso20022_types"]["primitives"].as_object() {
-		for (name, info) in primitives {
-			if let Some(asn1_type) = info["type"].as_str() {
-				wrapper_types
-					.entry(asn1_type.to_string())
-					.or_default()
-					.push(name.clone());
-			}
-		}
-	}
-
-	// Add sensitive attributes
-	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
-		for (_name, info) in sensitive_attrs {
-			if let Some(token) = info["token"].as_str() {
-				if let Some(asn1_type) = info["type"].as_str() {
-					wrapper_types
-						.entry(asn1_type.to_string())
-						.or_default()
-						.push(token.to_string());
-				}
-			}
-		}
-	}
+	add_primitive_wrappers(oids, &mut wrapper_types);
+	add_sensitive_wrappers(oids, &mut wrapper_types);
 
 	// Sort for consistent output
 	for wrappers in wrapper_types.values_mut() {
@@ -759,6 +789,39 @@ fn collect_wrapper_types(oids: &Value) -> std::collections::HashMap<String, Vec<
 	}
 
 	wrapper_types
+}
+
+fn add_primitive_wrappers(oids: &Value, wrapper_types: &mut std::collections::HashMap<String, Vec<String>>) {
+	let Some(primitives) = oids["iso20022_types"]["primitives"].as_object() else {
+		return;
+	};
+
+	for (name, info) in primitives {
+		if let Some(asn1_type) = info["type"].as_str() {
+			wrapper_types
+				.entry(asn1_type.to_string())
+				.or_default()
+				.push(name.clone());
+		}
+	}
+}
+
+fn add_sensitive_wrappers(oids: &Value, wrapper_types: &mut std::collections::HashMap<String, Vec<String>>) {
+	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
+		return;
+	};
+
+	for info in sensitive_attrs.values() {
+		let Some(token) = info["token"].as_str() else {
+			continue;
+		};
+		if let Some(asn1_type) = info["type"].as_str() {
+			wrapper_types
+				.entry(asn1_type.to_string())
+				.or_default()
+				.push(token.to_string());
+		}
+	}
 }
 
 fn generate_from_implementations(path: &str) {
@@ -831,17 +894,6 @@ use crate::generated::iso20022::*;
 
 	ensure_single_newline_ending(&mut generated_code);
 	fs::write(&dest_path, generated_code).unwrap_or_else(|_| panic!("Failed to write {filename}"));
-
-	// Format the generated file
-	if let Err(e) = std::process::Command::new("rustfmt")
-		.arg(&dest_path)
-		.status()
-	{
-		eprintln!("Warning: rustfmt failed: {}", e);
-	}
-
-	// Update generated.rs to include this module
-	update_generated_rs_with_from_imp(filename);
 }
 
 fn format_oid_array(value: &Value) -> String {
@@ -864,7 +916,11 @@ fn camel_to_snake_upper(s: &str) -> String {
 		if c.is_uppercase() && !result.is_empty() {
 			result.push('_');
 		}
-		result.push(c.to_uppercase().next().unwrap());
+		result.push(
+			c.to_uppercase()
+				.next()
+				.expect("ASCII char must have uppercase"),
+		);
 	}
 
 	result
@@ -876,7 +932,12 @@ fn camel_to_pascal_case(s: &str) -> String {
 	let mut chars = s.chars();
 
 	if let Some(first_char) = chars.next() {
-		result.push(first_char.to_uppercase().next().unwrap());
+		result.push(
+			first_char
+				.to_uppercase()
+				.next()
+				.expect("ASCII char must have uppercase"),
+		);
 		for c in chars {
 			result.push(c);
 		}

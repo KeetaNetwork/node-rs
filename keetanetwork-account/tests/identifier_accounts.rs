@@ -1,7 +1,8 @@
 //! Integration tests for identifier account generation functionality.
 
-use keetanetwork_account::{Account, GenericAccount, KeyPair, KeyPairType, KeyTOKEN};
+use keetanetwork_account::{Account, AccountError, GenericAccount, KeyPair, KeyPairType, KeyTOKEN};
 use keetanetwork_account::{Accountable, KeyECDSASECP256K1, KeyNETWORK, KeySTORAGE, Keyable};
+use keetanetwork_crypto::hash::BlockHash;
 use keetanetwork_crypto::IntoSecret;
 
 mod common;
@@ -19,14 +20,18 @@ const NETWORK_VERIFICATION_CASES: &[(u64, &str)] = &[
 	(999999, "Network ID 999999"),
 ];
 
+// Helper function to generate a base token identifier from a network address
+fn generate_base_token_identifier(network_address: &Account<KeyNETWORK>) -> Result<GenericAccount, AccountError> {
+	network_address.generate_identifier(KeyPairType::TOKEN, None, 0)
+}
+
 // Helper function to create crypto account with test seed
-fn create_test_crypto_account() -> Account<KeyECDSASECP256K1> {
+fn create_test_crypto_account() -> Result<Account<KeyECDSASECP256K1>, AccountError> {
 	let seed_array = create_test_seed_array();
 	Account::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
 		Keyable::Seed((seed_array.into_secret(), 0)),
 		KeyPairType::ECDSASECP256K1,
 	))
-	.unwrap()
 }
 
 // Helper function to verify network account properties
@@ -53,12 +58,12 @@ fn verify_storage_identifier_properties(account: &keetanetwork_account::Account<
 }
 
 #[test]
-fn test_network_address_deterministic_generation() {
+fn test_network_address_deterministic_generation() -> Result<(), AccountError> {
 	// Test deterministic generation with data-driven approach
 	for (network_id, description) in NETWORK_VERIFICATION_CASES {
 		// Same network ID should produce identical accounts
-		let network_account1 = Account::<KeyNETWORK>::generate_network_address(*network_id).unwrap();
-		let network_account2 = Account::<KeyNETWORK>::generate_network_address(*network_id).unwrap();
+		let network_account1 = Account::<KeyNETWORK>::generate_network_address(*network_id)?;
+		let network_account2 = Account::<KeyNETWORK>::generate_network_address(*network_id)?;
 		assert_eq!(
 			network_account1.to_string(),
 			network_account2.to_string(),
@@ -72,8 +77,8 @@ fn test_network_address_deterministic_generation() {
 	// Test that different network IDs produce different accounts
 	let accounts: Vec<_> = NETWORK_VERIFICATION_CASES
 		.iter()
-		.map(|(network_id, _)| Account::<KeyNETWORK>::generate_network_address(*network_id).unwrap())
-		.collect();
+		.map(|(network_id, _)| Account::<KeyNETWORK>::generate_network_address(*network_id))
+		.collect::<Result<Vec<_>, _>>()?;
 
 	for i in 0..accounts.len() {
 		for j in (i + 1)..accounts.len() {
@@ -86,102 +91,109 @@ fn test_network_address_deterministic_generation() {
 			);
 		}
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_base_token_identifier_generation() {
+fn test_base_token_identifier_generation() -> Result<(), AccountError> {
 	// Test base token generation from network addresses with data-driven approach
 	for (network_id, description) in NETWORK_VERIFICATION_CASES {
-		let network_address = Account::<KeyNETWORK>::generate_network_address(*network_id).unwrap();
+		let network_address = Account::<KeyNETWORK>::generate_network_address(*network_id)?;
 		verify_network_account_properties(&network_address);
 
-		// Generate base token identifier (using None for previous hash like Block.NO_PREVIOUS)
-		let base_token_result = network_address.generate_identifier(KeyPairType::TOKEN, None, 0);
+		// Generate base token identifier (None previous means opening semantics)
+		let base_token_result = generate_base_token_identifier(&network_address);
 		assert!(base_token_result.is_ok(), "Failed to generate base token identifier for {description}");
 
-		let base_token_generic = base_token_result.unwrap();
+		let base_token_generic = base_token_result?;
 		assert!(matches!(base_token_generic, GenericAccount::Token(_)));
 
-		let base_token_address = Account::<KeyTOKEN>::try_from(base_token_generic).unwrap();
+		let base_token_address = Account::<KeyTOKEN>::try_from(base_token_generic)?;
 		verify_token_identifier_properties(&base_token_address);
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_token_identifier_restrictions() {
-	let network_address = Account::<KeyNETWORK>::generate_network_address(NETWORK_VERIFICATION_CASES[0].0).unwrap();
-	let base_token_result = network_address.generate_identifier(KeyPairType::TOKEN, None, 0);
+fn test_token_identifier_restrictions() -> Result<(), AccountError> {
+	let network_address = Account::<KeyNETWORK>::generate_network_address(NETWORK_VERIFICATION_CASES[0].0)?;
+	let base_token_result = generate_base_token_identifier(&network_address);
 	assert!(base_token_result.is_ok());
 
-	let base_token_address = Account::<KeyTOKEN>::try_from(base_token_result.unwrap()).unwrap();
+	let base_token_address = Account::<KeyTOKEN>::try_from(base_token_result?)?;
 	// Test that token identifiers cannot generate more token identifiers.
 	let token_from_token_result = base_token_address.generate_identifier(KeyPairType::TOKEN, None, 0);
 	assert!(
 		token_from_token_result.is_err(),
 		"Token identifiers should not be able to generate more token identifiers"
 	);
+
+	Ok(())
 }
 
 #[test]
-fn test_network_identifier_restrictions() {
-	let network_address = Account::<KeyNETWORK>::generate_network_address(NETWORK_VERIFICATION_CASES[0].0).unwrap();
+fn test_network_identifier_restrictions() -> Result<(), AccountError> {
+	let network_address = Account::<KeyNETWORK>::generate_network_address(NETWORK_VERIFICATION_CASES[0].0)?;
 	// Network addresses should not be able to generate token identifiers with some previous hash
-	// (only base tokens with None/NO_PREVIOUS should work)
-	let fake_previous_hash = "fake_hash";
-	let token_with_previous_result =
-		network_address.generate_identifier(KeyPairType::TOKEN, Some(fake_previous_hash), 0);
+	// (only base tokens with an opening `None` previous should work)
+	let previous_hash = BlockHash::from([0x11u8; 32]);
+	let token_with_previous_result = network_address.generate_identifier(KeyPairType::TOKEN, Some(&previous_hash), 0);
 
 	// This should fail
 	assert!(
 		token_with_previous_result.is_err(),
 		"Network addresses should not generate token identifiers with previous hash"
 	);
+
+	Ok(())
 }
 
 #[test]
-fn test_storage_identifier_generation() {
-	let crypto_account = create_test_crypto_account();
+fn test_storage_identifier_generation() -> Result<(), AccountError> {
+	let crypto_account = create_test_crypto_account()?;
 
 	let storage_result = crypto_account.generate_identifier(KeyPairType::STORAGE, None, 0);
 	assert!(storage_result.is_ok(), "Failed to generate storage identifier");
 
-	let storage_generic = storage_result.unwrap();
+	let storage_generic = storage_result?;
 	assert!(matches!(storage_generic, GenericAccount::Storage(_)));
 
-	let storage_identifier = Account::<KeySTORAGE>::try_from(storage_generic).unwrap();
+	let storage_identifier = Account::<KeySTORAGE>::try_from(storage_generic)?;
 	verify_storage_identifier_properties(&storage_identifier);
+
+	Ok(())
 }
 
 #[test]
-fn test_identifier_generation_deterministic() {
+fn test_identifier_generation_deterministic() -> Result<(), AccountError> {
 	// Test that identifier generation is deterministic
-	let account1 = create_test_crypto_account();
-	let account2 = create_test_crypto_account();
+	let account1 = create_test_crypto_account()?;
+	let account2 = create_test_crypto_account()?;
 
 	// Generate storage identifiers from both accounts
-	let storage1 = account1
-		.generate_identifier(KeyPairType::STORAGE, None, 0)
-		.unwrap();
-	let storage2 = account2
-		.generate_identifier(KeyPairType::STORAGE, None, 0)
-		.unwrap();
+	let storage1 = account1.generate_identifier(KeyPairType::STORAGE, None, 0)?;
+	let storage2 = account2.generate_identifier(KeyPairType::STORAGE, None, 0)?;
 
-	let storage1 = Account::<KeySTORAGE>::try_from(storage1).unwrap();
-	let storage2 = Account::<KeySTORAGE>::try_from(storage2).unwrap();
+	let storage1 = Account::<KeySTORAGE>::try_from(storage1)?;
+	let storage2 = Account::<KeySTORAGE>::try_from(storage2)?;
 	assert_eq!(storage1.to_string(), storage2.to_string(), "Identifier generation should be deterministic");
+
+	Ok(())
 }
 
 #[test]
-fn test_base_address_consistency() {
+fn test_base_address_consistency() -> Result<(), Box<dyn std::error::Error>> {
 	for &network_id in CONSISTENCY_TEST_NETWORK_IDS {
 		// Generate network and base token addresses
-		let network_address = Account::<KeyNETWORK>::generate_network_address(network_id).unwrap();
-		let base_token_result = network_address.generate_identifier(KeyPairType::TOKEN, None, 0);
+		let network_address = Account::<KeyNETWORK>::generate_network_address(network_id)?;
+		let base_token_result = generate_base_token_identifier(&network_address);
 		assert!(base_token_result.is_ok());
 
 		// Generate them again to verify consistency
-		let network_address_check = Account::<KeyNETWORK>::generate_network_address(network_id).unwrap();
-		let base_token_check_result = network_address_check.generate_identifier(KeyPairType::TOKEN, None, 0);
+		let network_address_check = Account::<KeyNETWORK>::generate_network_address(network_id)?;
+		let base_token_check_result = generate_base_token_identifier(&network_address_check);
 		assert!(base_token_check_result.is_ok());
 
 		// Compare network addresses
@@ -191,37 +203,37 @@ fn test_base_address_consistency() {
 			"Network addresses should be deterministic for network_id {network_id}"
 		);
 
-		let token1 = Account::<KeyTOKEN>::try_from(base_token_result.unwrap()).unwrap();
-		let token2 = Account::<KeyTOKEN>::try_from(base_token_check_result.unwrap()).unwrap();
-		assert_eq!(
-			token1.keypair.to_public_key_string(),
-			token2.keypair.to_public_key_string(),
-			"Base token addresses should be deterministic for network_id {network_id}"
-		);
+		let token1 = Account::<KeyTOKEN>::try_from(base_token_result?)?;
+		let token2 = Account::<KeyTOKEN>::try_from(base_token_check_result?)?;
+		let pk1 = token1.keypair.to_public_key_string()?;
+		let pk2 = token2.keypair.to_public_key_string()?;
+		assert_eq!(pk1, pk2, "Base token addresses should be deterministic for network_id {network_id}");
 	}
+
+	Ok(())
 }
 
 #[test]
-fn test_account_comparison() {
+fn test_account_comparison() -> Result<(), AccountError> {
 	let account1 = TEST_PUBLIC_ACCOUNT
 		.ecdsa_secp256k1
 		.encoded_public_key
-		.parse::<Account<KeyECDSASECP256K1>>()
-		.unwrap();
+		.parse::<Account<KeyECDSASECP256K1>>()?;
 	let account2 = TEST_PUBLIC_ACCOUNT
 		.ecdsa_secp256k1
 		.encoded_public_key
-		.parse::<Account<KeyECDSASECP256K1>>()
-		.unwrap();
+		.parse::<Account<KeyECDSASECP256K1>>()?;
 
 	assert!(account1.compare_public_key(TEST_PUBLIC_ACCOUNT.ecdsa_secp256k1.encoded_public_key));
 	assert!(account1.compare_account(&account2)); // Same public keys
 	assert!(!account1.compare_public_key(TEST_PUBLIC_ACCOUNT.ecdsa_secp256r1.encoded_public_key));
+
+	Ok(())
 }
 
 #[test]
-fn test_identifier_account_error_handling() {
-	let network_account = Account::<KeyNETWORK>::generate_network_address(12345).unwrap();
+fn test_identifier_account_error_handling() -> Result<(), AccountError> {
+	let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
 
 	// Test that identifier accounts cannot sign
 	let sign_result = network_account.sign(b"test data", None);
@@ -242,9 +254,10 @@ fn test_identifier_account_error_handling() {
 	let token_account = TEST_PUBLIC_ACCOUNT
 		.token
 		.encoded_public_key
-		.parse::<GenericAccount>()
-		.unwrap();
-	let token_account = Account::<KeyTOKEN>::try_from(token_account).unwrap();
+		.parse::<GenericAccount>()?;
+	let token_account = Account::<KeyTOKEN>::try_from(token_account)?;
 	let invalid_generation = token_account.generate_identifier(KeyPairType::STORAGE, None, 0);
 	assert!(invalid_generation.is_err());
+
+	Ok(())
 }

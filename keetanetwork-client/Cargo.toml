@@ -1,0 +1,108 @@
+[package]
+name = "keetanetwork-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Async REST client for transmitting vote staples to a KeetaNet node"
+
+[features]
+default = ["std"]
+codec = ["dep:serde", "dep:serde_json"]
+http = [
+	"codec",
+	"dep:reqwest",
+	"reqwest/json",
+	"reqwest/query",
+	"dep:progenitor-client",
+]
+std = [
+	"http",
+	"dep:tokio",
+	"reqwest/rustls",
+	"futures/std",
+	"base64/std",
+	"snafu/std",
+	"num-bigint/std",
+	"keetanetwork-block/std",
+	"keetanetwork-vote/std",
+	"keetanetwork-error/std",
+	"keetanetwork-account/std",
+]
+wasm = ["http"]
+wasi = ["codec"]
+testing = []
+
+[dependencies]
+keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-vote = { workspace = true, features = ["alloc", "der", "rasn"] }
+keetanetwork-error = { workspace = true, features = ["alloc"] }
+keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
+
+progenitor-client = { workspace = true, optional = true }
+num-bigint = { workspace = true }
+rand_core = { workspace = true }
+spin = { workspace = true, features = ["mutex", "spin_mutex", "rwlock", "once"] }
+async-trait = { workspace = true }
+futures = { workspace = true, features = ["alloc"] }
+
+[dependencies.tokio]
+workspace = true
+features = ["rt", "time"]
+optional = true
+
+[dependencies.reqwest]
+workspace = true
+optional = true
+
+[dependencies.serde]
+workspace = true
+optional = true
+
+[dependencies.serde_json]
+workspace = true
+optional = true
+
+[dependencies.base64]
+workspace = true
+features = ["alloc"]
+
+[dependencies.snafu]
+workspace = true
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Performance"] }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wstd = { version = "0.6", features = ["json"] }
+percent-encoding = { version = "2", default-features = false, features = ["alloc"] }
+
+[build-dependencies]
+progenitor = { workspace = true }
+serde_yaml = "0.9"
+serde_json.workspace = true
+prettyplease = "0.2"
+syn = "2.0"
+
+[dev-dependencies]
+keetanetwork-utils = { workspace = true, features = ["std", "node-harness"] }
+keetanetwork-block = { workspace = true, features = ["std", "rasn", "testing"] }
+hex = { workspace = true }
+
+[dev-dependencies.serde_json]
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = ["rt", "rt-multi-thread", "macros", "time"]
+
+[[test]]
+name = "e2e"
+required-features = ["testing"]

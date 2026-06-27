@@ -1,0 +1,1170 @@
+openapi: 3.0.3
+info:
+  title: KeetaNet Node API (transmit subset)
+  version: 0.16.0
+  description: |
+    Transmit-path subset of the KeetaNet Node REST API consumed by
+    keetanetwork-client: request votes for blocks, request a vote quote,
+    and publish a vote staple to the network.
+
+    Derived from the full KeetaNet Node OpenAPI document; only the
+    endpoints required to assemble and transmit a vote staple are kept,
+    and operationIds are added so the generated client exposes stable
+    method names.
+servers:
+  - url: http://localhost:8080/api
+    description: Local development server
+
+components:
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: boolean
+        message:
+          type: string
+        type:
+          type: string
+          nullable: true
+        code:
+          type: string
+        shouldRetry:
+          type: boolean
+          nullable: true
+          description: Whether a LEDGER error may be retried
+        retryDelay:
+          type: integer
+          nullable: true
+          description: Suggested retry delay in milliseconds
+        accounts:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: Accounts party to a LEDGER vote conflict
+        blockhash:
+          type: string
+          nullable: true
+          description: Block hash being published (LEDGER idempotent errors)
+        existingBlockhash:
+          type: string
+          nullable: true
+          description: Pre-existing block hash for the idempotent key
+        account:
+          type: string
+          nullable: true
+          description: Account the idempotent key belongs to
+        idempotentKey:
+          type: string
+          nullable: true
+          description: Idempotent key bytes, base64-encoded
+
+    Vote:
+      type: object
+      description: A vote encoded in base64
+      properties:
+        $binary:
+          type: string
+          description: Binary vote data encoded as base64
+
+    VoteQuote:
+      type: object
+      description: A vote quote encoded in base64
+      properties:
+        $binary:
+          type: string
+          description: Binary vote quote data encoded as base64
+
+    Block:
+      type: object
+      description: A block encoded in base64
+      properties:
+        $binary:
+          type: string
+          description: Binary block data encoded as base64
+
+    VoteStaple:
+      type: object
+      description: A vote staple encoded in base64
+      properties:
+        $binary:
+          type: string
+          description: Binary vote staple data encoded as base64
+
+    Certificate:
+      type: object
+      properties:
+        certificate:
+          type: string
+          nullable: true
+          description: PEM-encoded certificate
+        intermediates:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: PEM-encoded intermediate certificates
+
+    ACLRow:
+      type: object
+      properties:
+        principal:
+          type: string
+        entity:
+          type: string
+        target:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+          description: Permission bitmaps as 0x-prefixed hexadecimal values
+
+    HistoryEntry:
+      type: object
+      properties:
+        voteStaple:
+          $ref: '#/components/schemas/VoteStaple'
+        $id:
+          type: string
+          description: Hexadecimal vote staple id
+        $timestamp:
+          type: string
+          description: ISO 8601 timestamp
+
+    Representative:
+      type: object
+      properties:
+        representative:
+          type: string
+        weight:
+          type: string
+          description: Voting weight as a 0x-prefixed hexadecimal BigInt
+        endpoints:
+          $ref: '#/components/schemas/RepresentativeEndpoints'
+
+    RepresentativeEndpoints:
+      type: object
+      description: Network endpoints a representative can be reached at.
+      properties:
+        api:
+          type: string
+          description: REST API base URL
+        p2p:
+          type: string
+          description: P2P WebSocket URL
+
+    AccountInfo:
+      type: object
+      description: On-chain account info; `supply` is present only for token accounts.
+      properties:
+        name:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        metadata:
+          type: string
+          nullable: true
+        supply:
+          type: string
+          nullable: true
+          description: Total token supply as a 0x-prefixed hexadecimal BigInt (token accounts only)
+
+    BalanceEntry:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Token account address
+        balance:
+          type: string
+          description: Settled balance as a 0x-prefixed hexadecimal BigInt
+        pending:
+          type: string
+          description: Pending balance as a 0x-prefixed hexadecimal BigInt
+
+
+paths:
+  /vote:
+    post:
+      operationId: createVote
+      summary: Create a new vote
+      description: Submit blocks to a representative and receive a vote for them.
+      tags:
+        - vote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - blocks
+              properties:
+                blocks:
+                  type: array
+                  items:
+                    type: string
+                  description: Array of base64-encoded blocks
+                votes:
+                  type: array
+                  items:
+                    type: string
+                  description: Array of base64-encoded votes
+                quote:
+                  type: string
+                  description: Base64-encoded vote quote
+      responses:
+        '200':
+          description: Vote created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vote:
+                    $ref: '#/components/schemas/Vote'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vote/quote:
+    post:
+      operationId: createVoteQuote
+      summary: Create a vote quote
+      description: Generate a vote quote for the given blocks.
+      tags:
+        - vote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - blocks
+              properties:
+                blocks:
+                  type: array
+                  items:
+                    type: string
+                  description: Array of base64-encoded blocks
+      responses:
+        '200':
+          description: Quote created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  quote:
+                    $ref: '#/components/schemas/VoteQuote'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vote/{blockhash}:
+    get:
+      operationId: getBlockVotes
+      summary: Get votes for a block
+      description: Retrieve the votes the node holds for a specific block hash.
+      tags:
+        - vote
+      parameters:
+        - name: blockhash
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 64-character hexadecimal block hash
+        - name: side
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - main
+              - side
+          description: Which ledger storage to read votes from (defaults to main).
+      responses:
+        '200':
+          description: Votes retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blockhash:
+                    type: string
+                  votes:
+                    type: array
+                    nullable: true
+                    items:
+                      $ref: '#/components/schemas/Vote'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/version:
+    get:
+      operationId: getNodeVersion
+      summary: Get node version
+      description: Retrieve the version of this node software.
+      tags:
+        - node
+      responses:
+        '200':
+          description: Version retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  node:
+                    type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}:
+    get:
+      operationId: getAccountState
+      summary: Get account state
+      description: Retrieve the head, representative, balances, and info for an account.
+      tags:
+        - ledger
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Account public key
+      responses:
+        '200':
+          description: Account state retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    type: string
+                  currentHeadBlock:
+                    type: string
+                    description: Head block hash as hexadecimal
+                  currentHeadBlockHeight:
+                    type: string
+                    description: Head block height as a 0x-prefixed hexadecimal BigInt
+                  representative:
+                    type: string
+                  info:
+                    $ref: '#/components/schemas/AccountInfo'
+                  balances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceEntry'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/balance:
+    get:
+      operationId: getAccountBalances
+      summary: Get all account balances
+      description: Retrieve balances for all tokens held by an account.
+      tags:
+        - ledger
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Account public key
+      responses:
+        '200':
+          description: Balances retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    type: string
+                  balances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BalanceEntry'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/balance/{token}:
+    get:
+      operationId: getAccountBalance
+      summary: Get account balance for a specific token
+      description: Retrieve the balance of a specific token for an account.
+      tags:
+        - ledger
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Account public key
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Token account address
+      responses:
+        '200':
+          description: Balance retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    type: string
+                  token:
+                    type: string
+                  balance:
+                    type: string
+                    description: Settled balance as a 0x-prefixed hexadecimal BigInt
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/head:
+    get:
+      operationId: getAccountHead
+      summary: Get account head block
+      description: Retrieve the head block for an account.
+      tags:
+        - ledger
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Account public key
+      responses:
+        '200':
+          description: Head block retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    type: string
+                  block:
+                    $ref: '#/components/schemas/Block'
+                  height:
+                    type: string
+                    nullable: true
+                    description: Head block height as a 0x-prefixed hexadecimal BigInt
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/pending:
+    get:
+      operationId: getPendingBlock
+      summary: Get pending block for account
+      description: Retrieve the next pending block for an account.
+      tags:
+        - ledger
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Account public key
+      responses:
+        '200':
+          description: Pending block retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    type: string
+                  block:
+                    $ref: '#/components/schemas/Block'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/block/{blockhash}:
+    get:
+      operationId: getBlock
+      summary: Get block by hash
+      description: Retrieve a specific block by its hash.
+      tags:
+        - ledger
+      parameters:
+        - name: blockhash
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 64-character hexadecimal block hash
+        - name: side
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - main
+              - side
+              - both
+          description: Which ledger storage to read from (defaults to main).
+      responses:
+        '200':
+          description: Block retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blockhash:
+                    type: string
+                  block:
+                    $ref: '#/components/schemas/Block'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/block/{blockhash}/successor:
+    get:
+      operationId: getSuccessorBlock
+      summary: Get successor block
+      description: Retrieve the block that follows the specified block.
+      tags:
+        - ledger
+      parameters:
+        - name: blockhash
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 64-character hexadecimal block hash
+      responses:
+        '200':
+          description: Successor block retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blockhash:
+                    type: string
+                  successorBlock:
+                    $ref: '#/components/schemas/Block'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/stats:
+    get:
+      operationId: getNodeStats
+      summary: Get node statistics
+      tags: [node]
+      responses:
+        '200':
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/peers:
+    get:
+      operationId: getPeers
+      summary: Get peers
+      tags: [node]
+      responses:
+        '200':
+          description: Peers
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/checksum:
+    get:
+      operationId: getLedgerChecksum
+      summary: Get ledger checksum
+      tags: [ledger]
+      responses:
+        '200':
+          description: Checksum
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moment:
+                    type: string
+                  momentRange:
+                    type: number
+                  checksum:
+                    type: string
+                    description: Checksum as a 0x-prefixed hexadecimal BigInt
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/representative:
+    get:
+      operationId: getNodeRepresentative
+      summary: Get the node's representative
+      tags: [ledger]
+      responses:
+        '200':
+          description: Representative
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Representative'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/representative/{rep}:
+    get:
+      operationId: getRepresentative
+      summary: Get a representative's weight
+      tags: [ledger]
+      parameters:
+        - name: rep
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Representative
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Representative'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/representatives:
+    get:
+      operationId: getAllRepresentatives
+      summary: Get all representatives
+      tags: [ledger]
+      responses:
+        '200':
+          description: Representatives
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  representatives:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Representative'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/history:
+    get:
+      operationId: getGlobalHistory
+      summary: Get global history
+      tags: [ledger]
+      parameters:
+        - name: start
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HistoryEntry'
+                  nextKey:
+                    type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/chain:
+    get:
+      operationId: getAccountChain
+      summary: Get account chain
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: string
+        - name: end
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Chain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    type: string
+                  blocks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        block:
+                          $ref: '#/components/schemas/Block'
+                  nextKey:
+                    type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/history:
+    get:
+      operationId: getAccountHistory
+      summary: Get account history
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/HistoryEntry'
+                  nextKey:
+                    type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/acl:
+    get:
+      operationId: listAclsByPrincipal
+      summary: List ACLs by principal
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ACLs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ACLRow'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/acl/granted:
+    get:
+      operationId: listAclsByEntity
+      summary: List ACLs granted to an entity
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ACLs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ACLRow'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/acl/additional:
+    get:
+      operationId: listAclsAdditional
+      summary: List ACLs by principal with entity info
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ACL aggregate
+          content:
+            application/json:
+              schema:
+                type: object
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/certificates:
+    get:
+      operationId: getAccountCertificates
+      summary: Get account certificates
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Certificates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    type: string
+                  certificates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Certificate'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/certificates/{certificateHash}:
+    get:
+      operationId: getCertificateByHash
+      summary: Get certificate by hash
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: certificateHash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Certificate
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Certificate'
+                  - type: object
+                    properties:
+                      account:
+                        type: string
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/account/{account}/idempotent/{idempotent}:
+    get:
+      operationId: getBlockFromIdempotent
+      summary: Get block by idempotent key
+      tags: [ledger]
+      parameters:
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: idempotent
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Block
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  block:
+                    $ref: '#/components/schemas/Block'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/ledger/accounts/{accounts}:
+    get:
+      operationId: getAccountStates
+      summary: Get state for multiple accounts
+      tags: [ledger]
+      parameters:
+        - name: accounts
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Comma-separated account public keys
+      responses:
+        '200':
+          description: Account states
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    account:
+                      type: string
+                    currentHeadBlock:
+                      type: string
+                    currentHeadBlockHeight:
+                      type: string
+                    representative:
+                      type: string
+                    info:
+                      $ref: '#/components/schemas/AccountInfo'
+                    balances:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/BalanceEntry'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/bootstrap/votes:
+    get:
+      operationId: getVoteStaplesAfter
+      summary: Get vote staples after a moment
+      tags: [node]
+      parameters:
+        - name: start
+          in: query
+          required: true
+          schema:
+            type: string
+            description: ISO 8601 start moment
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Vote staples
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  voteStaples:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VoteStaple'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /node/publish:
+    post:
+      operationId: publishVoteStaple
+      summary: Publish a vote staple
+      description: Publish a vote staple to the network.
+      tags:
+        - node
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - votesAndBlocks
+              properties:
+                votesAndBlocks:
+                  type: string
+                  description: Base64-encoded vote staple
+      responses:
+        '200':
+          description: Publish result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  publish:
+                    type: boolean
+                    description: Whether the vote staple was successfully published
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

@@ -2,6 +2,8 @@
 //!
 //! This module provides AES-GCM AEAD.
 
+use alloc::vec::Vec;
+
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm as AesGcmCipher, Key};
 
@@ -93,20 +95,22 @@ mod tests {
 	use crate::operations::encryption::NonceGeneration;
 
 	#[test]
-	fn test_aes_256_gcm_basic() {
+	fn test_aes_256_gcm_basic() -> Result<(), CryptoError> {
 		let key = [0x42u8; 32]; // 256-bit key
-		let aes_gcm = Aes256Gcm::new(key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"Hello, AES-GCM world!";
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Test encryption
-		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;
 		assert_ne!(ciphertext.as_slice(), plaintext); // Should be different
 		assert!(ciphertext.len() > plaintext.len()); // Should include tag
 
 		// Test decryption
-		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref()).unwrap();
+		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref())?;
 		assert_eq!(decrypted, plaintext);
+
+		Ok(())
 	}
 
 	#[test]
@@ -128,9 +132,9 @@ mod tests {
 	}
 
 	#[test]
-	fn test_aes_256_gcm_random_nonce() {
+	fn test_aes_256_gcm_random_nonce() -> Result<(), CryptoError> {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"Same plaintext";
 
 		// Generate two different nonces
@@ -139,26 +143,28 @@ mod tests {
 
 		// Encrypt the same plaintext with different nonces
 		// Should be different due to different nonces
-		let ciphertext1 = aes_gcm.encrypt(&nonce1, plaintext.as_ref()).unwrap();
-		let ciphertext2 = aes_gcm.encrypt(&nonce2, plaintext.as_ref()).unwrap();
+		let ciphertext1 = aes_gcm.encrypt(&nonce1, plaintext.as_ref())?;
+		let ciphertext2 = aes_gcm.encrypt(&nonce2, plaintext.as_ref())?;
 		assert_ne!(ciphertext1, ciphertext2);
 
 		// But both should decrypt to the same plaintext
-		let decrypted1 = aes_gcm.decrypt(&nonce1, ciphertext1.as_ref()).unwrap();
-		let decrypted2 = aes_gcm.decrypt(&nonce2, ciphertext2.as_ref()).unwrap();
+		let decrypted1 = aes_gcm.decrypt(&nonce1, ciphertext1.as_ref())?;
+		let decrypted2 = aes_gcm.decrypt(&nonce2, ciphertext2.as_ref())?;
 		assert_eq!(decrypted1, plaintext);
 		assert_eq!(decrypted2, plaintext);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_aes_256_gcm_authentication() {
+	fn test_aes_256_gcm_authentication() -> Result<(), CryptoError> {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"Authenticated message";
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Encrypt data
-		let mut ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let mut ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;
 		// Tamper with the ciphertext (modify the last byte)
 		let last_idx = ciphertext.len() - 1;
 		ciphertext[last_idx] ^= 0x01;
@@ -166,12 +172,14 @@ mod tests {
 		// Decryption should fail due to authentication failure
 		let result = aes_gcm.decrypt(&nonce, ciphertext.as_ref());
 		assert!(result.is_err());
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_aes_256_gcm_with_aad() {
+	fn test_aes_256_gcm_with_aad() -> Result<(), CryptoError> {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"Secret message";
 		let aad = b"additional data";
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
@@ -179,12 +187,12 @@ mod tests {
 		// Create payload with AAD
 		let payload = aes_gcm::aead::Payload { msg: plaintext.as_ref(), aad: aad.as_ref() };
 		// Test encryption with AAD
-		let ciphertext = aes_gcm.encrypt(&nonce, payload).unwrap();
+		let ciphertext = aes_gcm.encrypt(&nonce, payload)?;
 		assert_ne!(ciphertext.as_slice(), plaintext);
 
 		// Test decryption with correct AAD
 		let payload_decrypt = aes_gcm::aead::Payload { msg: ciphertext.as_ref(), aad: aad.as_ref() };
-		let decrypted = aes_gcm.decrypt(&nonce, payload_decrypt).unwrap();
+		let decrypted = aes_gcm.decrypt(&nonce, payload_decrypt)?;
 		assert_eq!(decrypted, plaintext);
 
 		// Test decryption with wrong AAD should fail
@@ -192,36 +200,42 @@ mod tests {
 		let wrong_payload = aes_gcm::aead::Payload { msg: ciphertext.as_ref(), aad: wrong_aad.as_ref() };
 		let result = aes_gcm.decrypt(&nonce, wrong_payload);
 		assert!(result.is_err());
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_aes_256_gcm_empty_plaintext() {
+	fn test_aes_256_gcm_empty_plaintext() -> Result<(), CryptoError> {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"";
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Should handle empty plaintext correctly
-		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;
 		assert_eq!(ciphertext.len(), 16); // tag only
 
-		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref()).unwrap();
+		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref())?;
 		assert_eq!(decrypted, plaintext);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_aes_256_gcm_large_data() {
+	fn test_aes_256_gcm_large_data() -> Result<(), CryptoError> {
 		let key = [0x42u8; 32];
-		let aes_gcm = Aes256Gcm::new(key).unwrap();
+		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = vec![0x55u8; 8192]; // 8KB of data
 		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
 
 		// Should handle large data efficiently
-		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref()).unwrap();
+		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;
 		assert_eq!(ciphertext.len(), 8192 + 16); // data + tag
 
-		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref()).unwrap();
+		let decrypted = aes_gcm.decrypt(&nonce, ciphertext.as_ref())?;
 		assert_eq!(decrypted, plaintext);
+
+		Ok(())
 	}
 
 	#[test]

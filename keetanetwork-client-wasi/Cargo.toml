@@ -1,0 +1,33 @@
+[package]
+name = "keetanetwork-client-wasi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "WASI bindings for the KeetaNet client: a P2 component (networked over wasi:http) and a P1 core module (pure/offline), selected by feature"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Exactly one of `p1`/`p2` MUST be enabled for a wasi build
+p1 = []
+# `p2`: wasm32-wasip2 component (wit-bindgen) with the networking
+p2 = ["dep:keetanetwork-client", "dep:wstd", "dep:wit-bindgen", "keetanetwork-bindings/client"]
+
+[dependencies]
+keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-crypto = { workspace = true, features = ["signature"] }
+keetanetwork-vote = { workspace = true, features = ["alloc", "der", "rasn"] }
+keetanetwork-x509 = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-bindings = { workspace = true }
+num-bigint = { workspace = true }
+hex = { workspace = true, features = ["alloc"] }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+keetanetwork-client = { workspace = true, features = ["wasi"], optional = true }
+wstd = { version = "0.6", optional = true }
+wit-bindgen = { version = "0.58", optional = true }

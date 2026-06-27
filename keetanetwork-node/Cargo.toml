@@ -9,10 +9,10 @@ homepage.workspace = true
 description = "Node functionality for Keetanetwork blockchain"
 
 [dependencies]
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error" }
-keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block" }
-keetanetwork-ledger = { version = "0.1.0", path = "../keetanetwork-ledger" }
-snafu = { workspace = true }
+keetanetwork-error = { workspace = true, features = ["std"] }
+keetanetwork-block = { workspace = true, features = ["std", "rasn"] }
+keetanetwork-ledger = { workspace = true }
+snafu = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 

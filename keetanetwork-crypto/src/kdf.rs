@@ -3,6 +3,8 @@
 //! This module provides abstractions over different key derivation functions
 //! used for expanding key material and deriving cryptographic keys.
 
+use alloc::vec::Vec;
+
 use hkdf::Hkdf;
 use sha2::{Sha256, Sha512};
 use sha3::Sha3_256;
@@ -211,7 +213,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_hkdf_derivation() {
+	fn test_hkdf_derivation() -> Result<(), CryptoError> {
 		let ikm = b"test input key material";
 		let salt = Some(b"optional salt".as_slice());
 		let info = b"application info";
@@ -219,112 +221,119 @@ mod tests {
 		for algo in ALL_ALGORITHMS {
 			// Test various output lengths
 			for &length in &[16, 32, 48, 64] {
-				let okm = algo.derive(ikm, salt, info, length).unwrap();
+				let okm = algo.derive(ikm, salt, info, length)?;
 				assert_eq!(okm.len(), length);
 
 				// Test that longer derivations contain the shorter ones as prefixes
 				if length > 16 {
-					let shorter = algo.derive(ikm, salt, info, 16).unwrap();
+					let shorter = algo.derive(ikm, salt, info, 16)?;
 					assert_eq!(okm[..16], shorter[..]);
 				}
 			}
 
 			// Test with no salt
-			let no_salt = algo.derive(ikm, None, info, 32).unwrap();
-			let with_salt = algo.derive(ikm, salt, info, 32).unwrap();
+			let no_salt = algo.derive(ikm, None, info, 32)?;
+			let with_salt = algo.derive(ikm, salt, info, 32)?;
 			assert_ne!(no_salt, with_salt);
 
 			// Test with different info
-			let info1 = algo.derive(ikm, salt, b"info1", 32).unwrap();
-			let info2 = algo.derive(ikm, salt, b"info2", 32).unwrap();
+			let info1 = algo.derive(ikm, salt, b"info1", 32)?;
+			let info2 = algo.derive(ikm, salt, b"info2", 32)?;
 			assert_ne!(info1, info2);
 
 			// Test with different IKM
-			let ikm1 = algo.derive(b"ikm1", salt, info, 32).unwrap();
-			let ikm2 = algo.derive(b"ikm2", salt, info, 32).unwrap();
+			let ikm1 = algo.derive(b"ikm1", salt, info, 32)?;
+			let ikm2 = algo.derive(b"ikm2", salt, info, 32)?;
 			assert_ne!(ikm1, ikm2);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_hkdf_array_derivation() {
+	fn test_hkdf_array_derivation() -> Result<(), CryptoError> {
 		let ikm = b"test input key material";
 		let salt = Some(b"salt".as_slice());
 		let info = b"info";
 
 		for algo in ALL_ALGORITHMS {
 			// Test fixed-size array derivation
-			let array: [u8; 32] = algo.derive_array(ikm, salt, info).unwrap();
-			let vec_result = algo.derive(ikm, salt, info, 32).unwrap();
+			let array: [u8; 32] = algo.derive_array(ikm, salt, info)?;
+			let vec_result = algo.derive(ikm, salt, info, 32)?;
 			assert_eq!(array.to_vec(), vec_result);
 
 			// Test different array sizes - they should have consistent prefixes
-			let array16: [u8; 16] = algo.derive_array(ikm, salt, info).unwrap();
-			let array64: [u8; 64] = algo.derive_array(ikm, salt, info).unwrap();
+			let array16: [u8; 16] = algo.derive_array(ikm, salt, info)?;
+			let array64: [u8; 64] = algo.derive_array(ikm, salt, info)?;
 			// HKDF produces consistent prefixes
 			assert_eq!(array16[..], array[..16]);
 			assert_eq!(array[..], array64[..32]);
 
 			// But different salt/info should produce different results
-			let array_diff_salt: [u8; 32] = algo.derive_array(ikm, None, info).unwrap();
-			let array_diff_info: [u8; 32] = algo.derive_array(ikm, salt, b"different").unwrap();
+			let array_diff_salt: [u8; 32] = algo.derive_array(ikm, None, info)?;
+			let array_diff_info: [u8; 32] = algo.derive_array(ikm, salt, b"different")?;
 			assert_ne!(array, array_diff_salt);
 			assert_ne!(array, array_diff_info);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_deterministic_derivation() {
+	fn test_deterministic_derivation() -> Result<(), CryptoError> {
 		let ikm = b"test input key material";
 		let salt = Some(b"salt".as_slice());
 		let info = b"info";
 
 		for algo in ALL_ALGORITHMS {
 			// Multiple calls should produce identical results
-			let result1 = algo.derive(ikm, salt, info, 32).unwrap();
-			let result2 = algo.derive(ikm, salt, info, 32).unwrap();
-			let result3 = algo.derive(ikm, salt, info, 32).unwrap();
+			let result1 = algo.derive(ikm, salt, info, 32)?;
+			let result2 = algo.derive(ikm, salt, info, 32)?;
+			let result3 = algo.derive(ikm, salt, info, 32)?;
 			assert_eq!(result1, result2);
 			assert_eq!(result2, result3);
 		}
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_error_conditions() {
+	fn test_error_conditions() -> Result<(), CryptoError> {
 		let ikm = b"test";
 		let algo = KdfAlgorithm::HkdfSha2_256;
 
 		// Test invalid output length
 		let max_len = algo.max_output_length();
 		let invalid_result = algo.derive(ikm, None, b"", max_len + 1);
-		assert!(matches!(invalid_result.unwrap_err(), CryptoError::InvalidLength { .. }));
+		assert!(matches!(invalid_result, Err(CryptoError::InvalidLength { .. })));
 
 		// Test zero-length output (should work)
-		let zero_result = algo.derive(ikm, None, b"", 0).unwrap();
+		let zero_result = algo.derive(ikm, None, b"", 0)?;
 		assert!(zero_result.is_empty());
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_algorithm_differences() {
+	fn test_algorithm_differences() -> Result<(), CryptoError> {
 		let ikm = b"test input key material";
 		let salt = Some(b"salt".as_slice());
 		let info = b"info";
 
 		// Different algorithms should produce different results
-		let sha256_result = KdfAlgorithm::HkdfSha2_256
-			.derive(ikm, salt, info, 32)
-			.unwrap();
-		let sha512_result = KdfAlgorithm::HkdfSha2_512
-			.derive(ikm, salt, info, 32)
-			.unwrap();
+		let sha256_result = KdfAlgorithm::HkdfSha2_256.derive(ikm, salt, info, 32)?;
+		let sha512_result = KdfAlgorithm::HkdfSha2_512.derive(ikm, salt, info, 32)?;
 		assert_ne!(sha256_result, sha512_result);
+
+		Ok(())
 	}
 
 	#[test]
-	fn test_ecies_compatibility() {
+	fn test_ecies_compatibility() -> Result<(), CryptoError> {
 		// Test the exact pattern used in ECIES
-		let ephemeral_pk = hex::decode("04abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890").unwrap();
-		let shared_secret = hex::decode("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12").unwrap();
+		let ephemeral_pk = hex::decode("04abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890").map_err(|_| CryptoError::InvalidInput)?;
+		let shared_secret = hex::decode("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12")
+			.map_err(|_| CryptoError::InvalidInput)?;
 
 		// Combine like ECIES does
 		let mut combined = Vec::with_capacity(ephemeral_pk.len() + shared_secret.len());
@@ -332,14 +341,12 @@ mod tests {
 		combined.extend_from_slice(&shared_secret);
 
 		// Derive key using our KDF
-		let derived_key = KdfAlgorithm::HkdfSha2_256
-			.derive_array::<32>(&combined, None, b"")
-			.unwrap();
+		let derived_key = KdfAlgorithm::HkdfSha2_256.derive_array::<32>(&combined, None, b"")?;
 		// Should be deterministic - test with the generic derive function
-		let derived_key2 = KdfAlgorithm::HkdfSha2_256
-			.derive(&combined, None, b"", 32)
-			.unwrap();
+		let derived_key2 = KdfAlgorithm::HkdfSha2_256.derive(&combined, None, b"", 32)?;
 		assert_eq!(derived_key.to_vec(), derived_key2);
 		assert_eq!(derived_key.len(), 32);
+
+		Ok(())
 	}
 }

@@ -2,7 +2,9 @@
 //!
 //! This module provides ASN.1 structures using the der library.
 
-use std::str::FromStr;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::str::FromStr;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -50,15 +52,19 @@ impl AlgorithmIdentifier {
 	}
 }
 
-impl From<spki::AlgorithmIdentifierOwned> for AlgorithmIdentifier {
-	fn from(spki_alg: spki::AlgorithmIdentifierOwned) -> Self {
-		Self { algorithm: ObjectIdentifier::new(&spki_alg.oid.to_string()).unwrap(), parameters: spki_alg.parameters }
+impl TryFrom<spki::AlgorithmIdentifierOwned> for AlgorithmIdentifier {
+	type Error = Asn1Error;
+
+	fn try_from(spki_alg: spki::AlgorithmIdentifierOwned) -> Result<Self, Self::Error> {
+		Ok(Self { algorithm: ObjectIdentifier::new(&spki_alg.oid.to_string())?, parameters: spki_alg.parameters })
 	}
 }
 
-impl From<AlgorithmIdentifier> for spki::AlgorithmIdentifierOwned {
-	fn from(alg: AlgorithmIdentifier) -> Self {
-		Self { oid: der::oid::ObjectIdentifier::new(&alg.algorithm.to_string()).unwrap(), parameters: alg.parameters }
+impl TryFrom<AlgorithmIdentifier> for spki::AlgorithmIdentifierOwned {
+	type Error = Asn1Error;
+
+	fn try_from(alg: AlgorithmIdentifier) -> Result<Self, Self::Error> {
+		Ok(Self { oid: der::oid::ObjectIdentifier::new(&alg.algorithm.to_string())?, parameters: alg.parameters })
 	}
 }
 
@@ -96,21 +102,25 @@ impl SubjectPublicKeyInfo {
 	}
 }
 
-impl From<spki::SubjectPublicKeyInfoOwned> for SubjectPublicKeyInfo {
-	fn from(spki_info: spki::SubjectPublicKeyInfoOwned) -> Self {
-		Self {
-			algorithm: AlgorithmIdentifier::from(spki_info.algorithm),
-			subject_public_key: BitString::from_bytes(spki_info.subject_public_key.raw_bytes()).unwrap(),
-		}
+impl TryFrom<spki::SubjectPublicKeyInfoOwned> for SubjectPublicKeyInfo {
+	type Error = Asn1Error;
+
+	fn try_from(spki_info: spki::SubjectPublicKeyInfoOwned) -> Result<Self, Self::Error> {
+		Ok(Self {
+			algorithm: AlgorithmIdentifier::try_from(spki_info.algorithm)?,
+			subject_public_key: BitString::from_bytes(spki_info.subject_public_key.raw_bytes())?,
+		})
 	}
 }
 
-impl From<SubjectPublicKeyInfo> for spki::SubjectPublicKeyInfoOwned {
-	fn from(info: SubjectPublicKeyInfo) -> Self {
-		Self {
-			algorithm: spki::AlgorithmIdentifierOwned::from(info.algorithm),
-			subject_public_key: der::asn1::BitString::from_bytes(info.subject_public_key.raw_bytes()).unwrap(),
-		}
+impl TryFrom<SubjectPublicKeyInfo> for spki::SubjectPublicKeyInfoOwned {
+	type Error = Asn1Error;
+
+	fn try_from(info: SubjectPublicKeyInfo) -> Result<Self, Self::Error> {
+		Ok(Self {
+			algorithm: spki::AlgorithmIdentifierOwned::try_from(info.algorithm)?,
+			subject_public_key: der::asn1::BitString::from_bytes(info.subject_public_key.raw_bytes())?,
+		})
 	}
 }
 
@@ -206,28 +216,32 @@ mod tests {
 	}
 
 	crate::test_der_round_trip! {
-		AlgorithmIdentifier: AlgorithmIdentifier::new(oids::ED25519).unwrap(),
+		AlgorithmIdentifier: AlgorithmIdentifier::new(oids::ED25519)?,
 		AlgorithmIdentifier: {
-			let null_param = Any::from_der(&[0x05, 0x00]).unwrap();
-			AlgorithmIdentifier::new_with_params(oids::RSA_ENCRYPTION, null_param).unwrap()
+			let null_param = Any::from_der(&[0x05, 0x00])?;
+			AlgorithmIdentifier::new_with_params(oids::RSA_ENCRYPTION, null_param)?
 		},
-		AlgorithmIdentifier: AlgorithmIdentifier::new(oids::SECP256R1).unwrap(),
+		AlgorithmIdentifier: AlgorithmIdentifier::new(oids::SECP256R1)?,
 		SubjectPublicKeyInfo: {
-			let alg_id = AlgorithmIdentifier::new(oids::ED25519).unwrap();
+			let alg_id = AlgorithmIdentifier::new(oids::ED25519)?;
 			let key_bytes = vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
-			SubjectPublicKeyInfo::new(alg_id, &key_bytes).unwrap()
+			SubjectPublicKeyInfo::new(alg_id, &key_bytes)?
 		},
 	}
 
 	#[test]
-	fn test_spki_conversions() {
+	fn test_spki_conversions() -> Result<(), Asn1Error> {
 		// Test AlgorithmIdentifier round-trip
-		let alg_basic = AlgorithmIdentifier::new(oids::ED25519).unwrap();
-		assert_eq!(alg_basic, spki::AlgorithmIdentifierOwned::from(alg_basic.clone()).into());
+		let alg_basic = AlgorithmIdentifier::new(oids::ED25519)?;
+		let alg_round_trip: AlgorithmIdentifier =
+			spki::AlgorithmIdentifierOwned::try_from(alg_basic.clone())?.try_into()?;
+		assert_eq!(alg_basic, alg_round_trip);
 
-		let null_param = Any::from_der(&[0x05, 0x00]).unwrap();
-		let alg_with_params = AlgorithmIdentifier::new_with_params(oids::RSA_ENCRYPTION, null_param).unwrap();
-		assert_eq!(alg_with_params, spki::AlgorithmIdentifierOwned::from(alg_with_params.clone()).into());
+		let null_param = Any::from_der(&[0x05, 0x00])?;
+		let alg_with_params = AlgorithmIdentifier::new_with_params(oids::RSA_ENCRYPTION, null_param)?;
+		let alg_params_round_trip: AlgorithmIdentifier =
+			spki::AlgorithmIdentifierOwned::try_from(alg_with_params.clone())?.try_into()?;
+		assert_eq!(alg_with_params, alg_params_round_trip);
 
 		// Test SubjectPublicKeyInfo round-trip
 		let test_cases = [
@@ -237,10 +251,12 @@ mod tests {
 		];
 
 		for (oid, key_bytes) in test_cases {
-			let alg = AlgorithmIdentifier::new(oid).unwrap();
-			let info = SubjectPublicKeyInfo::new(alg, &key_bytes).unwrap();
-			let round_trip: SubjectPublicKeyInfo = spki::SubjectPublicKeyInfoOwned::from(info.clone()).into();
+			let alg = AlgorithmIdentifier::new(oid)?;
+			let info = SubjectPublicKeyInfo::new(alg, &key_bytes)?;
+			let round_trip: SubjectPublicKeyInfo =
+				spki::SubjectPublicKeyInfoOwned::try_from(info.clone())?.try_into()?;
 			assert_eq!(info, round_trip);
 		}
+		Ok(())
 	}
 }

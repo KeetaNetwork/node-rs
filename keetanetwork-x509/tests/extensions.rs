@@ -13,17 +13,27 @@ fn test_certificate_has_extensions() {
 }
 
 #[test]
-fn test_extension_count() {
+fn test_extension_count() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
 	let user_cert = user_certificate();
 
-	let ca_extensions = ca_cert.tbs_certificate.extensions.as_ref().unwrap();
-	let user_extensions = user_cert.tbs_certificate.extensions.as_ref().unwrap();
+	let ca_extensions = ca_cert
+		.tbs_certificate
+		.extensions
+		.as_ref()
+		.ok_or("CA cert should have extensions")?;
+	let user_extensions = user_cert
+		.tbs_certificate
+		.extensions
+		.as_ref()
+		.ok_or("User cert should have extensions")?;
 	assert!(!ca_extensions.is_empty());
 	assert!(!user_extensions.is_empty());
 	// Both certs should have extensions
 	assert!(!ca_extensions.is_empty());
 	assert!(!user_extensions.is_empty());
+
+	Ok(())
 }
 
 #[test]
@@ -35,11 +45,12 @@ fn test_extensions_not_empty() {
 		}
 	}
 }
+
 #[test]
-fn test_extension_der_roundtrip() {
+fn test_extension_der_roundtrip() -> Result<(), Box<dyn core::error::Error>> {
 	let ca_cert = ca_certificate();
-	let ca_der = ca_cert.to_der().unwrap();
-	let ca_from_der = Certificate::try_from(ca_der.as_slice()).unwrap();
+	let ca_der = ca_cert.to_der()?;
+	let ca_from_der = Certificate::try_from(ca_der.as_slice())?;
 
 	let original_extensions = &ca_cert.tbs_certificate.extensions;
 	let decoded_extensions = &ca_from_der.tbs_certificate.extensions;
@@ -48,4 +59,6 @@ fn test_extension_der_roundtrip() {
 	if let (Some(orig), Some(decoded)) = (original_extensions, decoded_extensions) {
 		assert_eq!(orig.len(), decoded.len());
 	}
+
+	Ok(())
 }

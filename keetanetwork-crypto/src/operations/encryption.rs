@@ -3,6 +3,8 @@
 //! This module provides idiomatic traits and types for encryption,
 //! decryption, and key exchange operations.
 
+use alloc::vec::Vec;
+
 use crate::error::CryptoError;
 
 // Re-export key RustCrypto AEAD traits for easier use
