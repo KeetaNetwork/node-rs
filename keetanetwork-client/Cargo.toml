@@ -36,10 +36,10 @@ wasi = ["codec"]
 testing = []
 
 [dependencies]
-keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false, features = ["alloc", "rasn"] }
-keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote", default-features = false, features = ["alloc", "der", "rasn"] }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false, features = ["alloc"] }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-vote = { workspace = true, features = ["alloc", "der", "rasn"] }
+keetanetwork-error = { workspace = true, features = ["alloc"] }
+keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
 
 progenitor-client = { workspace = true, optional = true }
 num-bigint = { workspace = true }
@@ -92,8 +92,8 @@ prettyplease = "0.2"
 syn = "2.0"
 
 [dev-dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = ["node-harness"] }
-keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", features = ["testing"] }
+keetanetwork-utils = { workspace = true, features = ["std", "node-harness"] }
+keetanetwork-block = { workspace = true, features = ["std", "rasn", "testing"] }
 hex = { workspace = true }
 
 [dev-dependencies.serde_json]

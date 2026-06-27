@@ -51,14 +51,12 @@ features = ["spin_no_std"]
 workspace = true
 
 [dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
+keetanetwork-utils = { workspace = true }
 
 [build-dependencies]
 serde_json = "1.0"
 rasn-compiler = "0.14.2"
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = [
-	"build",
-] }
+keetanetwork-utils = { workspace = true, features = ["std", "build"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -59,11 +59,11 @@ optional = true
 
 # Local dependencies
 [dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false }
-keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
+keetanetwork-utils = { workspace = true }
+keetanetwork-error = { workspace = true }
+keetanetwork-crypto = { workspace = true }
+keetanetwork-asn1 = { workspace = true }
+keetanetwork-account = { workspace = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
@@ -115,6 +115,4 @@ rasn = [
 hex-literal.workspace = true
 
 [build-dependencies]
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = [
-	"build",
-] }
+keetanetwork-utils = { workspace = true, features = ["std", "build"] }

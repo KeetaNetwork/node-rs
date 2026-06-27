@@ -12,10 +12,10 @@ description = "Account management and cryptographic identities for Keetanetwork"
 path = "src/lib.rs"
 
 [dependencies]
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature", "encryption"] }
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
-keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", optional = true, default-features = false }
+keetanetwork-crypto = { workspace = true, features = ["signature", "encryption"] }
+keetanetwork-error = { workspace = true }
+keetanetwork-utils = { workspace = true }
+keetanetwork-asn1 = { workspace = true, optional = true }
 
 base32.workspace = true
 bip39-dict.workspace = true
