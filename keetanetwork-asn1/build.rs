@@ -111,6 +111,7 @@ fn generate_schema() {
 	schema_content.push('\n');
 
 	generate_choice_types(&oids, &mut schema_content);
+	generate_extension_types(&oids, &mut schema_content);
 	generate_sensitive_sequence_types(&oids, &mut schema_content);
 	generate_iso20022_sequence_types(&oids, &mut schema_content);
 	generate_sensitive_choice_types(&oids, &mut schema_content);
@@ -219,6 +220,50 @@ fn generate_iso20022_sequence_types(oids: &Value, schema_content: &mut String) {
 				generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
 				close_asn1_structure(schema_content);
 			}
+		}
+	}
+}
+
+fn generate_extension_types(oids: &Value, schema_content: &mut String) {
+	let Some(extensions) = oids["extensions"].as_object() else {
+		return;
+	};
+
+	// Collect extension type names for dependency resolution
+	let extension_type_names: std::collections::HashSet<_> = extensions
+		.iter()
+		.filter(|(_, info)| info["fields"].is_object())
+		.map(|(name, _)| name.as_str())
+		.collect();
+
+	// Filter extensions that have fields (actual type definitions)
+	let mut extension_types: Vec<_> = extensions
+		.iter()
+		.filter(|(_, info)| info["fields"].is_object())
+		.collect();
+
+	// Sort by dependency depth: types with fewer extension dependencies come first
+	extension_types.sort_by_key(|(_, info)| {
+		info["fields"]
+			.as_object()
+			.map(|fields| {
+				fields
+					.values()
+					.filter(|field_info| {
+						field_info["type"]
+							.as_str()
+							.is_some_and(|t| extension_type_names.contains(t))
+					})
+					.count()
+			})
+			.unwrap_or(0)
+	});
+
+	for (name, info) in extension_types {
+		if let Some(fields) = info["fields"].as_object() {
+			schema_content.push_str(&format!("    {name} ::= SEQUENCE {{\n"));
+			generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
+			close_asn1_structure(schema_content);
 		}
 	}
 }
@@ -623,101 +668,112 @@ fn generate_from_impl_for_type(generated_code: &mut String, wrapper_types: &[Str
 	}
 }
 
-fn generate_default_impl(oids: &Value, generated_code: &mut String) {
-	generated_code.push_str("// Default implementations for types with default fields\n\n");
-
-	// Types that typically implement Default in rasn
-	let default_types = [
-		"String",
-		"UTF8String",
-		"Utf8String",
-		"Vec",
-		"SequenceOf",
-		"BooleanType",
-		"Integer",
-		"BitString",
-		"OctetString",
-	];
-
-	emit_defaults_for_sensitive(oids, generated_code, &default_types);
-	emit_defaults_for_sequences(oids, generated_code, &default_types);
+/// Helper to get ordered field names from field_order or fallback to keys
+fn get_ordered_field_names(fields: &serde_json::Map<String, Value>, field_order_value: Option<&Value>) -> Vec<String> {
+	if let Some(order_array) = field_order_value.and_then(|v| v.as_array()) {
+		order_array
+			.iter()
+			.filter_map(|v| v.as_str())
+			.map(|s| s.to_string())
+			.collect()
+	} else {
+		fields.keys().cloned().collect()
+	}
 }
 
-/// Determine whether a field type can be defaulted via `Default::default()`.
-fn type_implements_default(field_type: &str, default_types: &[&str]) -> bool {
-	default_types.iter().any(|&t| field_type.contains(t))
-		|| field_type == "NamePrefixCode"
-		|| field_type == "PreferredContactMethodCode"
+/// Types that typically implement Default in rasn
+const DEFAULT_TYPES: [&str; 9] =
+	["String", "UTF8String", "Utf8String", "Vec", "SequenceOf", "BooleanType", "Integer", "BitString", "OctetString"];
+
+/// Collect all enumerated type names from oids.json
+fn collect_enumerated_types(oids: &Value) -> std::collections::HashSet<String> {
+	let mut enum_types = std::collections::HashSet::new();
+	if let Some(enumerations) = oids["iso20022_types"]["enumerations"].as_object() {
+		enum_types.extend(enumerations.keys().cloned());
+	}
+
+	enum_types
 }
 
-/// Compute the `Self::new` arguments for a sequence type, or `None` when a
-/// required field has no `Default` implementation.
-fn field_defaults(fields: &serde_json::Map<String, Value>, default_types: &[&str]) -> Option<Vec<String>> {
-	let mut defaults = Vec::new();
-	for field_info in fields.values() {
+/// Generate field defaults for a SEQUENCE type, returns None if type cannot implement Default
+fn generate_field_defaults(
+	fields: &serde_json::Map<String, Value>,
+	field_order_value: Option<&Value>,
+	enum_types: &std::collections::HashSet<String>,
+) -> Option<Vec<String>> {
+	let field_order = get_ordered_field_names(fields, field_order_value);
+	let mut field_defaults = Vec::new();
+	for field_name in field_order {
+		let Some(field_info) = fields.get(&field_name) else {
+			continue;
+		};
+
 		let is_optional = field_info["optional"].as_bool().unwrap_or(false);
 		let field_type = field_info["type"].as_str().unwrap_or("");
-
 		if is_optional {
-			defaults.push("None".to_string());
-		} else if type_implements_default(field_type, default_types) {
-			defaults.push("Default::default()".to_string());
+			field_defaults.push("None".to_string());
 		} else {
-			return None;
+			// Check if the required field type implements Default
+			let is_default_primitive = DEFAULT_TYPES.iter().any(|&t| field_type.contains(t));
+			let is_enum_type = enum_types.contains(field_type);
+			if is_default_primitive || is_enum_type {
+				field_defaults.push("Default::default()".to_string());
+			} else {
+				return None;
+			}
 		}
 	}
 
-	Some(defaults)
+	Some(field_defaults)
 }
 
-fn emit_default_impl(generated_code: &mut String, type_name: &str, defaults: &[String]) {
-	generated_code.push_str(&format!(
-		r#"impl Default for {type_name} {{
+fn generate_default_impl(oids: &Value, generated_code: &mut String) {
+	generated_code.push_str("// Default implementations for types with default fields\n\n");
+
+	let enum_types = collect_enumerated_types(oids);
+	if let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() {
+		for (name, attr_info) in sensitive_attrs {
+			if attr_info["type"] == "SEQUENCE" {
+				if let Some(fields) = attr_info["fields"].as_object() {
+					let token = attr_info["token"].as_str().unwrap_or(name);
+					if let Some(field_defaults) =
+						generate_field_defaults(fields, attr_info.get("field_order"), &enum_types)
+					{
+						generated_code.push_str(&format!(
+							r#"impl Default for {token} {{
 	fn default() -> Self {{
 		Self::new({})
 	}}
 }}
 
 "#,
-		defaults.join(", ")
-	));
-}
-
-fn emit_defaults_for_sensitive(oids: &Value, generated_code: &mut String, default_types: &[&str]) {
-	let Some(sensitive_attrs) = oids["sensitive_attributes"].as_object() else {
-		return;
-	};
-
-	for (name, attr_info) in sensitive_attrs {
-		if attr_info["type"] != "SEQUENCE" {
-			continue;
+							field_defaults.join(", ")
+						));
+					}
+				}
+			}
 		}
-		let Some(fields) = attr_info["fields"].as_object() else {
-			continue;
-		};
-		let Some(defaults) = field_defaults(fields, default_types) else {
-			continue;
-		};
-
-		let token = attr_info["token"].as_str().unwrap_or(name);
-		emit_default_impl(generated_code, token, &defaults);
 	}
-}
 
-fn emit_defaults_for_sequences(oids: &Value, generated_code: &mut String, default_types: &[&str]) {
-	let Some(iso_types) = oids["iso20022_types"]["sequences"].as_object() else {
-		return;
-	};
+	// Check iso20022_types sequences
+	if let Some(iso_types) = oids["iso20022_types"]["sequences"].as_object() {
+		for (name, type_info) in iso_types {
+			if let Some(fields) = type_info["fields"].as_object() {
+				if let Some(field_defaults) = generate_field_defaults(fields, type_info.get("field_order"), &enum_types)
+				{
+					generated_code.push_str(&format!(
+						r#"impl Default for {name} {{
+	fn default() -> Self {{
+		Self::new({})
+	}}
+}}
 
-	for (name, type_info) in iso_types {
-		let Some(fields) = type_info["fields"].as_object() else {
-			continue;
-		};
-		let Some(defaults) = field_defaults(fields, default_types) else {
-			continue;
-		};
-
-		emit_default_impl(generated_code, name, &defaults);
+"#,
+						field_defaults.join(", ")
+					));
+				}
+			}
+		}
 	}
 }
 

@@ -11,6 +11,9 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
     Department ::= UTF8String --1.3.6.1.4.1.62675.1.2.9
     EmailAddressPurpose ::= UTF8String --1.3.6.1.4.1.62675.1.3.0
     FullName ::= UTF8String --1.3.6.1.4.1.62675.1.0
+    FirstName ::= UTF8String --1.3.6.1.4.1.62675.1.0.1
+    LastName ::= UTF8String --1.3.6.1.4.1.62675.1.0.2
+    MiddleName ::= UTF8String --1.3.6.1.4.1.62675.1.0.3
     BirthDate ::= GeneralizedTime --1.3.6.1.4.1.62675.1.1
     EmailAddress ::= UTF8String --1.3.6.1.4.1.62675.1.3
     PhoneNumber ::= UTF8String --1.3.6.1.4.1.62675.1.4
@@ -18,6 +21,7 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
     JobResponsibility ::= UTF8String --1.3.6.1.4.1.62675.1.6.1
     Id ::= UTF8String     --1.3.6.1.4.1.62675.1.7
     Issuer ::= UTF8String --1.3.6.1.4.1.62675.1.7.1
+    Nationality ::= UTF8String --1.3.6.1.4.1.62675.1.10
 
     AddressType ::= CHOICE { -- 1.3.6.1.4.1.62675.1.2.10
         code              [0] EXPLICIT UTF8String,
@@ -31,7 +35,23 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
 
     PersonIdentificationSchemeNameChoice ::= CHOICE { -- 1.3.6.1.4.1.62675.1.8.1.1
         code              [0] EXPLICIT UTF8String,
-        proprietary       [1] EXPLICIT UTF8String
+        proprietary       [1] EXPLICIT PersonIdentificationSchemeNameProprietary
+    }
+
+    DigestInfo ::= SEQUENCE {
+        digestAlgorithm   [0] EXPLICIT OBJECT IDENTIFIER,
+        digest            [1] EXPLICIT OCTET STRING
+    }
+
+    ExternalReference ::= SEQUENCE {
+        url               [0] EXPLICIT UTF8String,
+        contentType       [1] EXPLICIT UTF8String
+    }
+
+    Reference ::= SEQUENCE {
+        external          [0] EXPLICIT ExternalReference,
+        digest            [1] EXPLICIT DigestInfo,
+        encryptionAlgorithm [2] EXPLICIT OBJECT IDENTIFIER
     }
 
     Address ::= SEQUENCE { --1.3.6.1.4.1.62675.1.2
@@ -54,6 +74,11 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
         provinceOfBirth   [3] EXPLICIT CountrySubDivision OPTIONAL
     }
 
+    EntityType ::= SEQUENCE { --1.3.6.1.4.1.62675.1.8
+        organization      [0] EXPLICIT SEQUENCE OF GenericOrganizationIdentification OPTIONAL,
+        person            [1] EXPLICIT SEQUENCE OF GenericPersonIdentification OPTIONAL
+    }
+
     ContactDetails ::= SEQUENCE { --1.3.6.1.4.1.62675.1.9
         department        [0] EXPLICIT Department OPTIONAL,
         emailAddress      [1] EXPLICIT EmailAddress OPTIONAL,
@@ -67,6 +92,30 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
         other             [9] EXPLICIT SEQUENCE OF OtherContact OPTIONAL,
         phoneNumber       [10] EXPLICIT PhoneNumber OPTIONAL,
         preferredMethod   [11] EXPLICIT PreferredContactMethodCode OPTIONAL
+    }
+
+    Document ::= SEQUENCE { --1.3.6.1.4.1.62675.1.11
+        documentNumber    [0] EXPLICIT UTF8String,
+        front             [1] EXPLICIT Reference OPTIONAL,
+        back              [2] EXPLICIT Reference OPTIONAL,
+        selfie            [3] EXPLICIT Reference OPTIONAL,
+        fullName          [4] EXPLICIT UTF8String OPTIONAL,
+        firstName         [5] EXPLICIT UTF8String OPTIONAL,
+        lastName          [6] EXPLICIT UTF8String OPTIONAL,
+        dob               [7] EXPLICIT GeneralizedTime OPTIONAL,
+        gender            [8] EXPLICIT UTF8String OPTIONAL,
+        address           [9] EXPLICIT Address OPTIONAL,
+        expiresAt         [10] EXPLICIT GeneralizedTime OPTIONAL,
+        issuedAt          [11] EXPLICIT GeneralizedTime OPTIONAL,
+        issuingState      [12] EXPLICIT UTF8String OPTIONAL,
+        issuingCountry    [13] EXPLICIT UTF8String OPTIONAL,
+        refNumber         [14] EXPLICIT UTF8String OPTIONAL,
+        nationality       [15] EXPLICIT UTF8String OPTIONAL,
+        curp              [16] EXPLICIT UTF8String OPTIONAL,
+        claveDeElector    [17] EXPLICIT UTF8String OPTIONAL,
+        classifiedDocumentType [18] EXPLICIT UTF8String OPTIONAL,
+        curpValidationResponse [19] EXPLICIT UTF8String OPTIONAL,
+        sambaActivityHistoryResponse [20] EXPLICIT UTF8String OPTIONAL
     }
 
     OrganizationIdentification ::= SEQUENCE { --1.3.6.1.4.1.62675.1.8.0
@@ -97,13 +146,12 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
         id                [1] EXPLICIT Id OPTIONAL
     }
 
-    EntityType ::= CHOICE { --1.3.6.1.4.1.62675.1.8
-        organization      [0] EXPLICIT OrganizationIdentification,
-        person            [1] EXPLICIT PersonIdentification
-    }
-
     NamePrefixCode ::= ENUMERATED { --1.3.6.1.4.1.62675.1.0.0
         DOCT, MIST, MISS, MIKS, MME
+    }
+
+    PersonIdentificationSchemeNameProprietary ::= ENUMERATED { --1.3.6.1.4.1.62675.1.8.1.1.0
+        DRLC, CPPT, ARNU, SSN, TXID, VISA, WPPT
     }
 
     PreferredContactMethodCode ::= ENUMERATED { --1.3.6.1.4.1.62675.1.9.0
