@@ -37,12 +37,12 @@ rasn = ["keetanetwork-asn1/rasn", "keetanetwork-account/rasn", "keetanetwork-cry
 testing = []
 
 [dependencies]
-keetanetwork-error = { version = "0.1.0", path = "../keetanetwork-error", default-features = false }
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", default-features = false }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
-keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
-keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", default-features = false }
+keetanetwork-error = { workspace = true }
+keetanetwork-utils = { workspace = true }
+keetanetwork-crypto = { workspace = true, features = ["signature"] }
+keetanetwork-account = { workspace = true }
+keetanetwork-asn1 = { workspace = true }
+keetanetwork-x509 = { workspace = true }
 snafu = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
@@ -56,7 +56,7 @@ default-features = false
 
 [dev-dependencies]
 hex-literal = { workspace = true }
-keetanetwork-utils = { version = "0.1.0", path = "../keetanetwork-utils", features = ["node-harness"] }
+keetanetwork-utils = { workspace = true, features = ["std", "node-harness"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

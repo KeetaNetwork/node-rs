@@ -12,16 +12,16 @@ description = "WebAssembly bindings for the KeetaNet client"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false, features = ["alloc", "rasn"] }
-keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
 num-bigint = { workspace = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-keetanetwork-bindings = { version = "0.1.0", path = "../keetanetwork-bindings", default-features = false, features = ["client"] }
-keetanetwork-client = { version = "0.1.0", path = "../keetanetwork-client", default-features = false, features = ["wasm"] }
-keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", default-features = false, features = ["signature"] }
-keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", default-features = false, features = ["rasn"] }
-keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-bindings = { workspace = true, features = ["client"] }
+keetanetwork-client = { workspace = true, features = ["wasm"] }
+keetanetwork-crypto = { workspace = true, features = ["signature"] }
+keetanetwork-x509 = { workspace = true, features = ["rasn"] }
+keetanetwork-asn1 = { workspace = true, features = ["alloc", "rasn"] }
 chrono = { workspace = true }
 hex = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive"] }

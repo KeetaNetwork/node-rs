@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-account"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base32",
  "base64",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-asn1"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "const-oid",
@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-bindings"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-block"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-client-wasi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "keetanetwork-account",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-client-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-crypto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aead",
  "aes",
@@ -1419,14 +1419,14 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-error"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "snafu",
 ]
 
 [[package]]
 name = "keetanetwork-ledger"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "keetanetwork-block",
  "keetanetwork-error",
@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-node"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "keetanetwork-block",
  "keetanetwork-error",
@@ -1445,7 +1445,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-utils"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rasn-compiler",
  "serde_json",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-vote"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "hex",
@@ -1475,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-x509"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "chrono",

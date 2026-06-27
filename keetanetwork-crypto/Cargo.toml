@@ -150,19 +150,17 @@ optional = true
 
 # Local dependencies
 [dependencies.keetanetwork-error]
-version = "0.1.0"
-path = "../keetanetwork-error"
+workspace = true
 optional = true
+features = ["std"]
 
 [dependencies.keetanetwork-asn1]
-version = "0.1.0"
-path = "../keetanetwork-asn1"
+workspace = true
 optional = true
+features = ["std", "serde", "rasn"]
 
 [dependencies.keetanetwork-utils]
-version = "0.1.0"
-path = "../keetanetwork-utils"
-default-features = false
+workspace = true
 
 [features]
 default = ["std", "signature", "encryption", "rasn"]
