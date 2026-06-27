@@ -65,7 +65,7 @@ keetanetwork-crypto = { version = "0.1.0", path = "../keetanetwork-crypto", defa
 keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false }
 keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false }
 
-[target.'cfg(target_family = "wasm")'.dependencies]
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 chrono = { workspace = true, features = ["wasmbind"] }

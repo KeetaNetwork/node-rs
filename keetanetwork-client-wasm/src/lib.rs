@@ -49,37 +49,24 @@
 //! }
 //! ```
 
+// Browser-only crate: gate on wasm32-unknown-unknown
+#![cfg(all(target_family = "wasm", target_os = "unknown"))]
+
 extern crate alloc;
 
-mod parse;
-
-#[cfg(target_family = "wasm")]
 mod account;
-#[cfg(target_family = "wasm")]
 mod block;
-#[cfg(target_family = "wasm")]
+mod block_builder;
 mod builder;
-#[cfg(target_family = "wasm")]
 mod certificate;
-#[cfg(target_family = "wasm")]
 mod client;
-#[cfg(target_family = "wasm")]
 mod convert;
-#[cfg(target_family = "wasm")]
 mod dto;
-#[cfg(target_family = "wasm")]
 mod options;
-#[cfg(target_family = "wasm")]
 mod pending;
-#[cfg(target_family = "wasm")]
 mod permissions;
-#[cfg(target_family = "wasm")]
 mod rep;
-#[cfg(target_family = "wasm")]
 mod swap;
-#[cfg(target_family = "wasm")]
 mod user;
-#[cfg(target_family = "wasm")]
 mod vote;
-#[cfg(target_family = "wasm")]
 mod x509;

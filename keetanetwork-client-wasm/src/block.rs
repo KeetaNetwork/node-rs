@@ -18,7 +18,7 @@ pub struct Block {
 
 #[wasm_bindgen]
 impl Block {
-	/// Decode a block from its hex wire encoding.
+	/// Decode a block from its hex transport encoding.
 	#[wasm_bindgen(js_name = fromHex)]
 	pub fn from_hex(hex: String) -> JsResult<Block> {
 		let bytes = hex::decode(&hex).map_err(|_| coded_error("INVALID_BLOCK", "block must be hex"))?;
@@ -32,7 +32,7 @@ impl Block {
 		self.inner.hash().to_string()
 	}
 
-	/// The block's hex wire encoding.
+	/// The block's hex transport encoding.
 	#[wasm_bindgen(js_name = toHex)]
 	pub fn to_hex(&self) -> String {
 		hex::encode(self.inner.to_bytes())
@@ -68,7 +68,7 @@ impl VoteStaple {
 		self.inner.hash().to_string()
 	}
 
-	/// The staple's compressed hex wire encoding.
+	/// The staple's compressed hex transport encoding.
 	#[wasm_bindgen(js_name = toHex)]
 	pub fn to_hex(&self) -> String {
 		hex::encode(self.inner.as_bytes())

@@ -16,6 +16,7 @@ words:
   - blockhash
   - blocktime
   - bip39
+  - bigints
   - chrono
   - ciphertext
   - ciphertexts
@@ -36,6 +37,7 @@ words:
   - extn
   - FAXX
   - FIPS
+  - funder
   - github
   - hexdigit
   - hexseed
@@ -51,6 +53,7 @@ words:
   - keypair
   - keystream
   - KEYTYPE
+  - millis
   - MIKS
   - MSRV
   - ocsp
@@ -76,9 +79,29 @@ words:
   - Sha3_256
   - spki
   - tlsv
+  - tsify
+  - TKNM
   - tyblocks
   - unpad
   - uper
+  - bindgen
+  - cdylib
+  - codegen
+  - prettyplease
+  - progenitor
+  - unparse
+  - dealloc
+  - jni
+  - multisig
+  - rebox
+  - wasi
+  - wasip1
+  - wasip2
+  - wasix
+  - wasmedge
+  - wasmtime
+  - wit
+  - wstd
   - zeroization
   - Zeroize
   - zeroized

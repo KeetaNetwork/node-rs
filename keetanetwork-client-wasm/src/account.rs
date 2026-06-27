@@ -6,22 +6,12 @@ use alloc::vec::Vec;
 use core::str::FromStr;
 
 use keetanetwork_account::account::AccountSigner;
-use keetanetwork_account::{
-	Account as CoreAccount, Accountable, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyPairType,
-	Keyable,
-};
-use keetanetwork_block::AccountRef;
+use keetanetwork_account::{Account as CoreAccount, GenericAccount, KeyED25519, Keyable};
+use keetanetwork_block::{AccountRef, BlockHash};
 use keetanetwork_crypto::prelude::{ExposeSecret, IntoSecret};
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use crate::convert::{coded_error, JsResult};
-
-/// Canonical map from JS algorithm name to crypto key type.
-const CRYPTO_ALGORITHMS: [(&str, KeyPairType); 3] = [
-	("ed25519", KeyPairType::ED25519),
-	("ecdsa_secp256k1", KeyPairType::ECDSASECP256K1),
-	("ecdsa_secp256r1", KeyPairType::ECDSASECP256R1),
-];
+use crate::convert::{coded, coded_error, parse_identifier_type, JsResult};
 
 /// A KeetaNet account: a signing key pair when built from a seed or private
 /// key, or a read-only handle when built from an address or public key.
@@ -102,18 +92,35 @@ impl Account {
 	/// The signing algorithm name, or `"other"` for identifier accounts.
 	#[wasm_bindgen(getter)]
 	pub fn algorithm(&self) -> String {
-		let key_type = self.inner.to_keypair_type();
-		let name = CRYPTO_ALGORITHMS
-			.iter()
-			.find_map(|(name, candidate)| (*candidate == key_type).then_some(*name))
-			.unwrap_or("other");
-		String::from(name)
+		String::from(keetanetwork_bindings::account::algorithm_name(self.inner.to_keypair_type()))
 	}
 
-	/// The type-prefixed public key wire bytes, hex-encoded.
+	/// The type-prefixed public key transport bytes, hex-encoded.
 	#[wasm_bindgen(getter, js_name = publicKey)]
 	pub fn public_key(&self) -> String {
 		hex::encode(self.inner.to_public_key_with_type())
+	}
+
+	/// Derive an identifier account of `kind` relative to this account.
+	#[wasm_bindgen(js_name = generateIdentifier)]
+	pub fn generate_identifier(
+		&self,
+		kind: String,
+		previous: Option<String>,
+		op_index: Option<u32>,
+	) -> JsResult<Account> {
+		let kind = parse_identifier_type(&kind)?;
+		let previous = previous
+			.map(|hash| {
+				BlockHash::from_str(&hash).map_err(|_| coded_error("INVALID_BLOCK_HASH", "block hash must be hex"))
+			})
+			.transpose()?;
+		let identifier = self
+			.inner
+			.generate_identifier(kind, previous.as_ref(), op_index.unwrap_or(0))
+			.map_err(|error| coded_error("IDENTIFIER", error.as_ref()))?;
+
+		Ok(Self { inner: Arc::new(identifier) })
 	}
 
 	/// Sign `message`, returning the raw signature bytes. Errors when the
@@ -151,29 +158,7 @@ impl Account {
 	}
 
 	fn from_keyable(keyable: Keyable, algorithm: &str) -> JsResult<Account> {
-		let account = match algorithm {
-			"ed25519" => CoreAccount::<KeyED25519>::try_from(Accountable::KeyAndType(keyable, KeyPairType::ED25519))
-				.map(GenericAccount::Ed25519),
-			"ecdsa_secp256k1" => CoreAccount::<KeyECDSASECP256K1>::try_from(Accountable::KeyAndType(
-				keyable,
-				KeyPairType::ECDSASECP256K1,
-			))
-			.map(GenericAccount::EcdsaSecp256k1),
-			"ecdsa_secp256r1" => CoreAccount::<KeyECDSASECP256R1>::try_from(Accountable::KeyAndType(
-				keyable,
-				KeyPairType::ECDSASECP256R1,
-			))
-			.map(GenericAccount::EcdsaSecp256r1),
-			_ => {
-				let names: Vec<&str> = CRYPTO_ALGORITHMS.iter().map(|(name, _)| *name).collect();
-				return Err(coded_error(
-					"INVALID_ALGORITHM",
-					&alloc::format!("algorithm must be one of: {}", names.join(", ")),
-				));
-			}
-		};
-
-		let account = account.map_err(|error| coded_error("ACCOUNT", error.as_ref()))?;
+		let account = keetanetwork_bindings::account::from_keyable(keyable, algorithm).map_err(coded)?;
 		Ok(Self { inner: Arc::new(account) })
 	}
 }

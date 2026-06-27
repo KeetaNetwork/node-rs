@@ -182,7 +182,7 @@ fn default_runtime() -> Arc<dyn Runtime> {
 	{
 		Arc::new(TokioRuntime)
 	}
-	#[cfg(all(feature = "wasm", target_family = "wasm"))]
+	#[cfg(all(feature = "wasm", target_family = "wasm", target_os = "unknown"))]
 	{
 		Arc::new(crate::runtime::WasmRuntime)
 	}

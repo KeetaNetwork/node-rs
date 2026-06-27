@@ -1,12 +1,13 @@
 //! JS `X509CertificateBuilder`: assemble and sign X.509 certificates whose
 //! DER bytes feed directly into [`ManageCertificate.add`](crate::certificate).
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use chrono::{DateTime, Utc};
-use keetanetwork_account::GenericAccount;
 use keetanetwork_asn1::SubjectPublicKeyInfo;
+use keetanetwork_bindings::error::CodedError;
+use keetanetwork_bindings::{time as bindings_time, x509 as bindings_x509};
 use keetanetwork_x509::builder::CertificateBuilder;
 use keetanetwork_x509::certificates::{Certificate, CertificateBundle};
 use keetanetwork_x509::error::CertificateError;
@@ -15,7 +16,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::JsValue;
 
 use crate::account::Account;
-use crate::convert::{coded_error, JsResult};
+use crate::convert::{coded, coded_error, JsResult};
 
 /// Fluent X.509 certificate builder. Set the subject key and naming, then
 /// `build` with a signing account to obtain the signed certificate as hex DER.
@@ -143,14 +144,7 @@ impl X509CertificateBuilder {
 	/// Sign the certificate with `signer` and return the DER bytes as hex,
 	/// ready for [`ManageCertificate.add`](crate::certificate).
 	pub fn build(&self, signer: &Account) -> JsResult<String> {
-		let certificate = match &*signer.inner() {
-			GenericAccount::Ed25519(account) => self.inner.build(account),
-			GenericAccount::EcdsaSecp256k1(account) => self.inner.build(account),
-			GenericAccount::EcdsaSecp256r1(account) => self.inner.build(account),
-			_ => return Err(coded_error("UNSUPPORTED_KEY_TYPE", "certificate signing requires a signing account")),
-		}
-		.map_err(certificate_error)?;
-
+		let certificate = bindings_x509::build_signed(&self.inner, &signer.inner()).map_err(coded)?;
 		let der = Vec::<u8>::try_from(&certificate).map_err(certificate_error)?;
 		Ok(hex::encode(der))
 	}
@@ -163,19 +157,14 @@ impl X509CertificateBuilder {
 	}
 }
 
-/// Derive the subject public key info from a signing account, dispatching over
-/// the concrete key type since the conversion is per-algorithm.
+/// Derive the subject public key info from a signing account.
 fn subject_public_key(account: &Account) -> JsResult<SubjectPublicKeyInfo> {
-	match &*account.inner() {
-		GenericAccount::Ed25519(inner) => SubjectPublicKeyInfo::try_from(inner),
-		GenericAccount::EcdsaSecp256k1(inner) => SubjectPublicKeyInfo::try_from(inner),
-		GenericAccount::EcdsaSecp256r1(inner) => SubjectPublicKeyInfo::try_from(inner),
-		_ => return Err(coded_error("UNSUPPORTED_KEY_TYPE", "certificate subject key requires a signing account")),
-	}
-	.map_err(|error| coded_error("PUBLIC_KEY", error.as_ref()))
+	bindings_x509::subject_public_key(&account.inner()).map_err(coded)
 }
 
-/// Convert a Unix-millisecond timestamp into a UTC instant.
+/// Convert a Unix-millisecond timestamp (a JS `number`) into a UTC instant,
+/// rejecting the non-integer and non-finite values only `f64` can carry before
+/// delegating the range check.
 fn timestamp(millis: f64, label: &str) -> JsResult<DateTime<Utc>> {
 	if !millis.is_finite() {
 		return Err(coded_error("INVALID_DATE", &alloc::format!("{label} unix milliseconds must be finite")));
@@ -189,8 +178,7 @@ fn timestamp(millis: f64, label: &str) -> JsResult<DateTime<Utc>> {
 		));
 	}
 
-	DateTime::from_timestamp_millis(millis_i64)
-		.ok_or_else(|| coded_error("INVALID_DATE", &alloc::format!("{label} unix milliseconds out of range")))
+	bindings_time::from_unix_millis(millis_i64, label).map_err(coded)
 }
 
 /// A parsed view of an X.509 certificate's core fields. When produced from a
@@ -245,6 +233,7 @@ impl X509Certificate {
 			let cert = Certificate::try_from(der.as_slice()).map_err(certificate_error)?;
 			bundle.add_intermediate(cert);
 		}
+
 		let chain_length = bundle.to_chain_length();
 		Ok(Self::from_leaf(bundle.to_certificate(), chain_length))
 	}
@@ -433,21 +422,5 @@ mod wasm_tests {
 
 /// Map a [`CertificateError`] onto a coded JavaScript `Error`.
 fn certificate_error(error: CertificateError) -> JsValue {
-	let code = match error {
-		CertificateError::InvalidCertificate => "INVALID_CERTIFICATE",
-		CertificateError::ValidationFailed { .. } => "VALIDATION_FAILED",
-		CertificateError::Expired => "CERTIFICATE_EXPIRED",
-		CertificateError::NotYetValid => "CERTIFICATE_NOT_YET_VALID",
-		CertificateError::Asn1ParseError { .. } => "ASN1_PARSE_ERROR",
-		CertificateError::MissingField { .. } => "MISSING_FIELD",
-		CertificateError::InvalidExtension { .. } => "INVALID_EXTENSION",
-		CertificateError::ChainValidationFailed { .. } => "CHAIN_VALIDATION_FAILED",
-		CertificateError::UnsupportedVersion { .. } => "UNSUPPORTED_VERSION",
-		CertificateError::CertificateSignatureVerificationFailed => "SIGNATURE_VERIFICATION_FAILED",
-		CertificateError::CertificateDuplicateIncluded => "CERTIFICATE_DUPLICATE",
-		CertificateError::CertificateOrphanFound => "CERTIFICATE_ORPHAN",
-		CertificateError::CertificateCycleFound => "CERTIFICATE_CYCLE",
-		CertificateError::CertificateInvalidGraphCount { .. } => "CERTIFICATE_INVALID_GRAPH_COUNT",
-	};
-	coded_error(code, &error.to_string())
+	coded(CodedError::from(error))
 }

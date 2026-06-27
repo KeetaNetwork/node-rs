@@ -1,0 +1,28 @@
+[package]
+name = "keetanetwork-bindings"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared, target-agnostic projections and error mapping for KeetaNet binding crates"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = []
+client = ["dep:keetanetwork-client"]
+
+[dependencies]
+keetanetwork-account = { version = "0.1.0", path = "../keetanetwork-account", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-block = { version = "0.1.0", path = "../keetanetwork-block", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-vote = { version = "0.1.0", path = "../keetanetwork-vote", default-features = false, features = ["alloc", "der", "rasn"] }
+keetanetwork-x509 = { version = "0.1.0", path = "../keetanetwork-x509", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-asn1 = { version = "0.1.0", path = "../keetanetwork-asn1", default-features = false, features = ["alloc", "rasn"] }
+keetanetwork-client = { version = "0.1.0", path = "../keetanetwork-client", default-features = false, optional = true }
+num-bigint = { workspace = true }
+hex = { workspace = true, features = ["alloc"] }
+chrono = { workspace = true, features = ["alloc"] }

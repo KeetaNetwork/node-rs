@@ -43,7 +43,9 @@
 //! and constructed with [`KeetaClient::with_parts`], so a `no_std` consumer
 //! supplies its own executor and HTTP backend.
 
-#![cfg_attr(not(any(feature = "std", feature = "http")), no_std)]
+// `wasm32-wasip2` is a std-capable target, so the `wasi` feature drops `no_std`
+// (without enabling the `std` feature, which would pull tokio/reqwest).
+#![cfg_attr(not(any(feature = "std", feature = "http", feature = "wasi")), no_std)]
 // On wasm the shared traits relax to `!Send`/`!Sync`, but the orchestrator
 // still shares its state through `Arc` for one cross-target ownership type.
 #![cfg_attr(target_family = "wasm", allow(clippy::arc_with_non_send_sync))]
@@ -52,7 +54,10 @@
 // alongside a runtime selector.
 #[cfg(all(
 	feature = "http",
-	not(any(all(feature = "std", not(target_family = "wasm")), all(feature = "wasm", target_family = "wasm")))
+	not(any(
+		all(feature = "std", not(target_family = "wasm")),
+		all(feature = "wasm", target_family = "wasm", target_os = "unknown")
+	))
 ))]
 compile_error!("feature `http` requires a runtime: enable `std` on native targets or wasm on wasm32");
 
@@ -72,6 +77,10 @@ mod sync;
 mod transport;
 mod user;
 
+/// Transport-agnostic type encoding/decoding shared by the HTTP backends.
+#[cfg(feature = "codec")]
+mod codec;
+
 #[cfg(feature = "std")]
 mod genesis;
 #[cfg(feature = "http")]
@@ -79,10 +88,12 @@ mod network;
 
 /// Generated transport client (`Client`, request/response `types`, and the
 /// transport `Error`). Emitted from the OpenAPI document at build time.
-#[cfg(feature = "http")]
+#[cfg(feature = "codec")]
 #[allow(clippy::all, dead_code, unused_imports, missing_docs)]
 pub mod generated {
-	include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
+	include!(concat!(env!("OUT_DIR"), "/codegen_types.rs"));
+	#[cfg(feature = "http")]
+	include!(concat!(env!("OUT_DIR"), "/codegen_client.rs"));
 }
 
 pub use builder::TransactionBuilder;
@@ -117,5 +128,11 @@ pub use {
 	runtime::TokioRuntime,
 };
 
-#[cfg(all(feature = "wasm", target_family = "wasm"))]
+#[cfg(all(feature = "wasm", target_family = "wasm", target_os = "unknown"))]
 pub use runtime::WasmRuntime;
+
+#[cfg(all(feature = "wasi", target_os = "wasi"))]
+pub use {
+	runtime::WasiRuntime,
+	transport::{WasiTransport, WasiTransportFactory},
+};

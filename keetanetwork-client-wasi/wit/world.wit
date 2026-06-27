@@ -1,0 +1,351 @@
+package keeta:client@0.1.0;
+
+/// Shared value types crossing the component boundary.
+interface types {
+	/// A stable, machine-readable error: a programmatic `code` plus a
+	/// human-readable `message`.
+	record coded-error {
+		code: string,
+		message: string,
+	}
+
+	/// One token balance held by an account. `amount` is a decimal integer
+	/// string in the token's base units.
+	record token-balance {
+		token: string,
+		amount: string,
+	}
+
+	/// A representative and its voting weight. `weight` is a decimal integer
+	/// string; `api-url` is present only on the plural lookup.
+	record representative {
+		account: string,
+		weight: string,
+		api-url: option<string>,
+	}
+
+	/// A point-in-time ledger checksum. `checksum` is a decimal integer string.
+	record ledger-checksum {
+		checksum: string,
+		moment: option<string>,
+		moment-range: option<f64>,
+	}
+
+	/// Account metadata as set via SET_INFO.
+	record account-info {
+		name: option<string>,
+		description: option<string>,
+		metadata: option<string>,
+	}
+
+	/// A snapshot of an account's ledger state. `height`/`supply` are decimal
+	/// integer strings; `head` is a block hash (hex).
+	record account-state {
+		representative: option<string>,
+		head: option<string>,
+		height: option<string>,
+		info: option<account-info>,
+		supply: option<string>,
+		balances: list<token-balance>,
+	}
+
+	/// One verified entry of an account's transaction history. `staple` is the
+	/// vote staple (hex); `timestamp` is ISO 8601.
+	record history-entry {
+		staple: string,
+		id: option<string>,
+		timestamp: option<string>,
+	}
+
+	/// Pagination/range bounds for a chain page. `start`/`end` are block-hash
+	/// cursors; `limit` caps the page size.
+	record chain-query {
+		start: option<string>,
+		end: option<string>,
+		limit: option<s64>,
+	}
+
+	/// A page of an account's chain (each block as hex, most recent first) plus
+	/// the cursor to pass as the next page's `start`, or none when exhausted.
+	record chain-page {
+		blocks: list<string>,
+		next-key: option<string>,
+	}
+
+	/// An account's head block (hex) together with its chain height (decimal
+	/// integer string).
+	record head-info {
+		block: string,
+		height: string,
+	}
+
+	/// How a supply/balance adjustment combines with the current value.
+	enum adjust-method {
+		add,
+		subtract,
+		set,
+	}
+
+	/// Pagination/range bounds for a history page. `start` is a vote-staple-id
+	/// cursor; `limit` caps the page size.
+	record history-query {
+		start: option<string>,
+		limit: option<s64>,
+	}
+
+	/// An access-control entry. `permissions` are `0x`-prefixed hex bitmaps.
+	record acl {
+		principal: option<string>,
+		entity: option<string>,
+		target: option<string>,
+		permissions: list<string>,
+	}
+
+	/// A certificate bundle: a PEM-encoded leaf plus PEM intermediates.
+	record certificate {
+		certificate: string,
+		intermediates: list<string>,
+	}
+
+	/// An optional token/amount assertion for one leg of a swap. `amount` is a
+	/// decimal integer string.
+	record swap-token-amount {
+		token: option<string>,
+		amount: option<string>,
+	}
+
+	/// Optional validation of a swap's legs when accepting an offer.
+	record swap-expectation {
+		receive: option<swap-token-amount>,
+		send: option<swap-token-amount>,
+	}
+
+	/// A signing account, derived from `seed` at `index` under `algorithm`
+	/// (e.g. `ed25519`, `ecdsa_secp256k1`). Used to reconstruct private keys
+	/// for low-level block signing.
+	record signer-spec {
+		seed: string,
+		index: u32,
+		algorithm: string,
+	}
+}
+
+/// The networked KeetaNet node surface. Outbound calls are made over
+/// `wasi:http`, which the host must grant.
+interface node {
+	use types.{
+		coded-error, token-balance, representative, ledger-checksum, account-info, account-state, history-entry,
+		chain-query, chain-page, head-info, adjust-method, history-query, acl, certificate,
+		swap-token-amount, swap-expectation, signer-spec,
+	};
+
+	/// Locally derive an identifier address relative to the account derived
+	/// from `spec`, an optional `previous` block hash (hex; the opening hash
+	/// when absent), and operation `op-index`. `kind` is an identifier key
+	/// type (`network`/`token`/`storage`/`multisig`).
+	derive-identifier: func(spec: signer-spec, kind: string, previous: option<string>, op-index: u32) -> result<string, coded-error>;
+
+	/// A client bound to a single representative endpoint.
+	resource client {
+		/// Bind a client to the node REST API reachable at `base-url`.
+		constructor(base-url: string);
+		/// The node software version string.
+		node-version: func() -> result<string, coded-error>;
+		/// The settled balance of `token` held by `account`, as a decimal
+		/// integer string in the token's base units.
+		account-balance: func(account: string, token: string) -> result<string, coded-error>;
+		/// Every token balance held by `account`.
+		account-balances: func(account: string) -> result<list<token-balance>, coded-error>;
+		/// The total supply of `token`, or none for a non-token account.
+		token-supply: func(token: string) -> result<option<string>, coded-error>;
+		/// A snapshot of `account`'s ledger state.
+		account-state: func(account: string) -> result<account-state, coded-error>;
+		/// The head block of `account` (hex), or none when it has no blocks.
+		head-block: func(account: string) -> result<option<string>, coded-error>;
+		/// The block identified by `blockhash` (hex), if held. `side` selects
+		/// the ledger (`main`, `side`, or `both`; defaults to main).
+		block: func(blockhash: string, side: option<string>) -> result<option<string>, coded-error>;
+		/// The vote staple (hex) covering `blockhash`, or none.
+		vote-staple: func(blockhash: string) -> result<option<string>, coded-error>;
+		/// A single representative and its voting weight.
+		representative: func(rep: string) -> result<representative, coded-error>;
+		/// Every known representative and its voting weight.
+		representatives: func() -> result<list<representative>, coded-error>;
+		/// A point-in-time ledger checksum.
+		ledger-checksum: func() -> result<ledger-checksum, coded-error>;
+		/// A prefix of `account`'s chain (most recent first), each block as hex.
+		chain: func(account: string) -> result<list<string>, coded-error>;
+		/// A single page of `account`'s chain plus the next-page cursor.
+		chain-page: func(account: string, query: chain-query) -> result<chain-page, coded-error>;
+		/// `account`'s transaction history as verified vote staples.
+		history: func(account: string) -> result<list<history-entry>, coded-error>;
+		/// `account`'s half-published successor block (hex), if any.
+		pending-block: func(account: string) -> result<option<string>, coded-error>;
+		/// `account`'s head block (hex) plus its chain height.
+		account-head-info: func(account: string) -> result<option<head-info>, coded-error>;
+		/// A snapshot of several accounts' ledger states, in input order.
+		account-states: func(accounts: list<string>) -> result<list<account-state>, coded-error>;
+		/// The block (hex) that chains directly after `blockhash`, if any.
+		successor-block: func(blockhash: string) -> result<option<string>, coded-error>;
+		/// The block (hex) `account` published under idempotency `key`, if any.
+		block-by-idempotent: func(account: string, key: string) -> result<option<string>, coded-error>;
+		/// A single page of `account`'s history, bounded by `query`.
+		history-page: func(account: string, query: history-query) -> result<list<history-entry>, coded-error>;
+		/// The node's own representative and its voting weight.
+		node-representative: func() -> result<representative, coded-error>;
+		/// The access-control entries `account` grants as principal.
+		acls-by-principal: func(account: string) -> result<list<acl>, coded-error>;
+		/// The access-control entries keyed under `account` as entity.
+		acls-by-entity: func(account: string) -> result<list<acl>, coded-error>;
+		/// Every certificate held by `account`.
+		certificates: func(account: string) -> result<list<certificate>, coded-error>;
+		/// The certificate on `account` identified by `hash`, if held.
+		certificate: func(account: string, hash: string) -> result<option<certificate>, coded-error>;
+		/// The node's global transaction history.
+		global-history: func() -> result<list<history-entry>, coded-error>;
+		/// A single page of the node's global history, bounded by `query`.
+		global-history-page: func(query: history-query) -> result<list<history-entry>, coded-error>;
+		/// Vote staples (hex) committed at or after the ISO 8601 `start` moment.
+		vote-staples-after: func(start: string) -> result<list<string>, coded-error>;
+		/// A single page of vote staples (hex) at or after the ISO 8601 `start`
+		/// moment, capped at `limit`.
+		vote-staples-after-page: func(start: string, limit: option<s64>) -> result<list<string>, coded-error>;
+	}
+
+	/// A client scoped to a single operating account: account-relative reads,
+	/// plus writes when constructed with a signer. A signer-bound client signs
+	/// and transmits over `wasi:http`; a read-only client rejects writes.
+	resource user-client {
+		/// Bind to the node at `base-url`, scoped to read `address`.
+		read-only: static func(base-url: string, address: string) -> result<user-client, coded-error>;
+		/// Bind to the node at `base-url`, deriving the signing (and operating)
+		/// account from `seed`/`index`/`algorithm` (e.g. `ed25519`). `network`
+		/// is the decimal network identifier stamped onto originated blocks.
+		with-signer: static func(base-url: string, seed: string, index: u32, algorithm: string, network: string) -> result<user-client, coded-error>;
+		/// The operating account's address.
+		address: func() -> result<string, coded-error>;
+		/// The settled balance of `token` held by the operating account.
+		balance: func(token: string) -> result<string, coded-error>;
+		/// Every token balance held by the operating account.
+		all-balances: func() -> result<list<token-balance>, coded-error>;
+		/// The full state of the operating account.
+		state: func() -> result<account-state, coded-error>;
+		/// The operating account's head block (hex), if any.
+		head: func() -> result<option<string>, coded-error>;
+		/// A prefix of the operating account's chain (most recent first), hex.
+		chain: func() -> result<list<string>, coded-error>;
+		/// A single page of the operating account's chain (hex), bounded by
+		/// `query`.
+		chain-page: func(query: chain-query) -> result<list<string>, coded-error>;
+		/// The operating account's transaction history as verified vote staples.
+		history: func() -> result<list<history-entry>, coded-error>;
+		/// The operating account's half-published successor block (hex), if any.
+		pending-block: func() -> result<option<string>, coded-error>;
+		/// Send `amount` (decimal) of `token` to `to`; builds, signs, and
+		/// transmits. Requires a signer.
+		send: func(to: string, token: string, amount: string) -> result<bool, coded-error>;
+		/// Send `amount` (decimal) of `token` to `to` with attached `external`
+		/// reference data; never aggregated. Requires a signer.
+		send-external: func(to: string, token: string, amount: string, external: string) -> result<bool, coded-error>;
+		/// Set the operating account's representative to `rep`. Requires a signer.
+		set-rep: func(rep: string) -> result<bool, coded-error>;
+		/// Set the operating account's info fields. Requires a signer.
+		set-info: func(name: option<string>, description: option<string>, metadata: option<string>) -> result<bool, coded-error>;
+		/// Adjust `token`'s supply (and optionally `holder`'s balance) by
+		/// `amount` (decimal) via `method`. Requires a signer with token admin.
+		modify-token: func(token: string, holder: option<string>, amount: string, method: adjust-method) -> result<bool, coded-error>;
+		/// Grant or revoke `permissions` (flag names) for `principal`, optionally
+		/// scoped to `target`, via `method`. An empty `permissions` list with
+		/// `set` clears them. Requires a signer.
+		update-permissions: func(principal: string, method: adjust-method, permissions: list<string>, target: option<string>) -> result<bool, coded-error>;
+		/// Create an on-chain multisig identifier requiring `quorum` of
+		/// `signers`; returns the new identifier address. Requires a signer.
+		generate-multisig: func(signers: list<string>, quorum: u32) -> result<string, coded-error>;
+		/// Create an on-chain identifier of `kind`
+		/// (`network`/`token`/`storage`/`multisig`); builds and publishes,
+		/// returning the new identifier address. Requires a signer.
+		generate-identifier: func(kind: string) -> result<string, coded-error>;
+		/// Build (without publishing) a swap offer sending `send-amount` of
+		/// `send-token` to `counterparty` against `receive-amount` of
+		/// `receive-token`; returns the offer block (hex) for the counterparty
+		/// to accept. Requires a signer.
+		create-swap: func(counterparty: string, send-token: string, send-amount: string, receive-token: string, receive-amount: string, receive-exact: bool) -> result<string, coded-error>;
+		/// Accept a maker's swap `offer` (block hex), optionally validating its
+		/// legs against `expected`; returns the taker's and maker's blocks (hex)
+		/// to transmit together. Requires a signer.
+		accept-swap: func(offer: string, expected: option<swap-expectation>) -> result<list<string>, coded-error>;
+		/// Transmit pre-signed `blocks` (hex) together as one staple so they
+		/// settle atomically; the bound signer pays the fee. Used by a swap
+		/// taker to settle both the taker's and maker's blocks at once.
+		transmit: func(blocks: list<string>) -> result<bool, coded-error>;
+		/// Add the certificate `certificate` (DER as hex) with `intermediates`
+		/// (DER hex) to the operating account. Requires a signer.
+		add-certificate: func(certificate: string, intermediates: list<string>) -> result<bool, coded-error>;
+		/// Remove the certificate identified by `hash` (hex) from the operating
+		/// account. Requires a signer.
+		remove-certificate: func(hash: string) -> result<bool, coded-error>;
+		/// Begin a multi-operation transaction on the operating account: stage
+		/// several operations, then seal them into one atomic block. Requires a
+		/// signer.
+		begin: func() -> result<transaction, coded-error>;
+	}
+
+	/// A staged, signer-bound transaction: accumulate operations on the
+	/// operating account, then seal them into one atomic block via `commit`.
+	resource transaction {
+		/// Stage a send of `amount` (decimal) of `token` to `to`.
+		send: func(to: string, token: string, amount: string) -> result<_, coded-error>;
+		/// Stage a send carrying `external` reference data (never aggregated).
+		send-external: func(to: string, token: string, amount: string, external: string) -> result<_, coded-error>;
+		/// Stage a representative change.
+		set-rep: func(rep: string) -> result<_, coded-error>;
+		/// Stage an account-info change.
+		set-info: func(name: option<string>, description: option<string>, metadata: option<string>) -> result<_, coded-error>;
+		/// Build, sign, and publish all staged operations as one atomic
+		/// transaction over `wasi:http`; returns the published block(s) as hex.
+		commit: func() -> result<list<string>, coded-error>;
+	}
+
+	/// A low-level, offline block assembler: stage operations on an operating
+	/// account, attach a single or multisig signer, then build-and-sign into a
+	/// transport block (hex). The signed block settles via
+	/// `user-client.transmit`.
+	resource block-builder {
+		/// Start a block for operating `account` (address) on `network`.
+		new: static func(network: u64, account: string) -> result<block-builder, coded-error>;
+		/// Set the block version (1 or 2).
+		version: func(version: u32) -> result<_, coded-error>;
+		/// Chain onto `previous` (block hash hex).
+		previous: func(previous: string) -> result<_, coded-error>;
+		/// Mark this as the account's opening block (no previous).
+		opening: func() -> result<_, coded-error>;
+		/// Set the block timestamp (Unix milliseconds). Required: the component
+		/// has no ambient clock, so the caller stamps the block.
+		date: func(unix-millis: s64) -> result<_, coded-error>;
+		/// Sign with a single account derived from `spec`.
+		signer-single: func(spec: signer-spec) -> result<_, coded-error>;
+		/// Sign with `multisig` (address) using the member accounts derived
+		/// from `members` (a quorum subset is allowed).
+		signer-multisig: func(multisig: string, members: list<signer-spec>) -> result<_, coded-error>;
+		/// Stage a CREATE_IDENTIFIER for a multisig requiring `quorum` of
+		/// `signers` (addresses).
+		op-create-multisig: func(multisig: string, signers: list<string>, quorum: u32) -> result<_, coded-error>;
+		/// Stage a MODIFY_PERMISSIONS for `principal` granting/clearing
+		/// `permissions` (flag names), optionally scoped to `target`.
+		op-modify-permissions: func(principal: string, permissions: list<string>, method: adjust-method, target: option<string>) -> result<_, coded-error>;
+		/// Stage a SET_INFO; an empty `default-permission` leaves it unset.
+		op-set-info: func(name: string, description: string, metadata: string, default-permission: list<string>) -> result<_, coded-error>;
+		/// Stage a SET_REP delegating voting weight to `rep` (address).
+		op-set-rep: func(rep: string) -> result<_, coded-error>;
+		/// Build and sign the staged block, returning it as transport hex.
+		/// Consumes the builder.
+		build-and-sign: func() -> result<string, coded-error>;
+	}
+}
+
+/// A vertical slice of the KeetaNet client: connect to a representative and run
+/// read-only queries over `wasi:http`. Expanded toward the browser binding
+/// surface (writes, sync, recovery) iteratively.
+world keeta-client {
+	export node;
+}

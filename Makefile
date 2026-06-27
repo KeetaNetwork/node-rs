@@ -1,4 +1,4 @@
-.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer node-harness node-harness-lint wasm-build test-wasm
+.PHONY: build clean do-docs do-docs-ci do-lint do-lint-ci test test-feat test-all all help check release coverage coverage-check coverage-ci coverage-setup audit docs developer node-harness node-harness-lint build-wasm test-wasm build-wasi test-wasi
 
 # Project name
 PROJ_NAME := node-rs
@@ -94,14 +94,19 @@ test-feat:
 	cargo check -p keetanetwork-block --no-default-features --features alloc,rasn,der
 	cargo clippy -p keetanetwork-client --no-default-features -- -D warnings
 	# Browser wasm build: no_std orchestrator with the relaxed (!Send) traits.
-	rustup target add wasm32-unknown-unknown
 	cargo build -p keetanetwork-client --no-default-features --target wasm32-unknown-unknown
 	cargo build -p keetanetwork-client --no-default-features --features wasm --target wasm32-unknown-unknown
 
-# Build the wasm client into a browser-ready npm package (pkg/).
-wasm-build:
-	rustup target add wasm32-unknown-unknown
+build-wasm:
 	wasm-pack build keetanetwork-client-wasm --target web --out-dir pkg
+
+WASI_CRATE := keetanetwork-client-wasi
+WASI_P1_WASM := target/wasm32-wasip1/debug/keetanetwork_client_wasi.wasm
+WASI_P2_WASM := target/wasm32-wasip2/debug/keetanetwork_client_wasi.wasm
+
+build-wasi:
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip1 --features p1
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip2 --features p2
 
 # Reference implementation harness (required by compatibility/e2e tests)
 HARNESS_DIR := keetanetwork-utils/node-harness
@@ -128,11 +133,16 @@ test-all: test test-feat
 # Browser end-to-end test
 WASM_TEST_DIR := keetanetwork-client-wasm/tests
 
-test-wasm: node-harness wasm-build
+test-wasm: node-harness build-wasm
 	wasm-pack test --node keetanetwork-client-wasm
 	cd $(WASM_TEST_DIR) && npm ci
 	cd $(WASM_TEST_DIR) && npx playwright install --with-deps chromium
 	cd $(WASM_TEST_DIR) && npx playwright test
+
+test-wasi: build-wasi node-harness
+	WASI_P1_MODULE=$(CURDIR)/$(WASI_P1_WASM) \
+	WASI_P2_COMPONENT=$(CURDIR)/$(WASI_P2_WASM) \
+		cargo test --manifest-path $(WASI_CRATE)/host-tests/Cargo.toml -- --include-ignored
 
 # Set up coverage tools (internal helper target)
 coverage-setup:
@@ -280,6 +290,8 @@ help:
 	@echo "  make test           - Run tests (includes all crypto feature combinations)"
 	@echo "  make test-feat      - Run crypto crate tests with specific features"
 	@echo "  make test-all       - Run all tests including feature tests"
+	@echo "  make build-wasi     - Build the WASI P1 core module and P2 component"
+	@echo "  make test-wasi      - Build both WASI artifacts and run the wasmtime host smoke tests (P1 flat ABI + P2 networked over wasi:http)"
 	@echo "  make audit          - Run security audit"
 	@echo "  make docs           - Generate and open documentation"
 	@echo "  make coverage       - Generate code coverage report (HTML + LCOV)"
