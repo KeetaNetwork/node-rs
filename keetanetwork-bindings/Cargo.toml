@@ -1,6 +1,6 @@
 [package]
 name = "keetanetwork-bindings"
-version.workspace = true
+version = "0.2.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -18,11 +18,15 @@ client = ["dep:keetanetwork-client"]
 
 [dependencies]
 keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-crypto = { workspace = true, features = ["alloc", "signature"] }
 keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
-keetanetwork-vote = { workspace = true, features = ["alloc", "der", "rasn"] }
+keetanetwork-vote = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-x509 = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-asn1 = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-client = { workspace = true, optional = true }
 num-bigint = { workspace = true }
 hex = { workspace = true, features = ["alloc"] }
 chrono = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+keetanetwork-x509 = { workspace = true, features = ["std", "rasn"] }

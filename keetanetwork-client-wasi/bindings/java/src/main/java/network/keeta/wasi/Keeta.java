@@ -55,6 +55,23 @@ public final class Keeta implements AutoCloseable {
 		return new Account(net, net.handle("keeta_account_from_address", ptr, bytes.length));
 	}
 
+	/* ---------------------------- certificates -------------------------- */
+
+	/** Parse a PEM-encoded X.509 certificate. */
+	public Certificate certificate(String pem) {
+		byte[] bytes = pem.getBytes(StandardCharsets.UTF_8);
+		int ptr = net.write(bytes);
+
+		return new Certificate(net, net.handle("keeta_certificate_parse", ptr, bytes.length));
+	}
+
+	/** Parse a DER-encoded X.509 certificate. */
+	public Certificate certificateFromDer(byte[] der) {
+		int ptr = net.write(der);
+
+		return new Certificate(net, net.handle("keeta_certificate_parse_der", ptr, der.length));
+	}
+
 	/* ---------------------------- operations ---------------------------- */
 
 	/** A {@code SET_REP} operation delegating voting weight to {@code to}. */

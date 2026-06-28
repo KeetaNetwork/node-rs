@@ -16,23 +16,38 @@ readonly ERR_RETURN_DIR="Failed to return to previous directory"
 # Parse command line arguments
 DRY_RUN=false
 INITIAL_RELEASE=false
+ALLOW_DIRTY=false
+SKIP_TESTS=false
+SELECTED_PACKAGES=()
 
 show_help() {
     cat << EOF
-Usage: $0 [OPTIONS]
+Usage: $0 [OPTIONS] [PACKAGE...]
 
 Release automation script for publishing workspace packages to crates.io.
 
+Arguments:
+  PACKAGE...   Optional list of workspace package names to release. When
+               provided, only those packages are published (in dependency
+               order) and the workspace release tag is skipped. Their
+               workspace dependencies must already be published.
+
 Options:
-  --dry-run    Show what would be done without actually publishing or creating tags
-  --initial    Force publication of all packages, even if they appear already published
-               (useful when adding new packages to an existing workspace)
-  -h, --help   Show this help message
+  --dry-run     Show what would be done without actually publishing or creating tags
+  --initial     Force publication of all packages, even if they appear already published
+                (useful when adding new packages to an existing workspace)
+  --allow-dirty Skip the clean-working-directory check and pass --allow-dirty to
+                cargo publish (publishes uncommitted changes)
+  --skip-tests  Skip running the test suite (make test-all) before publishing;
+                lints still run
+  -h, --help    Show this help message
 
 Examples:
-  $0           # Run the full release process
-  $0 --dry-run # Preview what would be done
-  $0 --initial # Force publish all packages (for new workspace packages)
+  $0                            # Run the full release process
+  $0 --dry-run                  # Preview what would be done
+  $0 --initial                  # Force publish all packages (for new workspace packages)
+  $0 keetanetwork-asn1          # Release only keetanetwork-asn1
+  $0 --dry-run keetanetwork-asn1 keetanetwork-utils  # Preview a subset release
 
 The script will:
 1. Discover all workspace packages automatically
@@ -59,14 +74,26 @@ while [[ $# -gt 0 ]]; do
             INITIAL_RELEASE=true
             shift
             ;;
+        --allow-dirty)
+            ALLOW_DIRTY=true
+            shift
+            ;;
+        --skip-tests)
+            SKIP_TESTS=true
+            shift
+            ;;
         -h|--help)
             show_help
             exit 0
             ;;
-        *)
+        -*)
             echo "Unknown option: $1" >&2
             echo "Use --help for usage information" >&2
             exit 1
+            ;;
+        *)
+            SELECTED_PACKAGES+=("$1")
+            shift
             ;;
     esac
 done
@@ -150,15 +177,16 @@ validate_environment() {
         die "Not in a git repository"
     fi
     
-    # Check working directory cleanliness (skip in dry-run)
-    if [[ "$DRY_RUN" != "true" ]]; then
-        if [[ -n $(git status --porcelain) ]]; then
-            log_error "Working directory is not clean. Please commit or stash changes."
-            git status --short
-            exit 1
-        fi
-    else
+    # Check working directory cleanliness (skip in dry-run or with --allow-dirty)
+    if [[ "$DRY_RUN" == "true" ]]; then
         log_dry_run "Skipping working directory clean check in dry-run mode"
+    elif [[ "$ALLOW_DIRTY" == "true" ]]; then
+        log_warning "Skipping working directory clean check (--allow-dirty)"
+    elif [[ -n $(git status --porcelain) ]]; then
+        log_error "Working directory is not clean. Please commit or stash changes."
+        log_error "Use --allow-dirty to override."
+        git status --short
+        exit 1
     fi
     
     # Ensure we're in the project root
@@ -302,8 +330,13 @@ publish_package() {
     log_info "Publishing $package_name v$package_version..."
     
     cd "$package_dir" || die "Failed to change to package directory: $package_dir"
-    
-    if cargo publish --all-features; then
+
+    local publish_args=(--all-features)
+    if [[ "$ALLOW_DIRTY" == "true" ]]; then
+        publish_args+=(--allow-dirty)
+    fi
+
+    if cargo publish "${publish_args[@]}"; then
         log_success "Published $package_name v$package_version"
         cd - > /dev/null || die "$ERR_RETURN_DIR"
         return 0
@@ -316,15 +349,22 @@ publish_package() {
 
 run_tests_and_lints() {
     if [[ "$DRY_RUN" != "true" ]]; then
-        log_info "Running tests..."
-        if ! make test-all; then
-            die "Tests failed. Aborting release."
+        if [[ "$SKIP_TESTS" == "true" ]]; then
+            log_warning "Skipping tests (--skip-tests)"
+        else
+            log_info "Running tests..."
+            if ! make test-all; then
+                die "Tests failed. Aborting release."
+            fi
         fi
-        
+
         log_info "Running lints..."
         if ! make do-lint; then
             die "Lints failed. Aborting release."
         fi
+    elif [[ "$SKIP_TESTS" == "true" ]]; then
+        log_dry_run "Would skip tests (--skip-tests)"
+        log_dry_run "Would run: make do-lint"
     else
         log_dry_run "Would run: make test-all"
         log_dry_run "Would run: make do-lint"
@@ -474,6 +514,38 @@ topological_sort_packages() {
     printf '%s\n' "${sorted_packages[@]}"
 }
 
+# Restrict a dependency-ordered package list to the user-requested subset.
+# Validates that every requested package exists and preserves the original order.
+filter_selected_packages() {
+    local available=("$@")
+    local result=()
+    local sel pkg found
+
+    for sel in "${SELECTED_PACKAGES[@]}"; do
+        found=false
+        for pkg in "${available[@]}"; do
+            if [[ "$pkg" == "$sel" ]]; then
+                found=true
+                break
+            fi
+        done
+        if [[ "$found" == false ]]; then
+            die "Requested package '$sel' is not a workspace package"
+        fi
+    done
+
+    for pkg in "${available[@]}"; do
+        for sel in "${SELECTED_PACKAGES[@]}"; do
+            if [[ "$pkg" == "$sel" ]]; then
+                result+=("$pkg")
+                break
+            fi
+        done
+    done
+
+    printf '%s\n' "${result[@]}"
+}
+
 # Main release orchestration
 process_packages() {
     local workspace_version="$1"
@@ -575,7 +647,26 @@ finalize_release() {
     
     # Convert string back to array
     IFS=' ' read -ra published_packages <<< "$published_packages_str"
-    
+
+    # A subset release is not a full workspace release, so skip the
+    # workspace-version release tag and just report what was published.
+    if [[ ${#SELECTED_PACKAGES[@]} -gt 0 ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_success "Dry-run completed successfully!"
+            if [[ ${#published_packages[@]} -gt 0 ]]; then
+                log_info "Would publish packages: ${published_packages[*]}"
+            fi
+            log_info "Subset release: workspace release tag would be skipped"
+        else
+            log_success "Subset release completed successfully!"
+            if [[ ${#published_packages[@]} -gt 0 ]]; then
+                log_info "Published packages: ${published_packages[*]}"
+            fi
+            log_info "Subset release: skipped workspace release tag"
+        fi
+        return 0
+    fi
+
     # Create release tag if we have packages or checksums
     if [[ ${#published_packages[@]} -gt 0 ]] || [[ -n "$checksums_list" ]]; then
         if create_release_tag "$workspace_version" "$commit_list" "$checksums_list" "$last_tag"; then
@@ -660,7 +751,19 @@ main() {
     if [[ ${#packages[@]} -eq 0 ]]; then
         die "No workspace packages found"
     fi
-    
+
+    # Restrict to a requested subset, if any were passed on the command line.
+    if [[ ${#SELECTED_PACKAGES[@]} -gt 0 ]]; then
+        log_info "Restricting release to requested packages: ${SELECTED_PACKAGES[*]}"
+        local filtered_packages=()
+        while IFS= read -r package; do
+            if [[ -n "$package" ]]; then
+                filtered_packages+=("$package")
+            fi
+        done < <(filter_selected_packages "${packages[@]}")
+        packages=("${filtered_packages[@]}")
+    fi
+
     log_info "Package publishing order: ${packages[*]}"
     
     # Process packages and collect results

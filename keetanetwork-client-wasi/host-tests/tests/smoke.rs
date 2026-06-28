@@ -46,6 +46,11 @@ struct Abi {
 	builder_build: TypedFunc<i32, i32>,
 	unsigned_sign: TypedFunc<i32, i32>,
 	block_hash: TypedFunc<i32, i32>,
+	certificate_parse: TypedFunc<(i32, i32), i32>,
+	certificate_pem: TypedFunc<i32, i32>,
+	certificate_der: TypedFunc<i32, i32>,
+	certificate_valid_at: TypedFunc<(i32, i64), i32>,
+	certificate_free: TypedFunc<i32, ()>,
 }
 
 impl Abi {
@@ -74,6 +79,11 @@ impl Abi {
 			builder_build: instance.get_typed_func(&mut *store, "keeta_builder_build")?,
 			unsigned_sign: instance.get_typed_func(&mut *store, "keeta_unsigned_sign")?,
 			block_hash: instance.get_typed_func(&mut *store, "keeta_block_hash")?,
+			certificate_parse: instance.get_typed_func(&mut *store, "keeta_certificate_parse")?,
+			certificate_pem: instance.get_typed_func(&mut *store, "keeta_certificate_pem")?,
+			certificate_der: instance.get_typed_func(&mut *store, "keeta_certificate_der")?,
+			certificate_valid_at: instance.get_typed_func(&mut *store, "keeta_certificate_valid_at")?,
+			certificate_free: instance.get_typed_func(&mut *store, "keeta_certificate_free")?,
 		})
 	}
 
@@ -211,6 +221,44 @@ fn p1_derives_account_and_signs_an_opening_block() -> wasmtime::Result<()> {
 	let hash = abi.take_string(&mut store, hash_handle)?;
 	assert_eq!(hash.len(), 64, "the signed block hash must be 32-byte hex");
 	assert!(hex::decode(&hash).is_ok(), "the block hash must be valid hex");
+
+	Ok(())
+}
+
+#[test]
+fn p1_parses_a_certificate_and_round_trips_pem_der_and_validity() -> wasmtime::Result<()> {
+	use std::time::{SystemTime, UNIX_EPOCH};
+
+	use keetanetwork_x509::doc_utils::create_test_certificate;
+
+	let fixture = create_test_certificate("Host Smoke CA", None);
+	let fixture_pem = fixture.to_pem().map_err(|error| wasmtime::Error::msg(error.to_string()))?;
+	let fixture_der = fixture.to_der().map_err(|error| wasmtime::Error::msg(error.to_string()))?;
+
+	let (mut store, abi) = instantiate()?;
+
+	let (pem_ptr, pem_len) = abi.write(&mut store, fixture_pem.as_bytes())?;
+	let raw = abi.certificate_parse.call(&mut store, (pem_ptr, pem_len))?;
+	let certificate = abi.handle(&mut store, raw)?;
+
+	let pem_handle = abi.certificate_pem.call(&mut store, certificate)?;
+	let round_tripped_pem = abi.take_string(&mut store, pem_handle)?;
+	assert_eq!(round_tripped_pem, fixture_pem, "the guest must round-trip the certificate PEM");
+
+	let der_handle = abi.certificate_der.call(&mut store, certificate)?;
+	let der = abi.take(&mut store, der_handle)?;
+	assert_eq!(der, fixture_der, "the guest must round-trip the certificate DER");
+
+	let now_millis = SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.expect("system clock must be after the unix epoch")
+		.as_millis() as i64;
+	let valid = abi.certificate_valid_at.call(&mut store, (certificate, now_millis))?;
+	assert_eq!(valid, 1, "a freshly built certificate must be valid now");
+
+	abi.certificate_free.call(&mut store, certificate)?;
+	let after_free = abi.certificate_valid_at.call(&mut store, (certificate, now_millis))?;
+	assert_eq!(after_free, -1, "a freed certificate handle must report an error");
 
 	Ok(())
 }

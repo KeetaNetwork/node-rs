@@ -2552,6 +2552,7 @@ mod tests {
 
 	#[test]
 	fn test_certificate_builder_basic() -> Result<(), CertificateError> {
+		#[cfg(feature = "der")]
 		use core::str::FromStr;
 
 		// Test each algorithm in our test certificate sets
@@ -2612,6 +2613,7 @@ mod tests {
 
 	#[test]
 	fn test_certificate_builder_build_functionality() -> Result<(), CertificateError> {
+		#[cfg(feature = "der")]
 		use core::str::FromStr;
 
 		for test_set in TEST_CERTIFICATE_SETS.iter() {

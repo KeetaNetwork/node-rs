@@ -9,6 +9,7 @@ use keetanetwork_bindings::error::CodedError;
 use keetanetwork_bindings::parse::adjust_method;
 use keetanetwork_block::{AccountRef, Block, BlockBuilder, Operation, Permissions, UnsignedBlock};
 use keetanetwork_vote::Vote;
+use keetanetwork_x509::certificates::Certificate;
 
 use crate::pure;
 
@@ -24,6 +25,7 @@ struct State {
 	builders: HashMap<i32, BlockBuilder>,
 	unsigned: HashMap<i32, UnsignedBlock>,
 	votes: HashMap<i32, Vote>,
+	certificates: HashMap<i32, Certificate>,
 	last_error: Option<CodedError>,
 }
 
@@ -122,6 +124,14 @@ impl Registered for Vote {
 	}
 }
 
+impl Registered for Certificate {
+	const KIND: &'static str = "certificate";
+
+	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+		&mut state.certificates
+	}
+}
+
 /// The `INVALID_HANDLE` error for a missing handle of kind `T`.
 fn unknown_handle<T: Registered>() -> CodedError {
 	CodedError::new("INVALID_HANDLE", format!("unknown {} handle", T::KIND))
@@ -196,6 +206,11 @@ fn block(handle: i32) -> Option<Block> {
 
 /// Resolve a permission set handle, recording an error when it is unknown.
 fn permissions(handle: i32) -> Option<Permissions> {
+	resolve(handle)
+}
+
+/// Resolve a certificate handle, recording an error when it is unknown.
+fn certificate(handle: i32) -> Option<Certificate> {
 	resolve(handle)
 }
 
@@ -1022,6 +1037,81 @@ pub unsafe extern "C" fn keeta_vote_staple_build(
 	};
 
 	bytes_result(pure::vote_staple_build(blocks, votes, moment_millis))
+}
+
+// ---------------------------------------------------------------------------
+// X.509 certificate objects (handle-based)
+// ---------------------------------------------------------------------------
+
+/// Parse a PEM-encoded certificate; returns a certificate handle.
+///
+/// # Safety
+/// See [`bytes_in`].
+#[no_mangle]
+pub unsafe extern "C" fn keeta_certificate_parse(ptr: i32, len: i32) -> i32 {
+	let Some(pem) = string_in(ptr, len) else {
+		return 0;
+	};
+
+	match pure::certificate_from_pem(&pem) {
+		Ok(certificate) => store(certificate),
+		Err(error) => fail(error),
+	}
+}
+
+/// Parse a DER-encoded certificate; returns a certificate handle.
+///
+/// # Safety
+/// See [`bytes_in`].
+#[no_mangle]
+pub unsafe extern "C" fn keeta_certificate_parse_der(ptr: i32, len: i32) -> i32 {
+	match pure::certificate_from_der(&bytes_in(ptr, len)) {
+		Ok(certificate) => store(certificate),
+		Err(error) => fail(error),
+	}
+}
+
+/// The PEM encoding of a certificate handle; returns a bytes handle.
+#[no_mangle]
+pub extern "C" fn keeta_certificate_pem(handle: i32) -> i32 {
+	match certificate(handle) {
+		Some(certificate) => string_result(pure::certificate_pem(&certificate)),
+		None => 0,
+	}
+}
+
+/// The DER encoding of a certificate handle; returns a bytes handle.
+#[no_mangle]
+pub extern "C" fn keeta_certificate_der(handle: i32) -> i32 {
+	match certificate(handle) {
+		Some(certificate) => bytes_result(pure::certificate_der(&certificate)),
+		None => 0,
+	}
+}
+
+/// Whether a certificate handle is valid at `unix_millis`: `1` valid, `0`
+/// invalid, `-1` on error (an unknown handle or out-of-range moment; see the
+/// last error).
+#[no_mangle]
+pub extern "C" fn keeta_certificate_valid_at(handle: i32, unix_millis: i64) -> i32 {
+	let Some(certificate) = certificate(handle) else {
+		return -1;
+	};
+
+	match pure::certificate_valid_at(&certificate, unix_millis) {
+		Ok(true) => 1,
+		Ok(false) => 0,
+		Err(error) => {
+			fail(error);
+			-1
+		}
+	}
+}
+
+/// Release a certificate handle.
+#[no_mangle]
+pub extern "C" fn keeta_certificate_free(handle: i32) {
+	release::<Certificate>(handle);
 }
 
 // ---------------------------------------------------------------------------

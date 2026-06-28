@@ -265,9 +265,12 @@ developer:
 	$(MAKE) help
 
 # Publish packages and create release
+# Optionally restrict to specific crates: make release PKG="keetanetwork-asn1"
+# Bypass the clean-tree check (and cargo publish dirty guard): make release DIRTY=1
+# Skip the test suite (lints still run): make release SKIP_TESTS=1
 release:
 	@echo "Running release script..."
-	@./scripts/release.sh $(filter-out $@,$(MAKECMDGOALS))
+	@./scripts/release.sh $(filter-out $@,$(MAKECMDGOALS)) $(if $(DIRTY),--allow-dirty) $(if $(SKIP_TESTS),--skip-tests) $(PKG)
 
 # Allow flags to be passed as fake targets
 --%:
@@ -304,4 +307,8 @@ help:
 	@echo "  make coverage-ci    - Generate LCOV coverage report for CI/SonarCloud"
 	@echo ""
 	@echo "Release Commands:"
-	@echo "  make release        - Publish all packages to crates.io and create signed release tag"
+	@echo "  make release                       - Publish all packages to crates.io and create signed release tag"
+	@echo "  make release PKG=\"crate-a crate-b\" - Publish only the named crates (skips workspace tag)"
+	@echo "  make release DIRTY=1               - Allow publishing with a dirty working tree"
+	@echo "  make release SKIP_TESTS=1          - Skip the test suite (lints still run)"
+	@echo "  make release --dry-run             - Preview the release without publishing"
