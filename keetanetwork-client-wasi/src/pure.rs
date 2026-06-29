@@ -1,111 +1,37 @@
 //! Shared, target-agnostic operations behind both WASI ABIs (`p1` flat ABI and
 //! `p2` component). Every function is pure/offline.
 
-use std::str::FromStr;
+use core::str::FromStr;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
 
-use keetanetwork_account::account::AccountSigner;
-use keetanetwork_account::{Account, GenericAccount, KeyED25519, KeyPairType, Keyable};
-use keetanetwork_bindings::account::{algorithm_name, from_keyable};
+use keetanetwork_account::KeyPairType;
 use keetanetwork_bindings::error::CodedError;
-use keetanetwork_bindings::parse::{base_flag, bigint_hex};
+use keetanetwork_bindings::parse::{adjust_method, base_flag, bigint_hex, purpose};
 use keetanetwork_bindings::permissions as bindings_permissions;
 use keetanetwork_block::{
-	AccountRef, AdjustMethod, Block, BlockBuilder, BlockHash, BlockTime, BlockVersion, CertificateDer,
-	CertificateOrHash, CreateIdentifier, Hashable, IdentifierCreateArguments, IntermediateCertificates,
+	AccountRef, AdjustMethod, Amount, Block, BlockBuilder, BlockHash, BlockPurpose, BlockTime, BlockVersion,
+	CertificateDer, CertificateOrHash, CreateIdentifier, Hashable, IdentifierCreateArguments, IntermediateCertificates,
 	ManageCertificate, ModifyPermissions, ModifyPermissionsPrincipal, MultisigCreateArguments, Operation, Permissions,
-	SetInfo, SetRep, Signer, UnsignedBlock,
+	Receive, Send, SetInfo, SetRep, Signer, TokenAdminModifyBalance, TokenAdminSupply, UnsignedBlock,
 };
-use keetanetwork_crypto::prelude::{ExposeSecret, IntoSecret};
 use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
 
-/// The default signing algorithm, matching the browser binding.
-pub const DEFAULT_ALGORITHM: &str = "ecdsa_secp256k1";
+/// The account primitive operations live in the shared `keetanetwork-bindings`
+/// crate so every binding boundary reuses a single definition.
+pub use keetanetwork_bindings::account::{
+	account_address, account_algorithm, account_decrypt, account_encrypt, account_from_address,
+	account_from_passphrase, account_from_private_key, account_from_public_key, account_from_seed, account_public_key,
+	account_sign, account_verify, generate_passphrase, generate_seed, DEFAULT_ALGORITHM,
+};
 
-/// Generate a fresh random 32-byte seed as hex.
-pub fn generate_seed() -> Result<String, CodedError> {
-	let seed = Account::<KeyED25519>::generate_random_seed().map_err(|error| CodedError::new("RNG", error.as_ref()))?;
-	Ok(hex::encode(seed.expose_secret()))
-}
-
-/// Generate a fresh BIP39 mnemonic.
-pub fn generate_passphrase() -> Result<Vec<String>, CodedError> {
-	let passphrase =
-		Account::<KeyED25519>::generate_passphrase().map_err(|error| CodedError::new("RNG", error.as_ref()))?;
-	Ok(passphrase.expose_secret().clone())
-}
-
-/// Derive an account from a 32-byte hex `seed` at derivation `index`.
-pub fn account_from_seed(seed: &str, index: u32, algorithm: &str) -> Result<AccountRef, CodedError> {
-	let mut bytes = [0u8; 32];
-	hex::decode_to_slice(seed, &mut bytes).map_err(|_| CodedError::new("INVALID_SEED", "seed must be 32-byte hex"))?;
-	keyable_account(Keyable::Seed((bytes.into_secret(), index)), algorithm)
-}
-
-/// Build an account from a hex-encoded private `key`.
-pub fn account_from_private_key(key: &str, algorithm: &str) -> Result<AccountRef, CodedError> {
-	let bytes = hex::decode(key).map_err(|_| CodedError::new("INVALID_PRIVATE_KEY", "private key must be hex"))?;
-	keyable_account(Keyable::PrivateKey(bytes), algorithm)
-}
-
-/// Derive an account from a BIP39 mnemonic `words` at derivation `index`.
-pub fn account_from_passphrase(words: Vec<String>, index: u32, algorithm: &str) -> Result<AccountRef, CodedError> {
-	keyable_account(Keyable::from((words, index)), algorithm)
-}
-
-/// Build a read-only account from a hex-encoded public `key`.
-pub fn account_from_public_key(key: &str, algorithm: &str) -> Result<AccountRef, CodedError> {
-	let bytes = hex::decode(key).map_err(|_| CodedError::new("INVALID_PUBLIC_KEY", "public key must be hex"))?;
-	keyable_account(Keyable::PublicKey(bytes), algorithm)
-}
-
-/// Build a read-only account from its textual `address`.
-pub fn account_from_address(address: &str) -> Result<AccountRef, CodedError> {
-	let account =
-		GenericAccount::from_str(address).map_err(|_| CodedError::new("INVALID_ADDRESS", "invalid account address"))?;
-	Ok(Arc::new(account))
-}
-
-/// The textual account address.
-pub fn account_address(account: &AccountRef) -> String {
-	account.to_string()
-}
-
-/// The signing algorithm name, or `"other"` for identifier accounts.
-pub fn account_algorithm(account: &AccountRef) -> String {
-	String::from(algorithm_name(account.to_keypair_type()))
-}
-
-/// The type-prefixed public key transport bytes, hex-encoded.
-pub fn account_public_key(account: &AccountRef) -> String {
-	hex::encode(account.to_public_key_with_type())
-}
-
-/// Sign `message`, returning the raw signature bytes.
-pub fn account_sign(account: &AccountRef, message: &[u8]) -> Result<Vec<u8>, CodedError> {
-	AccountSigner::sign(account.as_ref(), message, None).map_err(|error| CodedError::new("SIGN", error.as_ref()))
-}
-
-/// Whether `signature` is a valid signature of `message` by this account.
-pub fn account_verify(account: &AccountRef, message: &[u8], signature: &[u8]) -> bool {
-	account.verify(message, signature, None).is_ok()
-}
-
-/// Encrypt `plaintext` to the account's public key.
-pub fn account_encrypt(account: &AccountRef, plaintext: &[u8]) -> Result<Vec<u8>, CodedError> {
-	account
-		.encrypt(plaintext)
-		.map_err(|error| CodedError::new("ENCRYPT", error.as_ref()))
-}
-
-/// Decrypt `ciphertext` with the account's private key.
-pub fn account_decrypt(account: &AccountRef, ciphertext: &[u8]) -> Result<Vec<u8>, CodedError> {
-	account
-		.decrypt(ciphertext)
-		.map_err(|error| CodedError::new("DECRYPT", error.as_ref()))
-}
+/// The base X.509 certificate primitive operations also live in the shared
+/// `keetanetwork-bindings` crate, re-exported so the WASI ABIs call them as
+/// `pure::*`.
+pub use keetanetwork_bindings::x509::{
+	certificate_der, certificate_from_der, certificate_from_pem, certificate_pem, certificate_valid_at,
+};
 
 /// Derive an identifier account (`network`/`token`/`storage`) relative to
 /// `account`, an optional previous block hash (the opening hash when absent),
@@ -140,9 +66,9 @@ pub fn block_to_hex(block: &Block) -> String {
 	hex::encode(block.to_bytes())
 }
 
-fn keyable_account(keyable: Keyable, algorithm: &str) -> Result<AccountRef, CodedError> {
-	let account = from_keyable(keyable, algorithm)?;
-	Ok(Arc::new(account))
+/// The block's originating account.
+pub fn block_account(block: &Block) -> AccountRef {
+	block.data().account().clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +129,11 @@ pub fn quote_hash(quote: &VoteQuote) -> String {
 /// The quote's DER hex encoding.
 pub fn quote_to_hex(quote: &VoteQuote) -> String {
 	hex::encode(quote.as_vote().as_bytes())
+}
+
+/// The fee-paying `SEND` operation `vote` requires.
+pub fn fee_send(vote: &Vote, base_token: &AccountRef, priority: &[AccountRef]) -> Option<Operation> {
+	vote.fee_send(base_token, priority).map(Operation::from)
 }
 
 /// The staple hash as a hex string.
@@ -282,6 +213,46 @@ pub fn op_modify_permissions(
 	.into()
 }
 
+/// Parse a transfer amount accepting either a decimal or `0x`-prefixed hex
+/// integer (the latter matching the reference balance encoding).
+fn parse_amount(amount: &str) -> Result<Amount, CodedError> {
+	Amount::from_str(amount)
+		.map_err(|_| CodedError::new("INVALID_AMOUNT", "amount must be a decimal or 0x-hex integer"))
+}
+
+/// A `SEND` operation transferring `amount` of `token` to `to`. An empty
+/// `external` is treated as no reference, so every ABI can forward its raw
+/// optional-string argument without repeating that policy.
+pub fn op_send(to: AccountRef, amount: &str, token: AccountRef, external: &str) -> Result<Operation, CodedError> {
+	let external = (!external.is_empty()).then(|| external.to_string());
+
+	Ok(Send { to, amount: parse_amount(amount)?, token, external }.into())
+}
+
+/// A `RECEIVE` operation crediting `amount` of `token` from `from`, optionally
+/// requiring an `exact` match and forwarding to `forward`.
+pub fn op_receive(
+	from: AccountRef,
+	amount: &str,
+	token: AccountRef,
+	exact: bool,
+	forward: Option<AccountRef>,
+) -> Result<Operation, CodedError> {
+	Ok(Receive { amount: parse_amount(amount)?, token, from, exact, forward }.into())
+}
+
+/// A `TOKEN_ADMIN_SUPPLY` operation adjusting the block token's total supply by
+/// `amount` using `method` (`add`/`subtract`; `set` is rejected on validation).
+pub fn op_token_admin_supply(amount: &str, method: &str) -> Result<Operation, CodedError> {
+	Ok(TokenAdminSupply { amount: parse_amount(amount)?, method: adjust_method(method)? }.into())
+}
+
+/// A `TOKEN_ADMIN_MODIFY_BALANCE` operation adjusting the block account's
+/// balance of `token` by `amount` using `method`.
+pub fn op_token_admin_modify_balance(token: AccountRef, amount: &str, method: &str) -> Result<Operation, CodedError> {
+	Ok(TokenAdminModifyBalance { token, amount: parse_amount(amount)?, method: adjust_method(method)? }.into())
+}
+
 /// A `SET_REP` operation delegating voting weight to representative `to`.
 pub fn op_set_rep(to: AccountRef) -> Operation {
 	SetRep { to }.into()
@@ -310,6 +281,11 @@ pub fn block_version(version: u32) -> Result<BlockVersion, CodedError> {
 		2 => Ok(BlockVersion::V2),
 		_ => Err(CodedError::new("INVALID_BLOCK_VERSION", "block version must be 1 or 2")),
 	}
+}
+
+/// Parse a block purpose (`generic` or `fee`).
+pub fn block_purpose(value: &str) -> Result<BlockPurpose, CodedError> {
+	Ok(purpose(value)?)
 }
 
 /// Build and validate the unsigned block, consuming the builder.
@@ -347,15 +323,24 @@ pub fn certificate_hash(certificate: &str) -> Result<String, CodedError> {
 /// optional hex-DER `intermediates`.
 pub fn op_manage_certificate_add(certificate: &str, intermediates: &[String]) -> Result<Operation, CodedError> {
 	let certificate = decode_certificate_der(certificate)?;
-	let bundle = intermediates
-		.iter()
-		.map(|der| decode_certificate_der(der))
-		.collect::<Result<Vec<_>, _>>()?;
+	// An add with no intermediates is canonically encoded as NULL, not as an
+	// empty SEQUENCE; the two ASN.1 forms hash differently and an empty bundle
+	// would not match the bytes the network signs over.
+	let intermediates = if intermediates.is_empty() {
+		IntermediateCertificates::None
+	} else {
+		let bundle = intermediates
+			.iter()
+			.map(|der| decode_certificate_der(der))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		IntermediateCertificates::Bundle(bundle)
+	};
 
 	Ok(ManageCertificate {
 		method: AdjustMethod::Add,
 		certificate_or_hash: CertificateOrHash::Certificate(certificate),
-		intermediate_certificates: Some(IntermediateCertificates::Bundle(bundle)),
+		intermediate_certificates: Some(intermediates),
 	}
 	.into())
 }
@@ -383,39 +368,6 @@ fn decode_certificate_der(certificate: &str) -> Result<CertificateDer, CodedErro
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	#[test]
-	fn generated_seed_is_32_byte_hex() {
-		let seed = generate_seed().expect("seed generation must succeed");
-		assert_eq!(seed.len(), 64);
-		assert!(hex::decode(&seed).is_ok());
-	}
-
-	#[test]
-	fn account_round_trips_through_seed_and_address() {
-		let seed = generate_seed().expect("seed generation must succeed");
-		let account = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("account derivation must succeed");
-		let address = account_address(&account);
-		let reopened = account_from_address(&address).expect("address must parse");
-		assert_eq!(account_address(&reopened), address);
-		assert_eq!(account_algorithm(&account), DEFAULT_ALGORITHM);
-	}
-
-	#[test]
-	fn signatures_verify_against_the_signing_account() {
-		let seed = generate_seed().expect("seed generation must succeed");
-		let account = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("account derivation must succeed");
-		let message = b"keeta multisig";
-		let signature = account_sign(&account, message).expect("signing must succeed");
-		assert!(account_verify(&account, message, &signature));
-		assert!(!account_verify(&account, b"tampered", &signature));
-	}
-
-	#[test]
-	fn invalid_seed_is_rejected_with_a_stable_code() {
-		let error = account_from_seed("not-hex", 0, DEFAULT_ALGORITHM).expect_err("invalid seed must fail");
-		assert_eq!(error.code, "INVALID_SEED");
-	}
 
 	#[test]
 	fn permissions_round_trip_through_bitmaps() {
@@ -500,6 +452,59 @@ mod tests {
 	}
 
 	#[test]
+	fn send_and_receive_operations_assemble() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let (sender, recipient) = (derive(0), derive(1));
+		let token = generate_identifier(&sender, KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let send = op_send(recipient.clone(), "1000", token.clone(), "memo").expect("send must build");
+		assert!(matches!(send, Operation::Send(operation) if operation.external.as_deref() == Some("memo")));
+
+		let receive = op_receive(sender, "0x3e8", token, false, None).expect("receive must build");
+		assert!(matches!(receive, Operation::Receive(_)));
+	}
+
+	#[test]
+	fn send_treats_an_empty_external_as_absent() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&derive(0), KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let send = op_send(derive(1), "1", token, "").expect("send must build");
+		assert!(matches!(send, Operation::Send(operation) if operation.external.is_none()));
+	}
+
+	#[test]
+	fn send_rejects_a_malformed_amount() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&derive(0), KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let error = op_send(derive(1), "not-a-number", token, "").expect_err("amount must be rejected");
+		assert_eq!(error.code, "INVALID_AMOUNT");
+	}
+
+	#[test]
+	fn token_admin_operations_assemble() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&derive(0), KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let supply = op_token_admin_supply("1000", "add").expect("supply must build");
+		assert!(matches!(supply, Operation::TokenAdminSupply(_)));
+
+		let modify = op_token_admin_modify_balance(token, "0x10", "subtract").expect("modify must build");
+		assert!(matches!(modify, Operation::TokenAdminModifyBalance(_)));
+	}
+
+	#[test]
+	fn token_admin_supply_rejects_an_unknown_method() {
+		let error = op_token_admin_supply("1", "multiply").expect_err("method must be rejected");
+		assert!(!error.code.is_empty());
+	}
+
+	#[test]
 	fn malformed_vote_bytes_are_rejected() {
 		let error = vote_from_bytes([0u8, 1, 2, 3]).expect_err("garbage must not decode");
 		assert!(!error.code.is_empty());
@@ -515,28 +520,6 @@ mod tests {
 	fn staple_with_an_out_of_range_moment_is_rejected() {
 		let error = vote_staple_build(Vec::new(), Vec::new(), i64::MAX).expect_err("moment must be in range");
 		assert_eq!(error.code, "INVALID_DATE");
-	}
-
-	#[test]
-	fn passphrase_account_derives_and_exposes_transport_public_key() {
-		let words = generate_passphrase().expect("passphrase generation must succeed");
-		let account = account_from_passphrase(words, 0, DEFAULT_ALGORITHM).expect("passphrase derivation must succeed");
-		assert_eq!(account_algorithm(&account), DEFAULT_ALGORITHM);
-
-		let public_key = account_public_key(&account);
-		assert!(!public_key.is_empty());
-		assert!(hex::decode(&public_key).is_ok());
-	}
-
-	#[test]
-	fn encryption_round_trips_through_the_owning_account() {
-		let seed = generate_seed().expect("seed generation must succeed");
-		let account = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
-
-		let plaintext = b"keeta secret payload";
-		let ciphertext = account_encrypt(&account, plaintext).expect("encryption must succeed");
-		let recovered = account_decrypt(&account, &ciphertext).expect("decryption must succeed");
-		assert_eq!(recovered, plaintext);
 	}
 
 	#[test]
@@ -593,25 +576,19 @@ mod tests {
 	}
 
 	#[test]
-	fn malformed_inputs_are_rejected_with_stable_codes() {
-		assert_eq!(
-			account_from_private_key("zz", DEFAULT_ALGORITHM)
-				.expect_err("bad key must fail")
-				.code,
-			"INVALID_PRIVATE_KEY"
-		);
-		assert_eq!(
-			account_from_public_key("zz", DEFAULT_ALGORITHM)
-				.expect_err("bad key must fail")
-				.code,
-			"INVALID_PUBLIC_KEY"
-		);
-		assert_eq!(
-			account_from_address("not-an-address")
-				.expect_err("bad address must fail")
-				.code,
-			"INVALID_ADDRESS"
-		);
+	fn malformed_block_hex_is_rejected_with_a_stable_code() {
 		assert_eq!(block_from_hex("zz").expect_err("bad block must fail").code, "INVALID_BLOCK");
+	}
+
+	#[test]
+	fn block_purposes_parse_and_reject() {
+		assert!(matches!(block_purpose("generic"), Ok(BlockPurpose::Generic)));
+		assert!(matches!(block_purpose("fee"), Ok(BlockPurpose::Fee)));
+		assert_eq!(
+			block_purpose("other")
+				.expect_err("unknown purpose must fail")
+				.code,
+			"INVALID_PURPOSE"
+		);
 	}
 }

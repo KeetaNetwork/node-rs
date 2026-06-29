@@ -119,14 +119,58 @@ interface types {
 		receive: option<swap-token-amount>,
 		send: option<swap-token-amount>,
 	}
+}
 
-	/// A signing account, derived from `seed` at `index` under `algorithm`
-	/// (e.g. `ed25519`, `ecdsa_secp256k1`). Used to reconstruct private keys
-	/// for low-level block signing.
-	record signer-spec {
-		seed: string,
-		index: u32,
-		algorithm: string,
+/// The Keeta cryptographic primitives every binding boundary reuses: signing
+/// accounts and base X.509 certificates.
+interface crypto {
+	use types.{coded-error};
+
+	/// A Keeta account: a signer derived from a seed, or a read-only account
+	/// parsed from its textual address.
+	resource account {
+		/// Derive an account from a 32-byte hex `seed` at `index` under
+		/// `algorithm` (`ed25519`, `ecdsa_secp256k1`, or `ecdsa_secp256r1`).
+		from-seed: static func(seed: string, index: u32, algorithm: string) -> result<account, coded-error>;
+		/// Build an account from a hex-encoded private `key` under `algorithm`.
+		from-private-key: static func(key: string, algorithm: string) -> result<account, coded-error>;
+		/// Derive an account from a BIP39 mnemonic `words` at `index` under
+		/// `algorithm`.
+		from-passphrase: static func(words: list<string>, index: u32, algorithm: string) -> result<account, coded-error>;
+		/// Build a read-only account from a hex-encoded public `key` under
+		/// `algorithm`.
+		from-public-key: static func(key: string, algorithm: string) -> result<account, coded-error>;
+		/// Parse a read-only account from its textual `keeta_…` address.
+		from-address: static func(address: string) -> result<account, coded-error>;
+		/// A fresh random 32-byte seed, hex-encoded.
+		generate-seed: static func() -> string;
+		/// A fresh random BIP39 mnemonic.
+		generate-passphrase: static func() -> list<string>;
+		/// The textual `keeta_…` address.
+		address: func() -> string;
+		/// The signing algorithm name, or `other` for identifier accounts.
+		algorithm: func() -> string;
+		/// The type-prefixed public key, hex-encoded.
+		public-key: func() -> string;
+		/// Sign `message`, returning the raw signature bytes.
+		sign: func(message: list<u8>) -> result<list<u8>, coded-error>;
+		/// Whether `signature` is a valid signature of `message` by this account.
+		verify: func(message: list<u8>, signature: list<u8>) -> bool;
+		/// Encrypt `plaintext` to this account's public key.
+		encrypt: func(plaintext: list<u8>) -> result<list<u8>, coded-error>;
+		/// Decrypt `ciphertext` with this account's private key.
+		decrypt: func(ciphertext: list<u8>) -> result<list<u8>, coded-error>;
+	}
+
+	/// A base X.509 certificate: a provider CA, a trust root, or an
+	/// intermediate that bridges a leaf toward a root.
+	resource certificate {
+		/// Parse a certificate from its PEM encoding.
+		parse: static func(pem: string) -> result<certificate, coded-error>;
+		/// The certificate's PEM encoding.
+		pem: func() -> result<string, coded-error>;
+		/// Whether the certificate is valid at `unix-seconds` (Unix time).
+		valid-at: func(unix-seconds: s64) -> bool;
 	}
 }
 
@@ -136,14 +180,15 @@ interface node {
 	use types.{
 		coded-error, token-balance, representative, ledger-checksum, account-info, account-state, history-entry,
 		chain-query, chain-page, head-info, adjust-method, history-query, acl, certificate,
-		swap-token-amount, swap-expectation, signer-spec,
+		swap-token-amount, swap-expectation,
 	};
+	use crypto.{account};
 
-	/// Locally derive an identifier address relative to the account derived
-	/// from `spec`, an optional `previous` block hash (hex; the opening hash
-	/// when absent), and operation `op-index`. `kind` is an identifier key
-	/// type (`network`/`token`/`storage`/`multisig`).
-	derive-identifier: func(spec: signer-spec, kind: string, previous: option<string>, op-index: u32) -> result<string, coded-error>;
+	/// Locally derive an identifier address relative to `signer`, an optional
+	/// `previous` block hash (hex; the opening hash when absent), and operation
+	/// `op-index`. `kind` is an identifier key type
+	/// (`network`/`token`/`storage`/`multisig`).
+	derive-identifier: func(signer: borrow<account>, kind: string, previous: option<string>, op-index: u32) -> result<string, coded-error>;
 
 	/// A client bound to a single representative endpoint.
 	resource client {
@@ -218,10 +263,10 @@ interface node {
 	resource user-client {
 		/// Bind to the node at `base-url`, scoped to read `address`.
 		read-only: static func(base-url: string, address: string) -> result<user-client, coded-error>;
-		/// Bind to the node at `base-url`, deriving the signing (and operating)
-		/// account from `seed`/`index`/`algorithm` (e.g. `ed25519`). `network`
-		/// is the decimal network identifier stamped onto originated blocks.
-		with-signer: static func(base-url: string, seed: string, index: u32, algorithm: string, network: string) -> result<user-client, coded-error>;
+		/// Bind to the node at `base-url`, signing (and operating) as `signer`.
+		/// `network` is the decimal network identifier stamped onto originated
+		/// blocks.
+		with-account: static func(base-url: string, signer: borrow<account>, network: string) -> result<user-client, coded-error>;
 		/// The operating account's address.
 		address: func() -> result<string, coded-error>;
 		/// The settled balance of `token` held by the operating account.
@@ -322,11 +367,11 @@ interface node {
 		/// Set the block timestamp (Unix milliseconds). Required: the component
 		/// has no ambient clock, so the caller stamps the block.
 		date: func(unix-millis: s64) -> result<_, coded-error>;
-		/// Sign with a single account derived from `spec`.
-		signer-single: func(spec: signer-spec) -> result<_, coded-error>;
-		/// Sign with `multisig` (address) using the member accounts derived
-		/// from `members` (a quorum subset is allowed).
-		signer-multisig: func(multisig: string, members: list<signer-spec>) -> result<_, coded-error>;
+		/// Sign with the single account `signer`.
+		signer-single: func(signer: borrow<account>) -> result<_, coded-error>;
+		/// Sign with `multisig` (address) using the member accounts `members`
+		/// (a quorum subset is allowed).
+		signer-multisig: func(multisig: string, members: list<borrow<account>>) -> result<_, coded-error>;
 		/// Stage a CREATE_IDENTIFIER for a multisig requiring `quorum` of
 		/// `signers` (addresses).
 		op-create-multisig: func(multisig: string, signers: list<string>, quorum: u32) -> result<_, coded-error>;
@@ -347,5 +392,6 @@ interface node {
 /// read-only queries over `wasi:http`. Expanded toward the browser binding
 /// surface (writes, sync, recovery) iteratively.
 world keeta-client {
+	export crypto;
 	export node;
 }

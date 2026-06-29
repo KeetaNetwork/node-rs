@@ -64,6 +64,10 @@ pub mod typed {
 	pub const ECDSA_WITH_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
 }
 
-// Build-script-generated `rasn`-typed OIDs.
-#[cfg(all(feature = "rasn", not(feature = "der")))]
+// Build-script-generated OID constants and attribute maps.
+#[cfg(feature = "rasn")]
 include!(concat!(env!("OUT_DIR"), "/generated/oids.rs"));
+
+// The build-script-generated `rasn`-typed `typed` module.
+#[cfg(all(feature = "rasn", not(feature = "der")))]
+include!(concat!(env!("OUT_DIR"), "/generated/oids_typed.rs"));

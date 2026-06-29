@@ -1,4 +1,4 @@
-package network.keeta.wasi.example;
+package network.keeta.wasi.harness;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -15,7 +15,7 @@ import network.keeta.wasi.Permissions;
 import network.keeta.wasi.UserClient;
 
 /**
- * End-to-end multisig token example exercising the bound Java SDK against a node.
+ * End-to-end multisig token harness test exercising the bound Java SDK against a node.
  */
 public final class MultisigSigner {
 	private MultisigSigner() {
@@ -32,28 +32,28 @@ public final class MultisigSigner {
 
 			String version = client.nodeVersion();
 			check(!version.isBlank(), "node must report a version");
-			System.out.println("[example] node version " + version.trim());
+			System.out.println("[harness] node version " + version.trim());
 
 			try (Account trusted = keeta.account(trustedSeed, 0, Algorithm.ED25519);
 				 Account base = keeta.address(baseToken);
 				 Account signer1 = keeta.account(trustedSeed, 1, Algorithm.ED25519);
 				 Account signer2 = keeta.account(trustedSeed, 2, Algorithm.ED25519);
 				 Account signer3 = keeta.account(trustedSeed, 3, Algorithm.ED25519)) {
-				System.out.println("[example] funded account " + trusted.address());
-				System.out.println("[example] base balance " + client.balance(trusted, base).trim());
+				System.out.println("[harness] funded account " + trusted.address());
+				System.out.println("[harness] base balance " + client.balance(trusted, base).trim());
 
 				String openingHead = client.headHash(trusted);
 				check(openingHead != null && !openingHead.isBlank(), "funded account must have a head block");
 
 				try (Account multisig = trusted.generateMultisigIdentifier(hexDecode(openingHead), 0)) {
-					System.out.println("[example] multisig account " + multisig.address());
+					System.out.println("[harness] multisig account " + multisig.address());
 
 					String afterMultisig = createMultisig(keeta, client, trusted, multisig, List.of(signer1, signer2, signer3), network, openingHead);
 					check(client.headHash(trusted).equalsIgnoreCase(afterMultisig), "create-multisig block must be the funded head");
 
 					try (Account customToken = trusted.generateIdentifier(IdentifierType.TOKEN,
 						hexDecode(afterMultisig), 0)) {
-						System.out.println("[example] custom token " + customToken.address());
+						System.out.println("[harness] custom token " + customToken.address());
 
 						String afterToken = createToken(keeta, client, trusted, customToken, network, afterMultisig);
 						check(client.headHash(trusted).equalsIgnoreCase(afterToken), "create-token block must be the funded head");
@@ -66,7 +66,7 @@ public final class MultisigSigner {
 						check(tokenHead.equalsIgnoreCase(minted), "multisig-signed block must be the token head");
 						check(!tokenHead.equalsIgnoreCase(afterGrant), "token head must advance after the multisig mint");
 
-						System.out.println("[example] MULTISIG_OK " + minted);
+						System.out.println("[harness] MULTISIG_OK " + minted);
 					}
 				}
 			}
@@ -143,7 +143,7 @@ public final class MultisigSigner {
 		String metadata = Base64.getEncoder().encodeToString("{\"decimalPlaces\":6}".getBytes(StandardCharsets.UTF_8));
 		Block.SignedBlock block;
 		try (Permissions access = keeta.permissions(Permissions.ACCESS);
-			 Operation setInfo = keeta.setInfo("TKNM", "TestMultisigTokenExample", metadata, access);
+			 Operation setInfo = keeta.setInfo("TKNM", "TestMultisigToken", metadata, access);
 			 Block.UnsignedBlock unsigned = keeta.builder()
 				 .version(2)
 				 .network(network)
@@ -163,7 +163,7 @@ public final class MultisigSigner {
 		try (block) {
 			String hash = block.hashHex();
 			client.transmit(block);
-			System.out.println("[example] published " + label + " block " + hash);
+			System.out.println("[harness] published " + label + " block " + hash);
 			return hash;
 		}
 	}
@@ -179,7 +179,7 @@ public final class MultisigSigner {
 
 	private static void check(boolean condition, String message) {
 		if (!condition) {
-			throw new IllegalStateException("example assertion failed: " + message);
+			throw new IllegalStateException("harness assertion failed: " + message);
 		}
 	}
 

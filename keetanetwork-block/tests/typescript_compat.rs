@@ -9,7 +9,7 @@ use keetanetwork_block::{
 	ModifyPermissions, ModifyPermissionsPrincipal, Permissions, Receive, Send, SetInfo, SetRep, Signer,
 	TokenAdminModifyBalance, TokenAdminSupply, UnsignedBlock,
 };
-use keetanetwork_utils::node_harness::{run_node_script, script_path};
+use keetanetwork_utils::node_harness::{ref_call, run_node_script, script_path};
 
 /// The path of a compiled harness helper script.
 fn script(name: &str) -> std::path::PathBuf {
@@ -19,15 +19,14 @@ fn script(name: &str) -> std::path::PathBuf {
 /// Parse blocks with the reference implementation, returning `(hash,
 /// re-serialized hex)` per block.
 fn ts_parse(blocks_hex: &[String]) -> Vec<(String, String)> {
-	let stdin = blocks_hex.join("\n") + "\n";
-	let output = run_node_script(script("ts-verify"), [] as [&str; 0], Some(stdin.as_bytes()))
+	let response = ref_call("block_verify", serde_json::json!({ "blocks": blocks_hex }))
 		.expect("the reference implementation must parse every Rust-built block");
 
-	let stdout = String::from_utf8(output.stdout).expect("node output must be UTF-8");
-	stdout
-		.lines()
-		.map(|line| {
-			let value: serde_json::Value = serde_json::from_str(line).expect("node output must be JSON");
+	response["blocks"]
+		.as_array()
+		.expect("block_verify must return an array")
+		.iter()
+		.map(|value| {
 			let hash = value["hash"]
 				.as_str()
 				.expect("hash must be a string")
@@ -45,11 +44,13 @@ fn ts_parse(blocks_hex: &[String]) -> Vec<(String, String)> {
 /// Mint a deterministic X.509 certificate for `subject` with the
 /// reference implementation, returning the DER bytes.
 fn ts_mint_certificate(subject: &AccountRef) -> Vec<u8> {
-	let output = run_node_script(script("ts-mint-cert"), [subject.to_string()], None)
+	let response = ref_call("cert_mint", serde_json::json!({ "subject": subject.to_string() }))
 		.expect("certificate minting via the reference implementation must succeed");
 
-	let stdout = String::from_utf8(output.stdout).expect("node output must be UTF-8");
-	hex::decode(stdout.trim()).expect("minted certificate must be hex")
+	let der = response["der"]
+		.as_str()
+		.expect("cert_mint must return a der string");
+	hex::decode(der).expect("minted certificate must be hex")
 }
 
 fn fixed_date() -> BlockTime {

@@ -103,6 +103,7 @@ build-wasm:
 WASI_CRATE := keetanetwork-client-wasi
 WASI_P1_WASM := target/wasm32-wasip1/debug/keetanetwork_client_wasi.wasm
 WASI_P2_WASM := target/wasm32-wasip2/debug/keetanetwork_client_wasi.wasm
+WASI_P1_WASM_RELEASE := target/wasm32-wasip1/release/keetanetwork_client_wasi.wasm
 
 build-wasi:
 	cargo build -p $(WASI_CRATE) --target wasm32-wasip1 --features p1
@@ -139,8 +140,10 @@ test-wasm: node-harness build-wasm
 	cd $(WASM_TEST_DIR) && npx playwright install --with-deps chromium
 	cd $(WASM_TEST_DIR) && npx playwright test
 
-test-wasi: build-wasi node-harness
-	WASI_P1_MODULE=$(CURDIR)/$(WASI_P1_WASM) \
+test-wasi: node-harness
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip1 --features p1 --release
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip2 --features p2
+	WASI_P1_MODULE=$(CURDIR)/$(WASI_P1_WASM_RELEASE) \
 	WASI_P2_COMPONENT=$(CURDIR)/$(WASI_P2_WASM) \
 		cargo test --manifest-path $(WASI_CRATE)/host-tests/Cargo.toml -- --include-ignored
 
@@ -265,9 +268,12 @@ developer:
 	$(MAKE) help
 
 # Publish packages and create release
+# Optionally restrict to specific crates: make release PKG="keetanetwork-asn1"
+# Bypass the clean-tree check (and cargo publish dirty guard): make release DIRTY=1
+# Skip the test suite (lints still run): make release SKIP_TESTS=1
 release:
 	@echo "Running release script..."
-	@./scripts/release.sh $(filter-out $@,$(MAKECMDGOALS))
+	@./scripts/release.sh $(filter-out $@,$(MAKECMDGOALS)) $(if $(DIRTY),--allow-dirty) $(if $(SKIP_TESTS),--skip-tests) $(PKG)
 
 # Allow flags to be passed as fake targets
 --%:
@@ -290,8 +296,8 @@ help:
 	@echo "  make test           - Run tests (includes all crypto feature combinations)"
 	@echo "  make test-feat      - Run crypto crate tests with specific features"
 	@echo "  make test-all       - Run all tests including feature tests"
-	@echo "  make build-wasi     - Build the WASI P1 core module and P2 component"
-	@echo "  make test-wasi      - Build both WASI artifacts and run the wasmtime host smoke tests (P1 flat ABI + P2 networked over wasi:http)"
+	@echo "  make build-wasi     - Build the WASI P1 core module and P2 component (debug)"
+	@echo "  make test-wasi      - Build WASI artifacts (release P1) and run the host tests (P1 flat ABI + P2 networked over wasi:http)"
 	@echo "  make audit          - Run security audit"
 	@echo "  make docs           - Generate and open documentation"
 	@echo "  make coverage       - Generate code coverage report (HTML + LCOV)"
@@ -304,4 +310,8 @@ help:
 	@echo "  make coverage-ci    - Generate LCOV coverage report for CI/SonarCloud"
 	@echo ""
 	@echo "Release Commands:"
-	@echo "  make release        - Publish all packages to crates.io and create signed release tag"
+	@echo "  make release                       - Publish all packages to crates.io and create signed release tag"
+	@echo "  make release PKG=\"crate-a crate-b\" - Publish only the named crates (skips workspace tag)"
+	@echo "  make release DIRTY=1               - Allow publishing with a dirty working tree"
+	@echo "  make release SKIP_TESTS=1          - Skip the test suite (lints still run)"
+	@echo "  make release --dry-run             - Preview the release without publishing"

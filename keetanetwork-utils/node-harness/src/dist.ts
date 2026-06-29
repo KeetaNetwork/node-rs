@@ -5,6 +5,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as readline from 'node:readline';
 
 export function resolveDist(argument: string | undefined, usage: string): string {
 	if (argument === undefined) {
@@ -66,32 +67,65 @@ export function writeOutputFile(outFile: string, contents: string): void {
 }
 
 /*
- * Read the harness stdin protocol - one hex-encoded element per line - and
- * invoke `handler` with each decoded `ArrayBuffer`, skipping blank lines.
+ * Decode a hex string into a standalone `ArrayBuffer`, copying out of the
+ * pooled Node `Buffer` so the slice owns exactly the decoded bytes.
  */
-export function forEachHexLine(handler: (arrayBuffer: ArrayBuffer) => void): void {
-	let input = '';
-	process.stdin.setEncoding('utf8');
-	process.stdin.on('data', function(chunk: string) {
-		input += chunk;
-	});
+export function hexToArrayBuffer(hex: string): ArrayBuffer {
+	const buffer = Buffer.from(hex, 'hex');
+	return(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+}
 
-	process.stdin.on('end', function() {
-		for (const line of input.split('\n')) {
-			const hexBytes = line.trim();
-			if (hexBytes === '') {
-				continue;
-			}
+/*
+ * Hex-encode any byte container the reference SDK hands back.
+ */
+export function toHex(buffer: ArrayBuffer | Buffer | Uint8Array): string {
+	return(Buffer.from(buffer).toString('hex'));
+}
 
-			const buffer = Buffer.from(hexBytes, 'hex');
-			const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-			handler(arrayBuffer);
+/*
+ * A request carries its command name in `cmd`; every other field is the
+ * command's parameters.
+ */
+export interface DispatchRequest {
+	cmd: string;
+}
+
+/*
+ * Run the harness JSON-lines protocol
+ */
+export function runJsonLines(handler: (request: DispatchRequest) => Promise<unknown>): void {
+	const rl = readline.createInterface({ input: process.stdin, terminal: false });
+
+	let queue = Promise.resolve();
+	rl.on('line', function(line) {
+		if (line.trim() === '') {
+			return;
 		}
+
+		queue = queue.then(async function() {
+			try {
+				// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+				const request = JSON.parse(line) as DispatchRequest;
+				const response = await handler(request);
+				console.log(JSON.stringify(response));
+			} catch (error) {
+				console.error(error);
+
+				let message = String(error);
+				if (error instanceof Error) {
+					message = error.message;
+				}
+
+				console.log(JSON.stringify({ error: message }));
+			}
+		});
 	});
 }
 
 export function loadModule<T>(dist: string, relative: string): T {
-	/* The dist directory is only known at runtime, so a dynamic require is unavoidable */
+	/*
+	 * The dist directory is only known at runtime, so a dynamic require is unavoidable
+	 */
 	// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/consistent-type-assertions
 	return(require(path.join(dist, relative)) as T);
 }

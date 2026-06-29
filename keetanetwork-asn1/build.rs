@@ -400,17 +400,14 @@ fn load_oids_json() -> Value {
 fn generate_oids_from_json(path: &str) {
 	let oids = load_oids_json();
 
-	let dest_path = Path::new(path).join("oids.rs");
+	let generated_dir = Path::new(path);
+	fs::create_dir_all(generated_dir).expect("Failed to create generated directory");
 
-	// Ensure the directory exists
-	if let Some(parent) = dest_path.parent() {
-		fs::create_dir_all(parent).expect("Failed to create generated directory");
-	}
-
-	let mut generated_code = String::new();
-
-	// Add imports and header
-	generated_code.push_str(
+	// OID constants and attribute maps: included whenever the `rasn` backend is
+	// enabled (see `src/oids.rs`), regardless of whether `der` is also enabled.
+	// These are what downstream KYC/attribute code consumes by name.
+	let mut constants_code = String::new();
+	constants_code.push_str(
 		r#"
 use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
@@ -419,15 +416,22 @@ use rasn::types::ObjectIdentifier;
 "#,
 	);
 
-	emit_algorithm_constants(&oids, &mut generated_code);
-	emit_crypto_typed_module(&oids, &mut generated_code);
-	emit_plain_attribute_constants(&oids, &mut generated_code);
-	emit_keeta_module(&oids, &mut generated_code);
-	emit_algorithm_attributes_map(&oids, &mut generated_code);
-	emit_plain_attributes_map(&oids, &mut generated_code);
+	emit_algorithm_constants(&oids, &mut constants_code);
+	emit_plain_attribute_constants(&oids, &mut constants_code);
+	emit_keeta_module(&oids, &mut constants_code);
+	emit_algorithm_attributes_map(&oids, &mut constants_code);
+	emit_plain_attributes_map(&oids, &mut constants_code);
 
-	ensure_single_newline_ending(&mut generated_code);
-	fs::write(&dest_path, generated_code).expect("OUT_DIR must be writable during build");
+	ensure_single_newline_ending(&mut constants_code);
+	fs::write(generated_dir.join("oids.rs"), constants_code).expect("OUT_DIR must be writable during build");
+
+	// The rasn-typed `typed` OID module, written separately so it can be gated
+	// against the `der` backend, which supplies its own `typed` module.
+	let mut typed_code = String::new();
+	emit_crypto_typed_module(&oids, &mut typed_code);
+
+	ensure_single_newline_ending(&mut typed_code);
+	fs::write(generated_dir.join("oids_typed.rs"), typed_code).expect("OUT_DIR must be writable during build");
 }
 
 /// Resolve the constant name used for a plain certificate attribute.

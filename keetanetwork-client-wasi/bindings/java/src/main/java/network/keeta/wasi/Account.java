@@ -52,6 +52,18 @@ public final class Account implements AutoCloseable {
 		return net.callInt("keeta_account_verify", handle(), messagePtr, message.length, signaturePtr, signature.length) == 1;
 	}
 
+	/** Encrypt {@code plaintext} to this account's public key. */
+	public byte[] encrypt(byte[] plaintext) {
+		int plaintextPtr = net.write(plaintext);
+		return net.takeBytes(net.handle("keeta_account_encrypt", handle(), plaintextPtr, plaintext.length));
+	}
+
+	/** Decrypt {@code ciphertext} with this account's private key. */
+	public byte[] decrypt(byte[] ciphertext) {
+		int ciphertextPtr = net.write(ciphertext);
+		return net.takeBytes(net.handle("keeta_account_decrypt", handle(), ciphertextPtr, ciphertext.length));
+	}
+
 	/**
 	 * Derive an identifier account relative to this account, an optional
 	 * previous block hash (the account opening hash when {@code null}), and an

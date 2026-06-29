@@ -13,13 +13,14 @@
 //! set, must be an actual token identifier - non-token accounts are
 //! rejected at encode time as [`VoteError::MalformedFeesTokenNotToken`].
 
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hex::FromHex;
 use keetanetwork_account::{GenericAccount, KeyPairType};
 use keetanetwork_asn1::vote as transport;
-use keetanetwork_block::{AccountRef, Amount};
+use keetanetwork_block::{AccountRef, Amount, Send};
 use num_bigint::Sign;
 
 use crate::error::VoteError;
@@ -33,6 +34,23 @@ pub struct Fee {
 	pub pay_to: Option<AccountRef>,
 	/// Token in which the fee should be paid.
 	pub token: Option<AccountRef>,
+}
+
+impl Fee {
+	/// Whether this entry is payable in the network base token: an implicit
+	/// (`None`) token, or an explicit token equal to `base`.
+	pub fn pays_base_token(&self, base: &AccountRef) -> bool {
+		match &self.token {
+			None => true,
+			Some(token) => token.to_string() == base.to_string(),
+		}
+	}
+
+	/// The token this entry is paid in, treating an implicit (`None`) token
+	/// as the network base token.
+	pub fn token_or<'a>(&'a self, base: &'a AccountRef) -> &'a AccountRef {
+		self.token.as_ref().unwrap_or(base)
+	}
 }
 
 impl<'a> IntoIterator for &'a Fees {
@@ -84,6 +102,45 @@ impl Fees {
 	/// without an explicit borrow.
 	pub fn entries(&self) -> core::slice::Iter<'_, Fee> {
 		self.into_iter()
+	}
+
+	/// Whether this schedule obliges payment: it carries no zero-amount
+	/// (optional) entry, so the payer has no way to opt out.
+	pub fn required(&self) -> bool {
+		!self.entries().any(|fee| fee.amount == Amount::from(0u64))
+	}
+
+	/// Choose which entry to pay: the highest-ranked `priority` token wins
+	/// (an implicit `None` token counts as `base`); otherwise prefer the
+	/// base-token entry, then fall back to the first entry.
+	pub fn select(&self, base: &AccountRef, priority: &[AccountRef]) -> Option<&Fee> {
+		priority
+			.iter()
+			.find_map(|wanted| {
+				self.entries()
+					.find(|fee| fee.token_or(base).to_string() == wanted.to_string())
+			})
+			.or_else(|| self.entries().find(|fee| fee.pays_base_token(base)))
+			.or_else(|| self.entries().next())
+	}
+
+	/// Render this schedule to the `SEND` that pays it, defaulting the
+	/// recipient to `issuer` and the token to `base`. Returns `None` when the
+	/// schedule is optional ([`Fees::required`] is `false`) or carries no
+	/// selectable entry.
+	pub fn to_send(&self, base: &AccountRef, priority: &[AccountRef], issuer: &AccountRef) -> Option<Send> {
+		if !self.required() {
+			return None;
+		}
+
+		let selected = self.select(base, priority)?;
+
+		Some(Send {
+			to: selected.pay_to.clone().unwrap_or_else(|| issuer.clone()),
+			amount: selected.amount.clone(),
+			token: selected.token.clone().unwrap_or_else(|| base.clone()),
+			external: None,
+		})
 	}
 
 	/// Convenience constructor: build the right shape from `entries`. A
@@ -356,5 +413,68 @@ mod tests {
 			.map(|fee| fee.amount.as_bigint().to_string())
 			.collect();
 		assert_eq!(amounts, vec!["10", "20"]);
+	}
+
+	#[test]
+	fn test_fee_pays_base_token() {
+		let base = token_account(b"base");
+		let other = token_account(b"other");
+		assert!(simple_fee(1).pays_base_token(&base));
+		assert!(Fee { amount: Amount::from(1u64), pay_to: None, token: Some(base.clone()) }.pays_base_token(&base));
+		assert!(!Fee { amount: Amount::from(1u64), pay_to: None, token: Some(other) }.pays_base_token(&base));
+	}
+
+	#[test]
+	fn test_fee_token_or_defaults_to_base() {
+		let base = token_account(b"base");
+		let other = token_account(b"other");
+		assert_eq!(simple_fee(1).token_or(&base).to_string(), base.to_string());
+		let explicit = Fee { amount: Amount::from(1u64), pay_to: None, token: Some(other.clone()) };
+		assert_eq!(explicit.token_or(&base).to_string(), other.to_string());
+	}
+
+	#[test]
+	fn test_required_tracks_zero_opt_out() {
+		assert!(single_fees(10).required());
+		assert!(!multi_fees(false, [0, 9]).required());
+	}
+
+	#[test]
+	fn test_select_prefers_priority_then_base_then_first() {
+		let base = token_account(b"base");
+		let other = token_account(b"other");
+		let fees = Fees::Multiple {
+			quote: false,
+			fees: vec![simple_fee(5), Fee { amount: Amount::from(7u64), pay_to: None, token: Some(other.clone()) }],
+		};
+
+		let by_priority = fees
+			.select(&base, core::slice::from_ref(&other))
+			.expect("priority entry exists");
+		assert_eq!(by_priority.amount.as_bigint().to_string(), "7");
+
+		let by_base = fees.select(&base, &[]).expect("base entry exists");
+		assert_eq!(by_base.amount.as_bigint().to_string(), "5");
+	}
+
+	#[test]
+	fn test_to_send_defaults_recipient_and_token() {
+		let base = token_account(b"base");
+		let issuer = secp256k1_issuer(b"issuer");
+		let send = single_fees(42)
+			.to_send(&base, &[], &issuer)
+			.expect("required fee yields a send");
+		assert_eq!(send.amount.as_bigint().to_string(), "42");
+		assert_eq!(send.to.to_string(), issuer.to_string());
+		assert_eq!(send.token.to_string(), base.to_string());
+		assert!(send.external.is_none());
+	}
+
+	#[test]
+	fn test_to_send_skips_optional_schedule() {
+		let base = token_account(b"base");
+		let issuer = secp256k1_issuer(b"issuer");
+		let optional = multi_fees(false, [0, 9]);
+		assert!(optional.to_send(&base, &[], &issuer).is_none());
 	}
 }

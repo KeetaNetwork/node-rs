@@ -20,6 +20,7 @@ use keetanetwork_client::{
 	Representative as CoreRep, SwapExpectation, SwapTokenAmount, TransactionBuilder, TransmitOptions, UserClient,
 	WasiRuntime, WasiTransportFactory,
 };
+use keetanetwork_x509::certificates::Certificate as X509Certificate;
 use num_bigint::BigInt;
 use wstd::runtime::block_on;
 
@@ -30,11 +31,15 @@ wit_bindgen::generate!({
 	path: "wit",
 });
 
+use exports::keeta::client::crypto::{
+	Account as WitAccount, AccountBorrow, Certificate as WitCertificate, Guest as CryptoGuest, GuestAccount,
+	GuestCertificate,
+};
 use exports::keeta::client::node::{
 	AccountInfo, AccountState, Acl, AdjustMethod as WitAdjustMethod, BlockBuilder as BlockBuilderResource, Certificate,
 	ChainPage, ChainQuery as WitChainQuery, CodedError, Guest, GuestBlockBuilder, GuestClient, GuestTransaction,
 	GuestUserClient, HeadInfo, HistoryEntry, HistoryQuery as WitHistoryQuery, LedgerChecksum, Representative,
-	SignerSpec, SwapExpectation as WitSwapExpectation, SwapTokenAmount as WitSwapTokenAmount, TokenBalance,
+	SwapExpectation as WitSwapExpectation, SwapTokenAmount as WitSwapTokenAmount, TokenBalance,
 	Transaction as TransactionResource, UserClient as UserClientResource,
 };
 
@@ -68,22 +73,125 @@ impl Guest for Component {
 	type BlockBuilder = BuilderState;
 
 	fn derive_identifier(
-		spec: SignerSpec,
+		signer: AccountBorrow<'_>,
 		kind: String,
 		previous: Option<String>,
 		op_index: u32,
 	) -> Result<String, CodedError> {
-		let account = account_from_spec(&spec)?;
+		let account = &signer.get::<AccountResource>().account;
 		let kind = derivable_identifier_kind(&kind)?;
 		let previous = previous.map(|hash| decode_hash(&hash)).transpose()?;
-		let identifier = pure::generate_identifier(&account, kind, previous, op_index)?;
+		let identifier = pure::generate_identifier(account, kind, previous, op_index)?;
 		Ok(pure::account_address(&identifier))
 	}
 }
 
-/// Derive the signing account described by `spec`.
-fn account_from_spec(spec: &SignerSpec) -> Result<AccountRef, CodedError> {
-	Ok(pure::account_from_seed(&spec.seed, spec.index, &spec.algorithm)?)
+// ---------------------------------------------------------------------------
+// crypto interface: account + certificate resources
+// ---------------------------------------------------------------------------
+
+/// Multiply Unix `seconds` into milliseconds for the millisecond-based cores,
+/// rejecting a value that would overflow.
+fn seconds_to_millis(seconds: i64) -> Result<i64, CodedError> {
+	seconds
+		.checked_mul(1000)
+		.ok_or_else(|| CodedError { code: "INVALID_DATE".into(), message: "unix seconds out of range".into() })
+}
+
+impl CryptoGuest for Component {
+	type Account = AccountResource;
+	type Certificate = CertificateResource;
+}
+
+/// A signing or read-only account, stored erased over its algorithm.
+struct AccountResource {
+	account: AccountRef,
+}
+
+impl GuestAccount for AccountResource {
+	fn from_seed(seed: String, index: u32, algorithm: String) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_seed(&seed, index, &algorithm)?;
+		Ok(WitAccount::new(Self { account }))
+	}
+
+	fn from_private_key(key: String, algorithm: String) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_private_key(&key, &algorithm)?;
+		Ok(WitAccount::new(Self { account }))
+	}
+
+	fn from_passphrase(words: Vec<String>, index: u32, algorithm: String) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_passphrase(words, index, &algorithm)?;
+		Ok(WitAccount::new(Self { account }))
+	}
+
+	fn from_public_key(key: String, algorithm: String) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_public_key(&key, &algorithm)?;
+		Ok(WitAccount::new(Self { account }))
+	}
+
+	fn from_address(address: String) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_address(&address)?;
+		Ok(WitAccount::new(Self { account }))
+	}
+
+	fn generate_seed() -> String {
+		pure::generate_seed().unwrap_or_default()
+	}
+
+	fn generate_passphrase() -> Vec<String> {
+		pure::generate_passphrase().unwrap_or_default()
+	}
+
+	fn address(&self) -> String {
+		pure::account_address(&self.account)
+	}
+
+	fn algorithm(&self) -> String {
+		pure::account_algorithm(&self.account)
+	}
+
+	fn public_key(&self) -> String {
+		pure::account_public_key(&self.account)
+	}
+
+	fn sign(&self, message: Vec<u8>) -> Result<Vec<u8>, CodedError> {
+		Ok(pure::account_sign(&self.account, &message)?)
+	}
+
+	fn verify(&self, message: Vec<u8>, signature: Vec<u8>) -> bool {
+		pure::account_verify(&self.account, &message, &signature)
+	}
+
+	fn encrypt(&self, plaintext: Vec<u8>) -> Result<Vec<u8>, CodedError> {
+		Ok(pure::account_encrypt(&self.account, &plaintext)?)
+	}
+
+	fn decrypt(&self, ciphertext: Vec<u8>) -> Result<Vec<u8>, CodedError> {
+		Ok(pure::account_decrypt(&self.account, &ciphertext)?)
+	}
+}
+
+/// A base X.509 certificate: a provider CA, a trust root, or an intermediate.
+struct CertificateResource {
+	certificate: X509Certificate,
+}
+
+impl GuestCertificate for CertificateResource {
+	fn parse(pem: String) -> Result<WitCertificate, CodedError> {
+		let certificate = pure::certificate_from_pem(&pem)?;
+		Ok(WitCertificate::new(Self { certificate }))
+	}
+
+	fn pem(&self) -> Result<String, CodedError> {
+		Ok(pure::certificate_pem(&self.certificate)?)
+	}
+
+	fn valid_at(&self, unix_seconds: i64) -> bool {
+		seconds_to_millis(unix_seconds)
+			.ok()
+			.and_then(|millis| pure::certificate_valid_at(&self.certificate, millis).ok())
+			.unwrap_or(false)
+	}
 }
 
 /// Parse an identifier kind for local derivation. Unlike the shared parser
@@ -414,14 +522,12 @@ impl GuestUserClient for AccountClient {
 		Ok(UserClientResource::new(Self { inner }))
 	}
 
-	fn with_signer(
+	fn with_account(
 		base_url: String,
-		seed: String,
-		index: u32,
-		algorithm: String,
+		signer: AccountBorrow<'_>,
 		network: String,
 	) -> Result<UserClientResource, CodedError> {
-		let signer = pure::account_from_seed(&seed, index, &algorithm)?;
+		let signer = Arc::clone(&signer.get::<AccountResource>().account);
 		let network = BigInt::from_str(&network).map_err(|_| CodedError {
 			code: "INVALID_INTEGER".into(),
 			message: "network must be a decimal integer".into(),
@@ -766,17 +872,18 @@ impl GuestBlockBuilder for BuilderState {
 		self.stage(|builder| builder.with_date(date))
 	}
 
-	fn signer_single(&self, spec: SignerSpec) -> Result<(), CodedError> {
-		let signer = pure::signer_single(account_from_spec(&spec)?);
+	fn signer_single(&self, signer: AccountBorrow<'_>) -> Result<(), CodedError> {
+		let account = Arc::clone(&signer.get::<AccountResource>().account);
+		let signer = pure::signer_single(account);
 		self.stage(|builder| builder.with_signer(signer))
 	}
 
-	fn signer_multisig(&self, multisig: String, members: Vec<SignerSpec>) -> Result<(), CodedError> {
+	fn signer_multisig(&self, multisig: String, members: Vec<AccountBorrow<'_>>) -> Result<(), CodedError> {
 		let multisig = pure::account_from_address(&multisig)?;
 		let members = members
 			.iter()
-			.map(account_from_spec)
-			.collect::<Result<Vec<_>, _>>()?;
+			.map(|member| Arc::clone(&member.get::<AccountResource>().account))
+			.collect();
 		let signer = pure::signer_multisig(multisig, members);
 		self.stage(|builder| builder.with_signer(signer))
 	}

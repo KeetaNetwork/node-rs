@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 
 use keetanetwork_account::cert::{CertSigner, CertVerifier};
 use keetanetwork_asn1::vote::TbsCertificate;
-use keetanetwork_block::{AccountRef, BlockHash, BlockTime};
+use keetanetwork_block::{AccountRef, BlockHash, BlockTime, Send};
 use keetanetwork_crypto::verify::Verifiable;
 use num_bigint::BigInt;
 
@@ -111,9 +111,7 @@ impl UnsignedVote {
 
 	/// Sign and serialize this vote using the supplied signer.
 	///
-	/// `signer` must correspond to [`Self::issuer`]; the contract is that
-	/// the resulting certificate's `signatureValue` is verifiable against
-	/// the issuer's public key.
+	/// - `signer` must correspond to [`Self::issuer`]
 	pub fn sign(self, signer: &(impl CertSigner + ?Sized)) -> Result<Vote, VoteError> {
 		let algo = SignatureAlgo::from_issuer(&self.issuer)?;
 		let tbs = build_tbs(&self.serial, algo, &self.issuer, self.validity, &self.blocks, self.fees.as_ref())?;
@@ -241,6 +239,13 @@ impl Vote {
 	/// Optional fee schedule declared by the issuer.
 	pub fn fees(&self) -> Option<&Fees> {
 		self.decoded.fees.as_ref()
+	}
+
+	/// The `SEND` that pays this vote's required fee, defaulting the recipient
+	/// to the vote's issuer and the token to `base`. Returns `None` when the
+	/// vote declares no fee or an optional ([`Fees::required`] is `false`) one.
+	pub fn fee_send(&self, base: &AccountRef, priority: &[AccountRef]) -> Option<Send> {
+		self.fees()?.to_send(base, priority, self.issuer())
 	}
 
 	/// Whether this is a quote vote (fees present and `quote = true`).
@@ -383,9 +388,7 @@ impl TryFrom<&[u8]> for VoteQuote {
 	}
 }
 
-/// A vote that has been parsed but may currently be expired. Useful for
-/// inspection paths (e.g. retrieving signature or contents) without
-/// committing to the staple-inclusion contract.
+/// A vote that has been parsed but may currently be expired.
 #[derive(Debug, Clone)]
 pub struct PossiblyExpiredVote(Vote);
 

@@ -161,45 +161,24 @@ pub fn run_node_script(
 	Ok(output)
 }
 
-/// A live local reference node driven over a JSON-lines protocol.
-///
-/// Each command written to the harness produces exactly one JSON response
-/// line; harness diagnostics go to standard error.
-pub struct E2eNode {
+/// A `node` child driven over the harness JSON-lines protocol: each
+/// command written produces exactly one JSON response line, and harness
+/// diagnostics go to standard error.
+struct JsonLines {
 	child: Child,
 	stdin: ChildStdin,
 	lines: Lines<BufReader<ChildStdout>>,
-	ready: Value,
 }
 
-impl E2eNode {
-	/// Spawn the harness script and wait for it to report readiness.
-	pub fn start() -> Result<Self, HarnessError> {
-		Self::start_with_args(&[])
-	}
-
-	/// Spawn a fee-enforcing harness node that charges `amount` base tokens
-	/// (paid to the representative) on every transaction, so the fee block
-	/// origination path can be exercised end to end.
-	pub fn start_with_fee(amount: u64) -> Result<Self, HarnessError> {
-		Self::start_with_args(&[&format!("--fee={amount}")])
-	}
-
-	/// Spawn a peered cluster of `reps` representative nodes (P2P enabled)
-	/// sharing one trusted/genesis account, so the multi-representative
-	/// fan-out, quorum, and convergence paths can be exercised end to end.
-	pub fn start_cluster(reps: usize) -> Result<Self, HarnessError> {
-		let arg = format!("--reps={reps}");
-		Self::start_with_args(&[arg.as_str()])
-	}
-
-	/// Spawn the harness script with extra argv, waiting for readiness.
-	fn start_with_args(extra: &[&str]) -> Result<Self, HarnessError> {
+impl JsonLines {
+	/// Spawn `script` (resolved by name) with the resolved dist directory
+	/// as its first argument, followed by `extra`.
+	fn spawn(script: &str, extra: &[&str]) -> Result<Self, HarnessError> {
 		let dist = dist_dir()?;
-		let script = script_path("e2e-node")?;
+		let path = script_path(script)?;
 
 		let mut child = Command::new("node")
-			.arg(&script)
+			.arg(&path)
 			.arg(&dist)
 			.args(extra)
 			.stdin(Stdio::piped())
@@ -210,30 +189,14 @@ impl E2eNode {
 		let stdin = child.stdin.take().ok_or(HarnessError::UnexpectedEof)?;
 		let stdout = child.stdout.take().ok_or(HarnessError::UnexpectedEof)?;
 
-		let mut node = Self { child, stdin, lines: BufReader::new(stdout).lines(), ready: Value::Null };
-
-		// The harness emits a single ready line once the node is running.
-		let ready = node.read_response("start")?;
-		if ready.get("event").and_then(Value::as_str) != Some("ready") {
-			return Err(HarnessError::CommandFailed { command: "start".to_string(), message: ready.to_string() });
-		}
-
-		node.ready = ready;
-
-		Ok(node)
-	}
-
-	/// The readiness payload reported by the harness on startup (network
-	/// id, base token, trusted and representative accounts).
-	pub fn info(&self) -> &Value {
-		&self.ready
+		Ok(Self { child, stdin, lines: BufReader::new(stdout).lines() })
 	}
 
 	/// Send a command and return its (successful) JSON response.
 	///
 	/// `params` must be a JSON object (or null for parameter-less commands)
 	/// so the command name can always be attached to the payload.
-	pub fn request(&mut self, command: &str, params: Value) -> Result<Value, HarnessError> {
+	fn request(&mut self, command: &str, params: Value) -> Result<Value, HarnessError> {
 		let mut object = match params {
 			Value::Object(map) => map,
 			Value::Null => Map::new(),
@@ -262,20 +225,95 @@ impl E2eNode {
 
 		Ok(value)
 	}
-
-	/// Stop the node and wait for the harness to exit.
-	pub fn shutdown(mut self) -> Result<(), HarnessError> {
-		self.request("shutdown", Value::Object(serde_json::Map::new()))?;
-		self.child.wait()?;
-		Ok(())
-	}
 }
 
-impl Drop for E2eNode {
+impl Drop for JsonLines {
 	fn drop(&mut self) {
 		let _ = self.child.kill();
 		let _ = self.child.wait();
 	}
+}
+
+/// A live local reference node driven over the JSON-lines protocol.
+pub struct E2eNode {
+	proto: JsonLines,
+	ready: Value,
+}
+
+impl E2eNode {
+	/// Spawn the harness script and wait for it to report readiness.
+	pub fn start() -> Result<Self, HarnessError> {
+		Self::start_with_args(&[])
+	}
+
+	/// Spawn a fee-enforcing harness node that charges `amount` base tokens
+	/// (paid to the representative) on every transaction, so the fee block
+	/// origination path can be exercised end to end.
+	pub fn start_with_fee(amount: u64) -> Result<Self, HarnessError> {
+		Self::start_with_args(&[&format!("--fee={amount}")])
+	}
+
+	/// Spawn a peered cluster of `reps` representative nodes (P2P enabled)
+	/// sharing one trusted/genesis account, so the multi-representative
+	/// fan-out, quorum, and convergence paths can be exercised end to end.
+	pub fn start_cluster(reps: usize) -> Result<Self, HarnessError> {
+		let arg = format!("--reps={reps}");
+		Self::start_with_args(&[arg.as_str()])
+	}
+
+	/// Spawn the harness script with extra argv, waiting for readiness.
+	fn start_with_args(extra: &[&str]) -> Result<Self, HarnessError> {
+		let mut proto = JsonLines::spawn("e2e-node", extra)?;
+
+		// The harness emits a single ready line once the node is running.
+		let ready = proto.read_response("start")?;
+		if ready.get("event").and_then(Value::as_str) != Some("ready") {
+			return Err(HarnessError::CommandFailed { command: "start".to_string(), message: ready.to_string() });
+		}
+
+		Ok(Self { proto, ready })
+	}
+
+	/// The readiness payload reported by the harness on startup (network
+	/// id, base token, trusted and representative accounts).
+	pub fn info(&self) -> &Value {
+		&self.ready
+	}
+
+	/// Send a command and return its (successful) JSON response.
+	pub fn request(&mut self, command: &str, params: Value) -> Result<Value, HarnessError> {
+		self.proto.request(command, params)
+	}
+
+	/// Stop the node and wait for the harness to exit.
+	pub fn shutdown(mut self) -> Result<(), HarnessError> {
+		self.proto.request("shutdown", Value::Object(Map::new()))?;
+		self.proto.child.wait()?;
+		Ok(())
+	}
+}
+
+/// The stateless reference-implementation harness (`ts-ref`) driven over
+/// the JSON-lines protocol.
+pub struct RefHarness {
+	proto: JsonLines,
+}
+
+impl RefHarness {
+	/// Spawn the unified reference harness.
+	pub fn start() -> Result<Self, HarnessError> {
+		Ok(Self { proto: JsonLines::spawn("ts-ref", &[])? })
+	}
+
+	/// Send a command and return its (successful) JSON response.
+	pub fn request(&mut self, command: &str, params: Value) -> Result<Value, HarnessError> {
+		self.proto.request(command, params)
+	}
+}
+
+/// Run a single stateless reference command in a one-shot session.
+pub fn ref_call(command: &str, params: Value) -> Result<Value, HarnessError> {
+	RefHarness::start()?.request(command, params)
 }
 
 #[cfg(test)]
