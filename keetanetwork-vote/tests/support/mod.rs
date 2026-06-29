@@ -3,13 +3,12 @@
 #![allow(dead_code)]
 
 use std::error::Error;
-use std::path::PathBuf;
 
 use chrono::{DateTime, FixedOffset};
 use keetanetwork_asn1::testing;
 use keetanetwork_block::Hashable;
 use keetanetwork_block::{AccountRef, BlockHash};
-use keetanetwork_utils::node_harness::{run_node_script, script_path};
+use keetanetwork_utils::node_harness::ref_call;
 use keetanetwork_vote::{Fee, Fees, Validity, Vote, VoteHash, VoteQuote, VoteStaple};
 use num_bigint::BigInt;
 use serde_json::{Map, Value};
@@ -72,36 +71,23 @@ pub fn hex_decode(value: &str) -> Vec<u8> {
 	hex::decode(value).unwrap_or_else(|err| panic!("response field must be hex-encoded: {err}"))
 }
 
-// -- harness scripts ---------------------------------------------------------
+// -- harness commands --------------------------------------------------------
 
-fn script(name: &str) -> PathBuf {
-	script_path(name).expect("harness scripts must be built (run `make node-harness`)")
+/// Run one stateless reference command and return its JSON response.
+pub fn ref_command(command: &str, params: Value) -> Value {
+	ref_call(command, params).expect("the reference harness command must succeed")
 }
 
-/// Run a node-harness script with `stdin` and parse its first stdout
-/// line as JSON.
-pub fn run_script(name: &str, stdin: &[u8]) -> Value {
-	let output = run_node_script(script(name), [] as [&str; 0], Some(stdin)).expect("the harness script must run");
-	let stdout = String::from_utf8(output.stdout).expect("node output must be UTF-8");
-	let line = stdout
-		.lines()
-		.next()
-		.expect("the harness script must produce output");
-
-	serde_json::from_str(line).expect("the harness script must produce JSON")
-}
-
-/// Hand the supplied bytes to the TypeScript verifier and return its
-/// JSON view of the certificate.
+/// Hand the supplied bytes to the reference verifier and return its
+/// JSON view of the vote.
 pub fn ts_vote_verify(vote_bytes_hex: &str) -> Value {
-	run_script("ts-vote-verify", format!("{vote_bytes_hex}\n").as_bytes())
+	ref_command("vote_verify", serde_json::json!({ "bytes": vote_bytes_hex }))
 }
 
-/// Ask the TypeScript minter to produce a certificate matching `spec`
-/// and return its `{ bytes, hash }` response.
+/// Ask the reference minter to produce a vote matching `spec` and return
+/// its `{ bytes, hash, issuer }` response.
 pub fn ts_vote_mint(spec: &MintSpec) -> Value {
-	let bytes = serde_json::to_vec(&spec.to_value()).expect("the spec must serialize");
-	run_script("ts-vote-mint", &bytes)
+	ref_command("vote_mint", spec.to_value())
 }
 
 // -- rust signing helper -----------------------------------------------------
@@ -134,8 +120,8 @@ impl KeyKind {
 	fn wire_name(self) -> &'static str {
 		match self {
 			Self::Ed25519 => "ed25519",
-			Self::Secp256k1 => "ecdsa-secp256k1",
-			Self::Secp256r1 => "ecdsa-secp256r1",
+			Self::Secp256k1 => "ecdsa_secp256k1",
+			Self::Secp256r1 => "ecdsa_secp256r1",
 		}
 	}
 }
@@ -249,6 +235,7 @@ impl MintSpec {
 		obj.insert("blocks".to_string(), Value::Array(self.blocks.iter().cloned().map(Value::String).collect()));
 		obj.insert("validityFromMs".to_string(), Value::Number(self.validity_from_ms.into()));
 		obj.insert("validityToMs".to_string(), Value::Number(self.validity_to_ms.into()));
+
 		if let Some(schedule) = &self.fees {
 			let value = match schedule {
 				FeeSchedule::Single(entry) => entry.to_json(),
@@ -259,6 +246,7 @@ impl MintSpec {
 		if self.quote {
 			obj.insert("quote".to_string(), Value::Bool(true));
 		}
+
 		Value::Object(obj)
 	}
 }

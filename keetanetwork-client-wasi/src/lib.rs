@@ -24,3 +24,9 @@ mod p2;
 
 #[cfg(all(feature = "p1", target_os = "wasi"))]
 mod p1;
+
+/// The shared P1 registry
+#[cfg(all(feature = "p1", target_os = "wasi"))]
+pub use p1::{
+	account, bytes_in, bytes_result, certificate, fail, store_bytes, store_certificate, string_in, string_result,
+};

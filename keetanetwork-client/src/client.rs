@@ -21,7 +21,7 @@ use keetanetwork_block::{
 	AccountRef, Amount, Block, BlockBuilder, BlockHash, BlockPurpose, BlockTime, Hashable, Operation, Send,
 };
 use keetanetwork_error::KeetaNetError;
-use keetanetwork_vote::{Fee, Fees, ValidationConfig, Vote, VoteQuote, VoteStaple};
+use keetanetwork_vote::{Fees, ValidationConfig, Vote, VoteQuote, VoteStaple};
 use num_bigint::BigInt;
 use snafu::ResultExt;
 
@@ -1226,36 +1226,15 @@ impl KeetaClient {
 	}
 
 	/// Translate the fee schedule carried by `votes` into the `SEND`
-	/// operations of a fee block, skipping votes that offer a zero-amount
-	/// (optional) fee.
+	/// operations of a fee block, skipping votes that offer an optional
+	/// (zero-amount) fee. Selection policy lives on [`Vote::fee_send`].
 	fn fee_operations(&self, votes: &[Vote], priority: &[AccountRef]) -> Result<Vec<Send>, ClientError> {
 		let base_token = self.base_token()?;
-		let mut operations = Vec::new();
-		for vote in votes {
-			let Some(fees) = vote.fees() else {
-				continue;
-			};
-			if fees.entries().any(|fee| fee.amount == Amount::from(0u64)) {
-				continue;
-			}
 
-			let Some(selected) = select_fee(fees, &base_token, priority) else {
-				continue;
-			};
-
-			let token = match &selected.token {
-				Some(token) => Arc::clone(token),
-				None => Arc::clone(&base_token),
-			};
-			let to = match &selected.pay_to {
-				Some(pay_to) => Arc::clone(pay_to),
-				None => Arc::clone(vote.issuer()),
-			};
-
-			operations.push(Send { to, amount: selected.amount.clone(), token, external: None });
-		}
-
-		Ok(operations)
+		Ok(votes
+			.iter()
+			.filter_map(|vote| vote.fee_send(&base_token, priority))
+			.collect())
 	}
 
 	/// Derive the network base token (the `TOKEN` identifier of the
@@ -1991,48 +1970,12 @@ fn pick_best_vote(mut votes: Vec<Vote>) -> Option<Vote> {
 	votes.into_iter().next()
 }
 
-/// Whether a fee entry is payable in the network base token: an implicit
-/// (`None`) token, or an explicit token matching `base_token`.
-fn fee_pays_base_token(fee: &Fee, base_token: &AccountRef) -> bool {
-	match &fee.token {
-		None => true,
-		Some(token) => token.to_string() == base_token.to_string(),
-	}
-}
-
-/// The token a fee entry is paid in, treating an implicit (`None`) token as
-/// the network base token.
-fn fee_token(fee: &Fee, base_token: &AccountRef) -> String {
-	match &fee.token {
-		Some(token) => token.to_string(),
-		None => base_token.to_string(),
-	}
-}
-
-/// Choose which fee entry to pay: the highest-ranked `priority` token wins
-/// (an implicit `None` token counts as the base token); otherwise prefer the
-/// base-token entry, then fall back to the first entry.
-fn select_fee<'a>(fees: &'a Fees, base_token: &AccountRef, priority: &[AccountRef]) -> Option<&'a Fee> {
-	priority
-		.iter()
-		.find_map(|wanted| {
-			fees.entries()
-				.find(|fee| fee_token(fee, base_token) == wanted.to_string())
-		})
-		.or_else(|| {
-			fees.entries()
-				.find(|&fee| fee_pays_base_token(fee, base_token))
-		})
-		.or_else(|| fees.entries().next())
-}
-
-/// Whether any vote requires a fee block: it carries a fee schedule with no
-/// zero-amount (optional) entry, leaving the payer no way to opt out.
+/// Whether any vote obliges a fee block: it carries a required (non-optional)
+/// fee schedule. See [`Fees::required`].
 fn fees_required(votes: &[Vote]) -> bool {
-	votes.iter().any(|vote| match vote.fees() {
-		None => false,
-		Some(fees) => !fees.entries().any(|fee| fee.amount == Amount::from(0u64)),
-	})
+	votes
+		.iter()
+		.any(|vote| vote.fees().is_some_and(Fees::required))
 }
 
 #[cfg(test)]
@@ -2041,7 +1984,7 @@ mod tests {
 
 	use keetanetwork_block::testing::{generate_ed25519_ref, generate_identifier_ref, validity_blocktime};
 	use keetanetwork_block::BlockHash;
-	use keetanetwork_vote::{Fees, VoteBuilder};
+	use keetanetwork_vote::{Fee, Fees, VoteBuilder};
 
 	use crate::transport::GeneratedTransport;
 
@@ -2071,25 +2014,6 @@ mod tests {
 		}
 
 		Ok(builder.build_signed(issuer.as_ref())?)
-	}
-
-	#[test]
-	fn implicit_token_pays_base_token() {
-		let base = generate_identifier_ref(1, KeyPairType::TOKEN, 0);
-		assert!(fee_pays_base_token(&fee(1, None, None), &base));
-	}
-
-	#[test]
-	fn matching_token_pays_base_token() {
-		let base = generate_identifier_ref(1, KeyPairType::TOKEN, 0);
-		assert!(fee_pays_base_token(&fee(1, None, Some(Arc::clone(&base))), &base));
-	}
-
-	#[test]
-	fn divergent_token_does_not_pay_base_token() {
-		let base = generate_identifier_ref(1, KeyPairType::TOKEN, 0);
-		let other = generate_identifier_ref(2, KeyPairType::TOKEN, 0);
-		assert!(!fee_pays_base_token(&fee(1, None, Some(other)), &base));
 	}
 
 	#[test]

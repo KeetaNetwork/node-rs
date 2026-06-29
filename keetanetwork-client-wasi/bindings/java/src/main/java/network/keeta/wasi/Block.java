@@ -68,6 +68,13 @@ public final class Block {
 			return step(net.handle("keeta_builder_with_date", consume(), unixMillis));
 		}
 
+		/** Set the block purpose ({@code "generic"} or {@code "fee"}). */
+		public Builder purpose(String purpose) {
+			byte[] bytes = purpose.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+			int ptr = net.write(bytes);
+			return step(net.handle("keeta_builder_with_purpose", consume(), ptr, bytes.length));
+		}
+
 		/** Append an operation. */
 		public Builder addOperation(Operation operation) {
 			return step(net.handle("keeta_builder_with_operation", consume(), operation.handle()));
@@ -169,6 +176,11 @@ public final class Block {
 		/** The block hash (hex). */
 		public String hashHex() {
 			return net.takeString(net.handle("keeta_block_hash", handle()));
+		}
+
+		/** The originating account. */
+		public Account account() {
+			return new Account(net, net.handle("keeta_block_account", handle()));
 		}
 
 		/** The raw transport bytes. */

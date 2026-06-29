@@ -1,14 +1,12 @@
-//! Bound Java SDK networked multisig harness test.
+//! Bound Java SDK client-operations harness test against a live reference node.
 //!
-//! Boots a reference node via [`E2eNode`], then runs the idiomatic Java
-//! SDK (`bindings/java`) against it through Maven. The SDK loads the
-//! `wasm32-wasip1` core module on the pure-JVM Chicory runtime
-//! and performs node I/O over `java.net.http`.
+//! The harness test performs a base-token send/receive transfer and a certificate add/remove.
 
 use std::path::PathBuf;
 use std::process::Command;
 
-use keetanetwork_utils::node_harness::E2eNode;
+use keetanetwork_utils::node_harness::{E2eNode, RefHarness};
+use serde_json::json;
 
 /// Locate the prebuilt P1 core module.
 fn module_path() -> PathBuf {
@@ -44,7 +42,7 @@ fn trusted_seed() -> String {
 }
 
 #[test]
-fn java_sdk_transmits_against_e2e_node() -> Result<(), Box<dyn std::error::Error>> {
+fn java_sdk_sends_receives_and_manages_certificates() -> Result<(), Box<dyn std::error::Error>> {
 	let module = module_path();
 	assert!(module.exists(), "build the core module first (missing {})", module.display());
 
@@ -52,27 +50,35 @@ fn java_sdk_transmits_against_e2e_node() -> Result<(), Box<dyn std::error::Error
 	let api = ready_field(&harness, "api");
 	let network = ready_field(&harness, "network");
 	let base_token = ready_field(&harness, "baseToken");
+	let trusted = ready_field(&harness, "trusted");
 	assert!(!api.is_empty(), "the harness must advertise an api URL");
 	assert!(!network.is_empty(), "the harness must advertise a network id");
 	assert!(!base_token.is_empty(), "the harness must advertise a base token");
+	assert!(!trusted.is_empty(), "the harness must advertise the trusted account");
 
-	// Mint a supply to the trusted account so it has a chain head to build on.
-	harness.request("init_supply", serde_json::json!({ "amount": "1000000" }))?;
+	// Fund the trusted account so it has a base-token balance and a head to build on.
+	harness.request("init_supply", json!({ "amount": "1000000" }))?;
+
+	// A reference-issued certificate whose subject is the trusted account.
+	let certificate = RefHarness::start()?.request("cert_mint", json!({ "subject": trusted }))?;
+	let certificate_der = certificate["der"].as_str().ok_or("cert_mint must return a der string")?;
 
 	let output = Command::new(maven())
 		.current_dir(sdk_dir())
-		.args(["-q", "-B", "compile", "exec:java"])
+		.args(["-q", "-B", "compile", "exec:java", "-Dexec.mainClass=network.keeta.wasi.harness.ClientOperations"])
 		.env("WASI_P1_MODULE", &module)
 		.env("KEETA_API", &api)
 		.env("KEETA_NETWORK", &network)
 		.env("KEETA_BASE_TOKEN", &base_token)
 		.env("KEETA_TRUSTED_SEED", trusted_seed())
+		.env("KEETA_CERT_DER", certificate_der)
 		.output()?;
 
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	let stderr = String::from_utf8_lossy(&output.stderr);
 	assert!(output.status.success(), "the Java harness must exit zero\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-	assert!(stdout.contains("MULTISIG_OK"), "the Java must confirm a multisig transmit\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(stdout.contains("SEND_OK"), "the Java SDK must confirm the transfer\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(stdout.contains("CERT_OK"), "the Java SDK must confirm certificate management\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
 
 	Ok(())
 }

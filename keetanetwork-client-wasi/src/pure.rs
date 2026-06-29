@@ -1,19 +1,20 @@
 //! Shared, target-agnostic operations behind both WASI ABIs (`p1` flat ABI and
 //! `p2` component). Every function is pure/offline.
 
+use core::str::FromStr;
 use std::sync::Arc;
 
 use num_bigint::BigInt;
 
 use keetanetwork_account::KeyPairType;
 use keetanetwork_bindings::error::CodedError;
-use keetanetwork_bindings::parse::{base_flag, bigint_hex};
+use keetanetwork_bindings::parse::{adjust_method, base_flag, bigint_hex, purpose};
 use keetanetwork_bindings::permissions as bindings_permissions;
 use keetanetwork_block::{
-	AccountRef, AdjustMethod, Block, BlockBuilder, BlockHash, BlockTime, BlockVersion, CertificateDer,
-	CertificateOrHash, CreateIdentifier, Hashable, IdentifierCreateArguments, IntermediateCertificates,
+	AccountRef, AdjustMethod, Amount, Block, BlockBuilder, BlockHash, BlockPurpose, BlockTime, BlockVersion,
+	CertificateDer, CertificateOrHash, CreateIdentifier, Hashable, IdentifierCreateArguments, IntermediateCertificates,
 	ManageCertificate, ModifyPermissions, ModifyPermissionsPrincipal, MultisigCreateArguments, Operation, Permissions,
-	SetInfo, SetRep, Signer, UnsignedBlock,
+	Receive, Send, SetInfo, SetRep, Signer, TokenAdminModifyBalance, TokenAdminSupply, UnsignedBlock,
 };
 use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
 
@@ -63,6 +64,11 @@ pub fn block_hash(block: &Block) -> String {
 /// The block's hex transport encoding.
 pub fn block_to_hex(block: &Block) -> String {
 	hex::encode(block.to_bytes())
+}
+
+/// The block's originating account.
+pub fn block_account(block: &Block) -> AccountRef {
+	block.data().account().clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +129,11 @@ pub fn quote_hash(quote: &VoteQuote) -> String {
 /// The quote's DER hex encoding.
 pub fn quote_to_hex(quote: &VoteQuote) -> String {
 	hex::encode(quote.as_vote().as_bytes())
+}
+
+/// The fee-paying `SEND` operation `vote` requires.
+pub fn fee_send(vote: &Vote, base_token: &AccountRef, priority: &[AccountRef]) -> Option<Operation> {
+	vote.fee_send(base_token, priority).map(Operation::from)
 }
 
 /// The staple hash as a hex string.
@@ -202,6 +213,46 @@ pub fn op_modify_permissions(
 	.into()
 }
 
+/// Parse a transfer amount accepting either a decimal or `0x`-prefixed hex
+/// integer (the latter matching the reference balance encoding).
+fn parse_amount(amount: &str) -> Result<Amount, CodedError> {
+	Amount::from_str(amount)
+		.map_err(|_| CodedError::new("INVALID_AMOUNT", "amount must be a decimal or 0x-hex integer"))
+}
+
+/// A `SEND` operation transferring `amount` of `token` to `to`. An empty
+/// `external` is treated as no reference, so every ABI can forward its raw
+/// optional-string argument without repeating that policy.
+pub fn op_send(to: AccountRef, amount: &str, token: AccountRef, external: &str) -> Result<Operation, CodedError> {
+	let external = (!external.is_empty()).then(|| external.to_string());
+
+	Ok(Send { to, amount: parse_amount(amount)?, token, external }.into())
+}
+
+/// A `RECEIVE` operation crediting `amount` of `token` from `from`, optionally
+/// requiring an `exact` match and forwarding to `forward`.
+pub fn op_receive(
+	from: AccountRef,
+	amount: &str,
+	token: AccountRef,
+	exact: bool,
+	forward: Option<AccountRef>,
+) -> Result<Operation, CodedError> {
+	Ok(Receive { amount: parse_amount(amount)?, token, from, exact, forward }.into())
+}
+
+/// A `TOKEN_ADMIN_SUPPLY` operation adjusting the block token's total supply by
+/// `amount` using `method` (`add`/`subtract`; `set` is rejected on validation).
+pub fn op_token_admin_supply(amount: &str, method: &str) -> Result<Operation, CodedError> {
+	Ok(TokenAdminSupply { amount: parse_amount(amount)?, method: adjust_method(method)? }.into())
+}
+
+/// A `TOKEN_ADMIN_MODIFY_BALANCE` operation adjusting the block account's
+/// balance of `token` by `amount` using `method`.
+pub fn op_token_admin_modify_balance(token: AccountRef, amount: &str, method: &str) -> Result<Operation, CodedError> {
+	Ok(TokenAdminModifyBalance { token, amount: parse_amount(amount)?, method: adjust_method(method)? }.into())
+}
+
 /// A `SET_REP` operation delegating voting weight to representative `to`.
 pub fn op_set_rep(to: AccountRef) -> Operation {
 	SetRep { to }.into()
@@ -230,6 +281,11 @@ pub fn block_version(version: u32) -> Result<BlockVersion, CodedError> {
 		2 => Ok(BlockVersion::V2),
 		_ => Err(CodedError::new("INVALID_BLOCK_VERSION", "block version must be 1 or 2")),
 	}
+}
+
+/// Parse a block purpose (`generic` or `fee`).
+pub fn block_purpose(value: &str) -> Result<BlockPurpose, CodedError> {
+	Ok(purpose(value)?)
 }
 
 /// Build and validate the unsigned block, consuming the builder.
@@ -267,15 +323,24 @@ pub fn certificate_hash(certificate: &str) -> Result<String, CodedError> {
 /// optional hex-DER `intermediates`.
 pub fn op_manage_certificate_add(certificate: &str, intermediates: &[String]) -> Result<Operation, CodedError> {
 	let certificate = decode_certificate_der(certificate)?;
-	let bundle = intermediates
-		.iter()
-		.map(|der| decode_certificate_der(der))
-		.collect::<Result<Vec<_>, _>>()?;
+	// An add with no intermediates is canonically encoded as NULL, not as an
+	// empty SEQUENCE; the two ASN.1 forms hash differently and an empty bundle
+	// would not match the bytes the network signs over.
+	let intermediates = if intermediates.is_empty() {
+		IntermediateCertificates::None
+	} else {
+		let bundle = intermediates
+			.iter()
+			.map(|der| decode_certificate_der(der))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		IntermediateCertificates::Bundle(bundle)
+	};
 
 	Ok(ManageCertificate {
 		method: AdjustMethod::Add,
 		certificate_or_hash: CertificateOrHash::Certificate(certificate),
-		intermediate_certificates: Some(IntermediateCertificates::Bundle(bundle)),
+		intermediate_certificates: Some(intermediates),
 	}
 	.into())
 }
@@ -387,6 +452,59 @@ mod tests {
 	}
 
 	#[test]
+	fn send_and_receive_operations_assemble() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let (sender, recipient) = (derive(0), derive(1));
+		let token = generate_identifier(&sender, KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let send = op_send(recipient.clone(), "1000", token.clone(), "memo").expect("send must build");
+		assert!(matches!(send, Operation::Send(operation) if operation.external.as_deref() == Some("memo")));
+
+		let receive = op_receive(sender, "0x3e8", token, false, None).expect("receive must build");
+		assert!(matches!(receive, Operation::Receive(_)));
+	}
+
+	#[test]
+	fn send_treats_an_empty_external_as_absent() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&derive(0), KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let send = op_send(derive(1), "1", token, "").expect("send must build");
+		assert!(matches!(send, Operation::Send(operation) if operation.external.is_none()));
+	}
+
+	#[test]
+	fn send_rejects_a_malformed_amount() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&derive(0), KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let error = op_send(derive(1), "not-a-number", token, "").expect_err("amount must be rejected");
+		assert_eq!(error.code, "INVALID_AMOUNT");
+	}
+
+	#[test]
+	fn token_admin_operations_assemble() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let derive = |index| account_from_seed(&seed, index, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let token = generate_identifier(&derive(0), KeyPairType::TOKEN, None, 0).expect("identifier must derive");
+
+		let supply = op_token_admin_supply("1000", "add").expect("supply must build");
+		assert!(matches!(supply, Operation::TokenAdminSupply(_)));
+
+		let modify = op_token_admin_modify_balance(token, "0x10", "subtract").expect("modify must build");
+		assert!(matches!(modify, Operation::TokenAdminModifyBalance(_)));
+	}
+
+	#[test]
+	fn token_admin_supply_rejects_an_unknown_method() {
+		let error = op_token_admin_supply("1", "multiply").expect_err("method must be rejected");
+		assert!(!error.code.is_empty());
+	}
+
+	#[test]
 	fn malformed_vote_bytes_are_rejected() {
 		let error = vote_from_bytes([0u8, 1, 2, 3]).expect_err("garbage must not decode");
 		assert!(!error.code.is_empty());
@@ -460,5 +578,17 @@ mod tests {
 	#[test]
 	fn malformed_block_hex_is_rejected_with_a_stable_code() {
 		assert_eq!(block_from_hex("zz").expect_err("bad block must fail").code, "INVALID_BLOCK");
+	}
+
+	#[test]
+	fn block_purposes_parse_and_reject() {
+		assert!(matches!(block_purpose("generic"), Ok(BlockPurpose::Generic)));
+		assert!(matches!(block_purpose("fee"), Ok(BlockPurpose::Fee)));
+		assert_eq!(
+			block_purpose("other")
+				.expect_err("unknown purpose must fail")
+				.code,
+			"INVALID_PURPOSE"
+		);
 	}
 }

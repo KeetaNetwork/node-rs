@@ -1,13 +1,11 @@
 //! wasmtime P2 component networked smoke test.
 //!
-//! Boots a reference node via `E2eNode`, then drives the exported `node` and
-//! `user-client` resources over `wasi:http`, proving the component runs against
-//! a live node.
+//! The example drives the exported `node` and `user-client` resources over `wasi:http`.
 
 use std::path::PathBuf;
 
 use keetanetwork_utils::node_harness::E2eNode;
-use wasmtime::component::{Component, Linker, ResourceTable};
+use wasmtime::component::{Component, Linker, ResourceAny, ResourceTable};
 use wasmtime::{Engine, Store};
 use wasmtime_wasi::{WasiCtx, WasiCtxView, WasiView};
 use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
@@ -22,7 +20,7 @@ mod bindings {
 	});
 }
 
-use bindings::exports::keeta::client::node::{AdjustMethod, ChainQuery, CodedError, HistoryQuery, SignerSpec};
+use bindings::exports::keeta::client::node::{AdjustMethod, ChainQuery, CodedError, HistoryQuery};
 use bindings::KeetaClient;
 
 /// Host state granting the component WASI + outbound `wasi:http`.
@@ -97,8 +95,23 @@ fn trusted_seed() -> String {
 	"77".repeat(32)
 }
 
+/// Derive an `ed25519` `account` resource from `seed` at `index` via the
+/// exported `crypto` interface, returning its host handle.
+async fn account_from_seed(
+	store: &mut Store<Host>,
+	bindings: &KeetaClient,
+	seed: &str,
+	index: u32,
+) -> wasmtime::Result<ResourceAny> {
+	bindings
+		.keeta_client_crypto()
+		.account()
+		.call_from_seed(&mut *store, seed, index, "ed25519")
+		.await?
+		.map_err(coded)
+}
+
 #[tokio::test]
-#[ignore = "requires `make node-harness` and the built wasm32-wasip2 component"]
 async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	let mut harness = E2eNode::start()?;
 	let api = ready_field(&harness, "api");
@@ -336,7 +349,6 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires `make node-harness` and the built wasm32-wasip2 component"]
 async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	let mut harness = E2eNode::start()?;
 	let api = ready_field(&harness, "api");
@@ -356,9 +368,10 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 
 	// Bind a signing client to the trusted (genesis) seed; it is its own
 	// operating account.
+	let trusted_account = account_from_seed(&mut store, &bindings, &trusted_seed(), 0).await?;
 	let user = node
 		.user_client()
-		.call_with_signer(&mut store, &api, &trusted_seed(), 0, "ed25519", &network)
+		.call_with_account(&mut store, &api, trusted_account, &network)
 		.await?
 		.map_err(coded)?;
 	let before = node
@@ -607,9 +620,10 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	const SWAP_SEND: u128 = 400; // maker -> taker
 	const SWAP_RECV: u128 = 150; // taker -> maker
 	const FUND: u128 = 1_000; // seed the taker so it can pay its leg
+	let taker_account = account_from_seed(&mut store, &bindings, &"55".repeat(32), 0).await?;
 	let taker = node
 		.user_client()
-		.call_with_signer(&mut store, &api, &"55".repeat(32), 0, "ed25519", &network)
+		.call_with_account(&mut store, &api, taker_account, &network)
 		.await?
 		.map_err(coded)?;
 	let taker_address = node
@@ -693,8 +707,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 /// `generate-identifier`, and a `block-builder` block signed by a 2-of-3
 /// `Signer::Multisig` that the node accepts on-chain.
 #[tokio::test]
-#[ignore = "requires `make node-harness` and the built wasm32-wasip2 component"]
-async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> {
+async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 	let mut harness = E2eNode::start()?;
 	let api = ready_field(&harness, "api");
 	let network = ready_field(&harness, "network");
@@ -716,11 +729,11 @@ async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> 
 		.unwrap_or_default();
 
 	let seed = "33".repeat(32);
-	let spec = |index: u32| SignerSpec { seed: seed.clone(), index, algorithm: "ed25519".to_string() };
+	let account0 = account_from_seed(&mut store, &bindings, &seed, 0).await?;
 
 	let user = node
 		.user_client()
-		.call_with_signer(&mut store, &api, &seed, 0, "ed25519", &network)
+		.call_with_account(&mut store, &api, account0, &network)
 		.await?
 		.map_err(coded)?;
 	let user_address = node
@@ -731,9 +744,10 @@ async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> 
 
 	// Fund the user so it has a settled balance and a head to chain onto.
 	let base_token = ready_field(&harness, "baseToken");
+	let trusted_account = account_from_seed(&mut store, &bindings, &trusted_seed(), 0).await?;
 	let funder = node
 		.user_client()
-		.call_with_signer(&mut store, &api, &trusted_seed(), 0, "ed25519", &network)
+		.call_with_account(&mut store, &api, trusted_account, &network)
 		.await?
 		.map_err(coded)?;
 	let funded = node
@@ -743,24 +757,22 @@ async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> 
 		.map_err(coded)?;
 	assert!(funded, "the user funding send must settle");
 
+	let mut signer_accounts = Vec::new();
 	let mut signers = Vec::new();
 	for index in 1..=3u32 {
-		let signer = node
-			.user_client()
-			.call_with_signer(&mut store, &api, &seed, index, "ed25519", &network)
-			.await?
-			.map_err(coded)?;
-		let address = node
-			.user_client()
-			.call_address(&mut store, signer)
-			.await?
-			.map_err(coded)?;
+		let account = account_from_seed(&mut store, &bindings, &seed, index).await?;
+		let address = bindings
+			.keeta_client_crypto()
+			.account()
+			.call_address(&mut store, account)
+			.await?;
+		signer_accounts.push(account);
 		signers.push(address);
 	}
 
 	// Local, deterministic multisig address (kind MULTISIG, op index 0).
 	let multisig = node
-		.call_derive_identifier(&mut store, &spec(0), "multisig", None, 0)
+		.call_derive_identifier(&mut store, account0, "multisig", None, 0)
 		.await?
 		.map_err(coded)?;
 	assert!(!multisig.is_empty(), "the multisig identifier address must derive");
@@ -803,7 +815,7 @@ async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> 
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
-			.call_signer_single(&mut store, builder, &spec(0))
+			.call_signer_single(&mut store, builder, account0)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
@@ -827,9 +839,7 @@ async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> 
 	assert!(!custom_token.is_empty(), "the custom token address must be returned");
 
 	// Grant the multisig ADMIN on the token's own chain (the entity whose ACL
-	// changes), signed by the trusted creator. The high-level update-permissions
-	// can only touch its operating account's ACL, so the builder is the path.
-	let trusted_spec = SignerSpec { seed: trusted_seed(), index: 0, algorithm: "ed25519".to_string() };
+	// changes), signed by the trusted creator.
 	let grant_block = {
 		let builder = node
 			.block_builder()
@@ -849,7 +859,7 @@ async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> 
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
-			.call_signer_single(&mut store, builder, &trusted_spec)
+			.call_signer_single(&mut store, builder, trusted_account)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
@@ -909,7 +919,7 @@ async fn p2_multisig_signer_capstone_against_e2e_node() -> wasmtime::Result<()> 
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
-			.call_signer_multisig(&mut store, builder, &multisig, &[spec(1), spec(2)])
+			.call_signer_multisig(&mut store, builder, &multisig, &[signer_accounts[0], signer_accounts[1]])
 			.await?
 			.map_err(coded)?;
 		node.block_builder()

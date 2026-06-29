@@ -45,13 +45,13 @@ fn state() -> MutexGuard<'static, State> {
 }
 
 /// Record `error` as the last failure and return the null handle.
-fn fail(error: CodedError) -> i32 {
+pub fn fail(error: CodedError) -> i32 {
 	state().last_error = Some(error);
 	0
 }
 
 /// Store `bytes` as a result and return its handle.
-fn store_bytes(bytes: Vec<u8>) -> i32 {
+pub fn store_bytes(bytes: Vec<u8>) -> i32 {
 	let mut guard = state();
 	let handle = guard.allocate();
 
@@ -195,8 +195,19 @@ fn store_operation(operation: Operation) -> i32 {
 }
 
 /// Resolve an account handle, recording an error when it is unknown.
-fn account(handle: i32) -> Option<AccountRef> {
+pub fn account(handle: i32) -> Option<AccountRef> {
 	resolve(handle)
+}
+
+/// Resolve an optional account handle where `0` means "absent".
+///
+/// Returns `Some(None)` for the `0` sentinel, `Some(Some(account))` for a known
+/// handle, and `None` for an unknown handle (so the caller fails the call).
+fn optional_account(handle: i32) -> Option<Option<AccountRef>> {
+	match handle {
+		0 => Some(None),
+		handle => account(handle).map(Some),
+	}
 }
 
 /// Resolve a block handle, recording an error when it is unknown.
@@ -210,8 +221,14 @@ fn permissions(handle: i32) -> Option<Permissions> {
 }
 
 /// Resolve a certificate handle, recording an error when it is unknown.
-fn certificate(handle: i32) -> Option<Certificate> {
+pub fn certificate(handle: i32) -> Option<Certificate> {
 	resolve(handle)
+}
+
+/// Store a certificate and return its handle, so downstream binding crates
+/// hand back handles the shared `keeta_certificate_*` accessors can consume.
+pub fn store_certificate(certificate: Certificate) -> i32 {
+	store(certificate)
 }
 
 /// Apply a consuming transform to a builder handle, returning a fresh handle.
@@ -257,7 +274,7 @@ unsafe fn account_handles(ptr: i32, len: i32) -> Option<Vec<AccountRef>> {
 /// # Safety
 /// `ptr` must point at `len` initialized bytes inside the guest's linear
 /// memory (as returned by [`keeta_alloc`] and populated by the host).
-unsafe fn bytes_in(ptr: i32, len: i32) -> Vec<u8> {
+pub unsafe fn bytes_in(ptr: i32, len: i32) -> Vec<u8> {
 	if ptr == 0 || len <= 0 {
 		return Vec::new();
 	}
@@ -270,7 +287,7 @@ unsafe fn bytes_in(ptr: i32, len: i32) -> Vec<u8> {
 ///
 /// # Safety
 /// See [`bytes_in`].
-unsafe fn string_in(ptr: i32, len: i32) -> Option<String> {
+pub unsafe fn string_in(ptr: i32, len: i32) -> Option<String> {
 	match String::from_utf8(bytes_in(ptr, len)) {
 		Ok(value) => Some(value),
 		Err(_) => {
@@ -281,7 +298,7 @@ unsafe fn string_in(ptr: i32, len: i32) -> Option<String> {
 }
 
 /// Map a pure result into a bytes handle (`0` on error).
-fn bytes_result(result: Result<Vec<u8>, CodedError>) -> i32 {
+pub fn bytes_result(result: Result<Vec<u8>, CodedError>) -> i32 {
 	match result {
 		Ok(bytes) => store_bytes(bytes),
 		Err(error) => fail(error),
@@ -289,7 +306,7 @@ fn bytes_result(result: Result<Vec<u8>, CodedError>) -> i32 {
 }
 
 /// Map a pure string result into a bytes handle (`0` on error).
-fn string_result(result: Result<String, CodedError>) -> i32 {
+pub fn string_result(result: Result<String, CodedError>) -> i32 {
 	bytes_result(result.map(String::into_bytes))
 }
 
@@ -634,6 +651,12 @@ pub extern "C" fn keeta_block_to_hex(handle: i32) -> i32 {
 	block(handle).map_or(0, |block| store_bytes(pure::block_to_hex(&block).into_bytes()))
 }
 
+/// The block's originating account; returns an account handle.
+#[no_mangle]
+pub extern "C" fn keeta_block_account(handle: i32) -> i32 {
+	block(handle).map_or(0, |block| store(pure::block_account(&block)))
+}
+
 /// Release a block handle.
 #[no_mangle]
 pub extern "C" fn keeta_block_free(handle: i32) {
@@ -730,6 +753,104 @@ pub extern "C" fn keeta_op_set_rep(to: i32) -> i32 {
 	account(to).map_or(0, |to| store_operation(pure::op_set_rep(to)))
 }
 
+/// A `SEND` operation transferring `amount` (decimal or `0x`-hex) of `token`
+/// to `to`, with an optional `external` reference (empty for none); returns an
+/// operation handle.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_op_send(
+	to: i32,
+	amount_ptr: i32,
+	amount_len: i32,
+	token: i32,
+	external_ptr: i32,
+	external_len: i32,
+) -> i32 {
+	let (Some(to), Some(token)) = (account(to), account(token)) else {
+		return 0;
+	};
+	let (Some(amount), Some(external)) = (string_in(amount_ptr, amount_len), string_in(external_ptr, external_len))
+	else {
+		return 0;
+	};
+
+	match pure::op_send(to, &amount, token, &external) {
+		Ok(operation) => store_operation(operation),
+		Err(error) => fail(error),
+	}
+}
+
+/// A `RECEIVE` operation crediting `amount` (decimal or `0x`-hex) of `token`
+/// from `from`; `exact` is a boolean flag and `forward` may be `0` for none.
+/// Returns an operation handle.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_op_receive(
+	from: i32,
+	amount_ptr: i32,
+	amount_len: i32,
+	token: i32,
+	exact: i32,
+	forward: i32,
+) -> i32 {
+	let (Some(from), Some(token)) = (account(from), account(token)) else {
+		return 0;
+	};
+	let Some(amount) = string_in(amount_ptr, amount_len) else {
+		return 0;
+	};
+	let Some(forward) = optional_account(forward) else {
+		return 0;
+	};
+
+	match pure::op_receive(from, &amount, token, exact != 0, forward) {
+		Ok(operation) => store_operation(operation),
+		Err(error) => fail(error),
+	}
+}
+
+/// A `TOKEN_ADMIN_SUPPLY` operation adjusting the block token's supply by
+/// `amount` (decimal or `0x`-hex) using `method` (`add`/`subtract`); returns an
+/// operation handle.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_op_token_admin_supply(
+	amount_ptr: i32,
+	amount_len: i32,
+	method_ptr: i32,
+	method_len: i32,
+) -> i32 {
+	let (Some(amount), Some(method)) = (string_in(amount_ptr, amount_len), string_in(method_ptr, method_len)) else {
+		return 0;
+	};
+
+	match pure::op_token_admin_supply(&amount, &method) {
+		Ok(operation) => store_operation(operation),
+		Err(error) => fail(error),
+	}
+}
+
+/// A `TOKEN_ADMIN_MODIFY_BALANCE` operation adjusting the block account's
+/// balance of `token` by `amount` (decimal or `0x`-hex) using `method`; returns
+/// an operation handle.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_op_token_admin_modify_balance(
+	token: i32,
+	amount_ptr: i32,
+	amount_len: i32,
+	method_ptr: i32,
+	method_len: i32,
+) -> i32 {
+	let Some(token) = account(token) else {
+		return 0;
+	};
+	let (Some(amount), Some(method)) = (string_in(amount_ptr, amount_len), string_in(method_ptr, method_len)) else {
+		return 0;
+	};
+
+	match pure::op_token_admin_modify_balance(token, &amount, &method) {
+		Ok(operation) => store_operation(operation),
+		Err(error) => fail(error),
+	}
+}
+
 /// A `SET_INFO` operation; `perms` may be `0` for no default permission.
 #[no_mangle]
 pub unsafe extern "C" fn keeta_op_set_info(
@@ -806,12 +927,8 @@ pub unsafe extern "C" fn keeta_op_modify_permissions(
 		Ok(method) => method,
 		Err(error) => return fail(CodedError::from(error)),
 	};
-	let target = match target {
-		0 => None,
-		handle => match account(handle) {
-			Some(target) => Some(target),
-			None => return 0,
-		},
+	let Some(target) = optional_account(target) else {
+		return 0;
 	};
 
 	store_operation(pure::op_modify_permissions(principal, permissions, method, target))
@@ -919,6 +1036,22 @@ pub extern "C" fn keeta_builder_as_opening(handle: i32) -> i32 {
 pub extern "C" fn keeta_builder_with_date(handle: i32, unix_millis: i64) -> i32 {
 	rebox_builder(handle, |builder| match pure::block_time(unix_millis) {
 		Ok(date) => Some(builder.with_date(date)),
+		Err(error) => {
+			fail(error);
+			None
+		}
+	})
+}
+
+/// Set the block purpose (`generic`/`fee`).
+#[no_mangle]
+pub unsafe extern "C" fn keeta_builder_with_purpose(handle: i32, ptr: i32, len: i32) -> i32 {
+	let Some(purpose) = string_in(ptr, len) else {
+		return rebox_builder(handle, |_| None);
+	};
+
+	rebox_builder(handle, |builder| match pure::block_purpose(&purpose) {
+		Ok(purpose) => Some(builder.with_purpose(purpose)),
 		Err(error) => {
 			fail(error);
 			None
@@ -1037,6 +1170,26 @@ pub unsafe extern "C" fn keeta_vote_staple_build(
 	};
 
 	bytes_result(pure::vote_staple_build(blocks, votes, moment_millis))
+}
+
+/// The fee-paying `SEND` operation `vote` requires, denominated in
+/// `base_token`, with optional `priority` token preference (a buffer of
+/// little-endian `i32` account handles).
+///
+/// # Safety
+/// See [`bytes_in`]; `priority` must be a `(ptr, len)` pair of `i32` handles.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_fee_send(vote: i32, base_token: i32, priority_ptr: i32, priority_len: i32) -> i32 {
+	let (Some(vote), Some(base_token), Some(priority)) =
+		(resolve::<Vote>(vote), account(base_token), account_handles(priority_ptr, priority_len))
+	else {
+		return 0;
+	};
+
+	match pure::fee_send(&vote, &base_token, &priority) {
+		Some(operation) => store_operation(operation),
+		None => 0,
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@
 		"lint": "eslint"
 	},
 	"dependencies": {
-		"@keetanetwork/keetanet-node": "0.18.1",
+		"@keetanetwork/keetanet-node": "0.18.2",
 		"typia": "9.3.1"
 	},
 	"devDependencies": {

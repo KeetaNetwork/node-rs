@@ -103,6 +103,7 @@ build-wasm:
 WASI_CRATE := keetanetwork-client-wasi
 WASI_P1_WASM := target/wasm32-wasip1/debug/keetanetwork_client_wasi.wasm
 WASI_P2_WASM := target/wasm32-wasip2/debug/keetanetwork_client_wasi.wasm
+WASI_P1_WASM_RELEASE := target/wasm32-wasip1/release/keetanetwork_client_wasi.wasm
 
 build-wasi:
 	cargo build -p $(WASI_CRATE) --target wasm32-wasip1 --features p1
@@ -139,8 +140,10 @@ test-wasm: node-harness build-wasm
 	cd $(WASM_TEST_DIR) && npx playwright install --with-deps chromium
 	cd $(WASM_TEST_DIR) && npx playwright test
 
-test-wasi: build-wasi node-harness
-	WASI_P1_MODULE=$(CURDIR)/$(WASI_P1_WASM) \
+test-wasi: node-harness
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip1 --features p1 --release
+	cargo build -p $(WASI_CRATE) --target wasm32-wasip2 --features p2
+	WASI_P1_MODULE=$(CURDIR)/$(WASI_P1_WASM_RELEASE) \
 	WASI_P2_COMPONENT=$(CURDIR)/$(WASI_P2_WASM) \
 		cargo test --manifest-path $(WASI_CRATE)/host-tests/Cargo.toml -- --include-ignored
 
@@ -293,8 +296,8 @@ help:
 	@echo "  make test           - Run tests (includes all crypto feature combinations)"
 	@echo "  make test-feat      - Run crypto crate tests with specific features"
 	@echo "  make test-all       - Run all tests including feature tests"
-	@echo "  make build-wasi     - Build the WASI P1 core module and P2 component"
-	@echo "  make test-wasi      - Build both WASI artifacts and run the wasmtime host smoke tests (P1 flat ABI + P2 networked over wasi:http)"
+	@echo "  make build-wasi     - Build the WASI P1 core module and P2 component (debug)"
+	@echo "  make test-wasi      - Build WASI artifacts (release P1) and run the host tests (P1 flat ABI + P2 networked over wasi:http)"
 	@echo "  make audit          - Run security audit"
 	@echo "  make docs           - Generate and open documentation"
 	@echo "  make coverage       - Generate code coverage report (HTML + LCOV)"

@@ -18,6 +18,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <chicory.version>1.7.5</chicory.version>
         <jackson.version>2.17.2</jackson.version>
+        <!-- Default entrypoint for `exec:java`; override with -Dexec.mainClass. -->
+        <exec.mainClass>network.keeta.wasi.harness.MultisigSigner</exec.mainClass>
     </properties>
 
     <dependencies>
@@ -100,7 +102,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <configuration>
-                    <mainClass>network.keeta.wasi.example.MultisigSigner</mainClass>
+                    <mainClass>${exec.mainClass}</mainClass>
                 </configuration>
             </plugin>
         </plugins>
