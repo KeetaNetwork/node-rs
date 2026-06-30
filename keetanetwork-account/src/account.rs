@@ -5404,6 +5404,20 @@ mod tests {
 	}
 
 	#[test]
+	fn test_identifier_key_from_hex() -> Result<(), AccountError> {
+		let raw = [9u8; 32];
+		let key = IdentifierKey::from_hex(hex::encode(raw))?;
+		assert_eq!(key.to_uncompressed_bytes(), raw.to_vec());
+
+		// Non-hex input and wrong-length payloads both reject.
+		for invalid in [String::from("zz"), hex::encode([0u8; 16])] {
+			assert!(matches!(IdentifierKey::from_hex(invalid), Err(AccountError::InvalidConstruction)));
+		}
+
+		Ok(())
+	}
+
+	#[test]
 	fn test_specific_public_key_string_methods() -> Result<(), AccountError> {
 		macro_rules! test_public_key_parsing {
 			($key_type:ident, $test_data:expr, $expected_type:expr) => {
