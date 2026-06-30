@@ -1,4 +1,4 @@
-//! Account algorithm mapping, construction, and the offline account primitive
+//! Account algorithm mapping, construction, and the account primitive
 //! operations shared across every binding boundary.
 
 use alloc::format;

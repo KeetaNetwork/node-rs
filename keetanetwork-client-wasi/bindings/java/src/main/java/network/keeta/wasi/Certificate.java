@@ -42,6 +42,39 @@ public final class Certificate implements AutoCloseable {
 		return result == 1;
 	}
 
+	/** The subject distinguished name as an RFC 4514 string. */
+	public String subject() {
+		return net.takeString(net.handle("keeta_certificate_subject", handle()));
+	}
+
+	/** The issuer distinguished name as an RFC 4514 string. */
+	public String issuer() {
+		return net.takeString(net.handle("keeta_certificate_issuer", handle()));
+	}
+
+	/** The serial number as a base-10 string. */
+	public String serial() {
+		return net.takeString(net.handle("keeta_certificate_serial", handle()));
+	}
+
+	/** The start of the validity window, in Unix seconds. */
+	public long notBefore() {
+		return net.call("keeta_certificate_not_before", handle());
+	}
+
+	/** The end of the validity window, in Unix seconds. */
+	public long notAfter() {
+		return net.call("keeta_certificate_not_after", handle());
+	}
+
+	/**
+	 * The subject public key, type-prefixed and hex-encoded to match
+	 * {@link Account#publicKey()}, so a subject can be matched to an account.
+	 */
+	public String subjectPublicKey() {
+		return net.takeString(net.handle("keeta_certificate_subject_public_key", handle()));
+	}
+
 	@Override
 	public void close() {
 		if (handle != 0) {

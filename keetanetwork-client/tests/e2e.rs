@@ -1655,7 +1655,7 @@ async fn test_user_client_swap_request_round_trip_builds() -> Result<(), Box<dyn
 }
 
 /// A distinct operating account resolves reads against itself while the bound
-/// signer still pays fees, and the offline constructors bind a signer correctly.
+/// signer still pays fees, and the constructors bind a signer correctly.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_user_client_account_split_and_transmit() -> Result<(), Box<dyn core::error::Error>> {
 	let fixture = fixture().await;

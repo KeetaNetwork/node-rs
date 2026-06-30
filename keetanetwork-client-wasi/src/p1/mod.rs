@@ -941,7 +941,7 @@ pub extern "C" fn keeta_op_free(handle: i32) {
 }
 
 // ---------------------------------------------------------------------------
-// Offline block builder
+// Block builder
 // ---------------------------------------------------------------------------
 
 /// Create an empty block builder; returns a builder handle.
@@ -1258,6 +1258,66 @@ pub extern "C" fn keeta_certificate_valid_at(handle: i32, unix_millis: i64) -> i
 			fail(error);
 			-1
 		}
+	}
+}
+
+/// The subject distinguished name of a certificate handle; returns a bytes
+/// handle (`0` on an unknown handle).
+#[no_mangle]
+pub extern "C" fn keeta_certificate_subject(handle: i32) -> i32 {
+	match certificate(handle) {
+		Some(certificate) => string_result(Ok(pure::certificate_subject(&certificate))),
+		None => 0,
+	}
+}
+
+/// The issuer distinguished name of a certificate handle; returns a bytes handle
+/// (`0` on an unknown handle).
+#[no_mangle]
+pub extern "C" fn keeta_certificate_issuer(handle: i32) -> i32 {
+	match certificate(handle) {
+		Some(certificate) => string_result(Ok(pure::certificate_issuer(&certificate))),
+		None => 0,
+	}
+}
+
+/// The base-10 serial number of a certificate handle; returns a bytes handle
+/// (`0` on an unknown handle).
+#[no_mangle]
+pub extern "C" fn keeta_certificate_serial(handle: i32) -> i32 {
+	match certificate(handle) {
+		Some(certificate) => string_result(Ok(pure::certificate_serial(&certificate))),
+		None => 0,
+	}
+}
+
+/// The start of a certificate handle's validity window as Unix seconds (`0` on
+/// an unknown handle).
+#[no_mangle]
+pub extern "C" fn keeta_certificate_not_before(handle: i32) -> i64 {
+	match certificate(handle) {
+		Some(certificate) => pure::certificate_not_before(&certificate),
+		None => 0,
+	}
+}
+
+/// The end of a certificate handle's validity window as Unix seconds (`0` on an
+/// unknown handle).
+#[no_mangle]
+pub extern "C" fn keeta_certificate_not_after(handle: i32) -> i64 {
+	match certificate(handle) {
+		Some(certificate) => pure::certificate_not_after(&certificate),
+		None => 0,
+	}
+}
+
+/// The type-prefixed, hex-encoded subject public key of a certificate handle;
+/// returns a bytes handle (`0` on error; see the last error).
+#[no_mangle]
+pub extern "C" fn keeta_certificate_subject_public_key(handle: i32) -> i32 {
+	match certificate(handle) {
+		Some(certificate) => string_result(pure::certificate_subject_public_key(&certificate)),
+		None => 0,
 	}
 }
 

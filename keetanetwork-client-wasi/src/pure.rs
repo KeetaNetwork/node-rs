@@ -1,5 +1,5 @@
 //! Shared, target-agnostic operations behind both WASI ABIs (`p1` flat ABI and
-//! `p2` component). Every function is pure/offline.
+//! `p2` component). Every function is pure.
 
 use core::str::FromStr;
 use std::sync::Arc;
@@ -30,7 +30,9 @@ pub use keetanetwork_bindings::account::{
 /// `keetanetwork-bindings` crate, re-exported so the WASI ABIs call them as
 /// `pure::*`.
 pub use keetanetwork_bindings::x509::{
-	certificate_der, certificate_from_der, certificate_from_pem, certificate_pem, certificate_valid_at,
+	certificate_der, certificate_from_der, certificate_from_pem, certificate_issuer, certificate_not_after,
+	certificate_not_before, certificate_pem, certificate_serial, certificate_subject, certificate_subject_public_key,
+	certificate_valid_at,
 };
 
 /// Derive an identifier account (`network`/`token`/`storage`) relative to
@@ -162,7 +164,7 @@ pub fn vote_staple_build(blocks: Vec<Block>, votes: Vec<Vote>, moment_millis: i6
 }
 
 // ---------------------------------------------------------------------------
-// Offline block building (the `p1` host-transmit path). The networked
+// Block building (the `p1` host-transmit path). The networked
 // `TransactionBuilder` lives in the `p2` component.
 // ---------------------------------------------------------------------------
 

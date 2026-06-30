@@ -149,7 +149,7 @@ path = "keetanetwork-crypto"
 default-features = false
 
 [workspace.dependencies.keetanetwork-asn1]
-version = "0.2.2"
+version = "0.2.3"
 path = "keetanetwork-asn1"
 default-features = false
 
@@ -184,8 +184,13 @@ path = "keetanetwork-client"
 default-features = false
 
 [workspace.dependencies.keetanetwork-bindings]
-version = "0.2.1"
+version = "0.2.2"
 path = "keetanetwork-bindings"
+default-features = false
+
+[workspace.dependencies.keetanetwork-client-wasi]
+version = "0.2.2"
+path = "keetanetwork-client-wasi"
 default-features = false
 
 [profile.dev]

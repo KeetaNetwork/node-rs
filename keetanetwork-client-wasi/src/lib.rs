@@ -3,7 +3,7 @@
 //!
 //! - **`p2`** ([`wasm32-wasip2`]): a `wit-bindgen` component, networked over
 //!   `wasi:http` plus the pure surface.
-//! - **`p1`** ([`wasm32-wasip1`]): a core module, pure/offline only over a flat
+//! - **`p1`** ([`wasm32-wasip1`]): a core module, pure only over a flat
 //!   ABI (P1 has no outbound `connect`, so the host dials).
 //!
 //! Exactly one of `p1`/`p2` is enabled per wasi build; off a wasi target both

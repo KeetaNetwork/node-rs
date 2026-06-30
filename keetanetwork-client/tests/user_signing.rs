@@ -1,4 +1,4 @@
-//! Offline integration tests for `UserClient` signing semantics and the
+//! Integration tests for `UserClient` signing semantics and the
 //! builder's empty-block elision, exercised through public interfaces only.
 
 use std::sync::Arc;

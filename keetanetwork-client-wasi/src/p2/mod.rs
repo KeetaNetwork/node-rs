@@ -192,6 +192,30 @@ impl GuestCertificate for CertificateResource {
 			.and_then(|millis| pure::certificate_valid_at(&self.certificate, millis).ok())
 			.unwrap_or(false)
 	}
+
+	fn subject(&self) -> String {
+		pure::certificate_subject(&self.certificate)
+	}
+
+	fn issuer(&self) -> String {
+		pure::certificate_issuer(&self.certificate)
+	}
+
+	fn serial(&self) -> String {
+		pure::certificate_serial(&self.certificate)
+	}
+
+	fn not_before(&self) -> i64 {
+		pure::certificate_not_before(&self.certificate)
+	}
+
+	fn not_after(&self) -> i64 {
+		pure::certificate_not_after(&self.certificate)
+	}
+
+	fn subject_public_key(&self) -> Result<String, CodedError> {
+		Ok(pure::certificate_subject_public_key(&self.certificate)?)
+	}
 }
 
 /// Parse an identifier kind for local derivation. Unlike the shared parser
@@ -822,7 +846,7 @@ impl GuestTransaction for TransactionState {
 	}
 }
 
-/// A low-level, offline block assembler. `BlockBuilder` mutators consume `self`,
+/// A low-level, block assembler. `BlockBuilder` mutators consume `self`,
 /// so the staged builder is held in an `Option` and threaded through each step;
 /// `build-and-sign` takes it out and consumes it.
 struct BuilderState {

@@ -1,5 +1,5 @@
 //! X.509 logic shared across binding boundaries: certificate-error reduction,
-//! per-key-type dispatch for subject keys and signing, and the offline base
+//! per-key-type dispatch for subject keys and signing, and the base
 //! certificate primitive operations.
 
 use alloc::string::{String, ToString};
@@ -7,11 +7,14 @@ use alloc::vec::Vec;
 use core::str::FromStr;
 
 use chrono::{DateTime, Utc};
-use keetanetwork_account::GenericAccount;
+use keetanetwork_account::{GenericAccount, KeyPairType};
 use keetanetwork_asn1::SubjectPublicKeyInfo;
+use keetanetwork_x509::asn1::ObjectIdentifier;
 use keetanetwork_x509::builder::CertificateBuilder;
 use keetanetwork_x509::certificates::Certificate;
 use keetanetwork_x509::error::CertificateError;
+use keetanetwork_x509::{oids, AlgorithmIdentifierOwned};
+use num_bigint::BigUint;
 
 use crate::error::CodedError;
 
@@ -94,13 +97,95 @@ pub fn certificate_valid_at(certificate: &Certificate, unix_millis: i64) -> Resu
 	certificate.is_valid_at(moment).map_err(CodedError::from)
 }
 
+/// The subject distinguished name of `certificate` as an RFC 4514 string.
+pub fn certificate_subject(certificate: &Certificate) -> String {
+	certificate.to_subject()
+}
+
+/// The issuer distinguished name of `certificate` as an RFC 4514 string.
+pub fn certificate_issuer(certificate: &Certificate) -> String {
+	certificate.to_issuer()
+}
+
+/// The serial number of `certificate` as a base-10 string, matching the
+/// TypeScript `bigint` serial rather than a hex form.
+pub fn certificate_serial(certificate: &Certificate) -> String {
+	BigUint::from_bytes_be(certificate.to_serial_number().as_bytes()).to_str_radix(10)
+}
+
+/// The start of the validity window of `certificate` as Unix seconds.
+pub fn certificate_not_before(certificate: &Certificate) -> i64 {
+	certificate.to_not_before().timestamp()
+}
+
+/// The end of the validity window of `certificate` as Unix seconds.
+pub fn certificate_not_after(certificate: &Certificate) -> i64 {
+	certificate.to_not_after().timestamp()
+}
+
+/// The subject public key of `certificate` as a type-prefixed, hex-encoded key
+/// identical to an account's `public_key`, so a caller can match a certificate's
+/// subject to an account.
+pub fn certificate_subject_public_key(certificate: &Certificate) -> Result<String, CodedError> {
+	let spki = &certificate.tbs_certificate.subject_public_key_info;
+	let key_type = subject_key_pair_type(&spki.algorithm)?;
+	let raw = spki.subject_public_key.raw_bytes();
+
+	let mut bytes = Vec::with_capacity(1 + raw.len());
+	bytes.push(key_type as u8);
+	bytes.extend_from_slice(raw);
+
+	Ok(hex::encode(bytes))
+}
+
+/// Map a SubjectPublicKeyInfo algorithm (and, for ECDSA, its curve parameter) to
+/// the Keeta key-pair type that prefixes a type-tagged key.
+fn subject_key_pair_type(algorithm: &AlgorithmIdentifierOwned) -> Result<KeyPairType, CodedError> {
+	let oid = algorithm.oid.to_string();
+
+	if oid == oids::ED25519 {
+		Ok(KeyPairType::ED25519)
+	} else if oid == oids::SECP256K1 {
+		Ok(KeyPairType::ECDSASECP256K1)
+	} else if oid == oids::SECP256R1 {
+		Ok(KeyPairType::ECDSASECP256R1)
+	} else if oid == oids::EC_PUBLIC_KEY {
+		subject_curve_key_pair_type(algorithm)
+	} else {
+		Err(CodedError::new(UNSUPPORTED_KEY_TYPE, "unsupported certificate public-key algorithm"))
+	}
+}
+
+/// Resolve the ECDSA curve carried in the algorithm parameters to its key-pair
+/// type.
+fn subject_curve_key_pair_type(algorithm: &AlgorithmIdentifierOwned) -> Result<KeyPairType, CodedError> {
+	let curve = algorithm
+		.parameters
+		.as_ref()
+		.ok_or_else(|| CodedError::new(UNSUPPORTED_KEY_TYPE, "ecdsa public key is missing a curve parameter"))?
+		.decode_as::<ObjectIdentifier>()
+		.map_err(|_| CodedError::new(UNSUPPORTED_KEY_TYPE, "unable to decode ecdsa curve parameter"))?
+		.to_string();
+
+	if curve == oids::SECP256K1 {
+		Ok(KeyPairType::ECDSASECP256K1)
+	} else if curve == oids::SECP256R1 {
+		Ok(KeyPairType::ECDSASECP256R1)
+	} else {
+		Err(CodedError::new(UNSUPPORTED_KEY_TYPE, "unsupported ecdsa curve"))
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use std::time::{SystemTime, UNIX_EPOCH};
 
-	use keetanetwork_x509::doc_utils::create_test_certificate;
+	use keetanetwork_x509::doc_utils::{create_test_certificate, create_test_keys};
+	use keetanetwork_x509::utils::create_dn;
+	use keetanetwork_x509::SerialNumber;
 
 	use super::*;
+	use crate::account::{account_from_seed, account_public_key};
 
 	fn now_millis() -> i64 {
 		SystemTime::now()
@@ -152,5 +237,53 @@ mod tests {
 		let certificate = create_test_certificate("Test CA", None);
 		let error = certificate_valid_at(&certificate, i64::MAX).expect_err("out-of-range moment must fail");
 		assert_eq!(error.code, INVALID_DATE);
+	}
+
+	#[test]
+	fn reports_a_non_empty_subject_and_issuer() {
+		let certificate = create_test_certificate("Test CA", None);
+		assert!(!certificate_subject(&certificate).is_empty());
+		assert!(!certificate_issuer(&certificate).is_empty());
+	}
+
+	#[test]
+	fn reports_a_decimal_serial() {
+		let certificate = create_test_certificate("Test CA", None);
+		assert!(certificate_serial(&certificate)
+			.chars()
+			.all(|character| character.is_ascii_digit()));
+	}
+
+	#[test]
+	fn orders_the_validity_window() {
+		let certificate = create_test_certificate("Test CA", None);
+		assert!(certificate_not_before(&certificate) < certificate_not_after(&certificate));
+	}
+
+	#[test]
+	fn subject_public_key_matches_an_ed25519_account() {
+		let (_, _, account) = create_test_keys(None);
+		let certificate = create_test_certificate("Test CA", None);
+		let expected = hex::encode(account.to_public_key_with_type());
+		assert_eq!(certificate_subject_public_key(&certificate).unwrap(), expected);
+	}
+
+	#[test]
+	fn subject_public_key_matches_a_secp256k1_account() {
+		let subject = account_from_seed(&"11".repeat(32), 0, "ecdsa_secp256k1").unwrap();
+		let issuer = account_from_seed(&"22".repeat(32), 0, "ecdsa_secp256k1").unwrap();
+		let dn = create_dn(&[(oids::CN, "Subject")]).unwrap();
+		let certificate = build_signed(
+			&CertificateBuilder::new()
+				.with_subject_public_key(subject_public_key(&subject).unwrap())
+				.with_subject_dn(dn.clone())
+				.with_issuer_dn(dn)
+				.with_serial_number(SerialNumber::from(7u64))
+				.with_validity_days(365),
+			&issuer,
+		)
+		.unwrap();
+
+		assert_eq!(certificate_subject_public_key(&certificate).unwrap(), account_public_key(&subject));
 	}
 }
