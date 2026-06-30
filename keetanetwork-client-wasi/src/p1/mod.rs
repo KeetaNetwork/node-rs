@@ -1291,23 +1291,23 @@ pub extern "C" fn keeta_certificate_serial(handle: i32) -> i32 {
 	}
 }
 
-/// The start of a certificate handle's validity window as Unix seconds (`0` on
-/// an unknown handle).
+/// The start of a certificate handle's validity window as Unix seconds
+/// (`i64::MIN` on an unknown handle; see the last error).
 #[no_mangle]
 pub extern "C" fn keeta_certificate_not_before(handle: i32) -> i64 {
 	match certificate(handle) {
 		Some(certificate) => pure::certificate_not_before(&certificate),
-		None => 0,
+		None => i64::MIN,
 	}
 }
 
-/// The end of a certificate handle's validity window as Unix seconds (`0` on an
-/// unknown handle).
+/// The end of a certificate handle's validity window as Unix seconds
+/// (`i64::MIN` on an unknown handle; see the last error).
 #[no_mangle]
 pub extern "C" fn keeta_certificate_not_after(handle: i32) -> i64 {
 	match certificate(handle) {
 		Some(certificate) => pure::certificate_not_after(&certificate),
-		None => 0,
+		None => i64::MIN,
 	}
 }
 
