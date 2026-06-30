@@ -3,6 +3,7 @@
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
+use keetanetwork_account::AccountPublicKey;
 use keetanetwork_crypto::hash::hash_default;
 
 use crate::error::BlockError;

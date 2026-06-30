@@ -18,7 +18,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use hex::FromHex;
-use keetanetwork_account::{GenericAccount, KeyPairType};
+use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPairType};
 use keetanetwork_asn1::vote as transport;
 use keetanetwork_block::{AccountRef, Amount, Send};
 use num_bigint::Sign;

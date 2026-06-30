@@ -4,7 +4,7 @@ use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 
 use hex::FromHex;
-use keetanetwork_account::{AccountError, GenericAccount};
+use keetanetwork_account::{AccountError, AccountPublicKey, GenericAccount};
 
 use crate::error::BlockError;
 
@@ -55,7 +55,7 @@ where
 mod tests {
 	use super::*;
 	use keetanetwork_account::account::AccountSigner;
-	use keetanetwork_account::{Account, Accountable, KeyED25519, KeyPairType, Keyable};
+	use keetanetwork_account::{Account, AccountPublicKey, Accountable, KeyED25519, KeyPairType, Keyable};
 	use keetanetwork_crypto::prelude::IntoSecret;
 
 	fn test_account(seed_byte: u8) -> GenericAccount {

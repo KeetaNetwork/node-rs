@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use keetanetwork_account::KeyPairType;
+use keetanetwork_account::{AccountPublicKey, KeyPairType};
 use num_bigint::BigInt;
 
 use crate::account_util::{accounts_equal, unique_account_count};

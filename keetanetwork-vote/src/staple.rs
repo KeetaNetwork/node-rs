@@ -30,6 +30,7 @@ use alloc::vec::Vec;
 use miniz_oxide::deflate::compress_to_vec_zlib;
 use miniz_oxide::inflate::decompress_to_vec_zlib;
 
+use keetanetwork_account::AccountPublicKey;
 use keetanetwork_asn1::vote as transport;
 use keetanetwork_block::{Block, BlockHash, BlockTime};
 use keetanetwork_crypto::verify::Verifiable;

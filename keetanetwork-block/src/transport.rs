@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use keetanetwork_account::KeyPairType;
+use keetanetwork_account::{AccountPublicKey, KeyPairType};
 use keetanetwork_asn1::block as asn1;
 use keetanetwork_crypto::hash::BlockHash;
 use num_bigint::BigInt;

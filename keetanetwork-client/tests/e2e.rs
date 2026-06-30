@@ -9,7 +9,7 @@ use core::str::FromStr;
 use core::time::Duration;
 use std::sync::Arc;
 
-use keetanetwork_account::{GenericAccount, KeyPairType};
+use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPairType};
 use keetanetwork_block::testing::generate_ed25519_ref;
 use keetanetwork_block::{AccountRef, AdjustMethod, Amount, Block, Hashable, Operation, SetInfo};
 use keetanetwork_client::{

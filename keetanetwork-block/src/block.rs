@@ -4,7 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use keetanetwork_account::account::AccountSigner;
-use keetanetwork_account::KeyPairType;
+use keetanetwork_account::{AccountPublicKey, KeyPairType};
 use keetanetwork_crypto::hash::{hash_default, BlockHash, Hashable};
 use keetanetwork_crypto::verify::Verifiable;
 use num_bigint::BigInt;

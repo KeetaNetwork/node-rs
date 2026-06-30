@@ -1,5 +1,7 @@
 //! SET_REP operation: delegate voting weight to a representative.
 
+use keetanetwork_account::AccountPublicKey;
+
 use crate::error::BlockError;
 use crate::signer::AccountRef;
 
