@@ -1,12 +1,12 @@
 [package]
 name = "keetanetwork-client-wasi"
-version = "0.2.1"
+version = "0.2.2"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "WASI bindings for the KeetaNet client: a P2 component (networked over wasi:http) and a P1 core module (pure/offline), selected by feature"
+description = "WASI bindings for the KeetaNet client: a P2 component (networked over wasi:http) and a P1 core module (pure), selected by feature"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

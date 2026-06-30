@@ -261,7 +261,7 @@ impl TransactionBuilder {
 	}
 
 	/// Seed the primary account's first block `previous`, skipping its ledger
-	/// head lookup. Useful for offline building or chaining after a
+	/// head lookup. Useful for building or chaining after a
 	/// not-yet-published block.
 	pub fn with_previous(&mut self, previous: BlockHash) -> &mut Self {
 		self.initial_previous = Some(previous);

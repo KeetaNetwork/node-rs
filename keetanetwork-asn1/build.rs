@@ -126,7 +126,14 @@ fn generate_schema() {
 	}
 
 	ensure_single_newline_ending(&mut schema_content);
-	fs::write(&dest_path, schema_content).expect("Failed to write iso20022.asn");
+
+	// Only write when the generated schema actually differs.
+	let unchanged = fs::read_to_string(&dest_path)
+		.map(|existing| existing == schema_content)
+		.unwrap_or(false);
+	if !unchanged {
+		fs::write(&dest_path, schema_content).expect("Failed to write iso20022.asn");
+	}
 }
 
 fn generate_primitive_types(oids: &Value, schema_content: &mut String) {
