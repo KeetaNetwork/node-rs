@@ -2,6 +2,7 @@
 
 use alloc::string::String;
 
+use keetanetwork_account::AccountPublicKey;
 use num_bigint::BigInt;
 
 use crate::error::{BlockError, InfoField};

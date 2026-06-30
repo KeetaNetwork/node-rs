@@ -130,7 +130,7 @@
 //! ### Multi-Algorithm Support
 //!
 //! ```rust
-//! use keetanetwork_account::{GenericAccount, KeyPair, KeyPairType};
+//! use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPair, KeyPairType};
 //!
 //! // Parse accounts from address strings (using valid test addresses)
 //! # // cspell:disable-next-line
@@ -347,6 +347,17 @@ pub trait AccountVerifier {
 	) -> Result<(), AccountError> {
 		Err(AccountError::NoIdentifierVerify)
 	}
+}
+
+/// Exposes an account's public identity polymorphically over the statically
+/// typed [`Account`] and the runtime-typed [`GenericAccount`].
+pub trait AccountPublicKey {
+	/// The public key bytes prefixed with the key type byte:
+	/// `[key_type_byte || raw_public_key]`.
+	fn to_public_key_with_type(&self) -> Vec<u8>;
+
+	/// The key pair type (algorithm) backing this account.
+	fn to_keypair_type(&self) -> KeyPairType;
 }
 
 /// Trait for types that can provide raw public key bytes.
@@ -1188,6 +1199,31 @@ pub enum GenericAccount {
 	Multisig(Account<KeyMULTISIG>),
 }
 
+// Infallible erasure: a statically typed account maps to exactly one variant,
+// so callers can pass an `Account<K>` wherever a `GenericAccount` is expected
+// via `.into()` without branching on the algorithm.
+macro_rules! generic_account_from {
+	($($key:ty => $variant:ident),+ $(,)?) => {
+		$(
+			impl From<Account<$key>> for GenericAccount {
+				fn from(account: Account<$key>) -> Self {
+					GenericAccount::$variant(account)
+				}
+			}
+		)+
+	};
+}
+
+generic_account_from! {
+	KeyECDSASECP256K1 => EcdsaSecp256k1,
+	KeyECDSASECP256R1 => EcdsaSecp256r1,
+	KeyED25519 => Ed25519,
+	KeyNETWORK => Network,
+	KeyTOKEN => Token,
+	KeySTORAGE => Storage,
+	KeyMULTISIG => Multisig,
+}
+
 impl TryFrom<AnyPrivateKey> for GenericAccount {
 	type Error = AccountError;
 
@@ -1423,6 +1459,25 @@ impl<KEYTYPE: KeyPair> HasKeypairType for Account<KEYTYPE> {
 	const KEYPAIR_TYPE: KeyPairType = KEYTYPE::KEY_PAIR_TYPE;
 }
 
+impl<KEYTYPE> AccountPublicKey for Account<KEYTYPE>
+where
+	KEYTYPE: KeyPair,
+{
+	fn to_public_key_with_type(&self) -> Vec<u8> {
+		let public_key = self.keypair.to_public_key();
+		let raw_key = public_key.as_ref();
+
+		let mut bytes = Vec::with_capacity(1 + raw_key.len());
+		bytes.push(self.to_keypair_type() as u8);
+		bytes.extend_from_slice(raw_key);
+		bytes
+	}
+
+	fn to_keypair_type(&self) -> KeyPairType {
+		self.keypair.to_keypair_type()
+	}
+}
+
 impl<KEYTYPE> TryFrom<Accountable<KEYTYPE>> for Account<KEYTYPE>
 where
 	KEYTYPE: KeyPair,
@@ -1449,22 +1504,6 @@ impl<KEYTYPE> Account<KEYTYPE>
 where
 	KEYTYPE: KeyPair,
 {
-	/// Returns the key pair type for this instance.
-	pub fn to_keypair_type(&self) -> KeyPairType {
-		self.keypair.to_keypair_type()
-	}
-
-	/// Returns the public key bytes prefixed with the key type byte.
-	pub fn to_public_key_with_type(&self) -> Vec<u8> {
-		let public_key = self.keypair.to_public_key();
-		let raw_key = public_key.as_ref();
-
-		let mut bytes = Vec::with_capacity(1 + raw_key.len());
-		bytes.push(self.to_keypair_type() as u8);
-		bytes.extend_from_slice(raw_key);
-		bytes
-	}
-
 	/// Creates a new account containing only the public key.
 	///
 	/// This method creates a copy of the account that contains only the public key
@@ -2694,19 +2733,6 @@ macro_rules! delegate_to_variants {
 }
 
 impl GenericAccount {
-	/// Returns the key pair type for this instance.
-	pub fn to_keypair_type(&self) -> KeyPairType {
-		delegate_to_variants!(self, to_keypair_type)
-	}
-
-	/// Returns the public key bytes prefixed with the key type byte.
-	///
-	/// This is the wire representation used for accounts in block
-	/// serialization: `[key_type_byte || raw_public_key]`.
-	pub fn to_public_key_with_type(&self) -> Vec<u8> {
-		delegate_to_variants!(self, to_public_key_with_type)
-	}
-
 	/// Get the account's opening hash: the hash of its raw public key
 	/// bytes (without the key type byte).
 	pub fn to_opening_hash(&self) -> BlockHash {
@@ -2724,16 +2750,6 @@ impl GenericAccount {
 		operation_index: u32,
 	) -> Result<GenericAccount, AccountError> {
 		delegate_to_variants!(self, generate_identifier, identifier_type, block_hash, operation_index)
-	}
-
-	/// Verify `signature` over `message` using the account's public key.
-	pub fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
-		&self,
-		message: T,
-		signature: S,
-		options: Option<SigningOptions>,
-	) -> Result<(), AccountError> {
-		delegate_to_variants!(self, verify, message, signature, options)
 	}
 
 	/// Encrypt `plaintext` to the account's public key.
@@ -2768,6 +2784,27 @@ impl AccountSigner for GenericAccount {
 
 	fn signature_size(&self) -> usize {
 		delegate_to_variants!(self, signature_size)
+	}
+}
+
+impl AccountVerifier for GenericAccount {
+	fn verify<T: AsRef<[u8]>, S: AsRef<[u8]>>(
+		&self,
+		message: T,
+		signature: S,
+		options: Option<SigningOptions>,
+	) -> Result<(), AccountError> {
+		delegate_to_variants!(self, verify, message, signature, options)
+	}
+}
+
+impl AccountPublicKey for GenericAccount {
+	fn to_public_key_with_type(&self) -> Vec<u8> {
+		delegate_to_variants!(self, to_public_key_with_type)
+	}
+
+	fn to_keypair_type(&self) -> KeyPairType {
+		delegate_to_variants!(self, to_keypair_type)
 	}
 }
 
@@ -5362,6 +5399,20 @@ mod tests {
 		test_identifier_methods!(KeyTOKEN);
 		test_identifier_methods!(KeySTORAGE);
 		test_identifier_methods!(KeyMULTISIG);
+
+		Ok(())
+	}
+
+	#[test]
+	fn test_identifier_key_from_hex() -> Result<(), AccountError> {
+		let raw = [9u8; 32];
+		let key = IdentifierKey::from_hex(hex::encode(raw))?;
+		assert_eq!(key.to_uncompressed_bytes(), raw.to_vec());
+
+		// Non-hex input and wrong-length payloads both reject.
+		for invalid in [String::from("zz"), hex::encode([0u8; 16])] {
+			assert!(matches!(IdentifierKey::from_hex(invalid), Err(AccountError::InvalidConstruction)));
+		}
 
 		Ok(())
 	}

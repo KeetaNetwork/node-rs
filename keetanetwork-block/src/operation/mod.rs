@@ -27,7 +27,7 @@ pub use set_rep::SetRep;
 pub use token_admin_modify_balance::TokenAdminModifyBalance;
 pub use token_admin_supply::TokenAdminSupply;
 
-use keetanetwork_account::{GenericAccount, KeyPairType};
+use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPairType};
 use keetanetwork_crypto::hash::BlockHash;
 use num_bigint::BigInt;
 

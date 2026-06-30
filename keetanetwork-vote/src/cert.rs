@@ -12,7 +12,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use hex::FromHex;
-use keetanetwork_account::{GenericAccount, KeyPairType};
+use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPairType};
 use keetanetwork_asn1::vote as transport;
 use keetanetwork_block::{AccountRef, BlockHash};
 use num_bigint::BigInt;

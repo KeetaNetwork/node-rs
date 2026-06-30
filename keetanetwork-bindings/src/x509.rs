@@ -184,6 +184,8 @@ mod tests {
 	use keetanetwork_x509::utils::create_dn;
 	use keetanetwork_x509::SerialNumber;
 
+	use keetanetwork_account::AccountPublicKey;
+
 	use super::*;
 	use crate::account::{account_from_seed, account_public_key};
 

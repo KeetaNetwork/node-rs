@@ -2,7 +2,7 @@
 use std::string::ToString;
 
 use hex::{FromHex, ToHex};
-use keetanetwork_account::{Account, AccountError, GenericAccount, KeyPairType};
+use keetanetwork_account::{Account, AccountError, AccountPublicKey, GenericAccount, KeyPairType};
 use keetanetwork_account::{Accountable, Keyable};
 use keetanetwork_account::{KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519};
 use keetanetwork_account::{KeyMULTISIG, KeyNETWORK, KeySTORAGE, KeyTOKEN};

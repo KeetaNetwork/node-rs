@@ -3,7 +3,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use keetanetwork_account::GenericAccount;
+use keetanetwork_account::{AccountPublicKey, GenericAccount};
 use num_bigint::BigInt;
 use num_traits::Zero;
 

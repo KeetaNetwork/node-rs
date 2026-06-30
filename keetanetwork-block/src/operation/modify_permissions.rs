@@ -4,6 +4,8 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 
+use keetanetwork_account::AccountPublicKey;
+
 use crate::error::BlockError;
 use crate::permissions::{BaseFlag, GroupKind, Permissions};
 use crate::signer::AccountRef;

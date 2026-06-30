@@ -1,6 +1,6 @@
 //! Integration tests for identifier account generation functionality.
 
-use keetanetwork_account::{Account, AccountError, GenericAccount, KeyPair, KeyPairType, KeyTOKEN};
+use keetanetwork_account::{Account, AccountError, AccountPublicKey, GenericAccount, KeyPair, KeyPairType, KeyTOKEN};
 use keetanetwork_account::{Accountable, KeyECDSASECP256K1, KeyNETWORK, KeySTORAGE, Keyable};
 use keetanetwork_crypto::hash::BlockHash;
 use keetanetwork_crypto::IntoSecret;

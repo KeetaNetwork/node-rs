@@ -7,9 +7,10 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::str::FromStr;
 
-use keetanetwork_account::account::AccountSigner;
+use keetanetwork_account::account::{AccountSigner, AccountVerifier};
 use keetanetwork_account::{
-	Account, Accountable, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519, KeyPairType, Keyable,
+	Account, AccountPublicKey, Accountable, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519,
+	KeyPairType, Keyable,
 };
 use keetanetwork_block::AccountRef;
 use keetanetwork_crypto::prelude::{ExposeSecret, IntoSecret};

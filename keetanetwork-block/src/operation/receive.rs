@@ -1,6 +1,6 @@
 //! RECEIVE operation: receive tokens from a send.
 
-use keetanetwork_account::KeyPairType;
+use keetanetwork_account::{AccountPublicKey, KeyPairType};
 
 use crate::account_util::accounts_equal;
 use crate::amount::Amount;
