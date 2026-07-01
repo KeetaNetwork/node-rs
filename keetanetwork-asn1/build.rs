@@ -35,11 +35,13 @@ fn main() {
 		panic!("Failed to compile ASN.1 files: {e}");
 	}
 
-	// Substitute the canonical-DER `GeneralizedTime` type in block.rs and
-	// vote.rs with `Asn1Time`, which preserves trailing zeros to match
-	// the reference TypeScript transport format.
+	// Substitute the canonical-DER `GeneralizedTime` type in block.rs,
+	// vote.rs, and iso20022.rs with `Asn1Time`, which preserves trailing
+	// zeros to match the reference TypeScript transport format and decodes a
+	// legacy `UTCTime` for backwards compatibility.
 	rewrite_generalized_time(generated_dir_str, "block.rs");
 	rewrite_generalized_time(generated_dir_str, "vote.rs");
+	rewrite_generalized_time(generated_dir_str, "iso20022.rs");
 
 	// Generate From implementations for wrapper types
 	generate_from_implementations(generated_dir_str);
@@ -60,35 +62,50 @@ fn rewrite_generalized_time(generated_dir: &str, file_name: &str) {
 
 fn generate_sequence_fields_with_context_tags(
 	schema_content: &mut String,
+	type_name: &str,
 	fields: &serde_json::Map<String, Value>,
 	field_order_value: Option<&Value>,
 ) {
-	// Get field order
-	let field_order: Vec<String> = if let Some(order_array) = field_order_value.and_then(|v| v.as_array()) {
-		order_array
-			.iter()
-			.filter_map(|v| v.as_str())
-			.map(|s| s.to_string())
-			.collect()
-	} else {
-		fields.keys().cloned().collect()
+	// `field_order` is REQUIRED: ASN.1 SEQUENCE member order is positional and
+	// semantically significant.
+	let Some(order_array) = field_order_value.and_then(|v| v.as_array()) else {
+		panic!("ASN.1 SEQUENCE `{type_name}` must declare `field_order` in oids.json");
 	};
+	let field_order: Vec<String> = order_array
+		.iter()
+		.filter_map(|v| v.as_str())
+		.map(|s| s.to_string())
+		.collect();
+
+	// A struct carries EXPLICIT context tags on its members only when at least
+	// one member is OPTIONAL.
+	let has_optional_field = field_order.iter().any(|field_name| {
+		fields
+			.get(field_name)
+			.and_then(|field| field["optional"].as_bool())
+			.unwrap_or(false)
+	});
 
 	for (index, field_name) in field_order.iter().enumerate() {
-		if let Some(field_info) = fields.get(field_name) {
-			if let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool())
-			{
-				let optional_str = if optional {
-					" OPTIONAL"
-				} else {
-					""
-				};
+		let Some(field_info) = fields.get(field_name) else {
+			continue;
+		};
+		let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool()) else {
+			continue;
+		};
 
-				// Use EXPLICIT context tagging for each field
-				schema_content
-					.push_str(&format!("        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"));
-			}
-		}
+		let tag = if has_optional_field {
+			format!("[{index}] EXPLICIT ")
+		} else {
+			String::new()
+		};
+
+		let optional_str = if optional {
+			" OPTIONAL"
+		} else {
+			""
+		};
+		schema_content.push_str(&format!("        {field_name:<17} {tag}{field_type}{optional_str},\n"));
 	}
 }
 
@@ -99,7 +116,7 @@ fn generate_schema() {
 
 	// Add ASN.1 module header
 	schema_content.push_str(
-		"Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+		"Iso20022 DEFINITIONS EXPLICIT TAGS ::= BEGIN
 
 ",
 	);
@@ -205,8 +222,7 @@ fn generate_sensitive_sequence_types(oids: &Value, schema_content: &mut String) 
 				let oid_comment = format_oid_comment(oid_array);
 				schema_content.push_str(&format!("    {token} ::= SEQUENCE {{ --{oid_comment}\n"));
 
-				// Pass field_order if available
-				generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
+				generate_sequence_fields_with_context_tags(schema_content, token, fields, info.get("field_order"));
 				close_asn1_structure(schema_content);
 			}
 		}
@@ -216,19 +232,58 @@ fn generate_sensitive_sequence_types(oids: &Value, schema_content: &mut String) 
 fn generate_iso20022_sequence_types(oids: &Value, schema_content: &mut String) {
 	if let Some(sequences) = oids["iso20022_types"]["sequences"].as_object() {
 		let mut sequence_items: Vec<_> = sequences.iter().collect();
+
 		sort_by_oid(&mut sequence_items, |(_, info)| *info);
 
 		for (name, info) in sequence_items {
 			if let (Some(oid_array), Some(fields)) = (info["oid"].as_array(), info["fields"].as_object()) {
 				let oid_comment = format_oid_comment(oid_array);
-				schema_content.push_str(&format!("    {name} ::= SEQUENCE {{ --{oid_comment}\n"));
 
-				// Use context tags with field_order
-				generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
-				close_asn1_structure(schema_content);
+				// All-optional members: `SEQUENCE OF CHOICE`, else struct.
+				if all_fields_optional(fields) {
+					schema_content.push_str(&format!("    -- {name} ({oid_comment}): SEQUENCE OF CHOICE\n"));
+					generate_sequence_of_choice(schema_content, name, fields, info.get("field_order"));
+				} else {
+					schema_content.push_str(&format!("    {name} ::= SEQUENCE {{ --{oid_comment}\n"));
+					generate_sequence_fields_with_context_tags(schema_content, name, fields, info.get("field_order"));
+					close_asn1_structure(schema_content);
+				}
 			}
 		}
 	}
+}
+
+fn all_fields_optional(fields: &serde_json::Map<String, Value>) -> bool {
+	!fields.is_empty()
+		&& fields
+			.values()
+			.all(|field| field["optional"].as_bool().unwrap_or(false))
+}
+
+/// EXPLICIT context tags keep same-typed alternatives (`bic`/`lei`) distinct.
+fn generate_sequence_of_choice(
+	schema_content: &mut String,
+	name: &str,
+	fields: &serde_json::Map<String, Value>,
+	field_order_value: Option<&Value>,
+) {
+	let Some(order_array) = field_order_value.and_then(|v| v.as_array()) else {
+		panic!("ASN.1 SEQUENCE OF CHOICE `{name}` must declare `field_order` in oids.json");
+	};
+
+	schema_content.push_str(&format!("    {name}Choice ::= CHOICE {{\n"));
+	for (index, field_name) in order_array.iter().filter_map(|v| v.as_str()).enumerate() {
+		if let Some(field_type) = fields
+			.get(field_name)
+			.and_then(|field| field["type"].as_str())
+		{
+			schema_content.push_str(&format!("        {field_name:<17} [{index}] EXPLICIT {field_type},\n"));
+		}
+	}
+
+	close_asn1_structure(schema_content);
+
+	schema_content.push_str(&format!("    {name} ::= SEQUENCE OF {name}Choice\n\n"));
 }
 
 fn generate_extension_types(oids: &Value, schema_content: &mut String) {
@@ -269,7 +324,7 @@ fn generate_extension_types(oids: &Value, schema_content: &mut String) {
 	for (name, info) in extension_types {
 		if let Some(fields) = info["fields"].as_object() {
 			schema_content.push_str(&format!("    {name} ::= SEQUENCE {{\n"));
-			generate_sequence_fields_with_context_tags(schema_content, fields, info.get("field_order"));
+			generate_sequence_fields_with_context_tags(schema_content, name, fields, info.get("field_order"));
 			close_asn1_structure(schema_content);
 		}
 	}
@@ -864,9 +919,13 @@ use crate::generated::iso20022::*;
 			],
 		},
 		TypeMapping {
+			// iso20022 date wrappers back onto `Asn1Time` (see the
+			// `rewrite_generalized_time` post-process), so every conversion
+			// funnels through `.into()`; for a plain `GeneralizedTime` wrapper
+			// that reduces to an identity conversion.
 			asn1_type: "GeneralizedTime",
 			implementations: vec![
-				FromImpl { from_type: "rasn::types::GeneralizedTime", conversion: "value", feature_gate: None },
+				FromImpl { from_type: "rasn::types::GeneralizedTime", conversion: "value.into()", feature_gate: None },
 				FromImpl {
 					from_type: "std::time::SystemTime",
 					conversion: "chrono::DateTime::<chrono::Utc>::from(value).into()",
@@ -879,7 +938,7 @@ use crate::generated::iso20022::*;
 				},
 				FromImpl {
 					from_type: "chrono::NaiveDate",
-					conversion: "value.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset()",
+					conversion: "value.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset().into()",
 					feature_gate: Some("chrono"),
 				},
 			],

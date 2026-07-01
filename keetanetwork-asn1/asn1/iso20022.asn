@@ -1,4 +1,4 @@
-Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+Iso20022 DEFINITIONS EXPLICIT TAGS ::= BEGIN
 
     Country ::= UTF8String --1.3.6.1.4.1.62675.1.2.0
     CountrySubDivision ::= UTF8String --1.3.6.1.4.1.62675.1.2.1
@@ -39,19 +39,19 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
     }
 
     DigestInfo ::= SEQUENCE {
-        digestAlgorithm   [0] EXPLICIT OBJECT IDENTIFIER,
-        digest            [1] EXPLICIT OCTET STRING
+        digestAlgorithm   OBJECT IDENTIFIER,
+        digest            OCTET STRING
     }
 
     ExternalReference ::= SEQUENCE {
-        url               [0] EXPLICIT UTF8String,
-        contentType       [1] EXPLICIT UTF8String
+        url               UTF8String,
+        contentType       UTF8String
     }
 
     Reference ::= SEQUENCE {
-        external          [0] EXPLICIT ExternalReference,
-        digest            [1] EXPLICIT DigestInfo,
-        encryptionAlgorithm [2] EXPLICIT OBJECT IDENTIFIER
+        external          ExternalReference,
+        digest            DigestInfo,
+        encryptionAlgorithm OBJECT IDENTIFIER
     }
 
     Address ::= SEQUENCE { --1.3.6.1.4.1.62675.1.2
@@ -118,11 +118,14 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
         sambaActivityHistoryResponse [20] EXPLICIT UTF8String OPTIONAL
     }
 
-    OrganizationIdentification ::= SEQUENCE { --1.3.6.1.4.1.62675.1.8.0
-        bic               [0] EXPLICIT UTF8String OPTIONAL,
-        lei               [1] EXPLICIT UTF8String OPTIONAL,
-        other             [2] EXPLICIT SEQUENCE OF GenericOrganizationIdentification OPTIONAL
+    -- OrganizationIdentification (1.3.6.1.4.1.62675.1.8.0): SEQUENCE OF CHOICE
+    OrganizationIdentificationChoice ::= CHOICE {
+        bic               [0] EXPLICIT UTF8String,
+        lei               [1] EXPLICIT UTF8String,
+        other             [2] EXPLICIT SEQUENCE OF GenericOrganizationIdentification
     }
+
+    OrganizationIdentification ::= SEQUENCE OF OrganizationIdentificationChoice
 
     GenericOrganizationIdentification ::= SEQUENCE { --1.3.6.1.4.1.62675.1.8.0.1
         id                [0] EXPLICIT Id,
@@ -130,10 +133,13 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
         schemeName        [2] EXPLICIT OrganizationIdentificationSchemeNameChoice OPTIONAL
     }
 
-    PersonIdentification ::= SEQUENCE { --1.3.6.1.4.1.62675.1.8.1
-        dateAndPlaceOfBirth [0] EXPLICIT DateAndPlaceOfBirth OPTIONAL,
-        other             [1] EXPLICIT SEQUENCE OF GenericPersonIdentification OPTIONAL
+    -- PersonIdentification (1.3.6.1.4.1.62675.1.8.1): SEQUENCE OF CHOICE
+    PersonIdentificationChoice ::= CHOICE {
+        dateAndPlaceOfBirth [0] EXPLICIT DateAndPlaceOfBirth,
+        other             [1] EXPLICIT SEQUENCE OF GenericPersonIdentification
     }
+
+    PersonIdentification ::= SEQUENCE OF PersonIdentificationChoice
 
     GenericPersonIdentification ::= SEQUENCE { --1.3.6.1.4.1.62675.1.8.1.0
         id                [0] EXPLICIT Id,

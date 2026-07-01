@@ -1,6 +1,6 @@
 [package]
 name = "keetanetwork-vote"
-version = "0.3.0"
+version = "0.3.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ homepage.workspace = true
 description = "Vote and VoteStaple model, codec, and signing for Keetanetwork blockchain"
 
 [features]
-default = ["std", "der", "rasn"]
+default = ["std", "rasn"]
 std = [
 	"alloc",
 	"chrono/std",

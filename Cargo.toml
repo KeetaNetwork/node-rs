@@ -149,7 +149,7 @@ path = "keetanetwork-crypto"
 default-features = false
 
 [workspace.dependencies.keetanetwork-asn1]
-version = "0.2.3"
+version = "0.2.4"
 path = "keetanetwork-asn1"
 default-features = false
 
@@ -169,7 +169,7 @@ path = "keetanetwork-block"
 default-features = false
 
 [workspace.dependencies.keetanetwork-vote]
-version = "0.3.0"
+version = "0.3.1"
 path = "keetanetwork-vote"
 default-features = false
 
@@ -179,7 +179,7 @@ path = "keetanetwork-ledger"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client]
-version = "0.3.0"
+version = "0.3.1"
 path = "keetanetwork-client"
 default-features = false
 
@@ -189,7 +189,7 @@ path = "keetanetwork-bindings"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client-wasi]
-version = "0.3.0"
+version = "0.3.1"
 path = "keetanetwork-client-wasi"
 default-features = false
 

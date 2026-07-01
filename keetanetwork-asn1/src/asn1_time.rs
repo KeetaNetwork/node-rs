@@ -76,10 +76,14 @@ impl From<Asn1Time> for DateTime<Utc> {
 #[cfg(feature = "rasn")]
 mod rasn_impls {
 	use chrono::Utc;
-	use rasn::types::{Constraints, GeneralizedTime, Identifier, Tag};
-	use rasn::{AsnType, Decode, Decoder, Encode, Encoder};
+	use rasn::de::Error as _;
+	use rasn::types::{Constraints, GeneralizedTime, Identifier, Tag, UtcTime};
+	use rasn::{AsnType, Codec, Decode, Decoder, Encode, Encoder};
 
 	use super::Asn1Time;
+
+	/// DER identifier octet for a primitive universal `UTCTime`.
+	const UTC_TIME_IDENTIFIER: u8 = 0x17;
 
 	impl From<GeneralizedTime> for Asn1Time {
 		fn from(value: GeneralizedTime) -> Self {
@@ -114,12 +118,21 @@ mod rasn_impls {
 	}
 
 	impl Decode for Asn1Time {
+		/// Decode a `GeneralizedTime` (preferred) or a legacy `UTCTime`.
 		fn decode_with_tag_and_constraints<D: Decoder>(
 			decoder: &mut D,
-			tag: Tag,
+			_: Tag,
 			_: Constraints,
 		) -> Result<Self, D::Error> {
-			let parsed = decoder.decode_generalized_time(tag)?;
+			let element = decoder.decode_any()?;
+			let bytes = element.as_bytes();
+			if bytes.first() == Some(&UTC_TIME_IDENTIFIER) {
+				let parsed: UtcTime = rasn::der::decode(bytes).map_err(|error| D::Error::custom(error, Codec::Der))?;
+				return Ok(Self::new(parsed));
+			}
+
+			let parsed: GeneralizedTime =
+				rasn::der::decode(bytes).map_err(|error| D::Error::custom(error, Codec::Der))?;
 			Ok(Self::new(parsed.with_timezone(&Utc)))
 		}
 	}
@@ -267,6 +280,22 @@ mod tests {
 			let canonical_der = hex_to_bytes("181132303235303130323033303430352e355a");
 			let decoded: Asn1Time = rasn::der::decode(&canonical_der).expect("decode canonical form");
 			assert_eq!(decoded.0.timestamp_subsec_millis(), 500);
+		}
+
+		#[test]
+		fn test_decode_legacy_utc_time() {
+			// UTCTime "900101000000Z" (tag 0x17), the pre-2050 RFC 5280 form.
+			let utc_der = hex_to_bytes("170d3930303130313030303030305a");
+			let decoded: Asn1Time = rasn::der::decode(&utc_der).expect("decode legacy UTCTime");
+			assert_eq!(decoded, Asn1Time::new(datetime("1990-01-01T00:00:00Z")));
+		}
+
+		#[test]
+		fn test_legacy_utc_time_reencodes_as_generalized_time() {
+			let utc_der = hex_to_bytes("170d3930303130313030303030305a");
+			let decoded: Asn1Time = rasn::der::decode(&utc_der).expect("decode legacy UTCTime");
+			let reencoded = rasn::der::encode(&decoded).expect("re-encode");
+			assert_eq!(hex(&reencoded), "180f31393930303130313030303030305a");
 		}
 
 		#[test]

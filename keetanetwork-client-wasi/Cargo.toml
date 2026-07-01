@@ -1,6 +1,6 @@
 [package]
 name = "keetanetwork-client-wasi"
-version = "0.3.0"
+version = "0.3.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -21,7 +21,7 @@ p2 = ["dep:keetanetwork-client", "dep:wstd", "dep:wit-bindgen", "keetanetwork-bi
 keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-crypto = { workspace = true, features = ["signature"] }
-keetanetwork-vote = { workspace = true, features = ["alloc", "der", "rasn"] }
+keetanetwork-vote = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-x509 = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-bindings = { workspace = true }
 num-bigint = { workspace = true }

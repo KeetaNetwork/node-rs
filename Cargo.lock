@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-asn1"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "const-oid",
@@ -1304,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-client"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "base64",
@@ -1340,7 +1340,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-client-wasi"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "hex",
  "keetanetwork-account",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-vote"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "hex",
