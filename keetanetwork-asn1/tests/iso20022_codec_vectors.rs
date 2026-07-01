@@ -1,4 +1,6 @@
 //! Byte-conformance tests for generated ISO 20022 sequence-of-choice types.
+//! Requires the `rasn` feature.
+#![cfg(feature = "rasn")]
 
 use keetanetwork_asn1::generated::iso20022::{
 	OrganizationIdentification, OrganizationIdentificationChoice, PersonIdentification, PersonIdentificationChoice,
