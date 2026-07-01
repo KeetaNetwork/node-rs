@@ -49,6 +49,11 @@ pub mod testing;
 #[cfg(feature = "rasn")]
 pub mod generated;
 
+// Schema-driven positional DER codec. Requires `rasn` (for OID / [`Asn1Time`]
+// DER) which in turn enables `chrono`.
+#[cfg(feature = "rasn")]
+pub mod schema_codec;
+
 #[cfg(feature = "der")]
 pub mod der;
 

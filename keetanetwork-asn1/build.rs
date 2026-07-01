@@ -87,24 +87,25 @@ fn generate_sequence_fields_with_context_tags(
 	});
 
 	for (index, field_name) in field_order.iter().enumerate() {
-		if let Some(field_info) = fields.get(field_name) {
-			if let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool())
-			{
-				let optional_str = if optional {
-					" OPTIONAL"
-				} else {
-					""
-				};
+		let Some(field_info) = fields.get(field_name) else {
+			continue;
+		};
+		let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool()) else {
+			continue;
+		};
 
-				if has_optional_field {
-					schema_content.push_str(&format!(
-						"        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"
-					));
-				} else {
-					schema_content.push_str(&format!("        {field_name:<17} {field_type}{optional_str},\n"));
-				}
-			}
-		}
+		let tag = if has_optional_field {
+			format!("[{index}] EXPLICIT ")
+		} else {
+			String::new()
+		};
+
+		let optional_str = if optional {
+			" OPTIONAL"
+		} else {
+			""
+		};
+		schema_content.push_str(&format!("        {field_name:<17} {tag}{field_type}{optional_str},\n"));
 	}
 }
 
