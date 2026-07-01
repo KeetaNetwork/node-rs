@@ -35,11 +35,13 @@ fn main() {
 		panic!("Failed to compile ASN.1 files: {e}");
 	}
 
-	// Substitute the canonical-DER `GeneralizedTime` type in block.rs and
-	// vote.rs with `Asn1Time`, which preserves trailing zeros to match
-	// the reference TypeScript transport format.
+	// Substitute the canonical-DER `GeneralizedTime` type in block.rs,
+	// vote.rs, and iso20022.rs with `Asn1Time`, which preserves trailing
+	// zeros to match the reference TypeScript transport format and decodes a
+	// legacy `UTCTime` for backwards compatibility.
 	rewrite_generalized_time(generated_dir_str, "block.rs");
 	rewrite_generalized_time(generated_dir_str, "vote.rs");
+	rewrite_generalized_time(generated_dir_str, "iso20022.rs");
 
 	// Generate From implementations for wrapper types
 	generate_from_implementations(generated_dir_str);
@@ -74,6 +76,17 @@ fn generate_sequence_fields_with_context_tags(
 		fields.keys().cloned().collect()
 	};
 
+	// Mirror the reference TypeScript schema generator: a struct carries EXPLICIT
+	// context tags on its members only when at least one member is OPTIONAL (the
+	// tags are what disambiguate omitted positions). An all-required struct is
+	// encoded with its members' natural (universal) tags, which is the reference
+	// wire format (e.g. `Reference`/`DigestInfo`/`ExternalReference`). The module
+	// therefore uses EXPLICIT (not AUTOMATIC) tags so an untagged member keeps its
+	// universal tag rather than being auto-assigned a context tag.
+	let has_optional_field = field_order
+		.iter()
+		.any(|field_name| fields.get(field_name).and_then(|field| field["optional"].as_bool()).unwrap_or(false));
+
 	for (index, field_name) in field_order.iter().enumerate() {
 		if let Some(field_info) = fields.get(field_name) {
 			if let (Some(field_type), Some(optional)) = (field_info["type"].as_str(), field_info["optional"].as_bool())
@@ -84,9 +97,13 @@ fn generate_sequence_fields_with_context_tags(
 					""
 				};
 
-				// Use EXPLICIT context tagging for each field
-				schema_content
-					.push_str(&format!("        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"));
+				if has_optional_field {
+					schema_content.push_str(&format!(
+						"        {field_name:<17} [{index}] EXPLICIT {field_type}{optional_str},\n"
+					));
+				} else {
+					schema_content.push_str(&format!("        {field_name:<17} {field_type}{optional_str},\n"));
+				}
 			}
 		}
 	}
@@ -99,7 +116,7 @@ fn generate_schema() {
 
 	// Add ASN.1 module header
 	schema_content.push_str(
-		"Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+		"Iso20022 DEFINITIONS EXPLICIT TAGS ::= BEGIN
 
 ",
 	);
@@ -864,9 +881,13 @@ use crate::generated::iso20022::*;
 			],
 		},
 		TypeMapping {
+			// iso20022 date wrappers back onto `Asn1Time` (see the
+			// `rewrite_generalized_time` post-process), so every conversion
+			// funnels through `.into()`; for a plain `GeneralizedTime` wrapper
+			// that reduces to an identity conversion.
 			asn1_type: "GeneralizedTime",
 			implementations: vec![
-				FromImpl { from_type: "rasn::types::GeneralizedTime", conversion: "value", feature_gate: None },
+				FromImpl { from_type: "rasn::types::GeneralizedTime", conversion: "value.into()", feature_gate: None },
 				FromImpl {
 					from_type: "std::time::SystemTime",
 					conversion: "chrono::DateTime::<chrono::Utc>::from(value).into()",
@@ -879,7 +900,7 @@ use crate::generated::iso20022::*;
 				},
 				FromImpl {
 					from_type: "chrono::NaiveDate",
-					conversion: "value.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset()",
+					conversion: "value.and_hms_opt(0, 0, 0).unwrap().and_utc().fixed_offset().into()",
 					feature_gate: Some("chrono"),
 				},
 			],

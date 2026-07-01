@@ -1,4 +1,4 @@
-Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+Iso20022 DEFINITIONS EXPLICIT TAGS ::= BEGIN
 
     Country ::= UTF8String --1.3.6.1.4.1.62675.1.2.0
     CountrySubDivision ::= UTF8String --1.3.6.1.4.1.62675.1.2.1
@@ -39,19 +39,19 @@ Iso20022 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
     }
 
     DigestInfo ::= SEQUENCE {
-        digestAlgorithm   [0] EXPLICIT OBJECT IDENTIFIER,
-        digest            [1] EXPLICIT OCTET STRING
+        digestAlgorithm   OBJECT IDENTIFIER,
+        digest            OCTET STRING
     }
 
     ExternalReference ::= SEQUENCE {
-        url               [0] EXPLICIT UTF8String,
-        contentType       [1] EXPLICIT UTF8String
+        url               UTF8String,
+        contentType       UTF8String
     }
 
     Reference ::= SEQUENCE {
-        external          [0] EXPLICIT ExternalReference,
-        digest            [1] EXPLICIT DigestInfo,
-        encryptionAlgorithm [2] EXPLICIT OBJECT IDENTIFIER
+        external          ExternalReference,
+        digest            DigestInfo,
+        encryptionAlgorithm OBJECT IDENTIFIER
     }
 
     Address ::= SEQUENCE { --1.3.6.1.4.1.62675.1.2
