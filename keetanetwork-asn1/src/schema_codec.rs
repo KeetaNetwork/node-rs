@@ -174,7 +174,9 @@ pub(crate) fn matches(value: &Asn1, schema: &Schema) -> bool {
 	match schema {
 		Schema::Optional(inner) => matches(value, inner),
 		Schema::Context(tag, inner) => matches_context(value, *tag, inner),
-		Schema::Choice(alternatives) => alternatives.iter().any(|alternative| matches(value, alternative)),
+		Schema::Choice(alternatives) => alternatives
+			.iter()
+			.any(|alternative| matches(value, alternative)),
 		Schema::SequenceOf(inner) => matches_sequence_of(value, inner),
 		Schema::Struct(fields) => matches_struct(value, fields),
 		Schema::Utf8 => matches!(value, Asn1::Str(_)),
@@ -213,10 +215,7 @@ fn matches_struct(value: &Asn1, fields: &[Field]) -> bool {
 /// Match a sequence of components against an ordered list of member schemas,
 /// backtracking over optional members, returning each member's matched
 /// component (or `None` when absent).
-pub fn match_tuple<'a>(
-	components: &'a [Asn1],
-	schemas: &[&Schema],
-) -> Result<Vec<Option<&'a Asn1>>, SchemaCodecError> {
+pub fn match_tuple<'a>(components: &'a [Asn1], schemas: &[&Schema]) -> Result<Vec<Option<&'a Asn1>>, SchemaCodecError> {
 	let required = schemas.iter().filter(|schema| !is_optional(schema)).count();
 	if components.len() < required || components.len() > schemas.len() {
 		return Err(SchemaCodecError::ComponentCountOutOfBounds);
@@ -447,7 +446,9 @@ fn read_tlv(input: &[u8]) -> Result<Tlv<'_>, SchemaCodecError> {
 		(length, 2 + count)
 	};
 
-	let end = header.checked_add(length).ok_or(SchemaCodecError::MalformedLength)?;
+	let end = header
+		.checked_add(length)
+		.ok_or(SchemaCodecError::MalformedLength)?;
 	let value = input.get(header..end).ok_or(SchemaCodecError::Truncated)?;
 	let raw = input.get(..end).ok_or(SchemaCodecError::Truncated)?;
 	let rest = &input[end..];
@@ -468,7 +469,10 @@ mod tests {
 	}
 
 	fn utc(year: i32, month: u32, day: u32) -> Asn1Time {
-		let instant = Utc.with_ymd_and_hms(year, month, day, 0, 0, 0).single().expect("valid instant");
+		let instant = Utc
+			.with_ymd_and_hms(year, month, day, 0, 0, 0)
+			.single()
+			.expect("valid instant");
 		Asn1Time::new(instant)
 	}
 
