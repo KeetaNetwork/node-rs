@@ -76,13 +76,8 @@ fn generate_sequence_fields_with_context_tags(
 		fields.keys().cloned().collect()
 	};
 
-	// Mirror the reference TypeScript schema generator: a struct carries EXPLICIT
-	// context tags on its members only when at least one member is OPTIONAL (the
-	// tags are what disambiguate omitted positions). An all-required struct is
-	// encoded with its members' natural (universal) tags, which is the reference
-	// wire format (e.g. `Reference`/`DigestInfo`/`ExternalReference`). The module
-	// therefore uses EXPLICIT (not AUTOMATIC) tags so an untagged member keeps its
-	// universal tag rather than being auto-assigned a context tag.
+	// A struct carries EXPLICIT context tags on its members only when at least
+	// one member is OPTIONAL.
 	let has_optional_field = field_order
 		.iter()
 		.any(|field_name| fields.get(field_name).and_then(|field| field["optional"].as_bool()).unwrap_or(false));
