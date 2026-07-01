@@ -1,6 +1,6 @@
 [package]
 name = "keetanetwork-client"
-version = "0.3.0"
+version = "0.3.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -37,7 +37,7 @@ testing = []
 
 [dependencies]
 keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
-keetanetwork-vote = { workspace = true, features = ["alloc", "der", "rasn"] }
+keetanetwork-vote = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-error = { workspace = true, features = ["alloc"] }
 keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
 
