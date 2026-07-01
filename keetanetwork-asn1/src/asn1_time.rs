@@ -131,7 +131,8 @@ mod rasn_impls {
 				return Ok(Self::new(parsed));
 			}
 
-			let parsed: GeneralizedTime = rasn::der::decode(bytes).map_err(|error| D::Error::custom(error, Codec::Der))?;
+			let parsed: GeneralizedTime =
+				rasn::der::decode(bytes).map_err(|error| D::Error::custom(error, Codec::Der))?;
 			Ok(Self::new(parsed.with_timezone(&Utc)))
 		}
 	}
