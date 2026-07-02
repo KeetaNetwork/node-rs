@@ -3,9 +3,11 @@
 //! This module provides idiomatic traits and types for cryptographic signing
 //! and verification operations, leveraging the RustCrypto ecosystem.
 
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use crate::algorithms::CryptoAlgorithm;
+use crate::hash::hash_default;
 
 // Re-export key RustCrypto signature traits for easier use
 pub use signature::{
@@ -66,6 +68,23 @@ impl SigningOptions {
 	pub fn raw() -> Self {
 		Self { raw: true }
 	}
+
+	/// Resolve `message` into the digest to sign or verify.
+	///
+	/// - raw: `message` must already be a 32-byte digest (borrowed as-is)
+	/// - otherwise: pre-hash with the network default hash (SHA3-256)
+	pub fn digest<'a>(&self, message: &'a [u8]) -> Result<Cow<'a, [u8]>, SignatureError> {
+		if self.raw {
+			if message.len() != 32 {
+				return Err(SignatureError::new());
+			}
+
+			return Ok(Cow::Borrowed(message));
+		}
+
+		let digest = hash_default(message);
+		Ok(Cow::Owned(digest.to_vec()))
+	}
 }
 
 /// Extended signing operations with configurable options.
@@ -89,4 +108,33 @@ pub trait CryptoVerifierWithOptions<S>: CryptoVerifier<S> {
 		signature: &S,
 		options: SigningOptions,
 	) -> Result<(), SignatureError>;
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_digest_raw_borrows_precomputed_hash() -> Result<(), SignatureError> {
+		let precomputed = [0x42u8; 32];
+		let digest = SigningOptions::raw().digest(&precomputed)?;
+		assert!(matches!(digest, Cow::Borrowed(_)));
+		assert_eq!(digest.as_ref(), precomputed);
+		Ok(())
+	}
+
+	#[test]
+	fn test_digest_raw_rejects_non_digest_length() {
+		assert!(SigningOptions::raw().digest(b"too short").is_err());
+		assert!(SigningOptions::raw().digest(&[0u8; 64]).is_err());
+	}
+
+	#[test]
+	fn test_digest_default_prehashes_with_network_default() -> Result<(), SignatureError> {
+		let message = b"message to hash";
+		let digest = SigningOptions::default().digest(message)?;
+		assert!(matches!(digest, Cow::Owned(_)));
+		assert_eq!(digest.as_ref(), hash_default(message));
+		Ok(())
+	}
 }

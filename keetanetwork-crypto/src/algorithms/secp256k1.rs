@@ -39,8 +39,6 @@ use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGenera
 use crate::utils::generate_random_seed;
 
 #[cfg(feature = "signature")]
-use crate::hash::hash_default;
-#[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
 };
@@ -223,22 +221,10 @@ impl CryptoSignerWithOptions<Signature> for Secp256k1PrivateKey {
 		message: T,
 		options: SigningOptions,
 	) -> Result<Signature, ::signature::Error> {
-		let message = message.as_ref();
 		let signing_key = SigningKey::from(&self.inner);
 
-		if options.raw {
-			// For raw signing, treat the message as a pre-computed hash
-			// and use prehash signing to avoid double hashing
-			if message.len() != 32 {
-				return Err(::signature::Error::new());
-			}
-
-			signing_key.sign_prehash(message)
-		} else {
-			// For regular signing, use the default hash algorithm
-			let data = hash_default(message).to_vec();
-			signing_key.sign_prehash(&data)
-		}
+		let digest = options.digest(message.as_ref())?;
+		signing_key.sign_prehash(&digest)
 	}
 }
 
@@ -335,22 +321,10 @@ impl CryptoVerifierWithOptions<Signature> for Secp256k1PublicKey {
 		signature: &Signature,
 		options: SigningOptions,
 	) -> Result<(), ::signature::Error> {
-		let message = message.as_ref();
 		let verifying_key = VerifyingKey::from(&self.inner);
 
-		if options.raw {
-			// For raw verification, treat the message as a pre-computed hash
-			// and use prehash verification to avoid double hashing
-			if message.len() != 32 {
-				return Err(::signature::Error::new());
-			}
-
-			verifying_key.verify_prehash(message, signature)
-		} else {
-			// For regular verification, use the default hash algorithm
-			let data = hash_default(message).to_vec();
-			verifying_key.verify_prehash(&data, signature)
-		}
+		let digest = options.digest(message.as_ref())?;
+		verifying_key.verify_prehash(&digest, signature)
 	}
 }
 
