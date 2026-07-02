@@ -3,9 +3,11 @@
 //! This module provides idiomatic traits and types for cryptographic signing
 //! and verification operations, leveraging the RustCrypto ecosystem.
 
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use crate::algorithms::CryptoAlgorithm;
+use crate::hash::hash_default;
 
 // Re-export key RustCrypto signature traits for easier use
 pub use signature::{
@@ -50,27 +52,38 @@ where
 /// Signing and verification options for cryptographic operations.
 ///
 /// Default options are:
-/// - raw: false (will pre-hash the message)
-/// - for_cert: false (use SEC format, not DER)
+/// - raw: false (will pre-hash the message with the network default hash)
+///
+/// Callers that need a different hash pre-hash the message themselves
+/// and use [`SigningOptions::raw`].
 #[derive(Debug, Copy, Clone, Default)]
 pub struct SigningOptions {
 	/// If true, use the raw message without hashing
 	/// If false, pre-hash the message before signing/verification
 	pub raw: bool,
-
-	/// For certificate processing
-	pub for_cert: bool,
 }
 
 impl SigningOptions {
 	/// Create options for raw message processing (no pre-hashing)
 	pub fn raw() -> Self {
-		Self { raw: true, for_cert: false }
+		Self { raw: true }
 	}
 
-	/// Create options for certificate processing
-	pub fn for_cert() -> Self {
-		Self { raw: false, for_cert: true }
+	/// Resolve `message` into the digest to sign or verify.
+	///
+	/// - raw: `message` must already be a 32-byte digest (borrowed as-is)
+	/// - otherwise: pre-hash with the network default hash (SHA3-256)
+	pub fn digest<'a>(&self, message: &'a [u8]) -> Result<Cow<'a, [u8]>, SignatureError> {
+		if self.raw {
+			if message.len() != 32 {
+				return Err(SignatureError::new());
+			}
+
+			return Ok(Cow::Borrowed(message));
+		}
+
+		let digest = hash_default(message);
+		Ok(Cow::Owned(digest.to_vec()))
 	}
 }
 
@@ -95,4 +108,33 @@ pub trait CryptoVerifierWithOptions<S>: CryptoVerifier<S> {
 		signature: &S,
 		options: SigningOptions,
 	) -> Result<(), SignatureError>;
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_digest_raw_borrows_precomputed_hash() -> Result<(), SignatureError> {
+		let precomputed = [0x42u8; 32];
+		let digest = SigningOptions::raw().digest(&precomputed)?;
+		assert!(matches!(digest, Cow::Borrowed(_)));
+		assert_eq!(digest.as_ref(), precomputed);
+		Ok(())
+	}
+
+	#[test]
+	fn test_digest_raw_rejects_non_digest_length() {
+		assert!(SigningOptions::raw().digest(b"too short").is_err());
+		assert!(SigningOptions::raw().digest(&[0u8; 64]).is_err());
+	}
+
+	#[test]
+	fn test_digest_default_prehashes_with_network_default() -> Result<(), SignatureError> {
+		let message = b"message to hash";
+		let digest = SigningOptions::default().digest(message)?;
+		assert!(matches!(digest, Cow::Owned(_)));
+		assert_eq!(digest.as_ref(), hash_default(message));
+		Ok(())
+	}
 }

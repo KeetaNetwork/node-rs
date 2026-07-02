@@ -1,6 +1,6 @@
 [package]
 name = "keetanetwork-crypto"
-version.workspace = true
+version = "0.3.0"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true

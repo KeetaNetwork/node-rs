@@ -330,20 +330,8 @@ macro_rules! test_signatures {
 			let different_hash = [0x42u8; 32]; // Different from hash_default(message)
 			let signature_raw = private_key.sign_with_options(different_hash, raw_options)?;
 
-			// Test with cert options (pre-hash, but for_cert flag set)
-			let cert_options = crate::operations::signature::SigningOptions::for_cert();
-			let signature_cert = private_key.sign_with_options(message, cert_options)?;
-
 			// Signatures should be different when using different message processing
 			assert_ne!(signature_default.to_bytes(), signature_raw.to_bytes());
-
-			// For Ed25519, default and cert should be the same since they both pre-hash
-			// For ECDSA curves, they should be different due to different hash algorithms
-			if stringify!($seed_suffix) == "\"ed25519\"" {
-				assert_eq!(signature_default.to_bytes(), signature_cert.to_bytes());
-			} else {
-				assert_ne!(signature_default.to_bytes(), signature_cert.to_bytes());
-			}
 
 			// Verify that the regular signing (which signs raw message) differs from options-based signing (which pre-hashes)
 			// For Ed25519: try_sign signs raw message, sign_with_options(default) signs hash of message
@@ -373,12 +361,6 @@ macro_rules! test_signatures {
 			let signature_raw = private_key.sign_with_options(pre_computed_hash, raw_options)?;
 			assert!(public_key
 				.verify_with_options(pre_computed_hash, &signature_raw, raw_options)
-				.is_ok());
-
-			let cert_options = crate::operations::signature::SigningOptions::for_cert();
-			let signature_cert = private_key.sign_with_options(message, cert_options)?;
-			assert!(public_key
-				.verify_with_options(message, &signature_cert, cert_options)
 				.is_ok());
 
 			// Test verification failure with mismatched options

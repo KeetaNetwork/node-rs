@@ -144,7 +144,7 @@ path = "keetanetwork-utils"
 default-features = false
 
 [workspace.dependencies.keetanetwork-crypto]
-version = "0.2.0"
+version = "0.3.0"
 path = "keetanetwork-crypto"
 default-features = false
 
@@ -159,7 +159,7 @@ path = "keetanetwork-account"
 default-features = false
 
 [workspace.dependencies.keetanetwork-x509]
-version = "0.2.1"
+version = "0.3.0"
 path = "keetanetwork-x509"
 default-features = false
 
@@ -184,7 +184,7 @@ path = "keetanetwork-client"
 default-features = false
 
 [workspace.dependencies.keetanetwork-bindings]
-version = "0.3.0"
+version = "0.3.1"
 path = "keetanetwork-bindings"
 default-features = false
 

@@ -36,6 +36,7 @@ impl From<CertificateError> for CodedError {
 			CertificateError::InvalidExtension { .. } => "INVALID_EXTENSION",
 			CertificateError::ChainValidationFailed { .. } => "CHAIN_VALIDATION_FAILED",
 			CertificateError::UnsupportedVersion { .. } => "UNSUPPORTED_VERSION",
+			CertificateError::UnsupportedSignatureHash { .. } => "UNSUPPORTED_SIGNATURE_HASH",
 			CertificateError::CertificateSignatureVerificationFailed => "SIGNATURE_VERIFICATION_FAILED",
 			CertificateError::CertificateDuplicateIncluded => "CERTIFICATE_DUPLICATE",
 			CertificateError::CertificateOrphanFound => "CERTIFICATE_ORPHAN",

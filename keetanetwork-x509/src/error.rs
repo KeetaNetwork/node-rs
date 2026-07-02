@@ -1,6 +1,7 @@
 use alloc::format;
 use alloc::string::String;
 
+use keetanetwork_crypto::hash::HashAlgorithm;
 use keetanetwork_utils::{impl_error_from_with_fields, impl_variant_error_from};
 use snafu::Snafu;
 
@@ -35,6 +36,9 @@ pub enum CertificateError {
 	/// Unsupported certificate version
 	#[snafu(display("Unsupported certificate version: {version}"))]
 	UnsupportedVersion { version: u32 },
+	/// Unsupported hash algorithm for certificate signatures
+	#[snafu(display("Unsupported signature hash algorithm: {}", hash.name()))]
+	UnsupportedSignatureHash { hash: HashAlgorithm },
 	/// Certificate signature verification failed
 	#[snafu(display("Certificate signature verification failed"))]
 	CertificateSignatureVerificationFailed,
@@ -96,6 +100,7 @@ mod tests {
 			CertificateError::InvalidExtension { oid: "test".to_string() },
 			CertificateError::ChainValidationFailed { reason: "test".to_string() },
 			CertificateError::UnsupportedVersion { version: 1 },
+			CertificateError::UnsupportedSignatureHash { hash: HashAlgorithm::Sha2_512 },
 			CertificateError::CertificateSignatureVerificationFailed,
 			CertificateError::CertificateDuplicateIncluded,
 			CertificateError::CertificateOrphanFound,
