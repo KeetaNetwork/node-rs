@@ -81,7 +81,9 @@ use der::Encode;
 #[allow(unused_imports)]
 use keetanetwork_asn1::BitStringExt;
 use keetanetwork_asn1::SubjectPublicKeyInfo;
-use keetanetwork_crypto::prelude::{Algorithm, CryptoSignerWithOptions, SignatureEncoding, SigningOptions};
+use keetanetwork_crypto::prelude::{
+	Algorithm, CryptoSignerWithOptions, HashAlgorithm, SignatureEncoding, SigningOptions,
+};
 use x509_cert::name::DistinguishedName;
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned};
@@ -1412,6 +1414,7 @@ pub struct CertificateBuilder {
 	pub is_ca: Option<bool>,
 	pub include_common_exts: bool,
 	pub extensions: Vec<Extension>,
+	pub signature_hash: HashAlgorithm,
 }
 
 impl Default for CertificateBuilder {
@@ -1426,6 +1429,7 @@ impl Default for CertificateBuilder {
 			is_ca: None,
 			include_common_exts: true,
 			extensions: Vec::new(),
+			signature_hash: HashAlgorithm::Sha3_256,
 		}
 	}
 }
@@ -1434,6 +1438,18 @@ impl CertificateBuilder {
 	/// Create a new certificate builder.
 	pub fn new() -> Self {
 		Self::default()
+	}
+
+	/// Override the hash algorithm used for ECDSA certificate signatures.
+	///
+	/// The default is SHA3-256, which stamps the `ecdsa-with-SHA3-256`
+	/// signature algorithm OID. SHA2-256 stamps `ecdsa-with-SHA256`.
+	/// Other algorithms are rejected at build time.
+	///
+	/// Ignored for Ed25519 signers, which sign the raw TBS bytes.
+	pub fn with_signature_hash(mut self, hash: HashAlgorithm) -> Self {
+		self.signature_hash = hash;
+		self
 	}
 
 	/// Set the subject's public key information.
@@ -2275,7 +2291,8 @@ impl CertificateBuilder {
 	///
 	/// The method automatically selects the appropriate signature algorithm:
 	/// - **Ed25519**: Pure Ed25519 signatures (no hashing)
-	/// - **ECDSA (secp256k1/secp256r1)**: ECDSA with SHA-256
+	/// - **ECDSA (secp256k1/secp256r1)**: ECDSA with SHA3-256 by default;
+	///   override via [`CertificateBuilder::with_signature_hash`]
 	///
 	/// # Returns
 	///
@@ -2345,8 +2362,13 @@ impl CertificateBuilder {
 		let algorithm = signer.to_algorithm();
 		let signature_algorithm_oid = match algorithm {
 			Algorithm::Ed25519 => oids::ED25519,
-			Algorithm::Secp256k1 => oids::ECDSA_WITH_SHA256,
-			Algorithm::Secp256r1 => oids::ECDSA_WITH_SHA256,
+			Algorithm::Secp256k1 | Algorithm::Secp256r1 => match self.signature_hash {
+				HashAlgorithm::Sha3_256 => oids::ECDSA_WITH_SHA3_256,
+				HashAlgorithm::Sha2_256 => oids::ECDSA_WITH_SHA256,
+				HashAlgorithm::Sha2_512 => {
+					return Err(CertificateError::UnsupportedSignatureHash { hash: self.signature_hash })
+				}
+			},
 		};
 
 		// Build the TBS certificate with the correct signature algorithm
@@ -2358,15 +2380,16 @@ impl CertificateBuilder {
 		// Serialize the TBS certificate for signing
 		let tbs_der = Vec::<u8>::try_from(&tbs_certificate)?;
 
-		// Determine signing options based on algorithm
-		let signing_options = match algorithm {
-			Algorithm::Ed25519 => SigningOptions::raw(),
-			Algorithm::Secp256k1 | Algorithm::Secp256r1 => SigningOptions::for_cert(),
+		// Ed25519 signs the raw TBS bytes; ECDSA signs a pre-hash of the TBS
+		// using the hash declared by the signature algorithm OID
+		let to_sign = match algorithm {
+			Algorithm::Ed25519 => tbs_der,
+			Algorithm::Secp256k1 | Algorithm::Secp256r1 => self.signature_hash.hash(&tbs_der),
 		};
 
 		// Sign the TBS certificate
 		let signature = signer
-			.sign_with_options(&tbs_der, signing_options)
+			.sign_with_options(&to_sign, SigningOptions::raw())
 			.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)?;
 
 		// Convert signature to bytes and encode properly for X.509

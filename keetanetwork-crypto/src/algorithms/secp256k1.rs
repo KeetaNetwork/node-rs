@@ -39,7 +39,7 @@ use crate::operations::encryption::{AsymmetricEncryption, KeyExchange, KeyGenera
 use crate::utils::generate_random_seed;
 
 #[cfg(feature = "signature")]
-use crate::hash::{hash_default, HashAlgorithm};
+use crate::hash::hash_default;
 #[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
@@ -232,11 +232,8 @@ impl CryptoSignerWithOptions<Signature> for Secp256k1PrivateKey {
 			if message.len() != 32 {
 				return Err(::signature::Error::new());
 			}
+
 			signing_key.sign_prehash(message)
-		} else if options.for_cert {
-			// For certificate signing, use SHA2-256
-			let data = HashAlgorithm::Sha2_256.hash(message);
-			signing_key.sign_prehash(&data)
 		} else {
 			// For regular signing, use the default hash algorithm
 			let data = hash_default(message).to_vec();
@@ -347,18 +344,11 @@ impl CryptoVerifierWithOptions<Signature> for Secp256k1PublicKey {
 			if message.len() != 32 {
 				return Err(::signature::Error::new());
 			}
+
 			verifying_key.verify_prehash(message, signature)
 		} else {
-			// For non-raw verification, hash the message first
-			let data = if options.for_cert {
-				// For certificates, use SHA2-256
-				HashAlgorithm::Sha2_256.hash(message)
-			} else {
-				// For regular verification, use default hash
-				hash_default(message).to_vec()
-			};
-
-			// Use prehash verification since we've already computed the hash
+			// For regular verification, use the default hash algorithm
+			let data = hash_default(message).to_vec();
 			verifying_key.verify_prehash(&data, signature)
 		}
 	}

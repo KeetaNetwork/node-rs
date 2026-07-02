@@ -32,7 +32,7 @@ use aead::KeyInit;
 use p256::ecdh::diffie_hellman;
 
 #[cfg(feature = "signature")]
-use crate::hash::{hash_default, HashAlgorithm};
+use crate::hash::hash_default;
 #[cfg(feature = "signature")]
 use crate::operations::signature::{
 	CryptoSigner, CryptoSignerWithOptions, CryptoVerifier, CryptoVerifierWithOptions, SigningOptions,
@@ -233,11 +233,8 @@ impl CryptoSignerWithOptions<Signature> for Secp256r1PrivateKey {
 			if message.len() != 32 {
 				return Err(::signature::Error::new());
 			}
+
 			signing_key.sign_prehash(message)
-		} else if options.for_cert {
-			// For certificate signing, use SHA2-256
-			let data = HashAlgorithm::Sha2_256.hash(message);
-			signing_key.sign_prehash(&data)
 		} else {
 			// For regular signing, use the default hash algorithm (SHA3-256)
 			let data = hash_default(message).to_vec();
@@ -347,11 +344,8 @@ impl CryptoVerifierWithOptions<Signature> for Secp256r1PublicKey {
 			if message.len() != 32 {
 				return Err(::signature::Error::new());
 			}
+
 			verifying_key.verify_prehash(message, signature)
-		} else if options.for_cert {
-			// For certificate verification, use SHA2-256
-			let data = HashAlgorithm::Sha2_256.hash(message);
-			verifying_key.verify_prehash(&data, signature)
 		} else {
 			// For regular verification, use the default hash algorithm
 			let data = hash_default(message).to_vec();

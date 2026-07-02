@@ -7,9 +7,10 @@ use keetanetwork_asn1::{BitString, SubjectPublicKeyInfo};
 use keetanetwork_crypto::algorithms::secp256k1::Secp256k1Derivation;
 use keetanetwork_crypto::algorithms::secp256r1::Secp256r1Derivation;
 use keetanetwork_crypto::prelude::Algorithm;
-use keetanetwork_crypto::prelude::{ExposeSecret, IntoSecret, KeyDerivation};
+use keetanetwork_crypto::prelude::{ExposeSecret, HashAlgorithm, IntoSecret, KeyDerivation};
 use keetanetwork_crypto::utils::generate_random_seed;
 use keetanetwork_x509::certificates::*;
+use keetanetwork_x509::error::CertificateError;
 use keetanetwork_x509::{oids, utils};
 use keetanetwork_x509::{SerialNumber, SubjectPublicKeyInfoOwned, Version};
 
@@ -275,5 +276,75 @@ fn test_ecdsa_signature_der_encoding() -> Result<(), Box<dyn core::error::Error>
 	// Test both ECDSA curves
 	test_ecdsa_curve!("secp256k1", KeyECDSASECP256K1, Secp256k1Derivation);
 	test_ecdsa_curve!("secp256r1", KeyECDSASECP256R1, Secp256r1Derivation);
+	Ok(())
+}
+
+#[test]
+fn test_ecdsa_signature_hash_selection() -> Result<(), Box<dyn core::error::Error>> {
+	// Macro to eliminate code duplication for testing different ECDSA curves
+	macro_rules! test_hash_selection {
+		($curve_name:expr, $key_type:ty, $derivation:ty) => {{
+			let seed = generate_random_seed()?;
+			let private_key = <$derivation>::derive_from_seed(seed.expose_secret().clone().into_secret())?;
+			let account = Account::<$key_type>::from(private_key);
+			let public_key = account.keypair.to_public_key();
+			let public_key_info = SubjectPublicKeyInfo::from(public_key);
+
+			let cn = format!("Test Certificate {}", $curve_name);
+			let subject_dn = utils::create_dn(&[(oids::CN, &cn)])?;
+
+			let builder = keetanetwork_x509::builder::CertificateBuilder::new()
+				.with_subject_public_key(public_key_info.clone())
+				.with_subject_dn(subject_dn.clone())
+				.with_issuer_dn(subject_dn)
+				.with_serial_number(SerialNumber::from(1u64))
+				.with_validity_days(365);
+
+			// Default hash is SHA3-256, matching the TypeScript implementation
+			let default_cert = builder.clone().build(&account)?;
+			assert_eq!(
+				default_cert.signature_algorithm.oid.to_string(),
+				oids::ECDSA_WITH_SHA3_256,
+				"{} default signature algorithm OID should be ecdsa-with-SHA3-256",
+				$curve_name
+			);
+			assert!(
+				default_cert.verify_signature(&public_key_info)?,
+				"{} SHA3-256 signed certificate should verify",
+				$curve_name
+			);
+
+			// SHA2-256 override stamps the matching OID and still verifies
+			let sha2_cert = builder
+				.clone()
+				.with_signature_hash(HashAlgorithm::Sha2_256)
+				.build(&account)?;
+			assert_eq!(
+				sha2_cert.signature_algorithm.oid.to_string(),
+				oids::ECDSA_WITH_SHA256,
+				"{} SHA2-256 override should stamp ecdsa-with-SHA256 OID",
+				$curve_name
+			);
+			assert!(
+				sha2_cert.verify_signature(&public_key_info)?,
+				"{} SHA2-256 signed certificate should verify",
+				$curve_name
+			);
+
+			// Unsupported hash algorithms are rejected at build time
+			let sha512_result = builder
+				.clone()
+				.with_signature_hash(HashAlgorithm::Sha2_512)
+				.build(&account);
+			assert!(
+				matches!(sha512_result, Err(CertificateError::UnsupportedSignatureHash { .. })),
+				"{} SHA2-512 signature hash should be rejected",
+				$curve_name
+			);
+		}};
+	}
+
+	test_hash_selection!("secp256k1", KeyECDSASECP256K1, Secp256k1Derivation);
+	test_hash_selection!("secp256r1", KeyECDSASECP256R1, Secp256r1Derivation);
 	Ok(())
 }

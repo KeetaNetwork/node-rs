@@ -50,27 +50,21 @@ where
 /// Signing and verification options for cryptographic operations.
 ///
 /// Default options are:
-/// - raw: false (will pre-hash the message)
-/// - for_cert: false (use SEC format, not DER)
+/// - raw: false (will pre-hash the message with the network default hash)
+///
+/// Callers that need a different hash pre-hash the message themselves
+/// and use [`SigningOptions::raw`].
 #[derive(Debug, Copy, Clone, Default)]
 pub struct SigningOptions {
 	/// If true, use the raw message without hashing
 	/// If false, pre-hash the message before signing/verification
 	pub raw: bool,
-
-	/// For certificate processing
-	pub for_cert: bool,
 }
 
 impl SigningOptions {
 	/// Create options for raw message processing (no pre-hashing)
 	pub fn raw() -> Self {
-		Self { raw: true, for_cert: false }
-	}
-
-	/// Create options for certificate processing
-	pub fn for_cert() -> Self {
-		Self { raw: false, for_cert: true }
+		Self { raw: true }
 	}
 }
 

@@ -1203,18 +1203,19 @@ impl Certificate {
 		// Get public key bytes directly from the subject public key info
 		let public_key_bytes = issuer_public_key.subject_public_key.raw_bytes();
 
-		// Dispatch to appropriate verification function based on signature algorithm
+		// Dispatch to appropriate verification function based on signature
+		// algorithm; ECDSA pre-hashes the TBS with the OID-declared hash
 		match cert_sig_oid.to_string().as_str() {
 			oids::ED25519 => utils::verify_ed25519_signature(public_key_bytes, signature_bytes, &tbs_der),
 
 			oids::ECDSA_WITH_SHA3_256 => {
 				// For ECDSA, try both curves since the verification function handles curve detection
-				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der)
+				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha3_256)
 			}
 
 			oids::ECDSA_WITH_SHA256 => {
 				// For ECDSA, try both curves since the verification function handles curve detection
-				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der)
+				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha2_256)
 			}
 
 			oids::SHA256_WITH_RSA => Err(CertificateError::InvalidCertificate),
