@@ -1019,6 +1019,30 @@ fn check_duplicate_extensions(extensions: &[Extension]) -> Result<(), Certificat
 	Ok(())
 }
 
+/// Verify an ECDSA certificate signature using the curve declared by the
+/// issuer's SubjectPublicKeyInfo.
+///
+/// RFC 5480 Section 2.1.1 requires EC public keys to carry their named-curve
+/// OID in the algorithm parameters, so the curve is always known.
+fn verify_ecdsa_declared_curve(
+	issuer_public_key: &SubjectPublicKeyInfo,
+	signature_bytes: &[u8],
+	tbs_der: &[u8],
+	hash: HashAlgorithm,
+) -> Result<bool, CertificateError> {
+	let Some(curve_oid) = issuer_public_key.algorithm.parameters_oid() else {
+		return Ok(false);
+	};
+
+	let curve_oid = curve_oid.to_string();
+	let public_key_bytes = issuer_public_key.subject_public_key.raw_bytes();
+	match curve_oid.as_str() {
+		oids::SECP256R1 => utils::try_verify_ecdsa_secp256r1(public_key_bytes, signature_bytes, tbs_der, hash),
+		oids::SECP256K1 => utils::try_verify_ecdsa_secp256k1(public_key_bytes, signature_bytes, tbs_der, hash),
+		_ => Ok(false),
+	}
+}
+
 impl Certificate {
 	/// Check if the certificate is valid at a specific time
 	pub fn is_valid_at(&self, time: DateTime<Utc>) -> Result<bool, CertificateError> {
@@ -1209,13 +1233,11 @@ impl Certificate {
 			oids::ED25519 => utils::verify_ed25519_signature(public_key_bytes, signature_bytes, &tbs_der),
 
 			oids::ECDSA_WITH_SHA3_256 => {
-				// For ECDSA, try both curves since the verification function handles curve detection
-				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha3_256)
+				verify_ecdsa_declared_curve(issuer_public_key, signature_bytes, &tbs_der, HashAlgorithm::Sha3_256)
 			}
 
 			oids::ECDSA_WITH_SHA256 => {
-				// For ECDSA, try both curves since the verification function handles curve detection
-				utils::verify_ecdsa_signature(public_key_bytes, signature_bytes, &tbs_der, HashAlgorithm::Sha2_256)
+				verify_ecdsa_declared_curve(issuer_public_key, signature_bytes, &tbs_der, HashAlgorithm::Sha2_256)
 			}
 
 			oids::SHA256_WITH_RSA => Err(CertificateError::InvalidCertificate),

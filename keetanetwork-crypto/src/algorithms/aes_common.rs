@@ -52,5 +52,6 @@ pub(crate) fn split_iv(ciphertext: &[u8]) -> Result<(&[u8], &[u8]), CryptoError>
 		return Err(CryptoError::DecryptionFailed);
 	}
 
-	Ok(ciphertext.split_at(IV_SIZE))
+	let iv_and_payload = ciphertext.split_at(IV_SIZE);
+	Ok(iv_and_payload)
 }

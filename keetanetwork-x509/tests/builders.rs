@@ -3,7 +3,7 @@ mod common;
 use chrono::{TimeZone, Utc};
 use der::{Decode, Encode};
 use keetanetwork_account::{Account, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyPair};
-use keetanetwork_asn1::{BitString, SubjectPublicKeyInfo};
+use keetanetwork_asn1::{AlgorithmIdentifier, BitString, SubjectPublicKeyInfo};
 use keetanetwork_crypto::algorithms::secp256k1::Secp256k1Derivation;
 use keetanetwork_crypto::algorithms::secp256r1::Secp256r1Derivation;
 use keetanetwork_crypto::prelude::Algorithm;
@@ -346,5 +346,56 @@ fn test_ecdsa_signature_hash_selection() -> Result<(), Box<dyn core::error::Erro
 
 	test_hash_selection!("secp256k1", KeyECDSASECP256K1, Secp256k1Derivation);
 	test_hash_selection!("secp256r1", KeyECDSASECP256R1, Secp256r1Derivation);
+	Ok(())
+}
+
+#[test]
+fn test_ecdsa_verification_requires_declared_curve() -> Result<(), Box<dyn core::error::Error>> {
+	// Build a self-signed secp256k1 certificate
+	let seed = generate_random_seed()?;
+	let seed_bytes = (*seed.expose_secret()).into_secret();
+	let private_key = Secp256k1Derivation::derive_from_seed(seed_bytes)?;
+	let account = Account::<KeyECDSASECP256K1>::from(private_key);
+	let public_key = account.keypair.to_public_key();
+	let public_key_info = SubjectPublicKeyInfo::from(public_key.clone());
+
+	let subject_dn = utils::create_dn(&[(oids::CN, "Curve Declaration Test")])?;
+	let certificate = keetanetwork_x509::builder::CertificateBuilder::new()
+		.with_subject_public_key(public_key_info.clone())
+		.with_subject_dn(subject_dn.clone())
+		.with_issuer_dn(subject_dn)
+		.with_serial_number(SerialNumber::from(1u64))
+		.with_validity_days(365)
+		.build(&account)?;
+
+	assert!(
+		certificate.verify_signature(&public_key_info)?,
+		"certificate with correctly declared secp256k1 curve should verify"
+	);
+
+	// Same key bytes but SPKI declaring secp256r1: verification must not succeed
+	let r1_seed = generate_random_seed()?;
+	let r1_seed_bytes = (*r1_seed.expose_secret()).into_secret();
+	let r1_private_key = Secp256r1Derivation::derive_from_seed(r1_seed_bytes)?;
+	let r1_account = Account::<KeyECDSASECP256R1>::from(r1_private_key);
+	let r1_public_key = r1_account.keypair.to_public_key();
+	let r1_spki = SubjectPublicKeyInfo::from(r1_public_key);
+
+	let key_bytes = Vec::<u8>::from(public_key);
+	let wrong_curve_spki = SubjectPublicKeyInfo::new(r1_spki.algorithm, &key_bytes)?;
+	let wrong_curve_result = certificate.verify_signature(&wrong_curve_spki);
+	assert!(
+		!matches!(wrong_curve_result, Ok(true)),
+		"secp256k1 key declared as secp256r1 must not verify"
+	);
+
+	// SPKI with no curve parameters at all: verification must fail
+	let no_params_algorithm = AlgorithmIdentifier::new(oids::EC_PUBLIC_KEY)?;
+	let no_params_spki = SubjectPublicKeyInfo::new(no_params_algorithm, &key_bytes)?;
+	assert!(
+		!certificate.verify_signature(&no_params_spki)?,
+		"EC key without a declared curve must not verify"
+	);
+
 	Ok(())
 }

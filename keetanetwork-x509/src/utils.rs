@@ -468,11 +468,11 @@ pub fn raw_to_der_signature(signature_bytes: &[u8]) -> Result<Vec<u8>, Certifica
 	Ok(der_encoded)
 }
 
-/// Generic ECDSA signature verification with multiple signature format support.
+/// Generic ECDSA signature verification for DER-encoded signatures.
 ///
 /// This internal helper function implements the common ECDSA verification logic
-/// for both Secp256r1 and Secp256k1 curves, handling both DER-encoded and raw
-/// signature formats.
+/// for both Secp256r1 and Secp256k1 curves, accepting only DER-encoded
+/// signatures (RFC 5480 Section 2.2).
 ///
 /// # Type Parameters
 ///
@@ -482,7 +482,7 @@ pub fn raw_to_der_signature(signature_bytes: &[u8]) -> Result<Vec<u8>, Certifica
 /// # Arguments
 ///
 /// * `public_key` - The public key for verification
-/// * `signature_bytes` - Signature bytes (DER or raw format)
+/// * `signature_bytes` - DER-encoded signature bytes
 /// * `tbs_der` - To-be-signed certificate data
 /// * `hash` - Hash algorithm declared by the certificate's signature
 ///   algorithm OID, used to pre-hash the TBS data
@@ -504,53 +504,37 @@ where
 	K: CryptoVerifierWithOptions<S>,
 	F: Fn(&[u8; 64]) -> Result<S, CertificateError>,
 {
+	// X.509 ECDSA signatures are always DER-encoded Ecdsa-Sig-Value
+	// structures (RFC 5480 Section 2.2); anything else is invalid
 	let signature_bytes = signature_bytes.as_ref();
+	let Ok(sig_array) = der_to_raw_signature(signature_bytes) else {
+		return Ok(false);
+	};
+
+	let signature = sig_from_bytes(&sig_array)?;
 
 	// Pre-hash the TBS data with the OID-declared hash, then verify the
 	// digest directly (raw mode)
-	let tbs_digest = hash.hash(tbs_der.as_ref());
+	let tbs_der = tbs_der.as_ref();
+	let tbs_digest = hash.hash(tbs_der);
 	let options = SigningOptions::raw();
+	let verified = public_key
+		.verify_with_options(&tbs_digest, &signature, options)
+		.is_ok();
 
-	// Try DER-encoded signature first
-	if signature_bytes.len() >= 2 && signature_bytes[0] == 0x30 {
-		if let Ok(sig_array) = der_to_raw_signature(signature_bytes) {
-			let signature = sig_from_bytes(&sig_array)?;
-
-			if public_key
-				.verify_with_options(&tbs_digest, &signature, options)
-				.is_ok()
-			{
-				return Ok(true);
-			}
-		}
-	}
-	// Try raw 64-byte signature
-	else if signature_bytes.len() == 64 {
-		let sig_array: [u8; 64] = signature_bytes.try_into().or_invalid_certificate()?;
-		let signature = sig_from_bytes(&sig_array)?;
-
-		if public_key
-			.verify_with_options(&tbs_digest, &signature, options)
-			.is_ok()
-		{
-			return Ok(true);
-		}
-	}
-
-	Ok(false)
+	Ok(verified)
 }
 
-/// Verify ECDSA signature using Secp256r1 curve with multiple format support.
+/// Verify ECDSA signature using Secp256r1 curve.
 ///
 /// This function attempts to verify an ECDSA signature using the Secp256r1
-/// elliptic curve. It supports both DER-encoded and raw 64-byte signature
-/// formats, and tries multiple verification approaches including direct
-/// verification and hash-based verification.
+/// elliptic curve. The signature must be DER-encoded as required for X.509
+/// certificates (RFC 5480 Section 2.2).
 ///
 /// # Arguments
 ///
 /// * `public_key_bytes` - Raw bytes of the Secp256r1 public key
-/// * `signature_bytes` - Signature bytes (DER or raw format)
+/// * `signature_bytes` - DER-encoded signature bytes
 /// * `tbs_der` - To-be-signed certificate data in DER format
 /// * `hash` - Hash algorithm declared by the certificate's signature
 ///   algorithm OID
@@ -568,7 +552,7 @@ where
 /// use keetanetwork_x509::utils::try_verify_ecdsa_secp256r1;
 ///
 /// let public_key_bytes = &[/* 65 bytes of uncompressed public key */];
-/// let signature_bytes = &[/* DER or raw signature bytes */];
+/// let signature_bytes = &[/* DER-encoded signature bytes */];
 /// let tbs_data = &[/* certificate data to verify */];
 ///
 /// let result = try_verify_ecdsa_secp256r1(
@@ -591,17 +575,16 @@ pub fn try_verify_ecdsa_secp256r1(
 	})
 }
 
-/// Verify ECDSA signature using Secp256k1 curve with multiple format support.
+/// Verify ECDSA signature using Secp256k1 curve.
 ///
 /// This function attempts to verify an ECDSA signature using the Secp256k1
-/// elliptic curve. It supports both DER-encoded and raw  64-byte signature
-/// formats, and tries multiple verification approaches including direct
-/// verification and hash-based verification.
+/// elliptic curve. The signature must be DER-encoded as required for X.509
+/// certificates (RFC 5480 Section 2.2).
 ///
 /// # Arguments
 ///
 /// * `public_key_bytes` - Raw bytes of the Secp256k1 public key
-/// * `signature_bytes` - Signature bytes (DER or raw format)
+/// * `signature_bytes` - DER-encoded signature bytes
 /// * `tbs_der` - To-be-signed certificate data in DER format
 /// * `hash` - Hash algorithm declared by the certificate's signature
 ///   algorithm OID
@@ -619,7 +602,7 @@ pub fn try_verify_ecdsa_secp256r1(
 /// use keetanetwork_x509::utils::try_verify_ecdsa_secp256k1;
 ///
 /// let public_key_bytes = &[/* 65 bytes of uncompressed public key */];
-/// let signature_bytes = &[/* DER or raw signature bytes */];
+/// let signature_bytes = &[/* DER-encoded signature bytes */];
 /// let tbs_data = &[/* certificate data to verify */];
 ///
 /// let result = try_verify_ecdsa_secp256k1(
@@ -694,66 +677,6 @@ pub fn verify_ed25519_signature(
 		.verify_with_options(tbs_der.as_ref(), &signature, options)
 		.map(|()| true)
 		.map_err(|_| CertificateError::CertificateSignatureVerificationFailed)
-}
-
-/// Verify ECDSA signature trying both Secp256r1 and Secp256k1 curves.
-///
-/// This function attempts to verify an ECDSA signature by trying both supported
-/// elliptic curves (Secp256r1/P-256 and Secp256k1). This is useful when the
-/// specific curve is not known from the algorithm identifier, as is the case
-/// with the generic "ECDSA with SHA-256" algorithm identifier.
-///
-/// The function tries Secp256r1 first (as it's more common in X.509), then
-/// falls back to Secp256k1 if verification fails.
-///
-/// # Arguments
-///
-/// * `public_key_bytes` - Raw bytes of the ECDSA public key
-/// * `signature_bytes` - Signature bytes (DER or raw format)
-/// * `tbs_der` - To-be-signed certificate data in DER format
-/// * `hash` - Hash algorithm declared by the certificate's signature
-///   algorithm OID
-///
-/// # Returns
-///
-/// * `Ok(true)` - Signature verification succeeded with one of the curves
-/// * `Ok(false)` - Signature verification failed with both curves
-/// * `Err(CertificateError)` - Error during verification process
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use keetanetwork_crypto::prelude::HashAlgorithm;
-/// use keetanetwork_x509::utils::verify_ecdsa_signature;
-///
-/// // This example shows the function signature but does not run
-/// // because it would require valid cryptographic data
-/// let public_key_bytes = &[/* ECDSA public key bytes */];
-/// let signature_bytes = &[/* signature bytes */];
-/// let tbs_data = &[/* certificate data to verify */];
-///
-/// let result = verify_ecdsa_signature(
-///     public_key_bytes,
-///     signature_bytes,
-///     tbs_data,
-///     HashAlgorithm::Sha3_256
-/// );
-/// ```
-pub fn verify_ecdsa_signature(
-	public_key_bytes: impl AsRef<[u8]>,
-	signature_bytes: impl AsRef<[u8]>,
-	tbs_der: impl AsRef<[u8]>,
-	hash: HashAlgorithm,
-) -> Result<bool, CertificateError> {
-	// Try Secp256r1 first (more common in X.509)
-	if let Ok(result) = try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, &tbs_der, hash) {
-		if result {
-			return Ok(true);
-		}
-	}
-
-	// Try Secp256k1 if Secp256r1 failed
-	try_verify_ecdsa_secp256k1(public_key_bytes, signature_bytes, tbs_der, hash)
 }
 
 #[cfg(test)]
@@ -1289,7 +1212,7 @@ mod tests {
 
 		// Test cases: (pub_key_len, signature_data, description, should_error)
 		let test_cases = [
-			// Invalid signature lengths for raw format
+			// Non-DER signatures
 			(65, vec![0u8; 32], true),
 			(65, vec![0u8; 96], true),
 			(65, vec![], true),
@@ -1300,7 +1223,7 @@ mod tests {
 			// Invalid DER signature format
 			(65, vec![0x30, 0x02, 0x01], true),
 			(65, vec![0x30], true),
-			// Valid lengths but dummy data (should error due to invalid key)
+			// Non-DER signature with dummy data (should error due to invalid key)
 			(65, vec![0u8; 64], true),
 		];
 
@@ -1326,31 +1249,16 @@ mod tests {
 	}
 
 	#[test]
-	fn test_verify_ecdsa_signature_fallback() {
-		let public_key_bytes = vec![0u8; 65]; // Invalid but correct length
-		let signature_bytes = vec![0u8; 64];
-		let tbs_der = b"test data to sign";
-
-		let result = verify_ecdsa_signature(&public_key_bytes, &signature_bytes, tbs_der, HashAlgorithm::Sha3_256);
-		assert!(result.is_err());
-
-		let public_key_bytes = vec![0u8; 16];
-		let result = verify_ecdsa_signature(&public_key_bytes, &signature_bytes, tbs_der, HashAlgorithm::Sha3_256);
-		assert!(result.is_err());
-	}
-
-	#[test]
-	fn test_signature_format_detection() {
+	fn test_signature_format_rejection_with_invalid_key() {
 		let public_key_bytes = vec![0u8; 65];
 		let tbs_der = b"test data";
 		let test_cases = [
-			// DER format detection (starts with 0x30)
+			// Truncated DER SEQUENCE
 			vec![0x30, 0x44, 0x02, 0x20],
-			// Raw format (64 bytes, not starting with 0x30)
+			// Non-DER 64-byte signature (raw format is not accepted)
 			vec![0x01; 64],
-			// Raw format with different starting byte
 			vec![0xFF; 64],
-			// Invalid length (not 64 and not DER)
+			// Invalid lengths
 			vec![0x01; 48],
 			vec![0x01; 32],
 			// Empty signature
@@ -1364,5 +1272,24 @@ mod tests {
 				try_verify_ecdsa_secp256r1(&public_key_bytes, &signature_bytes, tbs_der, HashAlgorithm::Sha3_256);
 			assert!(result.is_err());
 		}
+	}
+
+	#[test]
+	fn test_non_der_signature_rejected_with_valid_key() -> Result<(), CertificateError> {
+		// P-256 generator point (uncompressed): a valid on-curve public key
+		let public_key_bytes: [u8; 65] = [
+			0x04, // Uncompressed point indicator
+			0x6B, 0x17, 0xD1, 0xF2, 0xE1, 0x2C, 0x42, 0x47, 0xF8, 0xBC, 0xE6, 0xE5, 0x63, 0xA4, 0x40, 0xF2, 0x77,
+			0x03, 0x7D, 0x81, 0x2D, 0xEB, 0x33, 0xA0, 0xF4, 0xA1, 0x39, 0x45, 0xD8, 0x98, 0xC2, 0x96, 0x4F, 0xE3,
+			0x42, 0xE2, 0xFE, 0x1A, 0x7F, 0x9B, 0x8E, 0xE7, 0xEB, 0x4A, 0x7C, 0x0F, 0x9E, 0x16, 0x2B, 0xCE, 0x33,
+			0x57, 0x6B, 0x31, 0x5E, 0xCE, 0xCB, 0xB6, 0x40, 0x68, 0x37, 0xBF, 0x51, 0xF5,
+		];
+
+		let tbs_der = b"test data";
+		// A raw 64-byte (non-DER) signature must fail verification
+		let raw_signature = [0x01u8; 64];
+		let result = try_verify_ecdsa_secp256r1(public_key_bytes, raw_signature, tbs_der, HashAlgorithm::Sha3_256)?;
+		assert!(!result);
+		Ok(())
 	}
 }
