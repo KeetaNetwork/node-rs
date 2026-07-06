@@ -60,8 +60,10 @@ impl<T> HandleRegistry<T> {
 	///
 	/// Returns [`INVALID_HANDLE`] when `handle` is unknown.
 	pub fn with_mut<R>(&mut self, handle: i32, body: impl FnOnce(&mut T) -> R) -> Result<R, CodedError> {
-		let missing = self.unknown();
-		self.entries.get_mut(&handle).map(body).ok_or(missing)
+		self.entries
+			.get_mut(&handle)
+			.map(body)
+			.ok_or_else(|| self.unknown())
 	}
 
 	/// Remove and return the value at `handle`.
@@ -70,8 +72,7 @@ impl<T> HandleRegistry<T> {
 	///
 	/// Returns [`INVALID_HANDLE`] when `handle` is unknown.
 	pub fn take(&mut self, handle: i32) -> Result<T, CodedError> {
-		let missing = self.unknown();
-		self.entries.remove(&handle).ok_or(missing)
+		self.entries.remove(&handle).ok_or_else(|| self.unknown())
 	}
 
 	/// Release `handle`, ignoring an unknown one.
@@ -112,7 +113,8 @@ mod tests {
 	fn with_mut_mutates_in_place() {
 		let mut registry = HandleRegistry::new("thing");
 		let handle = registry.store(1u8);
-		assert!(matches!(registry.with_mut(handle, |value| *value + 8), Ok(9)));
+		assert!(matches!(registry.with_mut(handle, |value| *value += 8), Ok(())));
+		assert!(matches!(registry.with(handle, |value| *value), Ok(9)));
 	}
 
 	#[test]
