@@ -1,12 +1,12 @@
 //! WASI Preview 1 core-module ABI: a flat, handle-based C ABI over the shared
 //! [`crate::pure`] surface, modeled on the JNI binding.
 
-use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use keetanetwork_account::KeyPairType;
 use keetanetwork_bindings::error::CodedError;
 use keetanetwork_bindings::parse::adjust_method;
+use keetanetwork_bindings::registry::HandleRegistry;
 use keetanetwork_block::{AccountRef, Block, BlockBuilder, Operation, Permissions, UnsignedBlock};
 use keetanetwork_vote::Vote;
 use keetanetwork_x509::certificates::Certificate;
@@ -14,25 +14,33 @@ use keetanetwork_x509::certificates::Certificate;
 use crate::pure;
 
 /// Registry of live handles plus the last error, behind a single lock.
-#[derive(Default)]
 struct State {
-	next: i32,
-	accounts: HashMap<i32, AccountRef>,
-	blocks: HashMap<i32, Block>,
-	bytes: HashMap<i32, Vec<u8>>,
-	permissions: HashMap<i32, Permissions>,
-	operations: HashMap<i32, Operation>,
-	builders: HashMap<i32, BlockBuilder>,
-	unsigned: HashMap<i32, UnsignedBlock>,
-	votes: HashMap<i32, Vote>,
-	certificates: HashMap<i32, Certificate>,
+	accounts: HandleRegistry<AccountRef>,
+	blocks: HandleRegistry<Block>,
+	bytes: HandleRegistry<Vec<u8>>,
+	permissions: HandleRegistry<Permissions>,
+	operations: HandleRegistry<Operation>,
+	builders: HandleRegistry<BlockBuilder>,
+	unsigned: HandleRegistry<UnsignedBlock>,
+	votes: HandleRegistry<Vote>,
+	certificates: HandleRegistry<Certificate>,
 	last_error: Option<CodedError>,
 }
 
-impl State {
-	fn allocate(&mut self) -> i32 {
-		self.next += 1;
-		self.next
+impl Default for State {
+	fn default() -> Self {
+		Self {
+			accounts: HandleRegistry::new("account"),
+			blocks: HandleRegistry::new("block"),
+			bytes: HandleRegistry::new("bytes"),
+			permissions: HandleRegistry::new("permissions"),
+			operations: HandleRegistry::new("operation"),
+			builders: HandleRegistry::new("builder"),
+			unsigned: HandleRegistry::new("unsigned-block"),
+			votes: HandleRegistry::new("vote"),
+			certificates: HandleRegistry::new("certificate"),
+			last_error: None,
+		}
 	}
 }
 
@@ -52,126 +60,99 @@ pub fn fail(error: CodedError) -> i32 {
 
 /// Store `bytes` as a result and return its handle.
 pub fn store_bytes(bytes: Vec<u8>) -> i32 {
-	let mut guard = state();
-	let handle = guard.allocate();
-
-	guard.bytes.insert(handle, bytes);
-	handle
+	state().bytes.store(bytes)
 }
 
 /// A value kind tracked in the handle registry.
 trait Registered: Clone + Sized {
-	/// Handle-kind label used in `INVALID_HANDLE` messages.
-	const KIND: &'static str;
-
 	/// The registry table holding values of this kind.
-	fn table(state: &mut State) -> &mut HashMap<i32, Self>;
+	fn table(state: &mut State) -> &mut HandleRegistry<Self>;
 }
 
 impl Registered for AccountRef {
-	const KIND: &'static str = "account";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.accounts
 	}
 }
 
 impl Registered for Block {
-	const KIND: &'static str = "block";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.blocks
 	}
 }
 
 impl Registered for Permissions {
-	const KIND: &'static str = "permissions";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.permissions
 	}
 }
 
 impl Registered for Operation {
-	const KIND: &'static str = "operation";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.operations
 	}
 }
 
 impl Registered for BlockBuilder {
-	const KIND: &'static str = "builder";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.builders
 	}
 }
 
 impl Registered for UnsignedBlock {
-	const KIND: &'static str = "unsigned-block";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.unsigned
 	}
 }
 
 impl Registered for Vote {
-	const KIND: &'static str = "vote";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.votes
 	}
 }
 
 impl Registered for Certificate {
-	const KIND: &'static str = "certificate";
-
-	fn table(state: &mut State) -> &mut HashMap<i32, Self> {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.certificates
 	}
 }
 
-/// The `INVALID_HANDLE` error for a missing handle of kind `T`.
-fn unknown_handle<T: Registered>() -> CodedError {
-	CodedError::new("INVALID_HANDLE", format!("unknown {} handle", T::KIND))
+/// Reduce a registry lookup to its value, recording the coded error and
+/// yielding `None` for an unknown handle. Callers drop the state lock before
+/// invoking this so the miss never re-enters [`state`].
+fn ok_or_fail<R>(result: Result<R, CodedError>) -> Option<R> {
+	match result {
+		Ok(value) => Some(value),
+		Err(error) => {
+			fail(error);
+			None
+		}
+	}
 }
 
 /// Store `value` under a fresh handle and return it.
 fn store<T: Registered>(value: T) -> i32 {
-	let mut guard = state();
-	let handle = guard.allocate();
-
-	T::table(&mut guard).insert(handle, value);
-	handle
+	T::table(&mut state()).store(value)
 }
 
 /// Resolve a handle to a clone, recording an error and returning `None` when
 /// the handle is unknown. The lock is released before recording the error so a
 /// miss never re-enters [`state`].
 fn resolve<T: Registered>(handle: i32) -> Option<T> {
-	let value = T::table(&mut state()).get(&handle).cloned();
-	if value.is_none() {
-		fail(unknown_handle::<T>());
-	}
-
-	value
+	let result = T::table(&mut state()).with(handle, Clone::clone);
+	ok_or_fail(result)
 }
 
 /// Remove and return a handle's value, recording an error and returning `None`
 /// when the handle is unknown.
 fn take<T: Registered>(handle: i32) -> Option<T> {
-	let value = T::table(&mut state()).remove(&handle);
-	if value.is_none() {
-		fail(unknown_handle::<T>());
-	}
-
-	value
+	let result = T::table(&mut state()).take(handle);
+	ok_or_fail(result)
 }
 
 /// Release a handle, ignoring an unknown one.
 fn release<T: Registered>(handle: i32) {
-	T::table(&mut state()).remove(&handle);
+	T::table(&mut state()).remove(handle);
 }
 
 /// Store an account and return its handle.
@@ -347,8 +328,8 @@ pub unsafe extern "C" fn keeta_dealloc(ptr: i32, len: i32) {
 pub extern "C" fn keeta_bytes_ptr(handle: i32) -> i32 {
 	state()
 		.bytes
-		.get(&handle)
-		.map_or(0, |bytes| bytes.as_ptr() as i32)
+		.with(handle, |bytes| bytes.as_ptr() as i32)
+		.unwrap_or(0)
 }
 
 /// Length of a bytes handle's data, or `0` for an unknown handle.
@@ -356,14 +337,14 @@ pub extern "C" fn keeta_bytes_ptr(handle: i32) -> i32 {
 pub extern "C" fn keeta_bytes_len(handle: i32) -> i32 {
 	state()
 		.bytes
-		.get(&handle)
-		.map_or(0, |bytes| bytes.len() as i32)
+		.with(handle, |bytes| bytes.len() as i32)
+		.unwrap_or(0)
 }
 
 /// Release a bytes handle.
 #[no_mangle]
 pub extern "C" fn keeta_bytes_free(handle: i32) {
-	state().bytes.remove(&handle);
+	state().bytes.remove(handle);
 }
 
 /// The last error code as a bytes handle (`0` when no error is pending).

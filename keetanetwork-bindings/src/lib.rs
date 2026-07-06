@@ -11,6 +11,7 @@ pub mod account;
 pub mod error;
 pub mod parse;
 pub mod permissions;
+pub mod registry;
 pub mod time;
 pub mod x509;
 
