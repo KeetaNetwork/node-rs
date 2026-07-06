@@ -1022,8 +1022,9 @@ fn check_duplicate_extensions(extensions: &[Extension]) -> Result<(), Certificat
 /// Verify an ECDSA certificate signature using the curve declared by the
 /// issuer's SubjectPublicKeyInfo.
 ///
-/// RFC 5480 Section 2.1.1 requires EC public keys to carry their named-curve
-/// OID in the algorithm parameters, so the curve is always known.
+/// RFC 5480 Section 2.1.1 requires the algorithm parameters to be present and
+/// restricts them to a named-curve OID. This implementation accepts the
+/// secp256r1 and secp256k1 named curves.
 fn verify_ecdsa_declared_curve(
 	issuer_public_key: &SubjectPublicKeyInfo,
 	signature_bytes: &[u8],

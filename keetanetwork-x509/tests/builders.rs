@@ -384,18 +384,12 @@ fn test_ecdsa_verification_requires_declared_curve() -> Result<(), Box<dyn core:
 	let key_bytes = Vec::<u8>::from(public_key);
 	let wrong_curve_spki = SubjectPublicKeyInfo::new(r1_spki.algorithm, &key_bytes)?;
 	let wrong_curve_result = certificate.verify_signature(&wrong_curve_spki);
-	assert!(
-		!matches!(wrong_curve_result, Ok(true)),
-		"secp256k1 key declared as secp256r1 must not verify"
-	);
+	assert!(!matches!(wrong_curve_result, Ok(true)), "secp256k1 key declared as secp256r1 must not verify");
 
 	// SPKI with no curve parameters at all: verification must fail
 	let no_params_algorithm = AlgorithmIdentifier::new(oids::EC_PUBLIC_KEY)?;
 	let no_params_spki = SubjectPublicKeyInfo::new(no_params_algorithm, &key_bytes)?;
-	assert!(
-		!certificate.verify_signature(&no_params_spki)?,
-		"EC key without a declared curve must not verify"
-	);
+	assert!(!certificate.verify_signature(&no_params_spki)?, "EC key without a declared curve must not verify");
 
 	Ok(())
 }
