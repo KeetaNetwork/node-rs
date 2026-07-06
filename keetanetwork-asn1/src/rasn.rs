@@ -167,109 +167,67 @@ impl_try_from_rasn_encode!(FeesSingle);
 impl_try_from_rasn_encode!(FeesMultiple);
 impl_try_from_rasn_encode!(Extension);
 
-// Implement der traits for AlgorithmIdentifier to make it compatible with x509 certificate structures
-impl<'a> DecodeValue<'a> for AlgorithmIdentifier {
-	fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-		// Read the content bytes
-		let content_bytes = reader.read_slice(header.length)?;
-		// Reconstruct the complete DER structure with the SEQUENCE tag and length
-		let mut der_bytes = Vec::new();
-		// SEQUENCE tag (0x30)
-		der_bytes.push(0x30);
+/// Macro to bridge rasn-backed SEQUENCE types into the der crate's trait system
+/// (DecodeValue/EncodeValue/Sequence/ValueOrd), making them usable inside x509
+/// certificate structures.
+macro_rules! impl_der_bridge {
+	($type:ty) => {
+		impl<'a> DecodeValue<'a> for $type {
+			fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
+				// Read the content bytes
+				let content_bytes = reader.read_slice(header.length)?;
+				// Reconstruct the complete DER structure with the SEQUENCE tag and length
+				let mut der_bytes = Vec::new();
 
-		// Length encoding
-		let length_value = usize::try_from(header.length).map_err(|_| der::ErrorKind::Failed)?;
-		if length_value < 0x80 {
-			der_bytes.push(length_value as u8);
-		} else {
-			// Long form length encoding
-			let length_bytes = length_value.to_be_bytes();
-			let significant_bytes = length_bytes.iter().skip_while(|&&b| b == 0).count();
-			der_bytes.push(0x80 | significant_bytes as u8);
-			der_bytes.extend_from_slice(&length_bytes[8 - significant_bytes..]);
+				// SEQUENCE tag (0x30)
+				der_bytes.push(0x30);
+
+				// Length encoding
+				let length_value = usize::try_from(header.length).map_err(|_| der::ErrorKind::Failed)?;
+				if length_value < 0x80 {
+					der_bytes.push(length_value as u8);
+				} else {
+					// Long form length encoding
+					let length_bytes = length_value.to_be_bytes();
+					let significant_bytes = length_bytes.iter().skip_while(|&&b| b == 0).count();
+					der_bytes.push(0x80 | significant_bytes as u8);
+					der_bytes.extend_from_slice(&length_bytes[8 - significant_bytes..]);
+				}
+
+				// Content bytes
+				der_bytes.extend_from_slice(content_bytes);
+
+				rasn::der::decode::<Self>(&der_bytes).map_err(|_| der::ErrorKind::Failed.into())
+			}
 		}
 
-		// Content bytes
-		der_bytes.extend_from_slice(content_bytes);
+		impl EncodeValue for $type {
+			fn value_len(&self) -> der::Result<Length> {
+				let der_bytes = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
+				Length::try_from(der_bytes.len()).map_err(|_| der::ErrorKind::Failed.into())
+			}
 
-		rasn::der::decode::<Self>(&der_bytes).map_err(|_| der::ErrorKind::Failed.into())
-	}
-}
-
-impl EncodeValue for AlgorithmIdentifier {
-	fn value_len(&self) -> der::Result<Length> {
-		let der_bytes = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
-		Length::try_from(der_bytes.len()).map_err(|_| der::ErrorKind::Failed.into())
-	}
-
-	fn encode_value(&self, writer: &mut impl Writer) -> der::Result<()> {
-		let der_bytes = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
-		writer.write(&der_bytes)
-	}
-}
-
-impl<'a> Sequence<'a> for AlgorithmIdentifier {}
-
-impl ValueOrd for AlgorithmIdentifier {
-	fn value_cmp(&self, other: &Self) -> der::Result<Ordering> {
-		// Compare based on DER encoding
-		let self_der = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
-		let other_der = rasn::der::encode(other).map_err(|_| der::ErrorKind::Failed)?;
-		Ok(self_der.cmp(&other_der))
-	}
-}
-
-// Implement der traits for SubjectPublicKeyInfo
-impl<'a> DecodeValue<'a> for SubjectPublicKeyInfo {
-	fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-		// Read the content bytes
-		let content_bytes = reader.read_slice(header.length)?;
-		// Reconstruct the complete DER structure with the SEQUENCE tag and length
-		let mut der_bytes = Vec::new();
-		// SEQUENCE tag (0x30)
-		der_bytes.push(0x30);
-
-		// Length encoding
-		let length_value = usize::try_from(header.length).map_err(|_| der::ErrorKind::Failed)?;
-		if length_value < 0x80 {
-			der_bytes.push(length_value as u8);
-		} else {
-			// Long form length encoding
-			let length_bytes = length_value.to_be_bytes();
-			let significant_bytes = length_bytes.iter().skip_while(|&&b| b == 0).count();
-			der_bytes.push(0x80 | significant_bytes as u8);
-			der_bytes.extend_from_slice(&length_bytes[8 - significant_bytes..]);
+			fn encode_value(&self, writer: &mut impl Writer) -> der::Result<()> {
+				let der_bytes = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
+				writer.write(&der_bytes)
+			}
 		}
 
-		// Content bytes
-		der_bytes.extend_from_slice(content_bytes);
+		impl<'a> Sequence<'a> for $type {}
 
-		rasn::der::decode::<Self>(&der_bytes).map_err(|_| der::ErrorKind::Failed.into())
-	}
+		impl ValueOrd for $type {
+			fn value_cmp(&self, other: &Self) -> der::Result<Ordering> {
+				// Compare based on DER encoding
+				let self_der = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
+				let other_der = rasn::der::encode(other).map_err(|_| der::ErrorKind::Failed)?;
+				Ok(self_der.cmp(&other_der))
+			}
+		}
+	};
 }
 
-impl EncodeValue for SubjectPublicKeyInfo {
-	fn value_len(&self) -> der::Result<Length> {
-		let der_bytes = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
-		Length::try_from(der_bytes.len()).map_err(|_| der::ErrorKind::Failed.into())
-	}
-
-	fn encode_value(&self, writer: &mut impl Writer) -> der::Result<()> {
-		let der_bytes = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
-		writer.write(&der_bytes)
-	}
-}
-
-impl<'a> Sequence<'a> for SubjectPublicKeyInfo {}
-
-impl ValueOrd for SubjectPublicKeyInfo {
-	fn value_cmp(&self, other: &Self) -> der::Result<Ordering> {
-		// Compare based on DER encoding
-		let self_der = rasn::der::encode(self).map_err(|_| der::ErrorKind::Failed)?;
-		let other_der = rasn::der::encode(other).map_err(|_| der::ErrorKind::Failed)?;
-		Ok(self_der.cmp(&other_der))
-	}
-}
+impl_der_bridge!(AlgorithmIdentifier);
+impl_der_bridge!(SubjectPublicKeyInfo);
 
 /// Extension trait for ObjectIdentifier to provide compatibility between rasn and der backends
 pub trait ObjectIdentifierExt {

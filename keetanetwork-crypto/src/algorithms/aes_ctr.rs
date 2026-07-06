@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use aes::Aes128;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use ctr::Ctr128BE;
-use rand_core::{OsRng, TryRngCore};
 
+use crate::algorithms::aes_common::{ensure_key_size, prepend_iv, resolve_iv, split_iv};
 use crate::error::CryptoError;
 use crate::operations::encryption::SymmetricEncryption;
 
@@ -43,10 +43,34 @@ impl Aes128CtrCipher {
 
 	/// Generate a random IV for CTR mode
 	pub fn generate_iv() -> Result<[u8; 16], CryptoError> {
-		let mut iv = [0u8; 16];
-		OsRng.try_fill_bytes(&mut iv)?;
+		resolve_iv(None)
+	}
 
-		Ok(iv)
+	/// Apply the CTR keystream to data.
+	///
+	/// CTR mode is symmetric: the same operation performs both encryption
+	/// and decryption.
+	fn apply_keystream<K: AsRef<[u8]>, I: AsRef<[u8]>, D: AsRef<[u8]>>(
+		key: K,
+		iv: I,
+		data: D,
+	) -> Result<Vec<u8>, CryptoError> {
+		let key = key.as_ref();
+		ensure_key_size(key, 16)?;
+
+		let iv = iv.as_ref();
+		if iv.len() != 16 {
+			return Err(CryptoError::InvalidOperation);
+		}
+
+		// Create CTR cipher instance
+		let mut cipher = Aes128Ctr::new_from_slices(key, iv)?;
+		// CTR mode works in-place, so we need a mutable copy
+		let mut output = data.as_ref().to_vec();
+
+		cipher.apply_keystream(&mut output);
+
+		Ok(output)
 	}
 
 	/// Encrypt data with a provided IV.
@@ -64,24 +88,7 @@ impl Aes128CtrCipher {
 		iv: I,
 		plaintext: P,
 	) -> Result<Vec<u8>, CryptoError> {
-		let key = key.as_ref();
-		if key.len() != 16 {
-			return Err(CryptoError::InvalidKeySize);
-		}
-
-		let iv = iv.as_ref();
-		if iv.len() != 16 {
-			return Err(CryptoError::InvalidOperation);
-		}
-
-		// Create CTR cipher instance
-		let mut cipher = Aes128Ctr::new_from_slices(key, iv)?;
-		// CTR mode works in-place, so we need a mutable copy
-		let mut ciphertext = plaintext.as_ref().to_vec();
-
-		cipher.apply_keystream(&mut ciphertext);
-
-		Ok(ciphertext)
+		Self::apply_keystream(key, iv, plaintext)
 	}
 
 	/// Decrypt data with a provided IV.
@@ -99,24 +106,7 @@ impl Aes128CtrCipher {
 		iv: I,
 		ciphertext: C,
 	) -> Result<Vec<u8>, CryptoError> {
-		let key = key.as_ref();
-		if key.len() != 16 {
-			return Err(CryptoError::InvalidKeySize);
-		}
-
-		let iv = iv.as_ref();
-		if iv.len() != 16 {
-			return Err(CryptoError::InvalidOperation);
-		}
-
-		// Create CTR cipher instance
-		let mut cipher = Aes128Ctr::new_from_slices(key, iv)?;
-		// CTR mode is symmetric - decryption is the same as encryption
-		let mut plaintext = ciphertext.as_ref().to_vec();
-
-		cipher.apply_keystream(&mut plaintext);
-
-		Ok(plaintext)
+		Self::apply_keystream(key, iv, ciphertext)
 	}
 }
 
@@ -131,33 +121,16 @@ impl SymmetricEncryption for Aes128CtrCipher {
 		plaintext: P,
 	) -> Result<Vec<u8>, CryptoError> {
 		let key = key.as_ref();
-		if key.len() != 16 {
-			return Err(CryptoError::InvalidKeySize);
-		}
+		ensure_key_size(key, 16)?;
 
 		// Use provided IV or generate random one
-		let iv_bytes = match iv {
-			Some(iv_slice) => {
-				if iv_slice.len() != 16 {
-					return Err(CryptoError::InvalidIvSize);
-				}
-
-				let mut iv_array = [0u8; 16];
-				iv_array.copy_from_slice(iv_slice);
-				iv_array
-			}
-			None => Self::generate_iv()?,
-		};
+		let iv_bytes = resolve_iv(iv)?;
 
 		// Encrypt with the IV
 		let ciphertext = self.encrypt_with_iv(key, iv_bytes, plaintext)?;
 
 		// Prepend IV to ciphertext
-		let mut result = Vec::with_capacity(16 + ciphertext.len());
-		result.extend_from_slice(&iv_bytes);
-		result.extend_from_slice(&ciphertext);
-
-		Ok(result)
+		Ok(prepend_iv(&iv_bytes, &ciphertext))
 	}
 
 	/// Decrypt data with IV extracted from the beginning
@@ -165,18 +138,10 @@ impl SymmetricEncryption for Aes128CtrCipher {
 	/// Expected format: iv (16 bytes) + ciphertext
 	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError> {
 		let key = key.as_ref();
-		if key.len() != 16 {
-			return Err(CryptoError::InvalidKeySize);
-		}
-
-		let ciphertext = ciphertext.as_ref();
-		if ciphertext.len() < 16 {
-			return Err(CryptoError::DecryptionFailed);
-		}
+		ensure_key_size(key, 16)?;
 
 		// Extract IV from the beginning
-		let iv = &ciphertext[..16];
-		let encrypted_data = &ciphertext[16..];
+		let (iv, encrypted_data) = split_iv(ciphertext.as_ref())?;
 
 		// Decrypt with the extracted IV
 		self.decrypt_with_iv(key, iv, encrypted_data)

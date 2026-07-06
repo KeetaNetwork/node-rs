@@ -7,9 +7,9 @@ use alloc::vec::Vec;
 use aes::Aes256;
 use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
-use rand_core::{OsRng, TryRngCore};
 
-use crate::error::{CryptoError, OrCryptoError};
+use crate::algorithms::aes_common::{ensure_key_size, prepend_iv, resolve_iv, split_iv};
+use crate::error::CryptoError;
 use crate::operations::encryption::SymmetricEncryption;
 
 /// AES-256-CBC symmetric encryption implementation.
@@ -42,41 +42,17 @@ impl SymmetricEncryption for Aes256Cbc {
 		plaintext: P,
 	) -> Result<Vec<u8>, CryptoError> {
 		let key = key.as_ref();
-		let plaintext = plaintext.as_ref();
-
-		if key.len() != 32 {
-			return Err(CryptoError::InvalidKeySize);
-		}
+		ensure_key_size(key, 32)?;
 
 		// Use provided IV or generate random one
-		let iv_bytes = match iv {
-			Some(iv_slice) => {
-				if iv_slice.len() != 16 {
-					return Err(CryptoError::InvalidIvSize);
-				}
-
-				let mut iv_array = [0u8; 16];
-				iv_array.copy_from_slice(iv_slice);
-				iv_array
-			}
-			None => {
-				let mut iv_array = [0u8; 16];
-				OsRng.try_fill_bytes(&mut iv_array).or_encryption_failed()?;
-				iv_array
-			}
-		};
-
+		let iv_bytes = resolve_iv(iv)?;
 		// Create cipher
 		let cipher = Aes256CbcEnc::new_from_slices(key, &iv_bytes)?;
 		// Encrypt with PKCS#7 padding
-		let ciphertext = cipher.encrypt_padded_vec_mut::<Pkcs7>(plaintext);
+		let ciphertext = cipher.encrypt_padded_vec_mut::<Pkcs7>(plaintext.as_ref());
 
 		// Return IV + ciphertext
-		let mut result = Vec::with_capacity(16 + ciphertext.len());
-		result.extend_from_slice(&iv_bytes);
-		result.extend_from_slice(&ciphertext);
-
-		Ok(result)
+		Ok(prepend_iv(&iv_bytes, &ciphertext))
 	}
 
 	/// Decrypt data using AES-256-CBC.
@@ -85,19 +61,10 @@ impl SymmetricEncryption for Aes256Cbc {
 	/// Decrypted data with PKCS#7 padding removed.
 	fn decrypt<K: AsRef<[u8]>, C: AsRef<[u8]>>(&self, key: K, ciphertext: C) -> Result<Vec<u8>, CryptoError> {
 		let key = key.as_ref();
-		if key.len() != 32 {
-			return Err(CryptoError::InvalidKeySize);
-		}
+		ensure_key_size(key, 32)?;
 
-		let ciphertext = ciphertext.as_ref();
-		if ciphertext.len() < 16 {
-			return Err(CryptoError::DecryptionFailed);
-		}
-
-		// Extract IV and ciphertext
-		let iv = &ciphertext[0..16];
-		// Ensure ciphertext is long enough
-		let encrypted_data = &ciphertext[16..];
+		// Extract IV and encrypted payload
+		let (iv, encrypted_data) = split_iv(ciphertext.as_ref())?;
 		// Create cipher
 		let cipher = Aes256CbcDec::new_from_slices(key, iv)?;
 
