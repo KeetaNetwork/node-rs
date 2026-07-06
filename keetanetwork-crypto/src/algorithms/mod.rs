@@ -27,6 +27,8 @@ pub mod secp256r1;
 #[cfg(feature = "encryption")]
 pub mod aes_cbc;
 #[cfg(feature = "encryption")]
+pub(crate) mod aes_common;
+#[cfg(feature = "encryption")]
 pub mod aes_ctr;
 #[cfg(feature = "encryption")]
 pub mod aes_gcm;

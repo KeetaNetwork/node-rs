@@ -887,51 +887,67 @@ pub struct KeyECDSASECP256K1 {
 	pub public_key: Secp256k1PublicKey,
 }
 
-impl KeyPair for KeyECDSASECP256K1 {
-	type PublicKey = Secp256k1PublicKey;
-	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::ECDSASECP256K1;
+/// Macro to implement [`KeyPair`] for cryptographic key types whose private
+/// keys derive via the crypto crate's seed derivation and support ECIES
+/// decryption.
+macro_rules! impl_crypto_keypair {
+	($key_type:ty, $public_key:ty, $keypair_type:expr, $derivation:ty, $any_variant:ident, $algorithm:expr) => {
+		impl KeyPair for $key_type {
+			type PublicKey = $public_key;
+			const KEY_PAIR_TYPE: KeyPairType = $keypair_type;
 
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index).into_secret();
-		// Use the crypto crate's secp256k1 derivation
-		let private_key = Secp256k1Derivation::derive_from_seed(seed_buffer)?;
+			fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
+				// Convert seed and index to bytes for HKDF
+				let seed_buffer = combine_seed_and_index(seed, index).into_secret();
+				// Use the crypto crate's derivation for this algorithm
+				let private_key = <$derivation>::derive_from_seed(seed_buffer)?;
 
-		Ok(AnyPrivateKey::Secp256k1(private_key))
-	}
+				Ok(AnyPrivateKey::$any_variant(private_key))
+			}
 
-	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		if let AnyPrivateKey::Secp256k1(secp_key) = key {
-			let public_key = secp_key.as_public_key();
-			let public_key_bytes = Vec::<u8>::from(&public_key);
-			format_public_key_string(&public_key_bytes, Algorithm::Secp256k1 as u8)
-		} else {
-			Err(AccountError::InvalidConstruction)
+			fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
+				if let AnyPrivateKey::$any_variant(private_key) = key {
+					let public_key = private_key.as_public_key();
+					let public_key_bytes = Vec::<u8>::from(&public_key);
+
+					format_public_key_string(&public_key_bytes, $algorithm as u8)
+				} else {
+					Err(AccountError::InvalidConstruction)
+				}
+			}
+
+			fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
+				let private_key = self
+					.private_key
+					.as_ref()
+					.ok_or(AccountError::InvalidConstruction)?;
+
+				Ok(private_key.decrypt(ciphertext.as_ref())?)
+			}
+
+			fn supports_encryption(&self) -> bool {
+				true // ECIES encryption is implemented for this algorithm
+			}
+
+			fn to_public_key(&self) -> Self::PublicKey {
+				self.public_key.clone()
+			}
+
+			fn take_private_key(self) -> Option<AnyPrivateKey> {
+				self.private_key.map(AnyPrivateKey::$any_variant)
+			}
 		}
-	}
-
-	fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
-		let private_key = self
-			.private_key
-			.as_ref()
-			.ok_or(AccountError::InvalidConstruction)?;
-
-		let plaintext = private_key.decrypt(ciphertext.as_ref())?;
-		Ok(plaintext)
-	}
-
-	fn supports_encryption(&self) -> bool {
-		true // ECDSA secp256k1 supports ECIES encryption
-	}
-
-	fn to_public_key(&self) -> Self::PublicKey {
-		self.public_key.clone()
-	}
-
-	fn take_private_key(self) -> Option<AnyPrivateKey> {
-		self.private_key.map(AnyPrivateKey::Secp256k1)
-	}
+	};
 }
+
+impl_crypto_keypair!(
+	KeyECDSASECP256K1,
+	Secp256k1PublicKey,
+	KeyPairType::ECDSASECP256K1,
+	Secp256k1Derivation,
+	Secp256k1,
+	Algorithm::Secp256k1
+);
 
 /// ECDSA key pair using the secp256r1 elliptic curve (NIST P-256).
 ///
@@ -965,49 +981,14 @@ pub struct KeyECDSASECP256R1 {
 	pub public_key: Secp256r1PublicKey,
 }
 
-impl KeyPair for KeyECDSASECP256R1 {
-	type PublicKey = Secp256r1PublicKey;
-	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::ECDSASECP256R1;
-
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index).into_secret();
-		// Use the crypto crate's secp256r1 derivation
-		let private_key = Secp256r1Derivation::derive_from_seed(seed_buffer)?;
-		Ok(AnyPrivateKey::Secp256r1(private_key))
-	}
-
-	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		if let AnyPrivateKey::Secp256r1(secp_key) = key {
-			let public_key = secp_key.as_public_key();
-			let public_key_bytes = Vec::<u8>::from(&public_key);
-			format_public_key_string(&public_key_bytes, Algorithm::Secp256r1 as u8)
-		} else {
-			Err(AccountError::InvalidConstruction)
-		}
-	}
-
-	fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
-		let private_key = self
-			.private_key
-			.as_ref()
-			.ok_or(AccountError::InvalidConstruction)?;
-
-		Ok(private_key.decrypt(ciphertext.as_ref())?)
-	}
-
-	fn supports_encryption(&self) -> bool {
-		true // ECIES-secp256r1-AES256CBC is now implemented
-	}
-
-	fn to_public_key(&self) -> Self::PublicKey {
-		self.public_key.clone()
-	}
-
-	fn take_private_key(self) -> Option<AnyPrivateKey> {
-		self.private_key.map(AnyPrivateKey::Secp256r1)
-	}
-}
+impl_crypto_keypair!(
+	KeyECDSASECP256R1,
+	Secp256r1PublicKey,
+	KeyPairType::ECDSASECP256R1,
+	Secp256r1Derivation,
+	Secp256r1,
+	Algorithm::Secp256r1
+);
 
 /// Ed25519 digital signature key pair implementation.
 ///
@@ -1044,50 +1025,14 @@ pub struct KeyED25519 {
 	pub public_key: Ed25519PublicKey,
 }
 
-impl KeyPair for KeyED25519 {
-	type PublicKey = Ed25519PublicKey;
-	const KEY_PAIR_TYPE: KeyPairType = KeyPairType::ED25519;
-
-	fn seed_to_private_key(seed: &Seed, index: Index) -> Result<AnyPrivateKey, AccountError> {
-		// Convert seed and index to bytes for HKDF
-		let seed_buffer = combine_seed_and_index(seed, index).into_secret();
-		// Use the crypto crate's Ed25519 derivation
-		let private_key = Ed25519Derivation::derive_from_seed(seed_buffer)?;
-		Ok(AnyPrivateKey::Ed25519(private_key))
-	}
-
-	fn derive_public_key_string(key: &AnyPrivateKey) -> Result<String, AccountError> {
-		if let AnyPrivateKey::Ed25519(ed_key) = key {
-			let public_key = ed_key.verifying_key();
-			let public_key_bytes = Vec::<u8>::from(&public_key);
-			let formatted_key = format_public_key_string(&public_key_bytes, Algorithm::Ed25519 as u8)?;
-			Ok(formatted_key)
-		} else {
-			Err(AccountError::InvalidConstruction)
-		}
-	}
-
-	fn decrypt<T: AsRef<[u8]>>(&self, ciphertext: T) -> Result<Vec<u8>, AccountError> {
-		let private_key = self
-			.private_key
-			.as_ref()
-			.ok_or(AccountError::InvalidConstruction)?;
-
-		Ok(private_key.decrypt(ciphertext.as_ref())?)
-	}
-
-	fn supports_encryption(&self) -> bool {
-		true // ECIES-25519 via X25519 is now implemented
-	}
-
-	fn to_public_key(&self) -> Self::PublicKey {
-		self.public_key.clone()
-	}
-
-	fn take_private_key(self) -> Option<AnyPrivateKey> {
-		self.private_key.map(AnyPrivateKey::Ed25519)
-	}
-}
+impl_crypto_keypair!(
+	KeyED25519,
+	Ed25519PublicKey,
+	KeyPairType::ED25519,
+	Ed25519Derivation,
+	Ed25519,
+	Algorithm::Ed25519
+);
 
 /// Network identifier key for node addressing and discovery.
 ///
