@@ -153,8 +153,8 @@ mod backend {
 	use super::{LedgerSide, NodeTransport, TransportFactory};
 	use crate::codec::{
 		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
-		decode_checksum, decode_hash, decode_history, decode_node_error, decode_quote_binary, decode_representative,
-		decode_staples, decode_vote_binary, encode_blocks, encode_votes,
+		decode_checksum, decode_hash, decode_history_page, decode_node_error, decode_quote_binary,
+		decode_representative, decode_staples, decode_vote_binary, encode_blocks, encode_votes,
 	};
 	use crate::error::ClientError;
 	use crate::generated::{types, Client as Transport, Error as GeneratedError};
@@ -353,10 +353,7 @@ mod backend {
 				.await?
 				.into_inner();
 
-			Ok(HistoryPage {
-				entries: decode_history(response.history, verify_moment())?,
-				next_key: decode_hash(response.next_key)?,
-			})
+			decode_history_page(response.history, response.next_key, verify_moment())
 		}
 
 		async fn global_history_page(&self, query: &HistoryQuery) -> Result<HistoryPage, ClientError> {
@@ -366,10 +363,8 @@ mod backend {
 				.get_global_history(query.limit, start.as_deref())
 				.await?
 				.into_inner();
-			Ok(HistoryPage {
-				entries: decode_history(response.history, verify_moment())?,
-				next_key: decode_hash(response.next_key)?,
-			})
+
+			decode_history_page(response.history, response.next_key, verify_moment())
 		}
 
 		async fn vote_staples_after(
@@ -533,8 +528,8 @@ mod wasi_backend {
 	use super::{LedgerSide, NodeTransport, TransportFactory};
 	use crate::codec::{
 		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
-		decode_checksum, decode_hash, decode_history, decode_node_error, decode_quote_binary, decode_representative,
-		decode_staples, decode_vote_binary, encode_blocks, encode_votes,
+		decode_checksum, decode_hash, decode_history_page, decode_node_error, decode_quote_binary,
+		decode_representative, decode_staples, decode_vote_binary, encode_blocks, encode_votes,
 	};
 	use crate::error::ClientError;
 	use crate::generated::types;
@@ -851,10 +846,7 @@ mod wasi_backend {
 			let path = format!("/node/ledger/account/{}/history{}", segment(account), params.finish());
 			let response: types::GetAccountHistoryResponse = self.get_json(&path).await?;
 
-			Ok(HistoryPage {
-				entries: decode_history(response.history, now_moment())?,
-				next_key: decode_hash(response.next_key)?,
-			})
+			decode_history_page(response.history, response.next_key, now_moment())
 		}
 
 		async fn global_history_page(&self, query: &HistoryQuery) -> Result<HistoryPage, ClientError> {
@@ -867,10 +859,7 @@ mod wasi_backend {
 			let path = format!("/node/ledger/history{}", params.finish());
 			let response: types::GetGlobalHistoryResponse = self.get_json(&path).await?;
 
-			Ok(HistoryPage {
-				entries: decode_history(response.history, now_moment())?,
-				next_key: decode_hash(response.next_key)?,
-			})
+			decode_history_page(response.history, response.next_key, now_moment())
 		}
 
 		async fn vote_staples_after(

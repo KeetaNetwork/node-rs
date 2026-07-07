@@ -23,8 +23,8 @@ use crate::error::{
 };
 use crate::generated::types;
 use crate::model::{
-	AccountInfo, AccountState, Acl, AclPrincipal, Certificate, HistoryEntry, LedgerChecksum, Representative,
-	TokenBalance,
+	AccountInfo, AccountState, Acl, AclPrincipal, Certificate, HistoryEntry, HistoryPage, LedgerChecksum,
+	Representative, TokenBalance,
 };
 use crate::transport::LedgerSide;
 
@@ -156,10 +156,7 @@ pub(crate) fn decode_staples(
 
 /// Decode transport history entries into verified domain entries against
 /// `moment`.
-pub(crate) fn decode_history(
-	entries: Vec<types::HistoryEntry>,
-	moment: BlockTime,
-) -> Result<Vec<HistoryEntry>, ClientError> {
+fn decode_history(entries: Vec<types::HistoryEntry>, moment: BlockTime) -> Result<Vec<HistoryEntry>, ClientError> {
 	entries
 		.into_iter()
 		.filter_map(|entry| match decode_staple(entry.vote_staple, moment) {
@@ -170,6 +167,19 @@ pub(crate) fn decode_history(
 		.collect()
 }
 
+/// Assemble a [`HistoryPage`] from a transport history list and next-page
+/// cursor, verifying each staple against `moment`.
+pub(crate) fn decode_history_page(
+	history: Vec<types::HistoryEntry>,
+	next_key: Option<String>,
+	moment: BlockTime,
+) -> Result<HistoryPage, ClientError> {
+	let entries = decode_history(history, moment)?;
+	let next_key = decode_hash(next_key)?;
+
+	Ok(HistoryPage { entries, next_key })
+}
+
 /// Assemble a verified [`HistoryEntry`] from its decoded staple and the
 /// transport id/timestamp fields.
 fn decode_history_entry(
@@ -177,7 +187,10 @@ fn decode_history_entry(
 	id: Option<String>,
 	timestamp: Option<String>,
 ) -> Result<HistoryEntry, ClientError> {
-	Ok(HistoryEntry { staple, id: decode_hash(id)?, timestamp: decode_moment(timestamp)? })
+	let id = decode_hash(id)?;
+	let timestamp = decode_moment(timestamp)?;
+
+	Ok(HistoryEntry { staple, id, timestamp })
 }
 
 /// Parse an optional ISO 8601 timestamp field into a [`BlockTime`], treating
