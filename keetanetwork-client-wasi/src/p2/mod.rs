@@ -15,10 +15,11 @@ use keetanetwork_block::{
 };
 use keetanetwork_client::{
 	AcceptSwapRequest, AccountInfo as CoreInfo, AccountState as CoreState, Acl as CoreAcl,
-	BlockEffects as CoreBlockEffects, Certificate as CoreCertificate, ChainQuery, ClientConfig, ClientError,
-	CreateSwapRequest, HistoryEntry as CoreHistory, HistoryQuery, KeetaClient, LedgerChecksum as CoreChecksum,
-	LedgerSide, RepPart, Representative as CoreRep, Runtime, SwapExpectation, SwapTokenAmount, TransactionBuilder,
-	TransmitOptions, UserClient, VoteBlockHash, WasiRuntime, WasiTransportFactory,
+	AclPrincipal as CoreAclPrincipal, BlockEffects as CoreBlockEffects, Certificate as CoreCertificate, ChainQuery,
+	ClientConfig, ClientError, CreateSwapRequest, HistoryEntry as CoreHistory, HistoryQuery, KeetaClient,
+	LedgerChecksum as CoreChecksum, LedgerSide, RepPart, Representative as CoreRep, Runtime, SwapExpectation,
+	SwapTokenAmount, TokenBalance as CoreTokenBalance, TransactionBuilder, TransmitOptions, UserClient, VoteBlockHash,
+	WasiRuntime, WasiTransportFactory,
 };
 use keetanetwork_x509::certificates::Certificate as X509Certificate;
 use num_bigint::BigInt;
@@ -36,7 +37,8 @@ use exports::keeta::client::crypto::{
 	Guest as CryptoGuest, GuestAccount, GuestCertificate, KeyAlgorithm as WitKeyAlgorithm,
 };
 use exports::keeta::client::node::{
-	AccountInfo, AccountState, Acl, AdjustMethod as WitAdjustMethod, BasePermission as WitBasePermission,
+	AccountInfo, AccountState, Acl, AclCertificatePrincipal as WitAclCertificatePrincipal,
+	AclPrincipal as WitAclPrincipal, AdjustMethod as WitAdjustMethod, BasePermission as WitBasePermission,
 	BlockBuilder as BlockBuilderResource, BlockEffects as WitBlockEffects, Certificate, ChainPage,
 	ChainQuery as WitChainQuery, CodedError, Guest, GuestBlockBuilder, GuestClient, GuestTransaction, GuestUserClient,
 	HeadInfo, HistoryEntry, HistoryQuery as WitHistoryQuery, IdentifierKind as WitIdentifierKind, LedgerChecksum,
@@ -304,6 +306,15 @@ fn permissions_of(flags: WitBasePermission) -> Result<Permissions, CodedError> {
 	Ok(bindings_permissions::from_flags(&flags, &[])?)
 }
 
+/// Project a domain permission set onto the WIT base-permission flags.
+fn wit_permissions_of(permissions: &Permissions) -> WitBasePermission {
+	let flags = permissions.base().flags();
+	PERMISSION_FLAGS
+		.iter()
+		.filter(|(_, base)| flags.contains(base))
+		.fold(WitBasePermission::empty(), |set, &(wit, _)| set | wit)
+}
+
 /// A single-representative KeetaNet client backed by the WASI transport.
 struct NodeClient {
 	inner: KeetaClient,
@@ -329,7 +340,10 @@ impl From<keetanetwork_bindings::parse::ParseError> for CodedError {
 
 impl From<CoreRep> for Representative {
 	fn from(rep: CoreRep) -> Self {
-		Self { account: rep.account, weight: amount_to_string(rep.weight), api_url: rep.api_url }
+		let account = rep.account.to_string();
+		let weight = amount_to_string(rep.weight);
+
+		Self { account, weight, api_url: rep.api_url }
 	}
 }
 
@@ -342,16 +356,14 @@ impl From<CoreInfo> for AccountInfo {
 impl From<CoreState> for AccountState {
 	fn from(state: CoreState) -> Self {
 		Self {
-			representative: state.representative,
+			representative: state
+				.representative
+				.map(|representative| representative.to_string()),
 			head: state.head.map(|head| head.to_string()),
 			height: state.height.map(amount_to_string),
 			info: state.info.map(AccountInfo::from),
 			supply: state.supply.map(amount_to_string),
-			balances: state
-				.balances
-				.into_iter()
-				.map(|balance| TokenBalance { token: balance.token, amount: amount_to_string(balance.balance) })
-				.collect(),
+			balances: state.balances.into_iter().map(TokenBalance::from).collect(),
 		}
 	}
 }
@@ -360,9 +372,18 @@ impl From<CoreChecksum> for LedgerChecksum {
 	fn from(checksum: CoreChecksum) -> Self {
 		Self {
 			checksum: amount_to_string(checksum.checksum),
-			moment: checksum.moment,
+			moment: checksum.moment.map(|moment| moment.to_string()),
 			moment_range: checksum.moment_range,
 		}
+	}
+}
+
+impl From<CoreTokenBalance> for TokenBalance {
+	fn from(balance: CoreTokenBalance) -> Self {
+		let amount = amount_to_string(balance.balance);
+		let token = balance.token.to_string();
+
+		Self { token, amount }
 	}
 }
 
@@ -414,9 +435,27 @@ impl TryFrom<WitHistoryQuery> for HistoryQuery {
 	}
 }
 
+impl From<&CoreAclPrincipal> for WitAclPrincipal {
+	fn from(principal: &CoreAclPrincipal) -> Self {
+		match principal {
+			CoreAclPrincipal::Account(account) => Self::Account(account.to_string()),
+			CoreAclPrincipal::Certificate { hash, account } => Self::Certificate(WitAclCertificatePrincipal {
+				certificate: hex::encode(hash),
+				account: account.to_string(),
+			}),
+		}
+	}
+}
+
 impl From<CoreAcl> for Acl {
 	fn from(acl: CoreAcl) -> Self {
-		Self { principal: acl.principal, entity: acl.entity, target: acl.target, permissions: acl.permissions }
+		Self {
+			principal: acl.principal.as_ref().map(WitAclPrincipal::from),
+			entity: acl.entity.map(|entity| entity.to_string()),
+			target: acl.target.map(|target| target.to_string()),
+			permissions: wit_permissions_of(&acl.permissions),
+			external_permissions: bindings_permissions::offsets(&acl.permissions),
+		}
 	}
 }
 
@@ -497,7 +536,7 @@ impl GuestClient for NodeClient {
 		let account = account_of(account);
 		Ok(run(self.inner.balances(&*account))?
 			.into_iter()
-			.map(|balance| TokenBalance { token: balance.token, amount: amount_to_string(balance.balance) })
+			.map(TokenBalance::from)
 			.collect())
 	}
 
@@ -521,9 +560,9 @@ impl GuestClient for NodeClient {
 		Ok(run(self.inner.block(blockhash, side.map(Into::into)))?.map(|block| pure::block_to_hex(&block)))
 	}
 
-	fn vote_staple(&self, blockhash: String) -> Result<Option<String>, CodedError> {
+	fn vote_staple(&self, blockhash: String, side: Option<WitLedgerSide>) -> Result<Option<String>, CodedError> {
 		let blockhash = parse_block_hash(&blockhash)?;
-		Ok(run(self.inner.vote_staple(blockhash))?.map(|staple| pure::staple_to_hex(&staple)))
+		Ok(run(self.inner.vote_staple(blockhash, side.map(Into::into)))?.map(|staple| pure::staple_to_hex(&staple)))
 	}
 
 	fn representative(&self, rep: AccountBorrow<'_>) -> Result<Representative, CodedError> {
@@ -736,6 +775,7 @@ impl GuestUserClient for AccountClient {
 
 		let client = single_rep_client(base_url).with_network(network);
 		let inner = UserClient::from_parts(client, Some(signer));
+
 		Ok(UserClientResource::new(Self { inner }))
 	}
 
@@ -751,7 +791,7 @@ impl GuestUserClient for AccountClient {
 	fn all_balances(&self) -> Result<Vec<TokenBalance>, CodedError> {
 		Ok(run(self.inner.all_balances())?
 			.into_iter()
-			.map(|balance| TokenBalance { token: balance.token, amount: amount_to_string(balance.balance) })
+			.map(TokenBalance::from)
 			.collect())
 	}
 
@@ -870,6 +910,7 @@ impl GuestUserClient for AccountClient {
 		let to = account_of(to);
 		let token = account_of(token);
 		let amount = parse_amount(&amount)?;
+
 		run(self.inner.send(&to, &token, amount))
 	}
 
@@ -883,6 +924,7 @@ impl GuestUserClient for AccountClient {
 		let to = account_of(to);
 		let token = account_of(token);
 		let amount = parse_amount(&amount)?;
+
 		run(self.inner.send_external(&to, &token, amount, external))
 	}
 
@@ -934,6 +976,7 @@ impl GuestUserClient for AccountClient {
 			true => None,
 			false => Some(permissions_of(permissions)?),
 		};
+
 		let target = target.map(account_of);
 		let change = ModifyPermissions { principal, method: AdjustMethod::from(method), permissions, target };
 		run(self.inner.update_permissions(change))
@@ -1130,6 +1173,7 @@ impl BuilderState {
 	fn stage(&self, change: impl FnOnce(BlockBuilder) -> BlockBuilder) -> Result<(), CodedError> {
 		let mut slot = self.builder.borrow_mut();
 		let builder = slot.take().ok_or_else(builder_consumed)?;
+
 		*slot = Some(change(builder));
 		Ok(())
 	}
@@ -1207,6 +1251,7 @@ impl GuestBlockBuilder for BuilderState {
 		let principal = account_of(principal);
 		let permissions = permissions_of(permissions)?;
 		let target = target.map(account_of);
+
 		let operation = pure::op_modify_permissions(principal, permissions, AdjustMethod::from(method), target);
 		self.stage(|builder| builder.with_operation(operation))
 	}
@@ -1236,6 +1281,7 @@ impl GuestBlockBuilder for BuilderState {
 			.take()
 			.ok_or_else(builder_consumed)?;
 		let unsigned = pure::build_unsigned(builder)?;
+
 		let signed = pure::sign_unsigned(unsigned)?;
 		Ok(pure::block_to_hex(&signed))
 	}

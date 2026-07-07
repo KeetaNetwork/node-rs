@@ -220,8 +220,9 @@ fn read_only_cases() -> Vec<Case<Fixture>> {
 		}),
 		case!("balances include the base token", |fx| {
 			let balances = fx.client.balances(&*fx.accounts.trusted).await?;
-			let base_token = fx.accounts.token.to_string();
-			let base = balances.iter().find(|entry| entry.token == base_token);
+			let base = balances
+				.iter()
+				.find(|entry| entry.token == fx.accounts.token);
 			require(
 				base.is_some_and(|entry| entry.balance == Amount::from(MINTED_SUPPLY)),
 				"base token balance mismatch",
@@ -230,14 +231,17 @@ fn read_only_cases() -> Vec<Case<Fixture>> {
 		case!("account state reports representative, head and balances", |fx| {
 			let state = fx.client.state(&*fx.accounts.trusted).await?;
 			let recipient = fx.recipient();
-			let representative_matches = state.representative.as_deref() == Some(recipient.as_str());
+			let representative_matches = state
+				.representative
+				.as_ref()
+				.is_some_and(|rep| rep.to_string() == recipient);
 			require(representative_matches, "representative mismatch")?;
 			require(state.head.is_some(), "missing head block")?;
-			let base_token = fx.accounts.token.to_string();
+
 			let base = state
 				.balances
 				.iter()
-				.find(|entry| entry.token == base_token);
+				.find(|entry| entry.token == fx.accounts.token);
 			let base_matches = base.is_some_and(|entry| entry.balance == Amount::from(MINTED_SUPPLY));
 			require(base_matches, "base balance mismatch")
 		}),
@@ -263,20 +267,29 @@ fn read_only_cases() -> Vec<Case<Fixture>> {
 		}),
 		case!("node representative matches ready payload", |fx| {
 			let rep = fx.client.node_representative().await?;
-			require(rep.account == fx.recipient(), "representative mismatch")
+			require(rep.account.to_string() == fx.recipient(), "representative mismatch")
 		}),
 		case!("representative lookup echoes the account", |fx| {
 			let rep = fx.client.representative(&*fx.accounts.recipient).await?;
-			require(rep.account == fx.recipient(), "representative mismatch")
+			require(rep.account.to_string() == fx.recipient(), "representative mismatch")
 		}),
 		case!("representative set includes the node rep", |fx| {
 			let all = fx.client.representatives().await?;
-			require(all.iter().any(|rep| rep.account == fx.recipient()), "node rep absent")
+			require(
+				all.iter()
+					.any(|rep| rep.account.to_string() == fx.recipient()),
+				"node rep absent",
+			)
 		}),
-		case!("principal ACLs carry permission bitmaps", |fx| {
+		case!("principal ACLs carry decoded permission flags", |fx| {
 			let acls = fx.client.acls_by_principal(&*fx.accounts.trusted).await?;
 			require(!acls.is_empty(), "no principal ACLs")?;
-			require(acls.iter().all(|acl| !acl.permissions.is_empty()), "empty permissions")
+			require(
+				acls.iter()
+					.all(|acl| !acl.permissions.base().flags().is_empty()),
+				"empty permissions",
+			)?;
+			require(acls.iter().all(|acl| acl.principal.is_some()), "every ACL row must carry a decoded principal")
 		}),
 		case!("granted ACL query succeeds", |fx| {
 			fx.client.acls_by_entity(&*fx.accounts.trusted).await?;
@@ -416,7 +429,7 @@ fn post_transmit_cases() -> Vec<Case<Published>> {
 			let staple = ctx
 				.fixture
 				.client
-				.vote_staple(ctx.head_hash)
+				.vote_staple(ctx.head_hash, None)
 				.await?
 				.ok_or("a vote staple must be retrievable for the published head")?;
 			let contains_head = staple
@@ -594,6 +607,7 @@ fn cluster_reps(node: &E2eNode) -> Result<Vec<RepEndpoint>, Box<dyn core::error:
 			.get("account")
 			.and_then(Value::as_str)
 			.ok_or("a rep entry must carry an account")?;
+
 		let account: AccountRef = Arc::new(GenericAccount::from_str(account_str)?);
 		endpoints.push(RepEndpoint::new(api, account, 1u8));
 	}
@@ -653,8 +667,11 @@ async fn one_block_from(
 	ops: impl FnOnce(&mut TransactionBuilder),
 ) -> Result<Block, ClientError> {
 	let mut builder = client.builder(account);
+
 	ops(&mut builder);
-	Ok(one_block(builder.build().await?))
+
+	let blocks = builder.build().await?;
+	Ok(one_block(blocks))
 }
 
 /// A signer-bound [`UserClient`] over `client`, signing as the trusted account.
@@ -747,6 +764,7 @@ impl ClusterFixture {
 
 		let endpoints = cluster_reps(&node)?;
 		assert_eq!(endpoints.len(), reps, "the cluster must report one endpoint per representative");
+
 		let rep_accounts = endpoints
 			.iter()
 			.map(|rep| rep.account().to_string())
@@ -801,6 +819,7 @@ fn assert_heads_diverged(node: &mut E2eNode, account: &str, block: &Block) -> Re
 	let heads = head_hashes(node, account)?;
 	let block_hash = block.hash().to_string();
 	assert_eq!(heads[0], block_hash, "the primary rep must hold the advanced head");
+
 	let peers_lag = heads[1..].iter().all(|head| *head != heads[0]);
 	assert!(peers_lag, "the peer reps must lag behind the primary before the repair");
 
@@ -899,13 +918,13 @@ const ACCOUNT3_SEED_BYTE: u8 = 0x43;
 /// The voting weight a representative reports in `representatives()`, by account.
 fn rep_weight(reps: &[keetanetwork_client::Representative], account: &str) -> Option<Amount> {
 	reps.iter()
-		.find(|rep| rep.account == account)
+		.find(|rep| rep.account.to_string() == account)
 		.map(|rep| rep.weight.clone())
 }
 
 /// Distribute base token to two fresh accounts and delegate each to a
 /// secondary rep, in one staple: a two-SEND block from the trusted account
-/// plus an opening SET_REP block for each recipient. Converges the cluster.
+/// plus an opening SET_REP block for each recipient.
 async fn distribute_and_delegate(
 	fixture: &mut ClusterFixture,
 	accounts: &SigningAccounts,
@@ -934,6 +953,7 @@ async fn distribute_and_delegate(
 		.transmit(&[distribute, set_rep2, set_rep3], TransmitOptions::default())
 		.await?;
 	assert!(accepted, "the cluster must accept the weight-distribution staple");
+
 	fixture.converge().await?;
 
 	Ok(())
@@ -952,10 +972,13 @@ async fn assert_rep_weights(
 	let primary = MINTED_SUPPLY - 2 * DISTRIBUTE_AMOUNT;
 	let primary_weight = rep_weight(&all, &rep_accounts[0]);
 	assert_eq!(primary_weight, Some(Amount::from(primary)), "primary rep weight mismatch");
+
 	let secondary1_weight = rep_weight(&all, &rep_accounts[1]);
 	assert_eq!(secondary1_weight, Some(Amount::from(DISTRIBUTE_AMOUNT)), "first secondary rep weight mismatch");
+
 	let secondary2_weight = rep_weight(&all, &rep_accounts[2]);
 	assert_eq!(secondary2_weight, Some(Amount::from(DISTRIBUTE_AMOUNT)), "second secondary rep weight mismatch");
+
 	let all_advertise = all.iter().all(|rep| rep.api_url.is_some());
 	assert!(all_advertise, "every discovered rep must advertise an endpoint");
 
@@ -978,6 +1001,7 @@ async fn send_and_assert_debit(
 		.transmit(&[send], TransmitOptions::default())
 		.await?;
 	assert!(accepted, "the cluster must accept a staple that needed votes from more than one rep");
+
 	fixture.converge().await?;
 
 	let after_send = fixture
@@ -1020,6 +1044,7 @@ async fn send_after_rep_failure(
 		.transmit(&[degraded], TransmitOptions::default())
 		.await?;
 	assert!(accepted, "the cluster must reach a degraded quorum with one rep down");
+
 	fixture.converge().await?;
 
 	// Reads must still resolve, dispatching past the failed rep.
@@ -1051,9 +1076,7 @@ async fn test_multi_rep_weighted_quorum_and_rep_failure() -> Result<(), Box<dyn 
 	distribute_and_delegate(&mut fixture, &accounts, &account2, &account3, &rep1_account, &rep2_account).await?;
 
 	let primary = assert_rep_weights(&fixture, &rep_accounts).await?;
-
 	send_and_assert_debit(&mut fixture, &accounts, &account2, primary).await?;
-
 	send_after_rep_failure(&mut fixture, &accounts, &account2, primary).await?;
 
 	Ok(())
@@ -1116,7 +1139,6 @@ async fn test_multi_rep_recover_reads_main_promoted_vote() -> Result<(), Box<dyn
 	// Promote the staple onto the primary's main ledger only: its head now
 	// holds the successor while the peers stay pending on their side ledgers.
 	ledger_add(&mut fixture.node, 0, &[permanent], &block_bytes)?;
-
 	assert_heads_diverged(&mut fixture.node, &trusted, &block)?;
 
 	// The divergent head must not hide the pending successor: the majority of
@@ -1163,6 +1185,7 @@ async fn test_send_rebuilds_after_recovering_successor_conflict() -> Result<(), 
 	assert!(accepted, "the send must succeed by recovering the conflict and rebuilding on the advanced head");
 
 	fixture.converge().await?;
+
 	let head = fixture
 		.client
 		.head_block(&*accounts.trusted)
@@ -1171,6 +1194,7 @@ async fn test_send_rebuilds_after_recovering_successor_conflict() -> Result<(), 
 	let head_hash = head.hash().to_string();
 	let staged_hash = staged.hash().to_string();
 	assert_ne!(head_hash, staged_hash, "the head must advance past the recovered successor to the rebuilt send");
+
 	let head_previous = head.data().previous().to_string();
 	assert_eq!(
 		head_previous, staged_hash,
@@ -1200,6 +1224,7 @@ async fn test_mod_token_supply_and_balance_admins_a_distinct_token() -> Result<(
 		Some(Amount::from(MINTED_SUPPLY + SEND_AMOUNT)),
 		"minting must raise the named token's total supply"
 	);
+
 	let balance = fixture
 		.client
 		.balance(&*fixture.accounts.trusted, &*fixture.accounts.token)
@@ -1234,6 +1259,7 @@ async fn test_mod_token_supply_and_balance_burns_supply_first() -> Result<(), Bo
 		Some(Amount::from(MINTED_SUPPLY - SEND_AMOUNT)),
 		"burning must lower the named token's total supply"
 	);
+
 	let balance = fixture
 		.client
 		.balance(&*fixture.accounts.trusted, &*fixture.accounts.token)
@@ -1322,9 +1348,9 @@ async fn test_user_client_chain_pagination_follows_cursor() -> Result<(), Box<dy
 	let single = user
 		.chain_page(ChainQuery { start: None, end: None, limit: Some(200) })
 		.await?;
-
 	assert!(paged.len() >= 3, "the chain must contain at least the three sends");
 	assert_eq!(paged.len(), single.len(), "cursor pagination must return the full chain");
+
 	let paged_hashes: Vec<String> = paged.iter().map(|block| block.hash().to_string()).collect();
 	let single_hashes: Vec<String> = single
 		.iter()
@@ -1470,6 +1496,7 @@ async fn test_multi_account_builder_staple() -> Result<(), Box<dyn core::error::
 	let mut builder = fixture.client.builder(&accounts.trusted);
 	builder.send(&account2, &accounts.token, Amount::from(SEND_AMOUNT));
 	builder.for_account(&account2).set_rep(&accounts.recipient);
+
 	let blocks = builder.build().await?;
 	assert_eq!(blocks.len(), 2, "two distinct originators must render two blocks");
 
@@ -1542,10 +1569,10 @@ async fn test_user_client_send_round_trip() -> Result<(), Box<dyn core::error::E
 	);
 
 	let read_only = UserClient::from_parts(user.client().clone(), None);
-	assert!(read_only.is_read_only(), "a signerless client must be read-only");
+	assert!(read_only.is_read_only(), "a signer-less client must be read-only");
 	assert!(
 		matches!(read_only.account(), Err(ClientError::SignerRequired)),
-		"a signerless client must reject account-scoped operations"
+		"a signer-less client must reject account-scoped operations"
 	);
 
 	let _ = node.request("shutdown", json!({}));
@@ -1586,14 +1613,15 @@ async fn test_initialize_network_bootstraps_fresh_chain() -> Result<(), Box<dyn 
 
 	let state = user.client().state(&*trusted).await?;
 	assert_eq!(
-		state.representative.as_deref(),
-		Some(rep_address.as_str()),
+		state.representative.as_ref().map(|rep| rep.to_string()),
+		Some(rep_address.clone()),
 		"genesis must delegate the recipient's weight to the representative"
 	);
+
 	let base = state
 		.balances
 		.iter()
-		.find(|entry| entry.token == base_token);
+		.find(|entry| *entry.token == base_token_account);
 	assert!(
 		base.is_some_and(|entry| entry.balance == Amount::from(MINTED_SUPPLY)),
 		"genesis must credit the recipient with the minted supply"
@@ -1613,18 +1641,24 @@ async fn test_user_client_read_surface() -> Result<(), Box<dyn core::error::Erro
 	let reported_signer = user.signer_account().map(|signer| signer.to_string());
 	assert_eq!(reported_signer, Some(accounts.trusted.to_string()), "the bound signer must be reported");
 	assert!(!user.is_read_only(), "a signer-bound client must be writable");
+
 	let operating_account = user.account()?.to_string();
 	assert_eq!(operating_account, accounts.trusted.to_string(), "reads must default to the signer's account");
 
 	let balance = user.balance(&*accounts.token).await?;
 	assert_eq!(balance, Amount::from(MINTED_SUPPLY), "the balance wrapper must delegate");
 
-	let base_token = accounts.token.to_string();
 	let balances = user.all_balances().await?;
-	assert!(balances.iter().any(|entry| entry.token == base_token), "all_balances must include the base token");
+	assert!(balances.iter().any(|entry| entry.token == accounts.token), "all_balances must include the base token");
 
 	let state = user.state().await?;
-	assert!(state.balances.iter().any(|entry| entry.token == base_token), "state must carry the base balance");
+	assert!(
+		state
+			.balances
+			.iter()
+			.any(|entry| entry.token == accounts.token),
+		"state must carry the base balance"
+	);
 
 	assert!(user.head().await?.is_some(), "the funded account must have a head");
 	assert!(!user.chain().await?.is_empty(), "the chain wrapper must return blocks");
@@ -1679,14 +1713,14 @@ async fn test_user_client_read_surface() -> Result<(), Box<dyn core::error::Erro
 async fn test_user_client_write_surface() -> Result<(), Box<dyn core::error::Error>> {
 	let fixture = fixture().await;
 	let accounts = &fixture.accounts;
-	let user = trusted_user(&fixture.client, accounts);
 
+	let user = trusted_user(&fixture.client, accounts);
 	assert!(user.set_rep(&accounts.recipient).await?, "set_rep must publish");
+
 	let state = user.state().await?;
-	let recipient = accounts.recipient.to_string();
 	assert_eq!(
-		state.representative.as_deref(),
-		Some(recipient.as_str()),
+		state.representative,
+		Some(Arc::clone(&accounts.recipient)),
 		"the representative wrapper must delegate weight"
 	);
 
@@ -1758,6 +1792,7 @@ async fn test_user_client_account_split_and_transmit() -> Result<(), Box<dyn cor
 	let split = trusted_user(&fixture.client, accounts).with_account(Arc::clone(&accounts.recipient));
 	let split_account = split.account()?.to_string();
 	assert_eq!(split_account, accounts.recipient.to_string(), "with_account must override the read/originator account");
+
 	let split_signer = split.signer_account().map(|signer| signer.to_string());
 	assert_eq!(split_signer, Some(accounts.trusted.to_string()), "the bound signer must remain the trusted account");
 
@@ -1771,7 +1806,7 @@ async fn test_user_client_account_split_and_transmit() -> Result<(), Box<dyn cor
 	assert!(!single.is_read_only(), "a signer-bound single-rep client must be writable");
 
 	let networked = UserClient::from_network(Network::Test, None)?;
-	assert!(networked.is_read_only(), "a signerless networked client must be read-only");
+	assert!(networked.is_read_only(), "a signer-less networked client must be read-only");
 
 	let user = trusted_user(&fixture.client, accounts);
 	let accepted = user

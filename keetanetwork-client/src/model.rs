@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use keetanetwork_block::{AccountRef, Amount, Block, BlockHash, BlockTime, Operation};
+use keetanetwork_block::{AccountRef, Amount, Block, BlockHash, BlockTime, Operation, Permissions};
 use keetanetwork_vote::{VoteBlockHash, VoteQuote, VoteStaple};
 
 use crate::error::ClientError;
@@ -88,8 +88,8 @@ impl From<&PendingAccount> for AccountOrPending {
 /// A token balance entry for an account.
 #[derive(Debug, Clone)]
 pub struct TokenBalance {
-	/// Token account address.
-	pub token: String,
+	/// Token account.
+	pub token: AccountRef,
 	/// Settled balance.
 	pub balance: Amount,
 }
@@ -97,8 +97,8 @@ pub struct TokenBalance {
 /// A representative and its voting weight.
 #[derive(Debug, Clone)]
 pub struct Representative {
-	/// Representative account address.
-	pub account: String,
+	/// Representative account.
+	pub account: AccountRef,
 	/// Voting weight.
 	pub weight: Amount,
 	/// REST API base URL the representative can be reached at, when the node
@@ -112,8 +112,8 @@ pub struct Representative {
 pub struct LedgerChecksum {
 	/// XOR checksum of the ledger.
 	pub checksum: Amount,
-	/// Approximate moment the checksum was taken (ISO 8601).
-	pub moment: Option<String>,
+	/// Approximate moment the checksum was taken.
+	pub moment: Option<BlockTime>,
 	/// Half the measurement window, in milliseconds.
 	pub moment_range: Option<f64>,
 }
@@ -154,17 +154,33 @@ impl BlockEffects {
 	}
 }
 
+/// The principal of an access-control entry: the party the permissions are
+/// granted to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AclPrincipal {
+	/// A concrete account.
+	Account(AccountRef),
+	/// Any account presenting a certificate issued by the referenced
+	/// certificate.
+	Certificate {
+		/// Hash of the issuing certificate.
+		hash: [u8; 32],
+		/// The account the certificate grant is anchored to.
+		account: AccountRef,
+	},
+}
+
 /// An access-control entry granting a principal permissions over a target.
 #[derive(Debug, Clone)]
 pub struct Acl {
 	/// Principal the permissions are granted to.
-	pub principal: Option<String>,
+	pub principal: Option<AclPrincipal>,
 	/// Entity the ACL is keyed under.
-	pub entity: Option<String>,
+	pub entity: Option<AccountRef>,
 	/// Target the permissions apply to.
-	pub target: Option<String>,
-	/// Permission bitmaps as `0x`-prefixed hexadecimal values.
-	pub permissions: Vec<String>,
+	pub target: Option<AccountRef>,
+	/// The granted permission set.
+	pub permissions: Permissions,
 }
 
 /// A certificate and its intermediate chain.
@@ -235,8 +251,8 @@ pub struct AccountInfo {
 /// A snapshot of an account's ledger state.
 #[derive(Debug, Clone)]
 pub struct AccountState {
-	/// Representative account address, if one is set.
-	pub representative: Option<String>,
+	/// Representative account, if one is set.
+	pub representative: Option<AccountRef>,
 	/// Head block hash, if the account has any blocks.
 	pub head: Option<BlockHash>,
 	/// Head block height, if known.

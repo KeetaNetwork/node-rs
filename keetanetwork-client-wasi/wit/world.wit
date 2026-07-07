@@ -173,13 +173,29 @@ interface types {
 		blocks: list<block-effects>,
 	}
 
-	/// An access-control entry. `permissions` are the on-chain
-	/// `[base, external]` `0x`-prefixed hex bitmaps.
+	/// A certificate-issuer principal: any account presenting a certificate
+	/// issued by the certificate with hash `certificate`, anchored at
+	/// `account`.
+	record acl-certificate-principal {
+		certificate: certificate-hash,
+		account: address,
+	}
+
+	/// The principal of an access-control entry: the party the permissions
+	/// are granted to.
+	variant acl-principal {
+		account(address),
+		certificate(acl-certificate-principal),
+	}
+
+	/// An access-control entry. `permissions` are the decoded base flags;
+	/// `external-permissions` are the external bit offsets.
 	record acl {
-		principal: option<address>,
+		principal: option<acl-principal>,
 		entity: option<address>,
 		target: option<address>,
-		permissions: list<string>,
+		permissions: base-permission,
+		external-permissions: list<u8>,
 	}
 
 	/// A certificate bundle: a PEM-encoded leaf plus PEM intermediates.
@@ -273,8 +289,8 @@ interface crypto {
 interface node {
 	use types.{
 		coded-error, token-balance, representative, ledger-checksum, account-info, account-state, history-entry,
-		chain-query, chain-page, head-info, adjust-method, history-query, acl, certificate,
-		block-effects, staple-effects, swap-token-amount, swap-expectation,
+		chain-query, chain-page, head-info, adjust-method, history-query, acl, acl-principal,
+		acl-certificate-principal, certificate, block-effects, staple-effects, swap-token-amount, swap-expectation,
 		ledger-side, identifier-kind, base-permission,
 		block-hash, staple-id, block-hex, staple-hex, amount, address, moment, certificate-hash, network-id,
 	};
@@ -305,8 +321,9 @@ interface node {
 		/// The block identified by `blockhash`, if held. `side` selects the
 		/// ledger to read (defaults to main).
 		block: func(blockhash: block-hash, side: option<ledger-side>) -> result<option<block-hex>, coded-error>;
-		/// The vote staple covering `blockhash`, or none.
-		vote-staple: func(blockhash: block-hash) -> result<option<staple-hex>, coded-error>;
+		/// The vote staple covering `blockhash`, or none. `side` selects the
+		/// ledger to read.
+		vote-staple: func(blockhash: block-hash, side: option<ledger-side>) -> result<option<staple-hex>, coded-error>;
 		/// A single representative and its voting weight.
 		representative: func(rep: borrow<account>) -> result<representative, coded-error>;
 		/// Every known representative and its voting weight.

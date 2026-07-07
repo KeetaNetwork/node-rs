@@ -153,8 +153,8 @@ mod backend {
 	use super::{LedgerSide, NodeTransport, TransportFactory};
 	use crate::codec::{
 		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
-		decode_hash, decode_history, decode_node_error, decode_quote_binary, decode_representative, decode_staples,
-		decode_vote_binary, encode_blocks, encode_votes,
+		decode_checksum, decode_hash, decode_history, decode_node_error, decode_quote_binary, decode_representative,
+		decode_staples, decode_vote_binary, encode_blocks, encode_votes,
 	};
 	use crate::error::ClientError;
 	use crate::generated::{types, Client as Transport, Error as GeneratedError};
@@ -406,32 +406,27 @@ mod backend {
 		}
 
 		async fn ledger_checksum(&self) -> Result<LedgerChecksum, ClientError> {
-			let checksum = self.client.get_ledger_checksum().await?.into_inner();
-			Ok(LedgerChecksum {
-				checksum: decode_amount(checksum.checksum)?,
-				moment: checksum.moment,
-				moment_range: checksum.moment_range,
-			})
+			decode_checksum(self.client.get_ledger_checksum().await?.into_inner())
 		}
 
 		async fn acls_by_principal(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let response = self.client.list_acls_by_principal(account).await?;
-			Ok(response
+			response
 				.into_inner()
 				.permissions
 				.into_iter()
 				.map(decode_acl)
-				.collect())
+				.collect()
 		}
 
 		async fn acls_by_entity(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let response = self.client.list_acls_by_entity(account).await?;
-			Ok(response
+			response
 				.into_inner()
 				.permissions
 				.into_iter()
 				.map(decode_acl)
-				.collect())
+				.collect()
 		}
 
 		#[cfg(feature = "std")]
@@ -538,8 +533,8 @@ mod wasi_backend {
 	use super::{LedgerSide, NodeTransport, TransportFactory};
 	use crate::codec::{
 		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
-		decode_hash, decode_history, decode_node_error, decode_quote_binary, decode_representative, decode_staples,
-		decode_vote_binary, encode_blocks, encode_votes,
+		decode_checksum, decode_hash, decode_history, decode_node_error, decode_quote_binary, decode_representative,
+		decode_staples, decode_vote_binary, encode_blocks, encode_votes,
 	};
 	use crate::error::ClientError;
 	use crate::generated::types;
@@ -914,23 +909,19 @@ mod wasi_backend {
 
 		async fn ledger_checksum(&self) -> Result<LedgerChecksum, ClientError> {
 			let checksum: types::GetLedgerChecksumResponse = self.get_json("/node/ledger/checksum").await?;
-			Ok(LedgerChecksum {
-				checksum: decode_amount(checksum.checksum)?,
-				moment: checksum.moment,
-				moment_range: checksum.moment_range,
-			})
+			decode_checksum(checksum)
 		}
 
 		async fn acls_by_principal(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let path = format!("/node/ledger/account/{}/acl", segment(account));
 			let response: types::ListAclsByPrincipalResponse = self.get_json(&path).await?;
-			Ok(response.permissions.into_iter().map(decode_acl).collect())
+			response.permissions.into_iter().map(decode_acl).collect()
 		}
 
 		async fn acls_by_entity(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let path = format!("/node/ledger/account/{}/acl/granted", segment(account));
 			let response: types::ListAclsByEntityResponse = self.get_json(&path).await?;
-			Ok(response.permissions.into_iter().map(decode_acl).collect())
+			response.permissions.into_iter().map(decode_acl).collect()
 		}
 
 		async fn certificates(&self, account: &str) -> Result<Vec<Certificate>, ClientError> {

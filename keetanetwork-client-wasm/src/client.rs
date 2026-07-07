@@ -138,7 +138,7 @@ impl KeetaClient {
 		Ok(head.map(Block::from))
 	}
 
-	/// The head block of `account` paired with its settled base-token balance.
+	/// The head block of `account` paired with its chain height.
 	#[wasm_bindgen(js_name = accountHeadInfo)]
 	pub async fn account_head_info(&self, account: &Account) -> JsResult<Option<AccountHead>> {
 		let info = self
@@ -146,7 +146,7 @@ impl KeetaClient {
 			.account_head_info(&*account.inner())
 			.await
 			.map_err(client_error)?;
-		Ok(info.map(|(block, balance)| AccountHead { block: Block::from(block), balance: amount_to_string(balance) }))
+		Ok(info.map(|(block, height)| AccountHead { block: Block::from(block), height: amount_to_string(height) }))
 	}
 
 	/// The next pending (unreceived-driven) block for `account`, if any.
@@ -201,18 +201,23 @@ impl KeetaClient {
 			.block_by_idempotent(&*account.inner(), key, side)
 			.await
 			.map_err(client_error)?;
+
 		Ok(block.map(Block::from))
 	}
 
 	/// The verified vote staple committing the block with hash `block_hash`.
+	/// `side` selects the ledger to read (`"main"` or `"side"`); the main
+	/// ledger is used when omitted.
 	#[wasm_bindgen(js_name = voteStaple)]
-	pub async fn vote_staple(&self, block_hash: String) -> JsResult<Option<VoteStaple>> {
+	pub async fn vote_staple(&self, block_hash: String, side: Option<String>) -> JsResult<Option<VoteStaple>> {
+		let side = parse_ledger_side(side)?;
 		let block_hash = parse_block_hash(&block_hash)?;
 		let staple = self
 			.inner
-			.vote_staple(block_hash)
+			.vote_staple(block_hash, side)
 			.await
 			.map_err(client_error)?;
+
 		Ok(staple.map(VoteStaple::from))
 	}
 
@@ -564,11 +569,11 @@ impl From<Core> for KeetaClient {
 	}
 }
 
-/// An account's head block paired with its settled base-token balance.
+/// An account's head block paired with its chain height.
 #[wasm_bindgen]
 pub struct AccountHead {
 	block: Block,
-	balance: String,
+	height: String,
 }
 
 #[wasm_bindgen]
@@ -579,9 +584,9 @@ impl AccountHead {
 		self.block.clone()
 	}
 
-	/// The settled base-token balance as a decimal string.
+	/// The chain height of the head block as a decimal string.
 	#[wasm_bindgen(getter)]
-	pub fn balance(&self) -> String {
-		self.balance.clone()
+	pub fn height(&self) -> String {
+		self.height.clone()
 	}
 }

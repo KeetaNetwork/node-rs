@@ -409,7 +409,7 @@ impl KeetaClient {
 		let representatives = self.representatives().await?;
 		let entries = representatives
 			.into_iter()
-			.map(|rep| (rep.account, rep.weight.as_bigint().clone(), rep.api_url))
+			.map(|rep| (rep.account.to_string(), rep.weight.as_bigint().clone(), rep.api_url))
 			.collect();
 		Ok(entries)
 	}
@@ -900,7 +900,7 @@ impl KeetaClient {
 			None => return Ok(None),
 		};
 		let staple = match self
-			.compose_staple_on(&highest_transport, successor.hash())
+			.compose_staple_on(&highest_transport, successor.hash(), LedgerSide::Main)
 			.await?
 		{
 			Some(staple) => staple,
@@ -1155,21 +1155,22 @@ impl KeetaClient {
 		Ok(votes)
 	}
 
-	/// Assemble the staple covering `block_hash` from one rep's main-ledger
-	/// votes and the blocks they cover.
+	/// Assemble the staple covering `block_hash` from one rep's votes on the
+	/// given ledger `side` and the blocks they cover.
 	async fn compose_staple_on(
 		&self,
 		transport: &Arc<dyn NodeTransport>,
 		block_hash: BlockHash,
+		side: LedgerSide,
 	) -> Result<Option<VoteStaple>, ClientError> {
-		let votes = match transport.block_votes(block_hash, LedgerSide::Main).await? {
+		let votes = match transport.block_votes(block_hash, side).await? {
 			Some(list) if !list.is_empty() => list,
 			_ => return Ok(None),
 		};
 
 		let mut blocks = Vec::new();
 		for hash in votes[0].blocks() {
-			match transport.block(*hash, Some(LedgerSide::Main)).await? {
+			match transport.block(*hash, Some(side)).await? {
 				Some(block) => blocks.push(block),
 				None => return Ok(None),
 			}
@@ -1426,10 +1427,16 @@ impl KeetaClient {
 		}
 	}
 
-	/// The vote staple covering `blockhash` on the main ledger, assembled from
-	/// the first representative that holds votes for it, or `None` when no
-	/// representative has the staple.
-	pub async fn vote_staple(&self, blockhash: BlockHash) -> Result<Option<VoteStaple>, ClientError> {
+	/// The vote staple covering `blockhash`, assembled from the first
+	/// representative that holds votes for it, or `None` when no
+	/// representative has the staple. `side` selects the ledger to read
+	/// (`None` defaults to the main ledger; vote lookups have no "both", so
+	/// [`LedgerSide::Both`] reads the main ledger).
+	pub async fn vote_staple(
+		&self,
+		blockhash: BlockHash,
+		side: Option<LedgerSide>,
+	) -> Result<Option<VoteStaple>, ClientError> {
 		self.ensure_refresh();
 
 		let picks = self.snapshot_picks();
@@ -1437,9 +1444,13 @@ impl KeetaClient {
 			return Err(ClientError::NoRepresentatives);
 		}
 
+		let side = side.unwrap_or(LedgerSide::Main);
 		let mut last_error: Option<ClientError> = None;
 		for pick in &picks {
-			match self.compose_staple_on(&pick.transport, blockhash).await {
+			match self
+				.compose_staple_on(&pick.transport, blockhash, side)
+				.await
+			{
 				Ok(Some(staple)) => {
 					self.boost(&pick.key);
 					return Ok(Some(staple));

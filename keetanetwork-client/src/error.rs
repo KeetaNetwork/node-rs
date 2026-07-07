@@ -78,6 +78,18 @@ pub enum ClientError {
 		source: chrono::ParseError,
 	},
 
+	/// A permission bitmap in the response failed to decode into a
+	/// permission set.
+	#[snafu(display("malformed permissions in node response"))]
+	Permission {
+		/// Underlying permission decoding error.
+		source: BlockError,
+	},
+
+	/// An ACL principal field in the response had an unrecognized shape.
+	#[snafu(display("malformed ACL principal in node response"))]
+	AclPrincipal,
+
 	/// The `/vote` response omitted the vote field.
 	#[snafu(display("node response omitted the vote"))]
 	MissingVote,
@@ -100,8 +112,9 @@ pub enum ClientError {
 	#[snafu(display("node votes require a fee block but no signer was supplied"))]
 	FeeRequired,
 
-	/// Deriving the network base token (the implicit fee currency) failed.
-	#[snafu(display("network base token derivation failed"))]
+	/// An account address could not be parsed or derived: a malformed address
+	/// in a node response, or a failed network base-token derivation.
+	#[snafu(display("account parsing or derivation failed"))]
 	Account {
 		/// Underlying account error.
 		source: AccountError,
@@ -189,6 +202,8 @@ impl ClientError {
 			Self::Amount { .. } => "AMOUNT",
 			Self::Hash { .. } => "HASH",
 			Self::Moment { .. } => "MOMENT",
+			Self::Permission { .. } => "PERMISSION",
+			Self::AclPrincipal => "ACL_PRINCIPAL",
 			Self::MissingVote => "MISSING_VOTE",
 			Self::MissingQuote => "MISSING_QUOTE",
 			Self::MissingPublish => "MISSING_PUBLISH",

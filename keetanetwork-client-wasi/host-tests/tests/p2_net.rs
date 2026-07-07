@@ -22,7 +22,7 @@ mod bindings {
 
 use bindings::exports::keeta::client::crypto::KeyAlgorithm;
 use bindings::exports::keeta::client::node::{
-	AdjustMethod, BasePermission, ChainQuery, CodedError, HistoryQuery, IdentifierKind, LedgerSide,
+	AclPrincipal, AdjustMethod, BasePermission, ChainQuery, CodedError, HistoryQuery, IdentifierKind, LedgerSide,
 };
 use bindings::KeetaClient;
 
@@ -471,14 +471,22 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 		.await?
 		.map_err(coded)?;
 	assert!(!user_acls.is_empty(), "the genesis account must hold ACLs as principal after network init");
+
 	let scoped_as_principal = user_acls
 		.iter()
-		.all(|acl| acl.principal.as_deref() == Some(trusted.as_str()));
+		.all(|acl| matches!(&acl.principal, Some(AclPrincipal::Account(account)) if account == &trusted));
 	assert!(scoped_as_principal, "every principal-scoped ACL must name the operating account as principal");
+
 	let grants_base_token = user_acls
 		.iter()
 		.any(|acl| acl.entity.as_deref() == Some(base_token.as_str()));
 	assert!(grants_base_token, "the genesis grants must include the base token as entity");
+
+	let carries_flags = user_acls
+		.iter()
+		.all(|acl| acl.permissions != BasePermission::empty());
+	assert!(carries_flags, "every genesis ACL must decode to non-empty base permission flags");
+
 	let node_acls = node
 		.client()
 		.call_acls_by_principal(&mut store, client, trusted_account)
@@ -497,6 +505,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 		.iter()
 		.all(|acl| acl.entity.as_deref() == Some(trusted.as_str()));
 	assert!(scoped_as_entity, "every entity-scoped ACL must name the operating account as entity");
+
 	let node_entity_acls = node
 		.client()
 		.call_acls_by_entity(&mut store, client, trusted_account)
@@ -514,6 +523,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 		.await?
 		.map_err(coded)?;
 	assert!(user_certificates.is_empty(), "a fresh account must hold no certificates");
+
 	let user_certificate = node
 		.user_client()
 		.call_certificate(&mut store, user, &"00".repeat(32))
@@ -527,6 +537,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 		.await?
 		.map_err(coded)?;
 	assert!(user_synced.is_none(), "a single-rep user-client must have nothing to sync");
+
 	let user_recovered = node
 		.user_client()
 		.call_recover(&mut store, user, false)
@@ -756,7 +767,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.map_err(coded)?;
 	let lists_representative = acls
 		.iter()
-		.any(|acl| acl.principal.as_deref() == Some(representative.as_str()));
+		.any(|acl| matches!(&acl.principal, Some(AclPrincipal::Account(account)) if account == &representative));
 	assert!(lists_representative, "the granted ACL must list the representative as principal");
 
 	// `generate-multisig`: create a 1-of-2 multisig identifier on-chain.
