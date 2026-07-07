@@ -113,7 +113,7 @@ pub fn create_test_passphrase() -> Vec<String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::{KeyPair, KeyPairType};
+	use crate::{AccountPublicKey, KeyPair, KeyPairType};
 
 	#[test]
 	fn test_create_ed25519_test_keys() {

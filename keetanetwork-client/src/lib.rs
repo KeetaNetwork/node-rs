@@ -81,7 +81,6 @@ mod user;
 #[cfg(feature = "codec")]
 mod codec;
 
-#[cfg(feature = "std")]
 mod genesis;
 #[cfg(feature = "http")]
 mod network;
@@ -100,12 +99,14 @@ pub use builder::TransactionBuilder;
 pub use client::KeetaClient;
 pub use config::ClientConfig;
 pub use error::ClientError;
+pub use genesis::{BaseNetworkInfo, BaseTokenInfo, InitializeNetwork};
 pub use keetanetwork_error::{KeetaNetError, NodeErrorType};
-pub use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
+pub use keetanetwork_vote::{Vote, VoteBlockHash, VoteQuote, VoteStaple};
 pub use marker::{MaybeSend, MaybeSync};
 pub use model::{
-	AccountInfo, AccountOrPending, AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery,
-	LedgerChecksum, PendingAccount, Representative, TokenBalance, TransmitOptions,
+	AccountInfo, AccountOrPending, AccountState, Acl, AclPrincipal, BlockEffects, Certificate, ChainPage, ChainQuery,
+	HistoryEntry, HistoryPage, HistoryQuery, LedgerChecksum, PendingAccount, Representative, TokenBalance,
+	TransmitOptions,
 };
 pub use rep::RepPart;
 pub use runtime::{BoxFuture, Runtime, TaskHandle};
@@ -122,11 +123,7 @@ pub use {
 };
 
 #[cfg(feature = "std")]
-pub use {
-	genesis::{BaseNetworkInfo, BaseTokenInfo, InitializeNetwork},
-	model::RepStatus,
-	runtime::TokioRuntime,
-};
+pub use {model::RepStatus, runtime::TokioRuntime};
 
 #[cfg(all(feature = "wasm", target_family = "wasm", target_os = "unknown"))]
 pub use runtime::WasmRuntime;

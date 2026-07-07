@@ -20,7 +20,10 @@ mod bindings {
 	});
 }
 
-use bindings::exports::keeta::client::node::{AdjustMethod, ChainQuery, CodedError, HistoryQuery};
+use bindings::exports::keeta::client::crypto::KeyAlgorithm;
+use bindings::exports::keeta::client::node::{
+	AclPrincipal, AdjustMethod, BasePermission, ChainQuery, CodedError, HistoryQuery, IdentifierKind, LedgerSide,
+};
 use bindings::KeetaClient;
 
 /// Host state granting the component WASI + outbound `wasi:http`.
@@ -106,7 +109,22 @@ async fn account_from_seed(
 	bindings
 		.keeta_client_crypto()
 		.account()
-		.call_from_seed(&mut *store, seed, index, "ed25519")
+		.call_from_seed(&mut *store, seed, index, KeyAlgorithm::Ed25519)
+		.await?
+		.map_err(coded)
+}
+
+/// Parse a textual `keeta_…` address into an `account` resource via the
+/// exported `crypto` interface, returning its host handle.
+async fn account_from_address(
+	store: &mut Store<Host>,
+	bindings: &KeetaClient,
+	address: &str,
+) -> wasmtime::Result<ResourceAny> {
+	bindings
+		.keeta_client_crypto()
+		.account()
+		.call_from_address(&mut *store, address)
 		.await?
 		.map_err(coded)
 }
@@ -128,6 +146,10 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	let (mut store, bindings) = instantiate().await?;
 	let node = bindings.keeta_client_node();
 
+	// Typed account resources for the harness's textual addresses.
+	let trusted_account = account_from_address(&mut store, &bindings, &trusted).await?;
+	let base_token_account = account_from_address(&mut store, &bindings, &base_token).await?;
+
 	// `node` resource: anonymous client bound to the rep URL.
 	let client = node.client().call_constructor(&mut store, &api).await?;
 	let version = node
@@ -139,7 +161,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 
 	let balance = node
 		.client()
-		.call_account_balance(&mut store, client, &trusted, &base_token)
+		.call_account_balance(&mut store, client, trusted_account, base_token_account)
 		.await?
 		.map_err(coded)?;
 	assert_eq!(balance, SUPPLY, "the trusted balance must equal the minted supply");
@@ -147,7 +169,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// `account-state` must round-trip and agree with the scalar balance read.
 	let state = node
 		.client()
-		.call_account_state(&mut store, client, &trusted)
+		.call_account_state(&mut store, client, trusted_account)
 		.await?
 		.map_err(coded)?;
 	let state_balance = state
@@ -169,7 +191,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// The minted supply gave the trusted account a chain (most recent first).
 	let chain = node
 		.client()
-		.call_chain(&mut store, client, &trusted)
+		.call_chain(&mut store, client, trusted_account)
 		.await?
 		.map_err(coded)?;
 	assert!(!chain.is_empty(), "the seeded trusted account must have a chain");
@@ -179,7 +201,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	let query = ChainQuery { start: None, end: None, limit: Some(page_limit) };
 	let page = node
 		.client()
-		.call_chain_page(&mut store, client, &trusted, &query)
+		.call_chain_page(&mut store, client, trusted_account, &query)
 		.await?
 		.map_err(coded)?;
 
@@ -193,7 +215,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// projection, so they are not directly comparable.)
 	let head_info = node
 		.client()
-		.call_account_head_info(&mut store, client, &trusted)
+		.call_account_head_info(&mut store, client, trusted_account)
 		.await?
 		.map_err(coded)?
 		.expect("a funded account must have a head block");
@@ -207,7 +229,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// `history` records the supply staple, each entry carrying a hex staple.
 	let history = node
 		.client()
-		.call_history(&mut store, client, &trusted)
+		.call_history(&mut store, client, trusted_account)
 		.await?
 		.map_err(coded)?;
 	assert!(!history.is_empty(), "the seeded account must have history");
@@ -216,7 +238,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// A settled account has no half-published successor.
 	let pending = node
 		.client()
-		.call_pending_block(&mut store, client, &trusted)
+		.call_pending_block(&mut store, client, trusted_account)
 		.await?
 		.map_err(coded)?;
 	assert!(pending.is_none(), "a settled account must have no pending block");
@@ -224,12 +246,12 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// `user-client` resource: account-scoped reads without repeating the address.
 	let user = node
 		.user_client()
-		.call_read_only(&mut store, &api, &trusted)
+		.call_read_only(&mut store, &api, trusted_account)
 		.await?
 		.map_err(coded)?;
 	let user_balance = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 	assert_eq!(user_balance, balance, "the user-client must read the same balance as the node client");
@@ -268,7 +290,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// Batch state read returns one entry per requested account.
 	let states = node
 		.client()
-		.call_account_states(&mut store, client, core::slice::from_ref(&trusted))
+		.call_account_states(&mut store, client, core::slice::from_ref(&trusted_account))
 		.await?
 		.map_err(coded)?;
 	assert_eq!(states.len(), 1, "account-states must return one state per requested account");
@@ -296,7 +318,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	// An unknown idempotency key resolves to no block.
 	let idempotent = node
 		.client()
-		.call_block_by_idempotent(&mut store, client, &trusted, "no-such-key")
+		.call_block_by_idempotent(&mut store, client, trusted_account, "no-such-key", None)
 		.await?
 		.map_err(coded)?;
 	assert!(idempotent.is_none(), "an unknown idempotency key must resolve to no block");
@@ -305,7 +327,7 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	let history_query = HistoryQuery { start: None, limit: Some(1) };
 	let history_first = node
 		.client()
-		.call_history_page(&mut store, client, &trusted, &history_query)
+		.call_history_page(&mut store, client, trusted_account, &history_query)
 		.await?
 		.map_err(coded)?;
 	assert!(history_first.len() <= 1, "history-page must honor the limit");
@@ -344,6 +366,185 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	let first_staple = history_first.first().map(|entry| &entry.staple);
 	assert_eq!(first_staple, history.first().map(|entry| &entry.staple), "the first history page must match the head");
 
+	// `chain-all` / `history-all` walk the node's cursor to exhaustion: even
+	// with a page limit of 1 they must cover the full chain/history.
+	let chain_all = node
+		.client()
+		.call_chain_all(&mut store, client, trusted_account, 1)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(chain_all.first(), chain.first(), "chain-all must start at the chain head");
+	assert!(chain_all.len() >= chain.len(), "chain-all must cover at least the unpaged chain");
+
+	let history_all = node
+		.client()
+		.call_history_all(&mut store, client, trusted_account, 1)
+		.await?
+		.map_err(coded)?;
+	assert!(history_all.len() >= history.len(), "history-all must cover at least the unpaged history");
+
+	// Single-rep topology: heads trivially agree, so there is nothing to sync;
+	// a settled account has nothing pending to recover.
+	let synced = node
+		.client()
+		.call_sync_account(&mut store, client, trusted_account, false)
+		.await?
+		.map_err(coded)?;
+	assert!(synced.is_none(), "a single-rep client must have nothing to sync");
+	let recovered = node
+		.client()
+		.call_recover_account(&mut store, client, trusted_account, false)
+		.await?
+		.map_err(coded)?;
+	assert!(recovered.is_none(), "a settled account must have nothing to recover");
+
+	// The user-client mirrors of the new reads, scoped to the operating account.
+	let user_chain_all = node
+		.user_client()
+		.call_chain_all(&mut store, user, 1)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(user_chain_all, chain_all, "the user-client chain-all must match the node-client chain-all");
+
+	let user_history_page = node
+		.user_client()
+		.call_history_page(&mut store, user, &history_query)
+		.await?
+		.map_err(coded)?;
+	assert!(user_history_page.len() <= 1, "the user-client history-page must honor the limit");
+
+	let user_history_all = node
+		.user_client()
+		.call_history_all(&mut store, user, 1)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(
+		user_history_all.len(),
+		history_all.len(),
+		"the user-client history-all must match the node-client history-all"
+	);
+
+	let user_head_block = node
+		.user_client()
+		.call_block(&mut store, user, &head_hash, None)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(user_head_block.as_ref(), chain.first(), "the user-client block lookup must return the head block");
+
+	let user_idempotent = node
+		.user_client()
+		.call_block_from_idempotent(&mut store, user, "no-such-key", None)
+		.await?
+		.map_err(coded)?;
+	assert!(user_idempotent.is_none(), "an unknown idempotency key must resolve to no block");
+
+	let user_idempotent_both = node
+		.user_client()
+		.call_block_from_idempotent(&mut store, user, "no-such-key", Some(LedgerSide::Both))
+		.await?
+		.map_err(coded)?;
+	assert!(user_idempotent_both.is_none(), "an unknown idempotency key must resolve to no block on both ledgers");
+
+	// The operating account's own history, filtered for itself, must name it
+	// in at least one operation (the genesis supply moves through it).
+	let history_staples: Vec<String> = history.iter().map(|entry| entry.staple.clone()).collect();
+	let staple_effects = node
+		.user_client()
+		.call_staple_effects(&mut store, user, &history_staples)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(staple_effects.len(), history_staples.len(), "every staple must be keyed in the effects list");
+
+	let named_operations: usize = staple_effects
+		.iter()
+		.flat_map(|effects| &effects.blocks)
+		.map(|block| block.operation_indexes.len())
+		.sum();
+	assert!(named_operations > 0, "the operating account's history must carry operations involving it");
+
+	// Genesis grants the trusted account ACLs as principal on the base token
+	// and network address, so the principal view must be non-empty, scoped
+	// to the operating account, and agree with the node-client read.
+	let user_acls = node
+		.user_client()
+		.call_acls(&mut store, user)
+		.await?
+		.map_err(coded)?;
+	assert!(!user_acls.is_empty(), "the genesis account must hold ACLs as principal after network init");
+
+	let scoped_as_principal = user_acls
+		.iter()
+		.all(|acl| matches!(&acl.principal, Some(AclPrincipal::Account(account)) if account == &trusted));
+	assert!(scoped_as_principal, "every principal-scoped ACL must name the operating account as principal");
+
+	let grants_base_token = user_acls
+		.iter()
+		.any(|acl| acl.entity.as_deref() == Some(base_token.as_str()));
+	assert!(grants_base_token, "the genesis grants must include the base token as entity");
+
+	let carries_flags = user_acls
+		.iter()
+		.all(|acl| acl.permissions != BasePermission::empty());
+	assert!(carries_flags, "every genesis ACL must decode to non-empty base permission flags");
+
+	let node_acls = node
+		.client()
+		.call_acls_by_principal(&mut store, client, trusted_account)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(user_acls.len(), node_acls.len(), "the user-client ACLs must match the node-client ACLs");
+
+	// The entity view keys rows under the operating account. It must be scoped
+	// to it and agree with the node-client read of the same entity.
+	let user_entity_acls = node
+		.user_client()
+		.call_acls_by_entity(&mut store, user)
+		.await?
+		.map_err(coded)?;
+	let scoped_as_entity = user_entity_acls
+		.iter()
+		.all(|acl| acl.entity.as_deref() == Some(trusted.as_str()));
+	assert!(scoped_as_entity, "every entity-scoped ACL must name the operating account as entity");
+
+	let node_entity_acls = node
+		.client()
+		.call_acls_by_entity(&mut store, client, trusted_account)
+		.await?
+		.map_err(coded)?;
+	assert_eq!(
+		user_entity_acls.len(),
+		node_entity_acls.len(),
+		"the user-client entity ACLs must match the node-client entity ACLs"
+	);
+
+	let user_certificates = node
+		.user_client()
+		.call_certificates(&mut store, user)
+		.await?
+		.map_err(coded)?;
+	assert!(user_certificates.is_empty(), "a fresh account must hold no certificates");
+
+	let user_certificate = node
+		.user_client()
+		.call_certificate(&mut store, user, &"00".repeat(32))
+		.await?
+		.map_err(coded)?;
+	assert!(user_certificate.is_none(), "an unknown certificate hash must resolve to none");
+
+	let user_synced = node
+		.user_client()
+		.call_sync(&mut store, user, false)
+		.await?
+		.map_err(coded)?;
+	assert!(user_synced.is_none(), "a single-rep user-client must have nothing to sync");
+
+	let user_recovered = node
+		.user_client()
+		.call_recover(&mut store, user, false)
+		.await?
+		.map_err(coded)?;
+	assert!(user_recovered.is_none(), "a settled operating account must have nothing to recover");
+
 	harness.shutdown()?;
 	Ok(())
 }
@@ -352,7 +553,6 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	let mut harness = E2eNode::start()?;
 	let api = ready_field(&harness, "api");
-	let trusted = ready_field(&harness, "trusted");
 	let representative = ready_field(&harness, "representative");
 	let base_token = ready_field(&harness, "baseToken");
 	let network = ready_field(&harness, "network");
@@ -366,6 +566,10 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	let (mut store, bindings) = instantiate().await?;
 	let node = bindings.keeta_client_node();
 
+	// Typed account resources for the harness's textual addresses.
+	let representative_account = account_from_address(&mut store, &bindings, &representative).await?;
+	let base_token_account = account_from_address(&mut store, &bindings, &base_token).await?;
+
 	// Bind a signing client to the trusted (genesis) seed; it is its own
 	// operating account.
 	let trusted_account = account_from_seed(&mut store, &bindings, &trusted_seed(), 0).await?;
@@ -376,7 +580,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.map_err(coded)?;
 	let before = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 	assert_eq!(before, SUPPLY.to_string(), "the signer must start with the minted supply");
@@ -385,14 +589,14 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	// sender's settled balance drops by exactly the amount (no fee configured).
 	let sent = node
 		.user_client()
-		.call_send(&mut store, user, &representative, &base_token, &SEND.to_string())
+		.call_send(&mut store, user, representative_account, base_token_account, &SEND.to_string())
 		.await?
 		.map_err(coded)?;
 	assert!(sent, "the send must be accepted");
 
 	let after = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 	assert_eq!(after, (SUPPLY - SEND).to_string(), "the sender balance must drop by the sent amount");
@@ -401,14 +605,21 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	// aggregated; it must move value just like a plain send.
 	let sent_external = node
 		.user_client()
-		.call_send_external(&mut store, user, &representative, &base_token, &SEND.to_string(), "invoice-42")
+		.call_send_external(
+			&mut store,
+			user,
+			representative_account,
+			base_token_account,
+			&SEND.to_string(),
+			"invoice-42",
+		)
 		.await?
 		.map_err(coded)?;
 	assert!(sent_external, "the external send must be accepted");
 
 	let after_external = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 	assert_eq!(after_external, (SUPPLY - SEND - SEND).to_string(), "the external send must drop the balance again");
@@ -416,7 +627,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	// `set-rep` must take effect in the operating account's state.
 	let set_rep = node
 		.user_client()
-		.call_set_rep(&mut store, user, &representative)
+		.call_set_rep(&mut store, user, representative_account)
 		.await?
 		.map_err(coded)?;
 	assert!(set_rep, "the set-rep must be accepted");
@@ -453,19 +664,19 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	let client = node.client().call_constructor(&mut store, &api).await?;
 	let supply_before = node
 		.client()
-		.call_token_supply(&mut store, client, &base_token)
+		.call_token_supply(&mut store, client, base_token_account)
 		.await?
 		.map_err(coded)?;
 	let minted = node
 		.user_client()
-		.call_modify_token(&mut store, user, &base_token, None, &MINT.to_string(), AdjustMethod::Add)
+		.call_modify_token(&mut store, user, base_token_account, None, &MINT.to_string(), AdjustMethod::Add)
 		.await?
 		.map_err(coded)?;
 	assert!(minted, "the supply mint must be accepted");
 
 	let supply_after = node
 		.client()
-		.call_token_supply(&mut store, client, &base_token)
+		.call_token_supply(&mut store, client, base_token_account)
 		.await?
 		.map_err(coded)?;
 	let supply_after_value = supply_after
@@ -486,7 +697,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.map_err(coded)?;
 	let balance_before_tx = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 
@@ -500,7 +711,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.await?
 		.map_err(coded)?;
 	node.transaction()
-		.call_send(&mut store, tx, &representative, &base_token, &SEND.to_string())
+		.call_send(&mut store, tx, representative_account, base_token_account, &SEND.to_string())
 		.await?
 		.map_err(coded)?;
 	let published = node
@@ -528,7 +739,7 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 
 	let balance_after_tx = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 	let expected = balance_before_tx.parse::<u128>().unwrap_or_default() - SEND;
@@ -538,24 +749,31 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	// via the ACL surface.
 	let granted = node
 		.user_client()
-		.call_update_permissions(&mut store, user, &representative, AdjustMethod::Add, &["access".to_string()], None)
+		.call_update_permissions(
+			&mut store,
+			user,
+			representative_account,
+			AdjustMethod::Add,
+			BasePermission::ACCESS,
+			None,
+		)
 		.await?
 		.map_err(coded)?;
 	assert!(granted, "the permission grant must be accepted");
 	let acls = node
 		.client()
-		.call_acls_by_principal(&mut store, client, &representative)
+		.call_acls_by_principal(&mut store, client, representative_account)
 		.await?
 		.map_err(coded)?;
 	let lists_representative = acls
 		.iter()
-		.any(|acl| acl.principal.as_deref() == Some(representative.as_str()));
+		.any(|acl| matches!(&acl.principal, Some(AclPrincipal::Account(account)) if account == &representative));
 	assert!(lists_representative, "the granted ACL must list the representative as principal");
 
 	// `generate-multisig`: create a 1-of-2 multisig identifier on-chain.
 	let multisig = node
 		.user_client()
-		.call_generate_multisig(&mut store, user, &[trusted.clone(), representative.clone()], 1)
+		.call_generate_multisig(&mut store, user, &[trusted_account, representative_account], 1)
 		.await?
 		.map_err(coded)?;
 	assert!(!multisig.is_empty(), "the multisig identifier address must be returned");
@@ -567,10 +785,10 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.call_create_swap(
 			&mut store,
 			user,
-			&representative,
-			&base_token,
+			representative_account,
+			base_token_account,
 			&SEND.to_string(),
-			&base_token,
+			base_token_account,
 			&SEND.to_string(),
 			false,
 		)
@@ -585,10 +803,10 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.call_create_swap(
 			&mut store,
 			user,
-			&trusted,
-			&base_token,
+			trusted_account,
+			base_token_account,
 			&SEND.to_string(),
-			&base_token,
+			base_token_account,
 			&SEND.to_string(),
 			true,
 		)
@@ -608,9 +826,10 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.call_add_certificate(&mut store, user, "zz", &[])
 		.await?;
 	assert!(bad_add.is_err(), "a non-hex certificate must be rejected with a coded error");
+
 	let bad_remove = node
 		.user_client()
-		.call_remove_certificate(&mut store, user, "abcd")
+		.call_remove_certificate(&mut store, user, &"abcd".to_string())
 		.await?;
 	assert!(bad_remove.is_err(), "a malformed certificate hash must be rejected with a coded error");
 
@@ -626,24 +845,19 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.call_with_account(&mut store, &api, taker_account, &network)
 		.await?
 		.map_err(coded)?;
-	let taker_address = node
-		.user_client()
-		.call_address(&mut store, taker)
-		.await?
-		.map_err(coded)?;
 	node.user_client()
-		.call_send(&mut store, user, &taker_address, &base_token, &FUND.to_string())
+		.call_send(&mut store, user, taker_account, base_token_account, &FUND.to_string())
 		.await?
 		.map_err(coded)?;
 
 	let maker_before = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 	let taker_before = node
 		.user_client()
-		.call_balance(&mut store, taker, &base_token)
+		.call_balance(&mut store, taker, base_token_account)
 		.await?
 		.map_err(coded)?;
 
@@ -652,10 +866,10 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 		.call_create_swap(
 			&mut store,
 			user,
-			&taker_address,
-			&base_token,
+			taker_account,
+			base_token_account,
 			&SWAP_SEND.to_string(),
-			&base_token,
+			base_token_account,
 			&SWAP_RECV.to_string(),
 			true,
 		)
@@ -676,12 +890,12 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 
 	let maker_after = node
 		.user_client()
-		.call_balance(&mut store, user, &base_token)
+		.call_balance(&mut store, user, base_token_account)
 		.await?
 		.map_err(coded)?;
 	let taker_after = node
 		.user_client()
-		.call_balance(&mut store, taker, &base_token)
+		.call_balance(&mut store, taker, base_token_account)
 		.await?
 		.map_err(coded)?;
 	let maker_before_value = maker_before.parse::<u128>().unwrap_or_default();
@@ -711,9 +925,6 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 	let mut harness = E2eNode::start()?;
 	let api = ready_field(&harness, "api");
 	let network = ready_field(&harness, "network");
-	let network_id: u64 = network
-		.parse()
-		.map_err(|_| wasmtime::Error::msg("the harness must advertise a numeric network id"))?;
 
 	// Give the node live ledger state to read; the harness charges no fee.
 	harness.request("init_supply", serde_json::json!({ "amount": "1000000" }))?;
@@ -741,9 +952,11 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 		.call_address(&mut store, user)
 		.await?
 		.map_err(coded)?;
+	let user_account = account_from_address(&mut store, &bindings, &user_address).await?;
 
 	// Fund the user so it has a settled balance and a head to chain onto.
 	let base_token = ready_field(&harness, "baseToken");
+	let base_token_account = account_from_address(&mut store, &bindings, &base_token).await?;
 	let trusted_account = account_from_seed(&mut store, &bindings, &trusted_seed(), 0).await?;
 	let funder = node
 		.user_client()
@@ -752,42 +965,36 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 		.map_err(coded)?;
 	let funded = node
 		.user_client()
-		.call_send(&mut store, funder, &user_address, &base_token, "1000")
+		.call_send(&mut store, funder, user_account, base_token_account, &"1000".to_string())
 		.await?
 		.map_err(coded)?;
 	assert!(funded, "the user funding send must settle");
 
 	let mut signer_accounts = Vec::new();
-	let mut signers = Vec::new();
 	for index in 1..=3u32 {
 		let account = account_from_seed(&mut store, &bindings, &seed, index).await?;
-		let address = bindings
-			.keeta_client_crypto()
-			.account()
-			.call_address(&mut store, account)
-			.await?;
 		signer_accounts.push(account);
-		signers.push(address);
 	}
 
 	// Local, deterministic multisig address (kind MULTISIG, op index 0).
 	let multisig = node
-		.call_derive_identifier(&mut store, account0, "multisig", None, 0)
+		.call_derive_identifier(&mut store, account0, IdentifierKind::Multisig, None, 0)
 		.await?
 		.map_err(coded)?;
 	assert!(!multisig.is_empty(), "the multisig identifier address must derive");
+	let multisig_account = account_from_address(&mut store, &bindings, &multisig).await?;
 
 	// User block: create the 2-of-3 multisig and grant it ADMIN over the user.
 	let user_head = node
 		.client()
-		.call_account_state(&mut store, client, &user_address)
+		.call_account_state(&mut store, client, user_account)
 		.await?
 		.map_err(coded)?
 		.head;
 	let identifier_block = {
 		let builder = node
 			.block_builder()
-			.call_new(&mut store, network_id, &user_address)
+			.call_new(&mut store, &network, user_account)
 			.await?
 			.map_err(coded)?;
 		match &user_head {
@@ -807,11 +1014,18 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
-			.call_op_create_multisig(&mut store, builder, &multisig, &signers, 2)
+			.call_op_create_multisig(&mut store, builder, multisig_account, &signer_accounts, 2)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
-			.call_op_modify_permissions(&mut store, builder, &multisig, &["admin".to_string()], AdjustMethod::Set, None)
+			.call_op_modify_permissions(
+				&mut store,
+				builder,
+				multisig_account,
+				BasePermission::ADMIN,
+				AdjustMethod::Set,
+				None,
+			)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
@@ -833,17 +1047,18 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 	// Generic identifier creation; the trusted client owns the token (see fn doc).
 	let custom_token = node
 		.user_client()
-		.call_generate_identifier(&mut store, funder, "token")
+		.call_generate_identifier(&mut store, funder, IdentifierKind::Token)
 		.await?
 		.map_err(coded)?;
 	assert!(!custom_token.is_empty(), "the custom token address must be returned");
+	let custom_token_account = account_from_address(&mut store, &bindings, &custom_token).await?;
 
 	// Grant the multisig ADMIN on the token's own chain (the entity whose ACL
 	// changes), signed by the trusted creator.
 	let grant_block = {
 		let builder = node
 			.block_builder()
-			.call_new(&mut store, network_id, &custom_token)
+			.call_new(&mut store, &network, custom_token_account)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
@@ -855,7 +1070,14 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
-			.call_op_modify_permissions(&mut store, builder, &multisig, &["admin".to_string()], AdjustMethod::Set, None)
+			.call_op_modify_permissions(
+				&mut store,
+				builder,
+				multisig_account,
+				BasePermission::ADMIN,
+				AdjustMethod::Set,
+				None,
+			)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
@@ -877,14 +1099,14 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 	// The proof: SET_INFO on the token signed by a 2-of-3 quorum subset.
 	let token_head = node
 		.client()
-		.call_account_state(&mut store, client, &custom_token)
+		.call_account_state(&mut store, client, custom_token_account)
 		.await?
 		.map_err(coded)?
 		.head;
 	let multisig_block = {
 		let builder = node
 			.block_builder()
-			.call_new(&mut store, network_id, &custom_token)
+			.call_new(&mut store, &network, custom_token_account)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
@@ -914,12 +1136,12 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 				"TKNM",
 				"Test Multisig Token Example",
 				"eyJkZWNpbWFsUGxhY2VzIjo2fQ==",
-				&["access".to_string()],
+				Some(BasePermission::ACCESS),
 			)
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
-			.call_signer_multisig(&mut store, builder, &multisig, &[signer_accounts[0], signer_accounts[1]])
+			.call_signer_multisig(&mut store, builder, multisig_account, &[signer_accounts[0], signer_accounts[1]])
 			.await?
 			.map_err(coded)?;
 		node.block_builder()
@@ -937,7 +1159,7 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 	// The node accepted a multisig-signed block: it set the info and is the head.
 	let token_state = node
 		.client()
-		.call_account_state(&mut store, client, &custom_token)
+		.call_account_state(&mut store, client, custom_token_account)
 		.await?
 		.map_err(coded)?;
 	let token_name = token_state.info.and_then(|info| info.name);
@@ -945,7 +1167,7 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 
 	let token_head_block = node
 		.client()
-		.call_head_block(&mut store, client, &custom_token)
+		.call_head_block(&mut store, client, custom_token_account)
 		.await?
 		.map_err(coded)?;
 	assert_eq!(token_head_block.as_ref(), Some(&multisig_block), "the multisig-signed block must be the token's head");

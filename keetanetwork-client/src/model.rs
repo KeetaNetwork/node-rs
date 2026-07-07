@@ -5,8 +5,8 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use keetanetwork_block::{AccountRef, Amount, Block};
-use keetanetwork_vote::{VoteQuote, VoteStaple};
+use keetanetwork_block::{AccountRef, Amount, Block, BlockHash, BlockTime, Operation, Permissions};
+use keetanetwork_vote::{VoteBlockHash, VoteQuote, VoteStaple};
 
 use crate::error::ClientError;
 use crate::sync::Once;
@@ -88,8 +88,8 @@ impl From<&PendingAccount> for AccountOrPending {
 /// A token balance entry for an account.
 #[derive(Debug, Clone)]
 pub struct TokenBalance {
-	/// Token account address.
-	pub token: String,
+	/// Token account.
+	pub token: AccountRef,
 	/// Settled balance.
 	pub balance: Amount,
 }
@@ -97,8 +97,8 @@ pub struct TokenBalance {
 /// A representative and its voting weight.
 #[derive(Debug, Clone)]
 pub struct Representative {
-	/// Representative account address.
-	pub account: String,
+	/// Representative account.
+	pub account: AccountRef,
 	/// Voting weight.
 	pub weight: Amount,
 	/// REST API base URL the representative can be reached at, when the node
@@ -112,8 +112,8 @@ pub struct Representative {
 pub struct LedgerChecksum {
 	/// XOR checksum of the ledger.
 	pub checksum: Amount,
-	/// Approximate moment the checksum was taken (ISO 8601).
-	pub moment: Option<String>,
+	/// Approximate moment the checksum was taken.
+	pub moment: Option<BlockTime>,
 	/// Half the measurement window, in milliseconds.
 	pub moment_range: Option<f64>,
 }
@@ -123,23 +123,64 @@ pub struct LedgerChecksum {
 pub struct HistoryEntry {
 	/// The verified vote staple.
 	pub staple: VoteStaple,
-	/// Hexadecimal vote staple id.
-	pub id: Option<String>,
-	/// ISO 8601 timestamp.
-	pub timestamp: Option<String>,
+	/// The staple's id: the hash of the block hashes it covers.
+	pub id: Option<VoteBlockHash>,
+	/// The moment the staple was committed.
+	pub timestamp: Option<BlockTime>,
+}
+
+/// One staple block together with the subset of its operations that involve
+/// a filtered account (see
+/// [`UserClient::filter_staple_operations`](crate::UserClient::filter_staple_operations)).
+///
+/// Operations are carried as indexes into the block's operation list, so the
+/// selection survives any boundary the block itself crosses.
+#[derive(Debug, Clone)]
+pub struct BlockEffects {
+	/// The block the operations came from.
+	pub block: Block,
+	/// Indexes into the block's operation list for the operations involving
+	/// the filtered account, in block order.
+	pub operation_indexes: Vec<usize>,
+}
+
+impl BlockEffects {
+	/// The operations involving the filtered account, resolved against the block.
+	pub fn operations(&self) -> impl Iterator<Item = &Operation> {
+		let operations = self.block.data().operations();
+		self.operation_indexes
+			.iter()
+			.filter_map(|&index| operations.get(index))
+	}
+}
+
+/// The principal of an access-control entry: the party the permissions are
+/// granted to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AclPrincipal {
+	/// A concrete account.
+	Account(AccountRef),
+	/// Any account presenting a certificate issued by the referenced
+	/// certificate.
+	Certificate {
+		/// Hash of the issuing certificate.
+		hash: [u8; 32],
+		/// The account the certificate grant is anchored to.
+		account: AccountRef,
+	},
 }
 
 /// An access-control entry granting a principal permissions over a target.
 #[derive(Debug, Clone)]
 pub struct Acl {
 	/// Principal the permissions are granted to.
-	pub principal: Option<String>,
+	pub principal: Option<AclPrincipal>,
 	/// Entity the ACL is keyed under.
-	pub entity: Option<String>,
+	pub entity: Option<AccountRef>,
 	/// Target the permissions apply to.
-	pub target: Option<String>,
-	/// Permission bitmaps as `0x`-prefixed hexadecimal values.
-	pub permissions: Vec<String>,
+	pub target: Option<AccountRef>,
+	/// The granted permission set.
+	pub permissions: Permissions,
 }
 
 /// A certificate and its intermediate chain.
@@ -155,12 +196,12 @@ pub struct Certificate {
 ///
 /// `start`/`end` are block-hash cursors; `limit` caps the page size (the node
 /// enforces its own maximum).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ChainQuery {
 	/// Start cursor (block hash) to page from.
-	pub start: Option<String>,
+	pub start: Option<BlockHash>,
 	/// End cursor (block hash) to stop at.
-	pub end: Option<String>,
+	pub end: Option<BlockHash>,
 	/// Maximum entries to return in the page.
 	pub limit: Option<i64>,
 }
@@ -172,18 +213,28 @@ pub struct ChainPage {
 	pub blocks: Vec<Block>,
 	/// Cursor to pass as the next page's [`ChainQuery::start`], or `None` once
 	/// the chain is exhausted.
-	pub next_key: Option<String>,
+	pub next_key: Option<BlockHash>,
 }
 
 /// Pagination/range bounds for
 /// [`KeetaClient::history_page`](crate::KeetaClient::history_page) and
 /// [`KeetaClient::global_history_page`](crate::KeetaClient::global_history_page).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct HistoryQuery {
-	/// Start cursor (block hash) to page from.
-	pub start: Option<String>,
+	/// Start cursor (the previous page's last staple id) to page from.
+	pub start: Option<VoteBlockHash>,
 	/// Maximum entries to return in the page.
 	pub limit: Option<i64>,
+}
+
+/// A single page of history together with the cursor for the next page.
+#[derive(Debug, Clone, Default)]
+pub struct HistoryPage {
+	/// The verified history entries in this page.
+	pub entries: Vec<HistoryEntry>,
+	/// Cursor to pass as the next page's [`HistoryQuery::start`], or `None`
+	/// once the history is exhausted.
+	pub next_key: Option<VoteBlockHash>,
 }
 
 /// Account metadata as set via [`UserClient::set_info`](crate::UserClient::set_info).
@@ -200,10 +251,10 @@ pub struct AccountInfo {
 /// A snapshot of an account's ledger state.
 #[derive(Debug, Clone)]
 pub struct AccountState {
-	/// Representative account address, if one is set.
-	pub representative: Option<String>,
-	/// Head block hash (hex), if the account has any blocks.
-	pub head: Option<String>,
+	/// Representative account, if one is set.
+	pub representative: Option<AccountRef>,
+	/// Head block hash, if the account has any blocks.
+	pub head: Option<BlockHash>,
 	/// Head block height, if known.
 	pub height: Option<Amount>,
 	/// Account metadata, if the account reports any.

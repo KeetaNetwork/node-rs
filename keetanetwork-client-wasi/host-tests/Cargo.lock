@@ -1453,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-account"
-version = "0.2.0"
+version = "0.3.1"
 dependencies = [
  "base32",
  "bip39-dict",
@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-asn1"
-version = "0.2.2"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "const-oid",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-crypto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aead",
  "aes",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-error"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "snafu",
 ]
@@ -1559,7 +1559,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-x509"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",

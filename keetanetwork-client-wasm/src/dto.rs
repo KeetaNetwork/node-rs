@@ -4,8 +4,10 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use keetanetwork_bindings::permissions::{flag_names, offsets};
 use keetanetwork_client::{
-	AccountInfo, AccountState, Acl, Certificate, HistoryEntry, LedgerChecksum, Representative, TokenBalance,
+	AccountInfo, AccountState, Acl, AclPrincipal, BlockEffects, Certificate, HistoryEntry, LedgerChecksum,
+	Representative, TokenBalance,
 };
 use serde::Serialize;
 use tsify::Tsify;
@@ -22,7 +24,7 @@ pub struct TokenBalanceView {
 
 impl From<&TokenBalance> for TokenBalanceView {
 	fn from(balance: &TokenBalance) -> Self {
-		Self { token: balance.token.clone(), balance: amount_to_string(balance.balance.clone()) }
+		Self { token: balance.token.to_string(), balance: amount_to_string(balance.balance.clone()) }
 	}
 }
 
@@ -37,7 +39,11 @@ pub struct AccountInfoView {
 
 impl From<&AccountInfo> for AccountInfoView {
 	fn from(info: &AccountInfo) -> Self {
-		Self { name: info.name.clone(), description: info.description.clone(), metadata: info.metadata.clone() }
+		let name = info.name.clone();
+		let description = info.description.clone();
+		let metadata = info.metadata.clone();
+
+		Self { name, description, metadata }
 	}
 }
 
@@ -56,14 +62,41 @@ pub struct AccountStateView {
 impl From<&AccountState> for AccountStateView {
 	fn from(state: &AccountState) -> Self {
 		Self {
-			representative: state.representative.clone(),
-			head: state.head.clone(),
+			representative: state
+				.representative
+				.as_ref()
+				.map(|representative| representative.to_string()),
+			head: state.head.map(|head| head.to_string()),
 			height: state.height.clone().map(amount_to_string),
 			info: state.info.as_ref().map(AccountInfoView::from),
 			supply: state.supply.clone().map(amount_to_string),
 			balances: state.balances.iter().map(TokenBalanceView::from).collect(),
 		}
 	}
+}
+
+/// One staple block (hex) with the indexes of its operations that involve
+/// the filtered account, in block order.
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
+pub struct BlockEffectsView {
+	pub block: String,
+	pub operation_indexes: Vec<usize>,
+}
+
+impl From<&BlockEffects> for BlockEffectsView {
+	fn from(effects: &BlockEffects) -> Self {
+		Self { block: hex::encode(effects.block.to_bytes()), operation_indexes: effects.operation_indexes.clone() }
+	}
+}
+
+/// The per-staple effects of a filter: the staple id with the matching
+/// operations of each of its blocks.
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
+pub struct StapleEffectsView {
+	pub id: String,
+	pub blocks: Vec<BlockEffectsView>,
 }
 
 /// A history entry: the staple as hex plus its id and timestamp.
@@ -77,7 +110,11 @@ pub struct HistoryEntryView {
 
 impl From<&HistoryEntry> for HistoryEntryView {
 	fn from(entry: &HistoryEntry) -> Self {
-		Self { staple: hex::encode(entry.staple.as_bytes()), id: entry.id.clone(), timestamp: entry.timestamp.clone() }
+		Self {
+			staple: hex::encode(entry.staple.as_bytes()),
+			id: entry.id.map(|id| id.to_string()),
+			timestamp: entry.timestamp.map(|moment| moment.to_string()),
+		}
 	}
 }
 
@@ -93,7 +130,7 @@ pub struct RepresentativeView {
 impl From<&Representative> for RepresentativeView {
 	fn from(rep: &Representative) -> Self {
 		Self {
-			account: rep.account.clone(),
+			account: rep.account.to_string(),
 			weight: amount_to_string(rep.weight.clone()),
 			api_url: rep.api_url.clone(),
 		}
@@ -113,29 +150,58 @@ impl From<&LedgerChecksum> for LedgerChecksumView {
 	fn from(checksum: &LedgerChecksum) -> Self {
 		Self {
 			checksum: amount_to_string(checksum.checksum.clone()),
-			moment: checksum.moment.clone(),
+			moment: checksum.moment.map(|moment| moment.to_string()),
 			moment_range: checksum.moment_range,
 		}
 	}
 }
 
-/// An access-control entry.
+/// The principal of an access-control entry: `kind` is `"account"` or
+/// `"certificate"`; `certificate` carries the issuing certificate hash (hex)
+/// for certificate principals.
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
+pub struct AclPrincipalView {
+	pub kind: String,
+	pub account: String,
+	pub certificate: Option<String>,
+}
+
+impl From<&AclPrincipal> for AclPrincipalView {
+	fn from(principal: &AclPrincipal) -> Self {
+		match principal {
+			AclPrincipal::Account(account) => {
+				Self { kind: String::from("account"), account: account.to_string(), certificate: None }
+			}
+			AclPrincipal::Certificate { hash, account } => Self {
+				kind: String::from("certificate"),
+				account: account.to_string(),
+				certificate: Some(hex::encode(hash)),
+			},
+		}
+	}
+}
+
+/// An access-control entry. `permissions` are the normalized base flag
+/// names; `external_permissions` are the external bit offsets.
 #[derive(Serialize, Tsify)]
 #[tsify(into_wasm_abi)]
 pub struct AclView {
-	pub principal: Option<String>,
+	pub principal: Option<AclPrincipalView>,
 	pub entity: Option<String>,
 	pub target: Option<String>,
 	pub permissions: Vec<String>,
+	pub external_permissions: Vec<u8>,
 }
 
 impl From<&Acl> for AclView {
 	fn from(acl: &Acl) -> Self {
 		Self {
-			principal: acl.principal.clone(),
-			entity: acl.entity.clone(),
-			target: acl.target.clone(),
-			permissions: acl.permissions.clone(),
+			principal: acl.principal.as_ref().map(AclPrincipalView::from),
+			entity: acl.entity.as_ref().map(|entity| entity.to_string()),
+			target: acl.target.as_ref().map(|target| target.to_string()),
+			permissions: flag_names(&acl.permissions),
+			external_permissions: offsets(&acl.permissions),
 		}
 	}
 }

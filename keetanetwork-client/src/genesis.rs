@@ -101,7 +101,7 @@ pub(crate) fn generate_initial_vote_staple(
 	let blocks = alloc::vec![network_block, base_token_block, balance_block, set_rep_block];
 	let hashes: Vec<BlockHash> = blocks.iter().map(Block::hash).collect();
 
-	let vote = permanent_vote(trusted, hashes, options)?;
+	let vote = permanent_vote(client.now_moment(), trusted, hashes, options)?;
 
 	VoteStapleBuilder::new()
 		.add_blocks(blocks)
@@ -123,6 +123,7 @@ fn seal(
 
 /// Self-issue the permanent vote binding the genesis `hashes` into a staple.
 fn permanent_vote(
+	from: BlockTime,
 	trusted: &AccountRef,
 	hashes: Vec<BlockHash>,
 	options: &InitializeNetwork,
@@ -132,7 +133,6 @@ fn permanent_vote(
 		.clone()
 		.unwrap_or_else(|| num_bigint::BigInt::from(0u8));
 
-	let from = BlockTime::now();
 	let span_end = from.unix_millis().saturating_add(PERMANENT_SPAN_MS);
 	let to = BlockTime::from_unix_millis(span_end).unwrap_or(from);
 

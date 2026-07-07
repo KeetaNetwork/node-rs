@@ -61,7 +61,9 @@ fn java_sdk_sends_receives_and_manages_certificates() -> Result<(), Box<dyn std:
 
 	// A reference-issued certificate whose subject is the trusted account.
 	let certificate = RefHarness::start()?.request("cert_mint", json!({ "subject": trusted }))?;
-	let certificate_der = certificate["der"].as_str().ok_or("cert_mint must return a der string")?;
+	let certificate_der = certificate["der"]
+		.as_str()
+		.ok_or("cert_mint must return a der string")?;
 
 	let output = Command::new(maven())
 		.current_dir(sdk_dir())
@@ -78,7 +80,10 @@ fn java_sdk_sends_receives_and_manages_certificates() -> Result<(), Box<dyn std:
 	let stderr = String::from_utf8_lossy(&output.stderr);
 	assert!(output.status.success(), "the Java harness must exit zero\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
 	assert!(stdout.contains("SEND_OK"), "the Java SDK must confirm the transfer\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-	assert!(stdout.contains("CERT_OK"), "the Java SDK must confirm certificate management\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(
+		stdout.contains("CERT_OK"),
+		"the Java SDK must confirm certificate management\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+	);
 
 	Ok(())
 }

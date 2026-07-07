@@ -8,7 +8,10 @@
 //! [`keetanetwork_asn1::Asn1Time`]; this type adds the millisecond-precision
 //! convenience surface (`now`, `from_unix_millis`, `unix_millis`).
 
-use chrono::{DateTime, Utc};
+use core::fmt;
+use core::str::FromStr;
+
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use keetanetwork_asn1::Asn1Time;
 
 #[cfg(feature = "std")]
@@ -62,6 +65,35 @@ impl From<Asn1Time> for BlockTime {
 	}
 }
 
+/// ISO 8601 with millisecond precision and a `Z` designator
+/// (`YYYY-MM-DDTHH:MM:SS.mmmZ`), matching TypeScript's `Date.toISOString`.
+impl fmt::Display for BlockTime {
+	fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let datetime = self.0.as_datetime();
+		write!(
+			formatter,
+			"{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+			datetime.year(),
+			datetime.month(),
+			datetime.day(),
+			datetime.hour(),
+			datetime.minute(),
+			datetime.second(),
+			datetime.timestamp_subsec_millis()
+		)
+	}
+}
+
+/// Parse an ISO 8601 / RFC 3339 moment, normalizing to UTC.
+impl FromStr for BlockTime {
+	type Err = chrono::ParseError;
+
+	fn from_str(value: &str) -> Result<Self, Self::Err> {
+		let parsed = DateTime::parse_from_rfc3339(value)?;
+		Ok(Self::from(parsed.with_timezone(&Utc)))
+	}
+}
+
 impl From<BlockTime> for Asn1Time {
 	fn from(value: BlockTime) -> Self {
 		value.0
@@ -110,5 +142,38 @@ mod tests {
 		let asn1: Asn1Time = time.into();
 		let restored: BlockTime = asn1.into();
 		assert_eq!(time, restored);
+	}
+
+	#[test]
+	fn test_display_matches_iso_millis() {
+		let time = time_from_str("2025-01-02T03:04:05.123Z");
+		assert_eq!(time.to_string(), "2025-01-02T03:04:05.123Z");
+	}
+
+	#[test]
+	fn test_display_pads_zero_millis() {
+		let time = time_from_str("2025-01-02T03:04:05Z");
+		assert_eq!(time.to_string(), "2025-01-02T03:04:05.000Z");
+	}
+
+	#[test]
+	fn test_from_str_round_trip() {
+		let time = "2025-01-02T03:04:05.123Z"
+			.parse::<BlockTime>()
+			.expect("test moment must parse");
+		assert_eq!(time.to_string(), "2025-01-02T03:04:05.123Z");
+	}
+
+	#[test]
+	fn test_from_str_normalizes_offsets_to_utc() {
+		let time = "2025-01-02T04:04:05.123+01:00"
+			.parse::<BlockTime>()
+			.expect("test moment must parse");
+		assert_eq!(time.to_string(), "2025-01-02T03:04:05.123Z");
+	}
+
+	#[test]
+	fn test_from_str_rejects_garbage() {
+		assert!("not-a-moment".parse::<BlockTime>().is_err());
 	}
 }

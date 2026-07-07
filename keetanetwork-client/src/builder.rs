@@ -326,12 +326,12 @@ impl TransactionBuilder {
 	/// seed (primary only), then the ledger head, then `None` (opening).
 	async fn first_previous(&self, account: &AccountRef) -> Result<Option<BlockHash>, ClientError> {
 		if let Some(previous) = self.initial_previous {
-			if account.to_string() == self.primary.to_string() {
+			if account == &self.primary {
 				return Ok(Some(previous));
 			}
 		}
 
-		match self.client.head_block(account.to_string()).await? {
+		match self.client.head_block(&**account).await? {
 			Some(head) => Ok(Some(head.hash())),
 			None => Ok(None),
 		}

@@ -7,16 +7,14 @@ use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::future::Future;
+use core::str::FromStr;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
-
-#[cfg(feature = "std")]
-use core::str::FromStr;
 
 use futures::future::{select, Either};
 use futures::pin_mut;
 use futures::stream::{FuturesUnordered, StreamExt};
-use keetanetwork_account::{Account, GenericAccount, KeyNETWORK, KeyPairType};
+use keetanetwork_account::{Account, AccountPublicKey, GenericAccount, KeyNETWORK, KeyPairType};
 use keetanetwork_block::{
 	AccountRef, Amount, Block, BlockBuilder, BlockHash, BlockPurpose, BlockTime, Hashable, Operation, Send,
 };
@@ -30,8 +28,8 @@ use crate::config::ClientConfig;
 use crate::error::{AccountSnafu, BlockSnafu, ClientError, VoteSnafu};
 use crate::math::{meets_quorum, most_common_hash, next_backoff, overlapping_moment};
 use crate::model::{
-	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
-	TokenBalance, TransmitOptions,
+	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryPage, HistoryQuery, LedgerChecksum,
+	Representative, TokenBalance, TransmitOptions,
 };
 use crate::rep::{RepBook, RepPart, RepRecord, RepRef, SmallRng};
 use crate::runtime::{Runtime, TaskHandle};
@@ -67,7 +65,7 @@ struct RepPick {
 /// an account, used to detect and reconcile divergence during a sync.
 struct RepHead {
 	pick: RepPick,
-	head: Option<(String, Amount)>,
+	head: Option<(BlockHash, Amount)>,
 }
 
 /// Representatives' own votes for a pending successor block, sorted into
@@ -84,18 +82,12 @@ struct RecoveredVotes {
 impl RecoveredVotes {
 	/// The hashes of the blocks covered by a sample vote (permanent first,
 	/// then temporary), or `None` when nothing was recovered.
-	fn block_hashes(&self) -> Option<Vec<String>> {
+	fn block_hashes(&self) -> Option<Vec<BlockHash>> {
 		let sample = self
 			.perm_votes
 			.first()
 			.or_else(|| self.temp_votes.first())?;
-		Some(
-			sample
-				.blocks()
-				.iter()
-				.map(|hash| hash.to_string())
-				.collect(),
-		)
+		Some(sample.blocks().to_vec())
 	}
 }
 
@@ -323,7 +315,7 @@ impl KeetaClient {
 
 	/// The current clock moment from the runtime, falling back to the
 	/// epoch if the clock is out of [`BlockTime`]'s representable range.
-	fn now_moment(&self) -> BlockTime {
+	pub(crate) fn now_moment(&self) -> BlockTime {
 		let millis = self.inner.runtime.unix_millis();
 		BlockTime::from_unix_millis(millis).unwrap_or_default()
 	}
@@ -417,7 +409,7 @@ impl KeetaClient {
 		let representatives = self.representatives().await?;
 		let entries = representatives
 			.into_iter()
-			.map(|rep| (rep.account, rep.weight.as_bigint().clone(), rep.api_url))
+			.map(|rep| (rep.account.to_string(), rep.weight.as_bigint().clone(), rep.api_url))
 			.collect();
 		Ok(entries)
 	}
@@ -898,18 +890,17 @@ impl KeetaClient {
 		}
 
 		let lowest_head = match &heads[0].head {
-			Some((hash, _)) => hash.clone(),
-			None => account.to_opening_hash().to_string(),
+			Some((hash, _)) => *hash,
+			None => account.to_opening_hash(),
 		};
 		let highest_transport = Arc::clone(&heads[highest_index].pick.transport);
 
-		let successor = match highest_transport.successor_block(&lowest_head).await? {
+		let successor = match highest_transport.successor_block(lowest_head).await? {
 			Some(block) => block,
 			None => return Ok(None),
 		};
-		let successor_hash = successor.hash().to_string();
 		let staple = match self
-			.compose_staple_on(&highest_transport, &successor_hash)
+			.compose_staple_on(&highest_transport, successor.hash(), LedgerSide::Main)
 			.await?
 		{
 			Some(staple) => staple,
@@ -956,7 +947,7 @@ impl KeetaClient {
 	) -> Result<Option<VoteStaple>, ClientError> {
 		self.ensure_refresh();
 
-		let successor = match self.pending_block(account.to_string()).await? {
+		let successor = match self.pending_block(&**account).await? {
 			Some(block) => block,
 			None => return Ok(None),
 		};
@@ -966,11 +957,11 @@ impl KeetaClient {
 			return Err(ClientError::NoRepresentatives);
 		}
 
-		let successor_hash = successor.hash().to_string();
+		let successor_hash = successor.hash();
 		let moment = self.now_moment();
 		let config = ValidationConfig::default();
 		let mut votes = self
-			.collect_recover_votes(&picks, &successor_hash, moment, config)
+			.collect_recover_votes(&picks, successor_hash, moment, config)
 			.await;
 
 		let block_hashes = match votes.block_hashes() {
@@ -1002,7 +993,7 @@ impl KeetaClient {
 	async fn collect_recover_votes(
 		&self,
 		picks: &[RepPick],
-		successor_hash: &str,
+		successor_hash: BlockHash,
 		moment: BlockTime,
 		config: ValidationConfig,
 	) -> RecoveredVotes {
@@ -1026,12 +1017,12 @@ impl KeetaClient {
 	async fn fetch_recover_blocks(
 		&self,
 		picks: &[RepPick],
-		block_hashes: &[String],
+		block_hashes: &[BlockHash],
 	) -> Result<Vec<Block>, ClientError> {
 		let mut blocks = Vec::with_capacity(block_hashes.len());
 		for hash in block_hashes {
 			let block = self
-				.first_block_on(picks, hash)
+				.first_block_on(picks, *hash)
 				.await?
 				.ok_or(ClientError::RecoverFailed)?;
 			blocks.push(block);
@@ -1041,7 +1032,7 @@ impl KeetaClient {
 	}
 
 	/// The first representative that holds `hash` on either ledger side.
-	async fn first_block_on(&self, picks: &[RepPick], hash: &str) -> Result<Option<Block>, ClientError> {
+	async fn first_block_on(&self, picks: &[RepPick], hash: BlockHash) -> Result<Option<Block>, ClientError> {
 		for pick in picks {
 			if let Some(block) = pick.transport.block(hash, Some(LedgerSide::Both)).await? {
 				return Ok(Some(block));
@@ -1109,7 +1100,7 @@ impl KeetaClient {
 	/// Fetch a representative's own vote for `hash`, preferring the main
 	/// ledger (the rep already promoted the staple) and falling back to the
 	/// side ledger (the staple is still pending).
-	async fn rep_recover_vote(&self, pick: &RepPick, hash: &str) -> Option<Vote> {
+	async fn rep_recover_vote(&self, pick: &RepPick, hash: BlockHash) -> Option<Vote> {
 		for side in [LedgerSide::Main, LedgerSide::Side] {
 			let list = match pick.transport.block_votes(hash, side).await {
 				Ok(Some(list)) if !list.is_empty() => list,
@@ -1164,24 +1155,22 @@ impl KeetaClient {
 		Ok(votes)
 	}
 
-	/// Assemble the staple covering `block_hash` from one rep's main-ledger
-	/// votes and the blocks they cover.
+	/// Assemble the staple covering `block_hash` from one rep's votes on the
+	/// given ledger `side` and the blocks they cover.
 	async fn compose_staple_on(
 		&self,
 		transport: &Arc<dyn NodeTransport>,
-		block_hash: &str,
+		block_hash: BlockHash,
+		side: LedgerSide,
 	) -> Result<Option<VoteStaple>, ClientError> {
-		let votes = match transport.block_votes(block_hash, LedgerSide::Main).await? {
+		let votes = match transport.block_votes(block_hash, side).await? {
 			Some(list) if !list.is_empty() => list,
 			_ => return Ok(None),
 		};
 
 		let mut blocks = Vec::new();
 		for hash in votes[0].blocks() {
-			match transport
-				.block(&hash.to_string(), Some(LedgerSide::Main))
-				.await?
-			{
+			match transport.block(*hash, Some(side)).await? {
 				Some(block) => blocks.push(block),
 				None => return Ok(None),
 			}
@@ -1203,11 +1192,10 @@ impl KeetaClient {
 		moment: BlockTime,
 		priority: &[AccountRef],
 	) -> Result<Block, ClientError> {
-		let signer_key = signer.to_string();
 		let previous = blocks
 			.iter()
 			.rev()
-			.find(|block| block.data().account().to_string() == signer_key)
+			.find(|block| block.data().account() == signer)
 			.map(|block| block.hash())
 			.ok_or(ClientError::FeeRequired)?;
 
@@ -1311,9 +1299,13 @@ impl KeetaClient {
 	}
 
 	/// The settled balance of `token` held by `account`.
-	pub async fn balance(&self, account: impl AsRef<str>, token: impl AsRef<str>) -> Result<Amount, ClientError> {
-		let account = account.as_ref().to_owned();
-		let token = token.as_ref().to_owned();
+	pub async fn balance(
+		&self,
+		account: impl AccountPublicKey,
+		token: impl AccountPublicKey,
+	) -> Result<Amount, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
+		let token = token.to_public_key_string().context(AccountSnafu)?;
 
 		self.dispatch_any(move |t| {
 			let account = account.clone();
@@ -1324,8 +1316,8 @@ impl KeetaClient {
 	}
 
 	/// Every token balance held by `account`.
-	pub async fn balances(&self, account: impl AsRef<str>) -> Result<Vec<TokenBalance>, ClientError> {
-		let account = account.as_ref().to_owned();
+	pub async fn balances(&self, account: impl AccountPublicKey) -> Result<Vec<TokenBalance>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.balances(&account).await }
@@ -1335,8 +1327,8 @@ impl KeetaClient {
 
 	/// The full ledger state of `account`: representative, head, height, and
 	/// balances.
-	pub async fn state(&self, account: impl AsRef<str>) -> Result<AccountState, ClientError> {
-		let account = account.as_ref().to_owned();
+	pub async fn state(&self, account: impl AccountPublicKey) -> Result<AccountState, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.account_state(&account).await }
@@ -1346,14 +1338,14 @@ impl KeetaClient {
 
 	/// The total supply of `token`, or `None` when the account reports no
 	/// supply (it is not a token account).
-	pub async fn token_supply(&self, token: impl AsRef<str>) -> Result<Option<Amount>, ClientError> {
+	pub async fn token_supply(&self, token: impl AccountPublicKey) -> Result<Option<Amount>, ClientError> {
 		let state = self.state(token).await?;
 		Ok(state.supply)
 	}
 
 	/// The head block of `account`, or `None` when the account has no blocks.
-	pub async fn head_block(&self, account: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
-		let account = account.as_ref().to_owned();
+	pub async fn head_block(&self, account: impl AccountPublicKey) -> Result<Option<Block>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.head_block(&account).await }
@@ -1363,8 +1355,11 @@ impl KeetaClient {
 
 	/// The head block of `account` paired with its height, or `None` when the
 	/// account has no blocks.
-	pub async fn account_head_info(&self, account: impl AsRef<str>) -> Result<Option<(Block, Amount)>, ClientError> {
-		let account = account.as_ref().to_owned();
+	pub async fn account_head_info(
+		&self,
+		account: impl AccountPublicKey,
+	) -> Result<Option<(Block, Amount)>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.account_head_info(&account).await }
@@ -1373,10 +1368,10 @@ impl KeetaClient {
 	}
 
 	/// The next pending (unreceived) block for `account`, if any.
-	pub async fn pending_block(&self, account: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
+	pub async fn pending_block(&self, account: impl AccountPublicKey) -> Result<Option<Block>, ClientError> {
 		self.ensure_refresh();
 
-		let account = account.as_ref().to_owned();
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
@@ -1393,8 +1388,8 @@ impl KeetaClient {
 		// Tally candidate blocks by hash so the block seen on the most reps
 		// wins: reps may briefly disagree on the pending head, so majority
 		// agreement is the safest single answer to return.
-		let mut blocks_by_hash: BTreeMap<String, Block> = BTreeMap::new();
-		let mut observed: Vec<String> = Vec::new();
+		let mut blocks_by_hash: BTreeMap<BlockHash, Block> = BTreeMap::new();
+		let mut observed: Vec<BlockHash> = Vec::new();
 		let mut any_success = false;
 		let mut last_error: Option<ClientError> = None;
 		while let Some((key, result)) = requests.next().await {
@@ -1404,8 +1399,8 @@ impl KeetaClient {
 
 					any_success = true;
 
-					let hash = block.hash().to_string();
-					blocks_by_hash.entry(hash.clone()).or_insert(block);
+					let hash = block.hash();
+					blocks_by_hash.entry(hash).or_insert(block);
 					observed.push(hash);
 				}
 				Ok(None) => {
@@ -1432,21 +1427,30 @@ impl KeetaClient {
 		}
 	}
 
-	/// The vote staple covering `blockhash` on the main ledger, assembled from
-	/// the first representative that holds votes for it, or `None` when no
-	/// representative has the staple.
-	pub async fn vote_staple(&self, blockhash: impl AsRef<str>) -> Result<Option<VoteStaple>, ClientError> {
+	/// The vote staple covering `blockhash`, assembled from the first
+	/// representative that holds votes for it, or `None` when no
+	/// representative has the staple. `side` selects the ledger to read
+	/// (`None` defaults to the main ledger; vote lookups have no "both", so
+	/// [`LedgerSide::Both`] reads the main ledger).
+	pub async fn vote_staple(
+		&self,
+		blockhash: BlockHash,
+		side: Option<LedgerSide>,
+	) -> Result<Option<VoteStaple>, ClientError> {
 		self.ensure_refresh();
 
-		let blockhash = blockhash.as_ref();
 		let picks = self.snapshot_picks();
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
 		}
 
+		let side = side.unwrap_or(LedgerSide::Main);
 		let mut last_error: Option<ClientError> = None;
 		for pick in &picks {
-			match self.compose_staple_on(&pick.transport, blockhash).await {
+			match self
+				.compose_staple_on(&pick.transport, blockhash, side)
+				.await
+			{
 				Ok(Some(staple)) => {
 					self.boost(&pick.key);
 					return Ok(Some(staple));
@@ -1467,53 +1471,47 @@ impl KeetaClient {
 
 	/// The block identified by `blockhash`, if the node has it. `side` selects
 	/// the ledger to read (`None` defaults to the main ledger).
-	pub async fn block(
-		&self,
-		blockhash: impl AsRef<str>,
-		side: Option<LedgerSide>,
-	) -> Result<Option<Block>, ClientError> {
-		let blockhash = blockhash.as_ref().to_owned();
-		self.dispatch_any(move |t| {
-			let blockhash = blockhash.clone();
-			async move { t.block(&blockhash, side).await }
-		})
-		.await
+	pub async fn block(&self, blockhash: BlockHash, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError> {
+		self.dispatch_any(move |t| async move { t.block(blockhash, side).await })
+			.await
 	}
 
 	/// The block following `blockhash`, if one exists.
-	pub async fn successor_block(&self, blockhash: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
-		let blockhash = blockhash.as_ref().to_owned();
-		self.dispatch_any(move |t| {
-			let blockhash = blockhash.clone();
-			async move { t.successor_block(&blockhash).await }
-		})
-		.await
+	pub async fn successor_block(&self, blockhash: BlockHash) -> Result<Option<Block>, ClientError> {
+		self.dispatch_any(move |t| async move { t.successor_block(blockhash).await })
+			.await
 	}
 
-	/// The block produced by `account` for the given idempotent `key`, if any.
+	/// The block produced by `account` for the given idempotent `key`, if
+	/// any, searching the given `side` (`None` defaults to the main ledger).
 	pub async fn block_by_idempotent(
 		&self,
-		account: impl AsRef<str>,
+		account: impl AccountPublicKey,
 		key: impl AsRef<str>,
+		side: Option<LedgerSide>,
 	) -> Result<Option<Block>, ClientError> {
-		let account = account.as_ref().to_owned();
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		let key = key.as_ref().to_owned();
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			let key = key.clone();
-			async move { t.block_by_idempotent(&account, &key).await }
+			async move { t.block_by_idempotent(&account, &key, side).await }
 		})
 		.await
 	}
 
 	/// A prefix of `account`'s block chain, most recent first.
-	pub async fn chain(&self, account: impl AsRef<str>) -> Result<Vec<Block>, ClientError> {
+	pub async fn chain(&self, account: impl AccountPublicKey) -> Result<Vec<Block>, ClientError> {
 		self.chain_page(account, ChainQuery::default()).await
 	}
 
 	/// A single page of `account`'s block chain (most recent first), bounded
 	/// by `query`.
-	pub async fn chain_page(&self, account: impl AsRef<str>, query: ChainQuery) -> Result<Vec<Block>, ClientError> {
+	pub async fn chain_page(
+		&self,
+		account: impl AccountPublicKey,
+		query: ChainQuery,
+	) -> Result<Vec<Block>, ClientError> {
 		Ok(self.chain_page_cursor(account, query).await?.blocks)
 	}
 
@@ -1521,13 +1519,18 @@ impl KeetaClient {
 	/// cursor for the following page.
 	pub async fn chain_page_cursor(
 		&self,
-		account: impl AsRef<str>,
+		account: impl AccountPublicKey,
 		query: ChainQuery,
 	) -> Result<ChainPage, ClientError> {
-		let account = account.as_ref().to_owned();
+		let account = account.to_public_key_string().context(AccountSnafu)?;
+		self.chain_page_cursor_raw(account, query).await
+	}
+
+	/// [`Self::chain_page_cursor`] over a pre-rendered account address, so
+	/// cursor loops render the address once.
+	async fn chain_page_cursor_raw(&self, account: String, query: ChainQuery) -> Result<ChainPage, ClientError> {
 		self.dispatch_any(move |t| {
 			let account = account.clone();
-			let query = query.clone();
 			async move { t.chain_page(&account, &query).await }
 		})
 		.await
@@ -1536,44 +1539,74 @@ impl KeetaClient {
 	/// Every block in `account`'s chain (most recent first), fetched by
 	/// following the node's `next_key` cursor with `page_limit` per request
 	/// until the cursor is exhausted.
-	pub async fn chain_all(&self, account: impl AsRef<str>, page_limit: u32) -> Result<Vec<Block>, ClientError> {
-		let account = account.as_ref();
+	pub async fn chain_all(&self, account: impl AccountPublicKey, page_limit: u32) -> Result<Vec<Block>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		let limit = i64::from(page_limit.max(1));
-		let mut blocks = Vec::new();
-		let mut cursor: Option<String> = None;
 
-		loop {
-			let query = ChainQuery { start: cursor.clone(), end: None, limit: Some(limit) };
-			let page = self.chain_page_cursor(account, query).await?;
-
-			blocks.extend(page.blocks);
-
-			match page.next_key {
-				Some(next) => cursor = Some(next),
-				None => break,
+		drain_cursor_pages(|cursor| {
+			let account = account.clone();
+			async move {
+				let query = ChainQuery { start: cursor, end: None, limit: Some(limit) };
+				let page = self.chain_page_cursor_raw(account, query).await?;
+				Ok((page.blocks, page.next_key))
 			}
-		}
-
-		Ok(blocks)
+		})
+		.await
 	}
 
 	/// `account`'s transaction history as verified vote staples.
-	pub async fn history(&self, account: impl AsRef<str>) -> Result<Vec<HistoryEntry>, ClientError> {
+	pub async fn history(&self, account: impl AccountPublicKey) -> Result<Vec<HistoryEntry>, ClientError> {
 		self.history_page(account, HistoryQuery::default()).await
 	}
 
 	/// A single page of `account`'s history, bounded by `query`.
 	pub async fn history_page(
 		&self,
-		account: impl AsRef<str>,
+		account: impl AccountPublicKey,
 		query: HistoryQuery,
 	) -> Result<Vec<HistoryEntry>, ClientError> {
-		let account = account.as_ref().to_owned();
+		Ok(self.history_page_cursor(account, query).await?.entries)
+	}
+
+	/// A single page of `account`'s history together with the node's
+	/// `next_key` cursor for the following page.
+	pub async fn history_page_cursor(
+		&self,
+		account: impl AccountPublicKey,
+		query: HistoryQuery,
+	) -> Result<HistoryPage, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
+		self.history_page_cursor_raw(account, query).await
+	}
+
+	/// [`Self::history_page_cursor`] over a pre-rendered account address, so
+	/// cursor loops render the address once.
+	async fn history_page_cursor_raw(&self, account: String, query: HistoryQuery) -> Result<HistoryPage, ClientError> {
 		self.dispatch_any(move |t| {
 			let account = account.clone();
-			let query = query.clone();
-
 			async move { t.history_page(&account, &query).await }
+		})
+		.await
+	}
+
+	/// Every entry in `account`'s history, fetched by following the node's
+	/// `next_key` cursor with `page_limit` per request until the cursor is
+	/// exhausted.
+	pub async fn history_all(
+		&self,
+		account: impl AccountPublicKey,
+		page_limit: u32,
+	) -> Result<Vec<HistoryEntry>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
+		let limit = i64::from(page_limit.max(1));
+
+		drain_cursor_pages(|cursor| {
+			let account = account.clone();
+			async move {
+				let query = HistoryQuery { start: cursor, limit: Some(limit) };
+				let page = self.history_page_cursor_raw(account, query).await?;
+				Ok((page.entries, page.next_key))
+			}
 		})
 		.await
 	}
@@ -1585,15 +1618,32 @@ impl KeetaClient {
 
 	/// A single page of the node's global history, bounded by `query`.
 	pub async fn global_history_page(&self, query: HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
-		self.dispatch_any(move |t| {
-			let query = query.clone();
-			async move { t.global_history_page(&query).await }
+		Ok(self.global_history_page_cursor(query).await?.entries)
+	}
+
+	/// A single page of the node's global history together with the node's
+	/// `next_key` cursor for the following page.
+	pub async fn global_history_page_cursor(&self, query: HistoryQuery) -> Result<HistoryPage, ClientError> {
+		self.dispatch_any(move |t| async move { t.global_history_page(&query).await })
+			.await
+	}
+
+	/// Every entry in the node's global history, fetched by following the
+	/// node's `next_key` cursor with `page_limit` per request until the
+	/// cursor is exhausted.
+	pub async fn global_history_all(&self, page_limit: u32) -> Result<Vec<HistoryEntry>, ClientError> {
+		let limit = i64::from(page_limit.max(1));
+
+		drain_cursor_pages(|cursor| async move {
+			let query = HistoryQuery { start: cursor, limit: Some(limit) };
+			let page = self.global_history_page_cursor(query).await?;
+			Ok((page.entries, page.next_key))
 		})
 		.await
 	}
 
-	/// Vote staples committed at or after the ISO 8601 `start` moment.
-	pub async fn vote_staples_after(&self, start: impl AsRef<str>) -> Result<Vec<VoteStaple>, ClientError> {
+	/// Vote staples committed at or after the `start` moment.
+	pub async fn vote_staples_after(&self, start: BlockTime) -> Result<Vec<VoteStaple>, ClientError> {
 		self.vote_staples_after_page(start, None).await
 	}
 
@@ -1601,15 +1651,11 @@ impl KeetaClient {
 	/// `limit`.
 	pub async fn vote_staples_after_page(
 		&self,
-		start: impl AsRef<str>,
+		start: BlockTime,
 		limit: Option<i64>,
 	) -> Result<Vec<VoteStaple>, ClientError> {
-		let start = start.as_ref().to_owned();
-		self.dispatch_any(move |t| {
-			let start = start.clone();
-			async move { t.vote_staples_after(&start, limit).await }
-		})
-		.await
+		self.dispatch_any(move |t| async move { t.vote_staples_after(start, limit).await })
+			.await
 	}
 
 	/// The node's own representative and its weight.
@@ -1619,8 +1665,8 @@ impl KeetaClient {
 	}
 
 	/// The weight of representative `rep`.
-	pub async fn representative(&self, rep: impl AsRef<str>) -> Result<Representative, ClientError> {
-		let rep = rep.as_ref().to_owned();
+	pub async fn representative(&self, rep: impl AccountPublicKey) -> Result<Representative, ClientError> {
+		let rep = rep.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let rep = rep.clone();
 			async move { t.representative(&rep).await }
@@ -1641,8 +1687,8 @@ impl KeetaClient {
 	}
 
 	/// ACL entries where `account` is the principal (grantee).
-	pub async fn acls_by_principal(&self, account: impl AsRef<str>) -> Result<Vec<Acl>, ClientError> {
-		let account = account.as_ref().to_owned();
+	pub async fn acls_by_principal(&self, account: impl AccountPublicKey) -> Result<Vec<Acl>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.acls_by_principal(&account).await }
@@ -1651,8 +1697,8 @@ impl KeetaClient {
 	}
 
 	/// ACL entries granted to `account` as an entity.
-	pub async fn acls_by_entity(&self, account: impl AsRef<str>) -> Result<Vec<Acl>, ClientError> {
-		let account = account.as_ref().to_owned();
+	pub async fn acls_by_entity(&self, account: impl AccountPublicKey) -> Result<Vec<Acl>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.acls_by_entity(&account).await }
@@ -1665,9 +1711,9 @@ impl KeetaClient {
 	#[cfg(feature = "std")]
 	pub async fn acls_by_principal_with_info(
 		&self,
-		account: impl AsRef<str>,
+		account: impl AccountPublicKey,
 	) -> Result<serde_json::Value, ClientError> {
-		let account = account.as_ref().to_owned();
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.acls_by_principal_with_info(&account).await }
@@ -1676,8 +1722,8 @@ impl KeetaClient {
 	}
 
 	/// Every certificate held by `account`.
-	pub async fn certificates(&self, account: impl AsRef<str>) -> Result<Vec<Certificate>, ClientError> {
-		let account = account.as_ref().to_owned();
+	pub async fn certificates(&self, account: impl AccountPublicKey) -> Result<Vec<Certificate>, ClientError> {
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
 			async move { t.certificates(&account).await }
@@ -1688,15 +1734,13 @@ impl KeetaClient {
 	/// The certificate of `account` identified by `hash`, if present.
 	pub async fn certificate(
 		&self,
-		account: impl AsRef<str>,
-		hash: impl AsRef<str>,
+		account: impl AccountPublicKey,
+		hash: [u8; 32],
 	) -> Result<Option<Certificate>, ClientError> {
-		let account = account.as_ref().to_owned();
-		let hash = hash.as_ref().to_owned();
+		let account = account.to_public_key_string().context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
 			let account = account.clone();
-			let hash = hash.clone();
-			async move { t.certificate(&account, &hash).await }
+			async move { t.certificate(&account, hash).await }
 		})
 		.await
 	}
@@ -1742,11 +1786,15 @@ impl KeetaClient {
 	}
 
 	/// Ledger state for several `accounts` in one call.
-	pub async fn states(&self, accounts: &[&str]) -> Result<Vec<AccountState>, ClientError> {
-		let accounts = accounts.join(",");
+	pub async fn states<T: AccountPublicKey>(&self, accounts: &[T]) -> Result<Vec<AccountState>, ClientError> {
+		let addresses: Vec<String> = accounts
+			.iter()
+			.map(AccountPublicKey::to_public_key_string)
+			.collect::<Result<_, _>>()
+			.context(AccountSnafu)?;
 		self.dispatch_any(move |t| {
-			let accounts = accounts.clone();
-			async move { t.account_states(&accounts).await }
+			let addresses = addresses.clone();
+			async move { t.account_states(&addresses).await }
 		})
 		.await
 	}
@@ -1768,7 +1816,6 @@ impl KeetaClient {
 
 	/// The account of the client's first representative, parsed from its
 	/// published key; used as the default delegate at genesis.
-	#[cfg(feature = "std")]
 	pub(crate) fn first_rep_account(&self) -> Result<Option<AccountRef>, ClientError> {
 		match self.inner.reps.snapshot().into_iter().next() {
 			Some(rep) => {
@@ -1809,7 +1856,7 @@ impl KeetaClient {
 			.with_account(Arc::clone(account))
 			.with_operations(operations);
 
-		if signer.to_string() != account.to_string() {
+		if signer != account {
 			builder = builder.with_signer(Arc::clone(signer));
 		}
 		if let Some(purpose) = purpose {
@@ -1880,6 +1927,35 @@ fn store_representatives(runtime: &Arc<dyn Runtime>, signature: &str, reps: &[Re
 #[cfg(not(feature = "std"))]
 fn store_representatives(_runtime: &Arc<dyn Runtime>, _signature: &str, _reps: &[RepEntry]) {}
 
+/// Drain a cursor-paged read: call `fetch` with no cursor, then with each
+/// page's `next_key`, until the node reports the end of the sequence.
+async fn drain_cursor_pages<ITEM, CURSOR, FETCH, PAGE>(fetch: FETCH) -> Result<Vec<ITEM>, ClientError>
+where
+	CURSOR: Copy,
+	FETCH: Fn(Option<CURSOR>) -> PAGE,
+	PAGE: Future<Output = Result<(Vec<ITEM>, Option<CURSOR>), ClientError>>,
+{
+	let mut items = Vec::new();
+	let mut cursor = None;
+
+	loop {
+		let (page, next_key) = fetch(cursor).await?;
+
+		if page.is_empty() {
+			break;
+		}
+
+		items.extend(page);
+
+		match next_key {
+			Some(next) => cursor = Some(next),
+			None => break,
+		}
+	}
+
+	Ok(items)
+}
+
 /// Choose a moment that lies within every vote's validity window so a
 /// reconstructed staple validates without rejecting near-expired votes.
 fn staple_moment(votes: &[Vote], fallback: BlockTime) -> BlockTime {
@@ -1925,7 +2001,7 @@ pub(crate) fn is_ledger_code(error: &ClientError, code: &str) -> bool {
 
 /// A specific rep's head block hash and height for `account`, treating any
 /// error or absent head as "no head" so divergence detection can sort it low.
-async fn head_info(transport: &Arc<dyn NodeTransport>, account: &str) -> Option<(String, Amount)> {
+async fn head_info(transport: &Arc<dyn NodeTransport>, account: &str) -> Option<(BlockHash, Amount)> {
 	let Ok(state) = transport.account_state(account).await else {
 		return None;
 	};
@@ -1937,7 +2013,7 @@ async fn head_info(transport: &Arc<dyn NodeTransport>, account: &str) -> Option<
 
 /// The head height carried by a rep's account info, treating a missing head as
 /// `-1` so unopened reps sort below opened ones.
-fn height_value(info: &Option<(String, Amount)>) -> BigInt {
+fn height_value(info: &Option<(BlockHash, Amount)>) -> BigInt {
 	match info {
 		Some((_, height)) => height.as_bigint().clone(),
 		None => BigInt::from(-1),
@@ -1967,6 +2043,7 @@ fn pick_best_vote(mut votes: Vec<Vote>) -> Option<Vote> {
 			.unix_millis()
 			.cmp(&left.validity().to.unix_millis())
 	});
+
 	votes.into_iter().next()
 }
 
@@ -2014,6 +2091,55 @@ mod tests {
 		}
 
 		Ok(builder.build_signed(issuer.as_ref())?)
+	}
+
+	/// Resolve a future that never awaits anything pending (the paging tests
+	/// drive `drain_cursor_pages` over `core::future::ready` fetches).
+	fn resolve<T>(future: impl Future<Output = T>) -> Option<T> {
+		let mut future = core::pin::pin!(future);
+		let waker = core::task::Waker::noop();
+		let mut context = core::task::Context::from_waker(waker);
+
+		match future.as_mut().poll(&mut context) {
+			core::task::Poll::Ready(value) => Some(value),
+			core::task::Poll::Pending => None,
+		}
+	}
+
+	#[test]
+	fn drain_cursor_pages_stops_on_an_empty_page_echoing_the_cursor() -> TestResult {
+		let calls = core::cell::Cell::new(0u32);
+		let fetch = |cursor: Option<u8>| {
+			let call = calls.get();
+			calls.set(call + 1);
+			core::future::ready(match call {
+				0 => Ok((alloc::vec![1, 2], Some(7u8))),
+				_ => Ok((Vec::new(), cursor)),
+			})
+		};
+
+		let items = resolve(drain_cursor_pages(fetch)).ok_or("ready future")??;
+		assert_eq!(items, alloc::vec![1, 2]);
+		assert_eq!(calls.get(), 2);
+		Ok(())
+	}
+
+	#[test]
+	fn drain_cursor_pages_stops_when_the_cursor_runs_out() -> TestResult {
+		let calls = core::cell::Cell::new(0u32);
+		let fetch = |_: Option<u8>| {
+			let call = calls.get();
+			calls.set(call + 1);
+			core::future::ready(match call {
+				0 => Ok((alloc::vec![1], Some(9u8))),
+				_ => Ok((alloc::vec![2], None)),
+			})
+		};
+
+		let items = resolve(drain_cursor_pages(fetch)).ok_or("ready future")??;
+		assert_eq!(items, alloc::vec![1, 2]);
+		assert_eq!(calls.get(), 2);
+		Ok(())
 	}
 
 	#[test]

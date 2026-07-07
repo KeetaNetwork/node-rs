@@ -4,6 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::str::FromStr;
 
+use keetanetwork_account::GenericAccount;
+use keetanetwork_block::AccountRef;
 use keetanetwork_client::{ChainQuery, HistoryQuery, KeetaClient as Core, Network};
 use num_bigint::BigInt;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -11,7 +13,10 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use crate::account::Account;
 use crate::block::{Block, VoteStaple};
 use crate::builder::Builder;
-use crate::convert::{amount_to_string, client_error, coded_error, parse_amount, parse_ledger_side, JsResult};
+use crate::convert::{
+	amount_to_string, client_error, coded_error, parse_amount, parse_block_hash, parse_hash32, parse_history_cursor,
+	parse_ledger_side, parse_moment, JsResult,
+};
 use crate::dto::{
 	AccountStateView, AclView, CertificateView, HistoryEntryView, LedgerChecksumView, RepresentativeView,
 	TokenBalanceView,
@@ -77,7 +82,7 @@ impl KeetaClient {
 	pub async fn balance(&self, account: &Account, token: &Account) -> JsResult<String> {
 		let amount = self
 			.inner
-			.balance(account.address(), token.address())
+			.balance(&*account.inner(), &*token.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(amount_to_string(amount))
@@ -87,7 +92,7 @@ impl KeetaClient {
 	pub async fn balances(&self, account: &Account) -> JsResult<Vec<TokenBalanceView>> {
 		let balances = self
 			.inner
-			.balances(account.address())
+			.balances(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(balances.iter().map(TokenBalanceView::from).collect())
@@ -97,15 +102,16 @@ impl KeetaClient {
 	pub async fn state(&self, account: &Account) -> JsResult<AccountStateView> {
 		let state = self
 			.inner
-			.state(account.address())
+			.state(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(AccountStateView::from(&state))
 	}
 
 	/// Snapshots of several accounts' ledger state, in input order.
-	pub async fn states(&self, accounts: Vec<String>) -> JsResult<Vec<AccountStateView>> {
-		let refs: Vec<&str> = accounts.iter().map(String::as_str).collect();
+	pub async fn states(&self, accounts: Vec<Account>) -> JsResult<Vec<AccountStateView>> {
+		let inners: Vec<AccountRef> = accounts.iter().map(Account::inner).collect();
+		let refs: Vec<&GenericAccount> = inners.iter().map(|account| &**account).collect();
 		let states = self.inner.states(&refs).await.map_err(client_error)?;
 		Ok(states.iter().map(AccountStateView::from).collect())
 	}
@@ -115,7 +121,7 @@ impl KeetaClient {
 	pub async fn token_supply(&self, token: &Account) -> JsResult<Option<String>> {
 		let supply = self
 			.inner
-			.token_supply(token.address())
+			.token_supply(&*token.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(supply.map(amount_to_string))
@@ -126,21 +132,21 @@ impl KeetaClient {
 	pub async fn head_block(&self, account: &Account) -> JsResult<Option<Block>> {
 		let head = self
 			.inner
-			.head_block(account.address())
+			.head_block(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(head.map(Block::from))
 	}
 
-	/// The head block of `account` paired with its settled base-token balance.
+	/// The head block of `account` paired with its chain height.
 	#[wasm_bindgen(js_name = accountHeadInfo)]
 	pub async fn account_head_info(&self, account: &Account) -> JsResult<Option<AccountHead>> {
 		let info = self
 			.inner
-			.account_head_info(account.address())
+			.account_head_info(&*account.inner())
 			.await
 			.map_err(client_error)?;
-		Ok(info.map(|(block, balance)| AccountHead { block: Block::from(block), balance: amount_to_string(balance) }))
+		Ok(info.map(|(block, height)| AccountHead { block: Block::from(block), height: amount_to_string(height) }))
 	}
 
 	/// The next pending (unreceived-driven) block for `account`, if any.
@@ -148,7 +154,7 @@ impl KeetaClient {
 	pub async fn pending_block(&self, account: &Account) -> JsResult<Option<Block>> {
 		let pending = self
 			.inner
-			.pending_block(account.address())
+			.pending_block(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(pending.map(Block::from))
@@ -159,6 +165,7 @@ impl KeetaClient {
 	/// used when omitted.
 	pub async fn block(&self, block_hash: String, side: Option<String>) -> JsResult<Option<Block>> {
 		let side = parse_ledger_side(side)?;
+		let block_hash = parse_block_hash(&block_hash)?;
 		let block = self
 			.inner
 			.block(block_hash, side)
@@ -170,6 +177,7 @@ impl KeetaClient {
 	/// The block that chains directly after `block_hash`, if any.
 	#[wasm_bindgen(js_name = successorBlock)]
 	pub async fn successor_block(&self, block_hash: String) -> JsResult<Option<Block>> {
+		let block_hash = parse_block_hash(&block_hash)?;
 		let block = self
 			.inner
 			.successor_block(block_hash)
@@ -178,25 +186,38 @@ impl KeetaClient {
 		Ok(block.map(Block::from))
 	}
 
-	/// The block carrying idempotency `key` on `account`, if any.
+	/// The block carrying idempotency `key` on `account`, if any. `side`
+	/// selects the ledger to search (`"main"`, `"side"`, or `"both"`).
 	#[wasm_bindgen(js_name = blockByIdempotent)]
-	pub async fn block_by_idempotent(&self, account: &Account, key: String) -> JsResult<Option<Block>> {
+	pub async fn block_by_idempotent(
+		&self,
+		account: &Account,
+		key: String,
+		side: Option<String>,
+	) -> JsResult<Option<Block>> {
+		let side = parse_ledger_side(side)?;
 		let block = self
 			.inner
-			.block_by_idempotent(account.address(), key)
+			.block_by_idempotent(&*account.inner(), key, side)
 			.await
 			.map_err(client_error)?;
+
 		Ok(block.map(Block::from))
 	}
 
 	/// The verified vote staple committing the block with hash `block_hash`.
+	/// `side` selects the ledger to read (`"main"` or `"side"`); the main
+	/// ledger is used when omitted.
 	#[wasm_bindgen(js_name = voteStaple)]
-	pub async fn vote_staple(&self, block_hash: String) -> JsResult<Option<VoteStaple>> {
+	pub async fn vote_staple(&self, block_hash: String, side: Option<String>) -> JsResult<Option<VoteStaple>> {
+		let side = parse_ledger_side(side)?;
+		let block_hash = parse_block_hash(&block_hash)?;
 		let staple = self
 			.inner
-			.vote_staple(block_hash)
+			.vote_staple(block_hash, side)
 			.await
 			.map_err(client_error)?;
+
 		Ok(staple.map(VoteStaple::from))
 	}
 
@@ -204,7 +225,7 @@ impl KeetaClient {
 	pub async fn chain(&self, account: &Account) -> JsResult<Vec<Block>> {
 		let blocks = self
 			.inner
-			.chain(account.address())
+			.chain(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(blocks.into_iter().map(Block::from).collect())
@@ -220,12 +241,15 @@ impl KeetaClient {
 		end: Option<String>,
 		limit: Option<u32>,
 	) -> JsResult<Vec<Block>> {
+		let start = start.as_deref().map(parse_block_hash).transpose()?;
+		let end = end.as_deref().map(parse_block_hash).transpose()?;
 		let query = ChainQuery { start, end, limit: limit.map(i64::from) };
 		let blocks = self
 			.inner
-			.chain_page(account.address(), query)
+			.chain_page(&*account.inner(), query)
 			.await
 			.map_err(client_error)?;
+
 		Ok(blocks.into_iter().map(Block::from).collect())
 	}
 
@@ -235,7 +259,7 @@ impl KeetaClient {
 	pub async fn chain_all(&self, account: &Account, page_limit: u32) -> JsResult<Vec<Block>> {
 		let blocks = self
 			.inner
-			.chain_all(account.address(), page_limit)
+			.chain_all(&*account.inner(), page_limit)
 			.await
 			.map_err(client_error)?;
 		Ok(blocks.into_iter().map(Block::from).collect())
@@ -245,7 +269,7 @@ impl KeetaClient {
 	pub async fn history(&self, account: &Account) -> JsResult<Vec<HistoryEntryView>> {
 		let entries = self
 			.inner
-			.history(account.address())
+			.history(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(entries.iter().map(HistoryEntryView::from).collect())
@@ -259,10 +283,24 @@ impl KeetaClient {
 		start: Option<String>,
 		limit: Option<u32>,
 	) -> JsResult<Vec<HistoryEntryView>> {
+		let start = start.as_deref().map(parse_history_cursor).transpose()?;
 		let query = HistoryQuery { start, limit: limit.map(i64::from) };
 		let entries = self
 			.inner
-			.history_page(account.address(), query)
+			.history_page(&*account.inner(), query)
+			.await
+			.map_err(client_error)?;
+
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
+	}
+
+	/// Every entry in `account`'s history, fetched by following the node's
+	/// cursor with `pageLimit` per request.
+	#[wasm_bindgen(js_name = historyAll)]
+	pub async fn history_all(&self, account: &Account, page_limit: u32) -> JsResult<Vec<HistoryEntryView>> {
+		let entries = self
+			.inner
+			.history_all(&*account.inner(), page_limit)
 			.await
 			.map_err(client_error)?;
 		Ok(entries.iter().map(HistoryEntryView::from).collect())
@@ -282,10 +320,24 @@ impl KeetaClient {
 		start: Option<String>,
 		limit: Option<u32>,
 	) -> JsResult<Vec<HistoryEntryView>> {
+		let start = start.as_deref().map(parse_history_cursor).transpose()?;
 		let query = HistoryQuery { start, limit: limit.map(i64::from) };
 		let entries = self
 			.inner
 			.global_history_page(query)
+			.await
+			.map_err(client_error)?;
+
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
+	}
+
+	/// Every entry in the node's global history, fetched by following the
+	/// node's cursor with `pageLimit` per request.
+	#[wasm_bindgen(js_name = globalHistoryAll)]
+	pub async fn global_history_all(&self, page_limit: u32) -> JsResult<Vec<HistoryEntryView>> {
+		let entries = self
+			.inner
+			.global_history_all(page_limit)
 			.await
 			.map_err(client_error)?;
 		Ok(entries.iter().map(HistoryEntryView::from).collect())
@@ -294,6 +346,7 @@ impl KeetaClient {
 	/// Vote staples committed at or after the ISO 8601 `start` moment.
 	#[wasm_bindgen(js_name = voteStaplesAfter)]
 	pub async fn vote_staples_after(&self, start: String) -> JsResult<Vec<VoteStaple>> {
+		let start = parse_moment(&start)?;
 		let staples = self
 			.inner
 			.vote_staples_after(start)
@@ -306,6 +359,7 @@ impl KeetaClient {
 	/// `limit`.
 	#[wasm_bindgen(js_name = voteStaplesAfterPage)]
 	pub async fn vote_staples_after_page(&self, start: String, limit: Option<u32>) -> JsResult<Vec<VoteStaple>> {
+		let start = parse_moment(&start)?;
 		let staples = self
 			.inner
 			.vote_staples_after_page(start, limit.map(i64::from))
@@ -329,7 +383,7 @@ impl KeetaClient {
 	pub async fn representative(&self, rep: &Account) -> JsResult<RepresentativeView> {
 		let rep = self
 			.inner
-			.representative(rep.address())
+			.representative(&*rep.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(RepresentativeView::from(&rep))
@@ -353,7 +407,7 @@ impl KeetaClient {
 	pub async fn acls_by_principal(&self, account: &Account) -> JsResult<Vec<AclView>> {
 		let acls = self
 			.inner
-			.acls_by_principal(account.address())
+			.acls_by_principal(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(acls.iter().map(AclView::from).collect())
@@ -364,7 +418,7 @@ impl KeetaClient {
 	pub async fn acls_by_entity(&self, account: &Account) -> JsResult<Vec<AclView>> {
 		let acls = self
 			.inner
-			.acls_by_entity(account.address())
+			.acls_by_entity(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(acls.iter().map(AclView::from).collect())
@@ -374,7 +428,7 @@ impl KeetaClient {
 	pub async fn certificates(&self, account: &Account) -> JsResult<Vec<CertificateView>> {
 		let certificates = self
 			.inner
-			.certificates(account.address())
+			.certificates(&*account.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(certificates.iter().map(CertificateView::from).collect())
@@ -382,9 +436,10 @@ impl KeetaClient {
 
 	/// The certificate of `account` identified by `hash`, if present.
 	pub async fn certificate(&self, account: &Account, hash: String) -> JsResult<Option<CertificateView>> {
+		let hash = parse_hash32(&hash, "certificate hash")?;
 		let certificate = self
 			.inner
-			.certificate(account.address(), hash)
+			.certificate(&*account.inner(), hash)
 			.await
 			.map_err(client_error)?;
 		Ok(certificate.as_ref().map(CertificateView::from))
@@ -514,11 +569,11 @@ impl From<Core> for KeetaClient {
 	}
 }
 
-/// An account's head block paired with its settled base-token balance.
+/// An account's head block paired with its chain height.
 #[wasm_bindgen]
 pub struct AccountHead {
 	block: Block,
-	balance: String,
+	height: String,
 }
 
 #[wasm_bindgen]
@@ -529,9 +584,9 @@ impl AccountHead {
 		self.block.clone()
 	}
 
-	/// The settled base-token balance as a decimal string.
+	/// The chain height of the head block as a decimal string.
 	#[wasm_bindgen(getter)]
-	pub fn balance(&self) -> String {
-		self.balance.clone()
+	pub fn height(&self) -> String {
+		self.height.clone()
 	}
 }

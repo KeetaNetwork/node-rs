@@ -7,7 +7,7 @@ use alloc::string::{String, ToString};
 use core::str::FromStr;
 
 use keetanetwork_account::KeyPairType;
-use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockPurpose};
+use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockPurpose, BlockTime};
 use num_bigint::BigInt;
 
 use crate::error::CodedError;
@@ -144,9 +144,25 @@ pub fn bigint_hex(value: &str, label: &str) -> Result<BigInt, CodedError> {
 		.ok_or_else(|| CodedError::new("INVALID_INTEGER", format!("{label} must be 0x-hex")))
 }
 
+/// Parse an ISO 8601 moment into a [`BlockTime`].
+pub fn moment(value: &str) -> Result<BlockTime, CodedError> {
+	BlockTime::from_str(value).map_err(|_| CodedError::new("INVALID_MOMENT", "moment must be ISO 8601"))
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn moment_parses_iso_and_round_trips() {
+		let parsed = moment("2025-01-02T03:04:05.123Z").expect("an ISO moment must parse");
+		assert_eq!(parsed.to_string(), "2025-01-02T03:04:05.123Z");
+	}
+
+	#[test]
+	fn moment_rejects_garbage() {
+		assert!(matches!(moment("nope"), Err(error) if error.code == "INVALID_MOMENT"));
+	}
 
 	#[test]
 	fn amount_round_trips_decimal_strings() {

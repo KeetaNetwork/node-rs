@@ -112,8 +112,15 @@ components:
     ACLRow:
       type: object
       properties:
-        principal:
+        principalType:
           type: string
+          enum: [ACCOUNT, CERTIFICATE]
+          description: Whether the principal is an account or a certificate issuer
+        principal:
+          description: >-
+            The principal account address when principalType is ACCOUNT, or an
+            object carrying the issuing certificate hash and its anchor account
+            when principalType is CERTIFICATE
         entity:
           type: string
         target:
@@ -122,7 +129,7 @@ components:
           type: array
           items:
             type: string
-          description: Permission bitmaps as 0x-prefixed hexadecimal values
+          description: Permission bitmaps as 0x-prefixed hexadecimal values ([base, external])
 
     HistoryEntry:
       type: object
@@ -1037,6 +1044,16 @@ paths:
           required: true
           schema:
             type: string
+        - name: side
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - main
+              - side
+              - both
+          description: Which ledger storage to search (defaults to main).
       responses:
         '200':
           description: Block

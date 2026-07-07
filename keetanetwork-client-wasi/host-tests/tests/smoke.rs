@@ -249,7 +249,9 @@ fn p1_account_signs_verifies_and_encrypts_round_trip() -> wasmtime::Result<()> {
 	let message: &[u8] = b"keeta account binding parity";
 
 	let (msg_ptr, msg_len) = abi.write(&mut store, message)?;
-	let raw = abi.account_sign.call(&mut store, (account, msg_ptr, msg_len))?;
+	let raw = abi
+		.account_sign
+		.call(&mut store, (account, msg_ptr, msg_len))?;
 	let signature = abi.take(&mut store, raw)?;
 	assert!(!signature.is_empty(), "signing must produce a signature");
 
@@ -261,12 +263,16 @@ fn p1_account_signs_verifies_and_encrypts_round_trip() -> wasmtime::Result<()> {
 	assert_eq!(valid, 1, "the account must verify its own signature");
 
 	let (plain_ptr, plain_len) = abi.write(&mut store, message)?;
-	let raw = abi.account_encrypt.call(&mut store, (account, plain_ptr, plain_len))?;
+	let raw = abi
+		.account_encrypt
+		.call(&mut store, (account, plain_ptr, plain_len))?;
 	let ciphertext = abi.take(&mut store, raw)?;
 	assert_ne!(ciphertext.as_slice(), message, "ciphertext must differ from plaintext");
 
 	let (cipher_ptr, cipher_len) = abi.write(&mut store, &ciphertext)?;
-	let raw = abi.account_decrypt.call(&mut store, (account, cipher_ptr, cipher_len))?;
+	let raw = abi
+		.account_decrypt
+		.call(&mut store, (account, cipher_ptr, cipher_len))?;
 	let recovered = abi.take(&mut store, raw)?;
 	assert_eq!(recovered.as_slice(), message, "decrypt must recover the plaintext");
 
@@ -280,8 +286,12 @@ fn p1_parses_a_certificate_and_round_trips_pem_der_and_validity() -> wasmtime::R
 	use keetanetwork_x509::doc_utils::create_test_certificate;
 
 	let fixture = create_test_certificate("Host Smoke CA", None);
-	let fixture_pem = fixture.to_pem().map_err(|error| wasmtime::Error::msg(error.to_string()))?;
-	let fixture_der = fixture.to_der().map_err(|error| wasmtime::Error::msg(error.to_string()))?;
+	let fixture_pem = fixture
+		.to_pem()
+		.map_err(|error| wasmtime::Error::msg(error.to_string()))?;
+	let fixture_der = fixture
+		.to_der()
+		.map_err(|error| wasmtime::Error::msg(error.to_string()))?;
 
 	let (mut store, abi) = instantiate()?;
 
@@ -300,11 +310,15 @@ fn p1_parses_a_certificate_and_round_trips_pem_der_and_validity() -> wasmtime::R
 		.duration_since(UNIX_EPOCH)
 		.expect("system clock must be after the unix epoch")
 		.as_millis() as i64;
-	let valid = abi.certificate_valid_at.call(&mut store, (certificate, now_millis))?;
+	let valid = abi
+		.certificate_valid_at
+		.call(&mut store, (certificate, now_millis))?;
 	assert_eq!(valid, 1, "a freshly built certificate must be valid now");
 
 	abi.certificate_free.call(&mut store, certificate)?;
-	let after_free = abi.certificate_valid_at.call(&mut store, (certificate, now_millis))?;
+	let after_free = abi
+		.certificate_valid_at
+		.call(&mut store, (certificate, now_millis))?;
 	assert_eq!(after_free, -1, "a freed certificate handle must report an error");
 
 	Ok(())

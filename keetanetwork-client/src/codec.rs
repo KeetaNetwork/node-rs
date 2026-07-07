@@ -7,16 +7,25 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::str::FromStr;
 
+use alloc::sync::Arc;
+
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use keetanetwork_block::{Amount, Block, BlockTime};
+use keetanetwork_account::GenericAccount;
+use keetanetwork_block::{AccountRef, Amount, Block, BlockTime, Permissions};
+use keetanetwork_crypto::error::CryptoError;
 use keetanetwork_error::{KeetaNetError, NodeErrorParts, NodeErrorType};
 use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
 use snafu::ResultExt;
 
-use crate::error::{AmountSnafu, BlockSnafu, ClientError, DecodeSnafu, VoteSnafu};
+use crate::error::{
+	AccountSnafu, AmountSnafu, BlockSnafu, ClientError, DecodeSnafu, HashSnafu, MomentSnafu, PermissionSnafu, VoteSnafu,
+};
 use crate::generated::types;
-use crate::model::{AccountInfo, AccountState, Acl, Certificate, HistoryEntry, Representative, TokenBalance};
+use crate::model::{
+	AccountInfo, AccountState, Acl, AclPrincipal, Certificate, HistoryEntry, HistoryPage, LedgerChecksum,
+	Representative, TokenBalance,
+};
 use crate::transport::LedgerSide;
 
 impl From<LedgerSide> for types::GetBlockSide {
@@ -25,6 +34,16 @@ impl From<LedgerSide> for types::GetBlockSide {
 			LedgerSide::Main => types::GetBlockSide::Main,
 			LedgerSide::Side => types::GetBlockSide::Side,
 			LedgerSide::Both => types::GetBlockSide::Both,
+		}
+	}
+}
+
+impl From<LedgerSide> for types::GetBlockFromIdempotentSide {
+	fn from(side: LedgerSide) -> Self {
+		match side {
+			LedgerSide::Main => types::GetBlockFromIdempotentSide::Main,
+			LedgerSide::Side => types::GetBlockFromIdempotentSide::Side,
+			LedgerSide::Both => types::GetBlockFromIdempotentSide::Both,
 		}
 	}
 }
@@ -137,32 +156,142 @@ pub(crate) fn decode_staples(
 
 /// Decode transport history entries into verified domain entries against
 /// `moment`.
-pub(crate) fn decode_history(
-	entries: Vec<types::HistoryEntry>,
-	moment: BlockTime,
-) -> Result<Vec<HistoryEntry>, ClientError> {
+fn decode_history(entries: Vec<types::HistoryEntry>, moment: BlockTime) -> Result<Vec<HistoryEntry>, ClientError> {
 	entries
 		.into_iter()
 		.filter_map(|entry| match decode_staple(entry.vote_staple, moment) {
 			Ok(None) => None,
-			Ok(Some(staple)) => Some(Ok(HistoryEntry { staple, id: entry.id, timestamp: entry.timestamp })),
+			Ok(Some(staple)) => Some(decode_history_entry(staple, entry.id, entry.timestamp)),
 			Err(error) => Some(Err(error)),
 		})
 		.collect()
 }
 
+/// Assemble a [`HistoryPage`] from a transport history list and next-page
+/// cursor, verifying each staple against `moment`.
+pub(crate) fn decode_history_page(
+	history: Vec<types::HistoryEntry>,
+	next_key: Option<String>,
+	moment: BlockTime,
+) -> Result<HistoryPage, ClientError> {
+	let entries = decode_history(history, moment)?;
+	let next_key = decode_hash(next_key)?;
+
+	Ok(HistoryPage { entries, next_key })
+}
+
+/// Assemble a verified [`HistoryEntry`] from its decoded staple and the
+/// transport id/timestamp fields.
+fn decode_history_entry(
+	staple: VoteStaple,
+	id: Option<String>,
+	timestamp: Option<String>,
+) -> Result<HistoryEntry, ClientError> {
+	let id = decode_hash(id)?;
+	let timestamp = decode_moment(timestamp)?;
+
+	Ok(HistoryEntry { staple, id, timestamp })
+}
+
+/// Parse an optional ISO 8601 timestamp field into a [`BlockTime`], treating
+/// an absent field as `None`.
+pub(crate) fn decode_moment(timestamp: Option<String>) -> Result<Option<BlockTime>, ClientError> {
+	timestamp
+		.map(|value| BlockTime::from_str(&value).context(MomentSnafu))
+		.transpose()
+}
+
+/// Parse a required account address field into an [`AccountRef`], treating an
+/// absent field as malformed.
+pub(crate) fn decode_account(address: Option<String>) -> Result<AccountRef, ClientError> {
+	let value = address.unwrap_or_default();
+	let account = GenericAccount::from_str(&value).context(AccountSnafu)?;
+	Ok(Arc::new(account))
+}
+
+/// Parse an optional account address field into an [`AccountRef`], treating an
+/// absent field as `None`.
+pub(crate) fn decode_account_opt(address: Option<String>) -> Result<Option<AccountRef>, ClientError> {
+	address.map(|value| decode_account(Some(value))).transpose()
+}
+
 /// Decode a transport representative entry.
 pub(crate) fn decode_representative(rep: types::Representative) -> Result<Representative, ClientError> {
 	Ok(Representative {
-		account: rep.representative.unwrap_or_default(),
+		account: decode_account(rep.representative)?,
 		weight: decode_amount(rep.weight)?,
 		api_url: rep.endpoints.and_then(|endpoints| endpoints.api),
 	})
 }
 
+/// Decode the ledger checksum response into a domain [`LedgerChecksum`].
+pub(crate) fn decode_checksum(checksum: types::GetLedgerChecksumResponse) -> Result<LedgerChecksum, ClientError> {
+	Ok(LedgerChecksum {
+		checksum: decode_amount(checksum.checksum)?,
+		moment: decode_moment(checksum.moment)?,
+		moment_range: checksum.moment_range,
+	})
+}
+
 /// Map a transport ACL row into a domain [`Acl`].
-pub(crate) fn decode_acl(row: types::AclRow) -> Acl {
-	Acl { principal: row.principal, entity: row.entity, target: row.target, permissions: row.permissions }
+pub(crate) fn decode_acl(row: types::AclRow) -> Result<Acl, ClientError> {
+	Ok(Acl {
+		principal: decode_acl_principal(row.principal_type, row.principal)?,
+		entity: decode_account_opt(row.entity)?,
+		target: decode_account_opt(row.target)?,
+		permissions: decode_permissions(row.permissions)?,
+	})
+}
+
+/// Decode the `[base, external]` permission bitmaps into a [`Permissions`]
+/// set, treating absent entries as empty bitmaps.
+pub(crate) fn decode_permissions(bitmaps: Vec<String>) -> Result<Permissions, ClientError> {
+	let mut parts = bitmaps.into_iter();
+	let base = decode_amount(parts.next())?;
+	let external = decode_amount(parts.next())?;
+
+	Permissions::from_bigints(base.as_bigint().clone(), external.as_bigint().clone()).context(PermissionSnafu)
+}
+
+/// Decode an ACL principal from its wire shape: an account address string
+/// when `kind` is `ACCOUNT` (or absent), or a certificate object when
+/// `CERTIFICATE`.
+fn decode_acl_principal(
+	kind: Option<types::AclRowPrincipalType>,
+	principal: Option<serde_json::Value>,
+) -> Result<Option<AclPrincipal>, ClientError> {
+	let Some(value) = principal else {
+		return Ok(None);
+	};
+
+	match kind {
+		Some(types::AclRowPrincipalType::Certificate) => Ok(Some(decode_certificate_principal(&value)?)),
+		Some(types::AclRowPrincipalType::Account) | None => {
+			let address = value.as_str().ok_or(ClientError::AclPrincipal)?;
+			let decoded = decode_account(Some(address.into()))?;
+
+			Ok(Some(AclPrincipal::Account(decoded)))
+		}
+	}
+}
+
+/// Decode a certificate principal object carrying the issuing certificate
+/// hash and its anchor account.
+fn decode_certificate_principal(value: &serde_json::Value) -> Result<AclPrincipal, ClientError> {
+	let hash_hex = value
+		.get("certificate")
+		.and_then(serde_json::Value::as_str)
+		.ok_or(ClientError::AclPrincipal)?;
+	let account = value
+		.get("certificateAccount")
+		.and_then(serde_json::Value::as_str)
+		.ok_or(ClientError::AclPrincipal)?;
+
+	let bytes = hex::decode(hash_hex).map_err(|_| ClientError::AclPrincipal)?;
+	let hash: [u8; 32] = bytes.try_into().map_err(|_| ClientError::AclPrincipal)?;
+	let account = decode_account(Some(account.into()))?;
+
+	Ok(AclPrincipal::Certificate { hash, account })
 }
 
 /// Map a transport certificate into a domain [`Certificate`], dropping entries
@@ -176,9 +305,7 @@ pub(crate) fn decode_certificate(cert: types::Certificate) -> Option<Certificate
 pub(crate) fn decode_balances(entries: Vec<types::BalanceEntry>) -> Result<Vec<TokenBalance>, ClientError> {
 	entries
 		.into_iter()
-		.map(|entry| {
-			Ok(TokenBalance { token: entry.token.unwrap_or_default(), balance: decode_amount(entry.balance)? })
-		})
+		.map(|entry| Ok(TokenBalance { token: decode_account(entry.token)?, balance: decode_amount(entry.balance)? }))
 		.collect()
 }
 
@@ -203,8 +330,8 @@ pub(crate) fn decode_account_state(
 		.transpose()?;
 
 	Ok(AccountState {
-		representative,
-		head,
+		representative: decode_account_opt(representative)?,
+		head: decode_hash(head)?,
 		height: height
 			.map(|height| decode_amount(Some(height)))
 			.transpose()?,
@@ -223,13 +350,106 @@ pub(crate) fn decode_amount(balance: Option<String>) -> Result<Amount, ClientErr
 	}
 }
 
+/// Parse an optional hex hash field into its domain digest type, treating an
+/// absent field as `None`.
+pub(crate) fn decode_hash<T>(hash: Option<String>) -> Result<Option<T>, ClientError>
+where
+	T: FromStr<Err = CryptoError>,
+{
+	hash.map(|value| T::from_str(&value).context(HashSnafu))
+		.transpose()
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
 
+	use alloc::vec;
+
+	use keetanetwork_block::testing::generate_ed25519_ref;
+	use keetanetwork_block::BaseFlag;
+
 	#[test]
 	fn decodes_absent_amount_as_zero() {
 		assert_eq!(decode_amount(None).unwrap(), Amount::default());
+	}
+
+	#[test]
+	fn decodes_a_required_account() -> Result<(), ClientError> {
+		let account = generate_ed25519_ref(0x05);
+		let decoded = decode_account(Some(account.to_string()))?;
+		assert_eq!(decoded, account);
+		Ok(())
+	}
+
+	#[test]
+	fn rejects_an_absent_required_account() {
+		assert!(matches!(decode_account(None), Err(ClientError::Account { .. })));
+	}
+
+	#[test]
+	fn decodes_an_absent_optional_account_as_none() -> Result<(), ClientError> {
+		assert_eq!(decode_account_opt(None)?, None);
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_permission_bitmaps() -> Result<(), ClientError> {
+		let permissions = decode_permissions(vec![String::from("0x1"), String::from("0x0")])?;
+		assert!(permissions.has(&[BaseFlag::Access], &[]));
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_absent_bitmaps_as_an_empty_set() -> Result<(), ClientError> {
+		let permissions = decode_permissions(vec![])?;
+		assert!(permissions.base().flags().is_empty());
+		Ok(())
+	}
+
+	#[test]
+	fn rejects_a_malformed_bitmap() {
+		let decoded = decode_permissions(vec![String::from("nope")]);
+		assert!(matches!(decoded, Err(ClientError::Amount { .. })));
+	}
+
+	#[test]
+	fn decodes_an_account_principal() -> Result<(), ClientError> {
+		let account = generate_ed25519_ref(0x06);
+		let decoded = decode_acl_principal(
+			Some(types::AclRowPrincipalType::Account),
+			Some(serde_json::Value::String(account.to_string())),
+		)?;
+		assert!(matches!(decoded, Some(AclPrincipal::Account(principal)) if principal == account));
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_a_certificate_principal() -> Result<(), ClientError> {
+		let account = generate_ed25519_ref(0x07);
+		let value = serde_json::json!({
+			"certificate": "ab".repeat(32),
+			"certificateAccount": account.to_string(),
+		});
+
+		let decoded = decode_acl_principal(Some(types::AclRowPrincipalType::Certificate), Some(value))?;
+		assert!(matches!(
+			decoded,
+			Some(AclPrincipal::Certificate { hash, account: anchor }) if hash == [0xABu8; 32] && anchor == account
+		));
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_an_absent_principal_as_none() -> Result<(), ClientError> {
+		assert_eq!(decode_acl_principal(None, None)?, None);
+		Ok(())
+	}
+
+	#[test]
+	fn rejects_a_malformed_principal_shape() {
+		let decoded = decode_acl_principal(None, Some(serde_json::Value::from(7)));
+		assert!(matches!(decoded, Err(ClientError::AclPrincipal)));
 	}
 
 	#[test]
@@ -243,10 +463,66 @@ mod tests {
 	}
 
 	#[test]
+	fn decodes_absent_hash_as_none() -> Result<(), ClientError> {
+		let decoded: Option<keetanetwork_block::BlockHash> = decode_hash(None)?;
+		assert_eq!(decoded, None);
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_a_hex_hash() -> Result<(), ClientError> {
+		let hash = keetanetwork_block::BlockHash::from([0xABu8; 32]);
+		let decoded: Option<keetanetwork_block::BlockHash> = decode_hash(Some(hash.to_string()))?;
+		assert_eq!(decoded, Some(hash));
+		Ok(())
+	}
+
+	#[test]
+	fn rejects_a_malformed_hash() {
+		let decoded: Result<Option<keetanetwork_block::BlockHash>, ClientError> =
+			decode_hash(Some(String::from("nope")));
+		assert!(matches!(decoded, Err(ClientError::Hash { .. })));
+	}
+
+	#[test]
+	fn decodes_absent_moment_as_none() -> Result<(), ClientError> {
+		assert_eq!(decode_moment(None)?, None);
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_an_iso_moment() -> Result<(), ClientError> {
+		let decoded = decode_moment(Some(String::from("2025-01-02T03:04:05.123Z")))?;
+		assert_eq!(decoded.map(|moment| moment.to_string()).as_deref(), Some("2025-01-02T03:04:05.123Z"));
+		Ok(())
+	}
+
+	#[test]
+	fn rejects_a_malformed_moment() {
+		assert!(matches!(decode_moment(Some(String::from("nope"))), Err(ClientError::Moment { .. })));
+	}
+
+	#[test]
 	fn maps_block_side_to_the_wire_variant() {
 		assert!(matches!(types::GetBlockSide::from(LedgerSide::Main), types::GetBlockSide::Main));
 		assert!(matches!(types::GetBlockSide::from(LedgerSide::Side), types::GetBlockSide::Side));
 		assert!(matches!(types::GetBlockSide::from(LedgerSide::Both), types::GetBlockSide::Both));
+	}
+
+	#[test]
+	fn maps_idempotent_side_to_the_wire_variant() {
+		assert!(matches!(
+			types::GetBlockFromIdempotentSide::from(LedgerSide::Main),
+			types::GetBlockFromIdempotentSide::Main
+		));
+		assert!(matches!(
+			types::GetBlockFromIdempotentSide::from(LedgerSide::Side),
+			types::GetBlockFromIdempotentSide::Side
+		));
+		assert!(matches!(
+			types::GetBlockFromIdempotentSide::from(LedgerSide::Both),
+			types::GetBlockFromIdempotentSide::Both
+		));
 	}
 
 	#[test]

@@ -10,13 +10,13 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use async_trait::async_trait;
-use keetanetwork_block::{Amount, Block};
+use keetanetwork_block::{Amount, Block, BlockHash, BlockTime};
 use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
 
 use crate::error::ClientError;
 use crate::marker::{MaybeSend, MaybeSync};
 use crate::model::{
-	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum, Representative,
+	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryPage, HistoryQuery, LedgerChecksum, Representative,
 	TokenBalance,
 };
 
@@ -47,8 +47,8 @@ pub trait NodeTransport: core::fmt::Debug + MaybeSend + MaybeSync {
 	async fn balances(&self, account: &str) -> Result<Vec<TokenBalance>, ClientError>;
 	/// The full ledger state of `account`.
 	async fn account_state(&self, account: &str) -> Result<AccountState, ClientError>;
-	/// Ledger state for several comma-joined `accounts` in one call.
-	async fn account_states(&self, accounts: &str) -> Result<Vec<AccountState>, ClientError>;
+	/// Ledger state for several `accounts` (pre-rendered addresses) in one call.
+	async fn account_states(&self, accounts: &[String]) -> Result<Vec<AccountState>, ClientError>;
 	/// The head block of `account`, if any.
 	async fn head_block(&self, account: &str) -> Result<Option<Block>, ClientError>;
 	/// The head block of `account` paired with its height, if any.
@@ -56,22 +56,30 @@ pub trait NodeTransport: core::fmt::Debug + MaybeSend + MaybeSync {
 	/// The next pending (unreceived) block for `account`, if any.
 	async fn pending_block(&self, account: &str) -> Result<Option<Block>, ClientError>;
 	/// The block identified by `hash` on the given `side`, if present.
-	async fn block(&self, hash: &str, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError>;
+	async fn block(&self, hash: BlockHash, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError>;
 	/// The block following `hash`, if one exists.
-	async fn successor_block(&self, hash: &str) -> Result<Option<Block>, ClientError>;
-	/// The block produced by `account` for the idempotent `key`, if any.
-	async fn block_by_idempotent(&self, account: &str, key: &str) -> Result<Option<Block>, ClientError>;
+	async fn successor_block(&self, hash: BlockHash) -> Result<Option<Block>, ClientError>;
+	/// The block produced by `account` for the idempotent `key`, if any,
+	/// searching the given `side` (`None` defaults to the main ledger).
+	async fn block_by_idempotent(
+		&self,
+		account: &str,
+		key: &str,
+		side: Option<LedgerSide>,
+	) -> Result<Option<Block>, ClientError>;
 	/// The verified votes a rep holds for `hash` on `side`. `None` when none.
-	async fn block_votes(&self, hash: &str, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError>;
+	async fn block_votes(&self, hash: BlockHash, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError>;
 	/// A single page of `account`'s block chain, bounded by `query`, including
 	/// the cursor for the next page.
 	async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<ChainPage, ClientError>;
-	/// A single page of `account`'s staple history, bounded by `query`.
-	async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError>;
-	/// A single page of global staple history, bounded by `query`.
-	async fn global_history_page(&self, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError>;
-	/// Verified vote staples published after the `start` cursor.
-	async fn vote_staples_after(&self, start: &str, limit: Option<i64>) -> Result<Vec<VoteStaple>, ClientError>;
+	/// A single page of `account`'s staple history, bounded by `query`,
+	/// including the cursor for the next page.
+	async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<HistoryPage, ClientError>;
+	/// A single page of global staple history, bounded by `query`, including
+	/// the cursor for the next page.
+	async fn global_history_page(&self, query: &HistoryQuery) -> Result<HistoryPage, ClientError>;
+	/// Verified vote staples committed at or after the `start` moment.
+	async fn vote_staples_after(&self, start: BlockTime, limit: Option<i64>) -> Result<Vec<VoteStaple>, ClientError>;
 	/// The node's own representative.
 	async fn node_representative(&self) -> Result<Representative, ClientError>;
 	/// The named representative `rep`.
@@ -87,7 +95,7 @@ pub trait NodeTransport: core::fmt::Debug + MaybeSend + MaybeSync {
 	/// Every certificate held by `account`.
 	async fn certificates(&self, account: &str) -> Result<Vec<Certificate>, ClientError>;
 	/// The certificate of `account` identified by `hash`, if present.
-	async fn certificate(&self, account: &str, hash: &str) -> Result<Option<Certificate>, ClientError>;
+	async fn certificate(&self, account: &str, hash: [u8; 32]) -> Result<Option<Certificate>, ClientError>;
 	/// Request a vote for `blocks`, attaching `prior` votes and an optional
 	/// `quote` issued by this representative.
 	async fn create_vote(
@@ -132,26 +140,26 @@ pub use wasi_backend::{WasiTransport, WasiTransportFactory};
 #[cfg(feature = "http")]
 mod backend {
 	use alloc::boxed::Box;
-	use alloc::string::String;
+	use alloc::string::{String, ToString};
 	use alloc::sync::Arc;
 	use alloc::vec::Vec;
 
 	use async_trait::async_trait;
 	use base64::engine::general_purpose::STANDARD as B64;
 	use base64::Engine;
-	use keetanetwork_block::{Amount, Block, BlockTime};
+	use keetanetwork_block::{Amount, Block, BlockHash, BlockTime};
 	use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
 
 	use super::{LedgerSide, NodeTransport, TransportFactory};
 	use crate::codec::{
 		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
-		decode_history, decode_node_error, decode_quote_binary, decode_representative, decode_staples,
-		decode_vote_binary, encode_blocks, encode_votes,
+		decode_checksum, decode_hash, decode_history_page, decode_node_error, decode_quote_binary,
+		decode_representative, decode_staples, decode_vote_binary, encode_blocks, encode_votes,
 	};
 	use crate::error::ClientError;
 	use crate::generated::{types, Client as Transport, Error as GeneratedError};
 	use crate::model::{
-		AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
+		AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryPage, HistoryQuery, LedgerChecksum,
 		Representative, TokenBalance,
 	};
 
@@ -236,9 +244,9 @@ mod backend {
 			)
 		}
 
-		async fn account_states(&self, accounts: &str) -> Result<Vec<AccountState>, ClientError> {
+		async fn account_states(&self, accounts: &[String]) -> Result<Vec<AccountState>, ClientError> {
 			self.client
-				.get_account_states(accounts)
+				.get_account_states(&accounts.join(","))
 				.await?
 				.into_inner()
 				.into_iter()
@@ -276,23 +284,37 @@ mod backend {
 			decode_block(response.into_inner().block)
 		}
 
-		async fn block(&self, hash: &str, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError> {
-			let response = self.client.get_block(hash, side.map(Into::into)).await?;
+		async fn block(&self, hash: BlockHash, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError> {
+			let response = self
+				.client
+				.get_block(&hash.to_string(), side.map(Into::into))
+				.await?;
 			decode_block(response.into_inner().block)
 		}
 
-		async fn successor_block(&self, hash: &str) -> Result<Option<Block>, ClientError> {
-			let response = self.client.get_successor_block(hash).await?;
+		async fn successor_block(&self, hash: BlockHash) -> Result<Option<Block>, ClientError> {
+			let response = self.client.get_successor_block(&hash.to_string()).await?;
 			decode_block(response.into_inner().successor_block)
 		}
 
-		async fn block_by_idempotent(&self, account: &str, key: &str) -> Result<Option<Block>, ClientError> {
-			let response = self.client.get_block_from_idempotent(account, key).await?;
+		async fn block_by_idempotent(
+			&self,
+			account: &str,
+			key: &str,
+			side: Option<LedgerSide>,
+		) -> Result<Option<Block>, ClientError> {
+			let response = self
+				.client
+				.get_block_from_idempotent(account, key, side.map(Into::into))
+				.await?;
 			decode_block(response.into_inner().block)
 		}
 
-		async fn block_votes(&self, hash: &str, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError> {
-			let response = self.client.get_block_votes(hash, Some(side.into())).await?;
+		async fn block_votes(&self, hash: BlockHash, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError> {
+			let response = self
+				.client
+				.get_block_votes(&hash.to_string(), Some(side.into()))
+				.await?;
 			let Some(list) = response.into_inner().votes else {
 				return Ok(None);
 			};
@@ -306,9 +328,11 @@ mod backend {
 		}
 
 		async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<ChainPage, ClientError> {
+			let end = query.end.map(|hash| hash.to_string());
+			let start = query.start.map(|hash| hash.to_string());
 			let response = self
 				.client
-				.get_account_chain(account, query.end.as_deref(), query.limit, query.start.as_deref())
+				.get_account_chain(account, end.as_deref(), query.limit, start.as_deref())
 				.await?
 				.into_inner();
 
@@ -318,27 +342,40 @@ mod backend {
 				.filter_map(|entry| decode_block(entry.block).transpose())
 				.collect::<Result<Vec<Block>, ClientError>>()?;
 
-			Ok(ChainPage { blocks, next_key: response.next_key })
+			Ok(ChainPage { blocks, next_key: decode_hash(response.next_key)? })
 		}
 
-		async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
+		async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<HistoryPage, ClientError> {
+			let start = query.start.map(|hash| hash.to_string());
 			let response = self
 				.client
-				.get_account_history(account, query.limit, query.start.as_deref())
-				.await?;
-			decode_history(response.into_inner().history, verify_moment())
+				.get_account_history(account, query.limit, start.as_deref())
+				.await?
+				.into_inner();
+
+			decode_history_page(response.history, response.next_key, verify_moment())
 		}
 
-		async fn global_history_page(&self, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
+		async fn global_history_page(&self, query: &HistoryQuery) -> Result<HistoryPage, ClientError> {
+			let start = query.start.map(|hash| hash.to_string());
 			let response = self
 				.client
-				.get_global_history(query.limit, query.start.as_deref())
-				.await?;
-			decode_history(response.into_inner().history, verify_moment())
+				.get_global_history(query.limit, start.as_deref())
+				.await?
+				.into_inner();
+
+			decode_history_page(response.history, response.next_key, verify_moment())
 		}
 
-		async fn vote_staples_after(&self, start: &str, limit: Option<i64>) -> Result<Vec<VoteStaple>, ClientError> {
-			let response = self.client.get_vote_staples_after(limit, start).await?;
+		async fn vote_staples_after(
+			&self,
+			start: BlockTime,
+			limit: Option<i64>,
+		) -> Result<Vec<VoteStaple>, ClientError> {
+			let response = self
+				.client
+				.get_vote_staples_after(limit, &start.to_string())
+				.await?;
 			decode_staples(response.into_inner().vote_staples, verify_moment())
 		}
 
@@ -364,32 +401,27 @@ mod backend {
 		}
 
 		async fn ledger_checksum(&self) -> Result<LedgerChecksum, ClientError> {
-			let checksum = self.client.get_ledger_checksum().await?.into_inner();
-			Ok(LedgerChecksum {
-				checksum: decode_amount(checksum.checksum)?,
-				moment: checksum.moment,
-				moment_range: checksum.moment_range,
-			})
+			decode_checksum(self.client.get_ledger_checksum().await?.into_inner())
 		}
 
 		async fn acls_by_principal(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let response = self.client.list_acls_by_principal(account).await?;
-			Ok(response
+			response
 				.into_inner()
 				.permissions
 				.into_iter()
 				.map(decode_acl)
-				.collect())
+				.collect()
 		}
 
 		async fn acls_by_entity(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let response = self.client.list_acls_by_entity(account).await?;
-			Ok(response
+			response
 				.into_inner()
 				.permissions
 				.into_iter()
 				.map(decode_acl)
-				.collect())
+				.collect()
 		}
 
 		#[cfg(feature = "std")]
@@ -408,10 +440,10 @@ mod backend {
 				.collect())
 		}
 
-		async fn certificate(&self, account: &str, hash: &str) -> Result<Option<Certificate>, ClientError> {
+		async fn certificate(&self, account: &str, hash: [u8; 32]) -> Result<Option<Certificate>, ClientError> {
 			let found = self
 				.client
-				.get_certificate_by_hash(account, hash)
+				.get_certificate_by_hash(account, &hex::encode_upper(hash))
 				.await?
 				.into_inner();
 			Ok(decode_certificate(types::Certificate {
@@ -486,7 +518,7 @@ mod wasi_backend {
 	use async_trait::async_trait;
 	use base64::engine::general_purpose::STANDARD as B64;
 	use base64::Engine;
-	use keetanetwork_block::{Amount, Block, BlockTime};
+	use keetanetwork_block::{Amount, Block, BlockHash, BlockTime};
 	use keetanetwork_vote::{Vote, VoteQuote, VoteStaple};
 	use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 	use serde::de::DeserializeOwned;
@@ -496,13 +528,13 @@ mod wasi_backend {
 	use super::{LedgerSide, NodeTransport, TransportFactory};
 	use crate::codec::{
 		decode_account_state, decode_acl, decode_amount, decode_balances, decode_block, decode_certificate,
-		decode_history, decode_node_error, decode_quote_binary, decode_representative, decode_staples,
-		decode_vote_binary, encode_blocks, encode_votes,
+		decode_checksum, decode_hash, decode_history_page, decode_node_error, decode_quote_binary,
+		decode_representative, decode_staples, decode_vote_binary, encode_blocks, encode_votes,
 	};
 	use crate::error::ClientError;
 	use crate::generated::types;
 	use crate::model::{
-		AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryQuery, LedgerChecksum,
+		AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryPage, HistoryQuery, LedgerChecksum,
 		Representative, TokenBalance,
 	};
 
@@ -695,8 +727,8 @@ mod wasi_backend {
 			)
 		}
 
-		async fn account_states(&self, accounts: &str) -> Result<Vec<AccountState>, ClientError> {
-			let path = format!("/node/ledger/accounts/{}", segment(accounts));
+		async fn account_states(&self, accounts: &[String]) -> Result<Vec<AccountState>, ClientError> {
+			let path = format!("/node/ledger/accounts/{}", segment(&accounts.join(",")));
 			let response: Vec<types::GetAccountStatesResponseItem> = self.get_json(&path).await?;
 			response
 				.into_iter()
@@ -737,32 +769,41 @@ mod wasi_backend {
 			decode_block(response.block)
 		}
 
-		async fn block(&self, hash: &str, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError> {
+		async fn block(&self, hash: BlockHash, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError> {
 			let mut query = Query::default();
 			query.push_opt("side", side.map(block_side));
-			let path = format!("/node/ledger/block/{}{}", segment(hash), query.finish());
+			let path = format!("/node/ledger/block/{}{}", segment(&hash.to_string()), query.finish());
 			let response: types::GetBlockResponse = self.get_json(&path).await?;
 			decode_block(response.block)
 		}
 
-		async fn successor_block(&self, hash: &str) -> Result<Option<Block>, ClientError> {
-			let path = format!("/node/ledger/block/{}/successor", segment(hash));
+		async fn successor_block(&self, hash: BlockHash) -> Result<Option<Block>, ClientError> {
+			let path = format!("/node/ledger/block/{}/successor", segment(&hash.to_string()));
 			let response: types::GetSuccessorBlockResponse = self.get_json(&path).await?;
 			decode_block(response.successor_block)
 		}
 
-		async fn block_by_idempotent(&self, account: &str, key: &str) -> Result<Option<Block>, ClientError> {
-			let path = format!("/node/ledger/account/{}/idempotent/{}", segment(account), segment(key));
+		async fn block_by_idempotent(
+			&self,
+			account: &str,
+			key: &str,
+			side: Option<LedgerSide>,
+		) -> Result<Option<Block>, ClientError> {
+			let mut query = Query::default();
+			query.push_opt("side", side.map(block_side));
+
+			let path =
+				format!("/node/ledger/account/{}/idempotent/{}{}", segment(account), segment(key), query.finish());
 			let response: types::GetBlockFromIdempotentResponse = self.get_json(&path).await?;
 			decode_block(response.block)
 		}
 
-		async fn block_votes(&self, hash: &str, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError> {
+		async fn block_votes(&self, hash: BlockHash, side: LedgerSide) -> Result<Option<Vec<Vote>>, ClientError> {
 			let mut query = Query::default();
 
 			query.push("side", block_votes_side(side));
 
-			let path = format!("/vote/{}{}", segment(hash), query.finish());
+			let path = format!("/vote/{}{}", segment(&hash.to_string()), query.finish());
 			let response: types::GetBlockVotesResponse = self.get_json(&path).await?;
 			let Some(list) = response.votes else {
 				return Ok(None);
@@ -777,10 +818,12 @@ mod wasi_backend {
 		}
 
 		async fn chain_page(&self, account: &str, query: &ChainQuery) -> Result<ChainPage, ClientError> {
+			let end = query.end.map(|hash| hash.to_string());
+			let start = query.start.map(|hash| hash.to_string());
 			let mut params = Query::default();
-			params.push_opt("end", query.end.as_deref());
+			params.push_opt("end", end.as_deref());
 			params.push_limit(query.limit);
-			params.push_opt("start", query.start.as_deref());
+			params.push_opt("start", start.as_deref());
 
 			let path = format!("/node/ledger/account/{}/chain{}", segment(account), params.finish());
 			let response: types::GetAccountChainResponse = self.get_json(&path).await?;
@@ -790,33 +833,43 @@ mod wasi_backend {
 				.filter_map(|entry| decode_block(entry.block).transpose())
 				.collect::<Result<Vec<Block>, ClientError>>()?;
 
-			Ok(ChainPage { blocks, next_key: response.next_key })
+			Ok(ChainPage { blocks, next_key: decode_hash(response.next_key)? })
 		}
 
-		async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
+		async fn history_page(&self, account: &str, query: &HistoryQuery) -> Result<HistoryPage, ClientError> {
+			let start = query.start.map(|hash| hash.to_string());
+
 			let mut params = Query::default();
 			params.push_limit(query.limit);
-			params.push_opt("start", query.start.as_deref());
+			params.push_opt("start", start.as_deref());
 
 			let path = format!("/node/ledger/account/{}/history{}", segment(account), params.finish());
 			let response: types::GetAccountHistoryResponse = self.get_json(&path).await?;
-			decode_history(response.history, now_moment())
+
+			decode_history_page(response.history, response.next_key, now_moment())
 		}
 
-		async fn global_history_page(&self, query: &HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
+		async fn global_history_page(&self, query: &HistoryQuery) -> Result<HistoryPage, ClientError> {
+			let start = query.start.map(|hash| hash.to_string());
+
 			let mut params = Query::default();
 			params.push_limit(query.limit);
-			params.push_opt("start", query.start.as_deref());
+			params.push_opt("start", start.as_deref());
 
 			let path = format!("/node/ledger/history{}", params.finish());
 			let response: types::GetGlobalHistoryResponse = self.get_json(&path).await?;
-			decode_history(response.history, now_moment())
+
+			decode_history_page(response.history, response.next_key, now_moment())
 		}
 
-		async fn vote_staples_after(&self, start: &str, limit: Option<i64>) -> Result<Vec<VoteStaple>, ClientError> {
+		async fn vote_staples_after(
+			&self,
+			start: BlockTime,
+			limit: Option<i64>,
+		) -> Result<Vec<VoteStaple>, ClientError> {
 			let mut params = Query::default();
 			params.push_limit(limit);
-			params.push("start", start);
+			params.push("start", &start.to_string());
 
 			let path = format!("/node/bootstrap/votes{}", params.finish());
 			let response: types::GetVoteStaplesAfterResponse = self.get_json(&path).await?;
@@ -845,23 +898,19 @@ mod wasi_backend {
 
 		async fn ledger_checksum(&self) -> Result<LedgerChecksum, ClientError> {
 			let checksum: types::GetLedgerChecksumResponse = self.get_json("/node/ledger/checksum").await?;
-			Ok(LedgerChecksum {
-				checksum: decode_amount(checksum.checksum)?,
-				moment: checksum.moment,
-				moment_range: checksum.moment_range,
-			})
+			decode_checksum(checksum)
 		}
 
 		async fn acls_by_principal(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let path = format!("/node/ledger/account/{}/acl", segment(account));
 			let response: types::ListAclsByPrincipalResponse = self.get_json(&path).await?;
-			Ok(response.permissions.into_iter().map(decode_acl).collect())
+			response.permissions.into_iter().map(decode_acl).collect()
 		}
 
 		async fn acls_by_entity(&self, account: &str) -> Result<Vec<Acl>, ClientError> {
 			let path = format!("/node/ledger/account/{}/acl/granted", segment(account));
 			let response: types::ListAclsByEntityResponse = self.get_json(&path).await?;
-			Ok(response.permissions.into_iter().map(decode_acl).collect())
+			response.permissions.into_iter().map(decode_acl).collect()
 		}
 
 		async fn certificates(&self, account: &str) -> Result<Vec<Certificate>, ClientError> {
@@ -874,8 +923,9 @@ mod wasi_backend {
 				.collect())
 		}
 
-		async fn certificate(&self, account: &str, hash: &str) -> Result<Option<Certificate>, ClientError> {
-			let path = format!("/node/ledger/account/{}/certificates/{}", segment(account), segment(hash));
+		async fn certificate(&self, account: &str, hash: [u8; 32]) -> Result<Option<Certificate>, ClientError> {
+			let path =
+				format!("/node/ledger/account/{}/certificates/{}", segment(account), segment(&hex::encode_upper(hash)));
 			let found: types::GetCertificateByHashResponse = self.get_json(&path).await?;
 			Ok(decode_certificate(types::Certificate {
 				certificate: found.certificate,

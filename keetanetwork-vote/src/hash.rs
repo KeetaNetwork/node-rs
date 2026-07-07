@@ -18,7 +18,7 @@ use keetanetwork_crypto::hash::{hash_default, BlockHash};
 
 pub use keetanetwork_crypto::hash::Hashable;
 
-macro_rules! digest_newtype {
+macro_rules! digest_new_type {
 	($(#[$meta:meta])* $name:ident) => {
 		$(#[$meta])*
 		#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -76,17 +76,17 @@ macro_rules! digest_newtype {
 	};
 }
 
-digest_newtype!(
+digest_new_type!(
 	/// Hash of an entire serialized vote certificate.
 	VoteHash
 );
 
-digest_newtype!(
+digest_new_type!(
 	/// Hash of a canonical, uncompressed vote staple body.
 	VoteStapleHash
 );
 
-digest_newtype!(
+digest_new_type!(
 	/// Hash of the block hashes covered by a vote or staple, independent of
 	/// which vote subset is included.
 	VoteBlockHash

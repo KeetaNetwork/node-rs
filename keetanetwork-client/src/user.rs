@@ -1,21 +1,22 @@
 //! Signer-bound high-level facade over [`KeetaClient`].
 
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use keetanetwork_account::KeyPairType;
+use keetanetwork_account::{AccountPublicKey, KeyPairType};
 use keetanetwork_block::{
-	AccountRef, AdjustMethod, Amount, Block, IdentifierCreateArguments, ManageCertificate, ModifyPermissions,
-	Operation, Receive, Send, SetInfo,
+	AccountRef, AdjustMethod, Amount, Block, BlockHash, IdentifierCreateArguments, ManageCertificate,
+	ModifyPermissions, ModifyPermissionsPrincipal, Operation, Receive, Send, SetInfo,
 };
-use keetanetwork_vote::{VoteQuote, VoteStaple};
+use keetanetwork_vote::{VoteBlockHash, VoteQuote, VoteStaple};
 
 use crate::builder::TransactionBuilder;
 use crate::client::{is_ledger_code, KeetaClient};
 use crate::error::ClientError;
 use crate::model::{
-	AccountState, Acl, Certificate, ChainQuery, HistoryEntry, HistoryQuery, TokenBalance, TransmitOptions,
+	AccountState, Acl, BlockEffects, Certificate, ChainQuery, HistoryEntry, HistoryQuery, TokenBalance, TransmitOptions,
 };
 use crate::swap::{AcceptSwapRequest, CreateSwapRequest, SwapTokenAmount};
 use crate::transport::LedgerSide;
@@ -23,7 +24,6 @@ use crate::transport::LedgerSide;
 #[cfg(feature = "http")]
 use {crate::config::ClientConfig, crate::network::Network, crate::rep::RepEndpoint, num_bigint::BigInt};
 
-#[cfg(feature = "std")]
 use crate::genesis::{generate_initial_vote_staple, InitializeNetwork};
 
 /// A [`KeetaClient`] bound to a signer (and optionally a distinct operating
@@ -176,65 +176,72 @@ impl UserClient {
 	}
 
 	/// The settled balance of `token` held by the operating account.
-	pub async fn balance(&self, token: impl AsRef<str>) -> Result<Amount, ClientError> {
+	pub async fn balance(&self, token: impl AccountPublicKey) -> Result<Amount, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.balance(account.to_string(), token).await
+		self.client.balance(&*account, token).await
 	}
 
 	/// Every token balance held by the operating account.
 	pub async fn all_balances(&self) -> Result<Vec<TokenBalance>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.balances(account.to_string()).await
+		self.client.balances(&*account).await
 	}
 
 	/// The full state of the operating account.
 	pub async fn state(&self) -> Result<AccountState, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.state(account.to_string()).await
+		self.client.state(&*account).await
 	}
 
 	/// The operating account's head block, if any.
 	pub async fn head(&self) -> Result<Option<Block>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.head_block(account.to_string()).await
+		self.client.head_block(&*account).await
 	}
 
 	/// The operating account's settled chain (first/default page).
 	pub async fn chain(&self) -> Result<Vec<Block>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.chain(account.to_string()).await
+		self.client.chain(&*account).await
 	}
 
 	/// A single page of the operating account's chain, bounded by `query`.
 	pub async fn chain_page(&self, query: ChainQuery) -> Result<Vec<Block>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.chain_page(account.to_string(), query).await
+		self.client.chain_page(&*account, query).await
 	}
 
 	/// Every block in the operating account's chain, following the node's
 	/// pagination cursor with `page_limit` blocks per request.
 	pub async fn chain_all(&self, page_limit: u32) -> Result<Vec<Block>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.chain_all(account.to_string(), page_limit).await
+		self.client.chain_all(&*account, page_limit).await
 	}
 
 	/// The operating account's transaction history (first/default page).
 	pub async fn history(&self) -> Result<Vec<HistoryEntry>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.history(account.to_string()).await
+		self.client.history(&*account).await
+	}
+
+	/// Every entry in the operating account's history, fetched by following
+	/// the node's cursor with `page_limit` per request.
+	pub async fn history_all(&self, page_limit: u32) -> Result<Vec<HistoryEntry>, ClientError> {
+		let account = self.account_or(None)?;
+		self.client.history_all(&*account, page_limit).await
 	}
 
 	/// A single page of the operating account's history, bounded by `query`.
 	pub async fn history_page(&self, query: HistoryQuery) -> Result<Vec<HistoryEntry>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.history_page(account.to_string(), query).await
+		self.client.history_page(&*account, query).await
 	}
 
 	/// The operating account's half-published successor, if any reps agree on
 	/// one.
 	pub async fn pending_block(&self) -> Result<Option<Block>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.pending_block(account.to_string()).await
+		self.client.pending_block(&*account).await
 	}
 
 	/// Recover the operating account's half-published staple, optionally
@@ -270,13 +277,13 @@ impl UserClient {
 	/// The access-control entries the operating account grants as principal.
 	pub async fn acls(&self) -> Result<Vec<Acl>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.acls_by_principal(account.to_string()).await
+		self.client.acls_by_principal(&*account).await
 	}
 
 	/// The access-control entries naming the operating account as entity.
 	pub async fn acls_by_entity(&self) -> Result<Vec<Acl>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.acls_by_entity(account.to_string()).await
+		self.client.acls_by_entity(&*account).await
 	}
 
 	/// The access-control entries the operating account grants as principal,
@@ -284,27 +291,24 @@ impl UserClient {
 	#[cfg(feature = "std")]
 	pub async fn acls_with_info(&self) -> Result<serde_json::Value, ClientError> {
 		let account = self.account_or(None)?;
-		self.client
-			.acls_by_principal_with_info(account.to_string())
-			.await
+		self.client.acls_by_principal_with_info(&*account).await
 	}
 
 	/// A specific block by hash, regardless of account. `side` selects the
 	/// ledger to read (`None` defaults to the main ledger).
-	pub async fn block(
-		&self,
-		blockhash: impl AsRef<str>,
-		side: Option<LedgerSide>,
-	) -> Result<Option<Block>, ClientError> {
+	pub async fn block(&self, blockhash: BlockHash, side: Option<LedgerSide>) -> Result<Option<Block>, ClientError> {
 		self.client.block(blockhash, side).await
 	}
 
-	/// The operating account's block carrying the idempotency `key`, if any.
-	pub async fn block_from_idempotent(&self, key: impl AsRef<str>) -> Result<Option<Block>, ClientError> {
+	/// The operating account's block carrying the idempotency `key`, if any,
+	/// searching the given `side` (`None` defaults to the main ledger).
+	pub async fn block_from_idempotent(
+		&self,
+		key: impl AsRef<str>,
+		side: Option<LedgerSide>,
+	) -> Result<Option<Block>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client
-			.block_by_idempotent(account.to_string(), key)
-			.await
+		self.client.block_by_idempotent(&*account, key, side).await
 	}
 
 	/// Vote quotes for `blocks` from every responding representative.
@@ -312,16 +316,44 @@ impl UserClient {
 		self.client.quotes(blocks).await
 	}
 
+	/// The operations in `staples` that involve `account`, keyed by staple id
+	/// and ordered as published: every operation of a block the account
+	/// produced, plus operations on other accounts' blocks that name it.
+	pub fn filter_staple_operations(
+		staples: &[VoteStaple],
+		account: impl AccountPublicKey,
+	) -> BTreeMap<VoteBlockHash, Vec<BlockEffects>> {
+		staples
+			.iter()
+			.map(|staple| {
+				let blocks = staple
+					.blocks()
+					.iter()
+					.map(|block| block_effects(block, &account));
+				(staple.block_hash(), blocks.collect())
+			})
+			.collect()
+	}
+
+	/// [`Self::filter_staple_operations`] over the operating account.
+	pub fn staple_effects(
+		&self,
+		staples: &[VoteStaple],
+	) -> Result<BTreeMap<VoteBlockHash, Vec<BlockEffects>>, ClientError> {
+		let account = self.account_or(None)?;
+		Ok(Self::filter_staple_operations(staples, &*account))
+	}
+
 	/// The certificates attached to the operating account.
 	pub async fn certificates(&self) -> Result<Vec<Certificate>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.certificates(account.to_string()).await
+		self.client.certificates(&*account).await
 	}
 
 	/// A single certificate on the operating account by its `hash`, if present.
-	pub async fn certificate(&self, hash: impl AsRef<str>) -> Result<Option<Certificate>, ClientError> {
+	pub async fn certificate(&self, hash: [u8; 32]) -> Result<Option<Certificate>, ClientError> {
 		let account = self.account_or(None)?;
-		self.client.certificate(account.to_string(), hash).await
+		self.client.certificate(&*account, hash).await
 	}
 
 	/// Start a transaction originated by the operating account and signed by
@@ -530,7 +562,6 @@ impl UserClient {
 	///   client has no representative to default to.
 	/// - [`ClientError::Block`] / [`ClientError::Vote`] -- the genesis staple
 	///   cannot be built.
-	#[cfg(feature = "std")]
 	pub async fn initialize_network(&self, options: InitializeNetwork) -> Result<bool, ClientError> {
 		let trusted = self.signer()?;
 		let recipient = self.account_or(None)?;
@@ -669,6 +700,55 @@ impl UserClient {
 	}
 }
 
+/// The [`BlockEffects`] of one staple block for `account`: every operation
+/// when the account produced the block, otherwise only the operations that
+/// name it.
+fn block_effects(block: &Block, account: &impl AccountPublicKey) -> BlockEffects {
+	let operations = block.data().operations().iter().enumerate();
+	let operation_indexes = match same_account(block.data().account(), account) {
+		true => operations.map(|(index, _)| index).collect(),
+		false => operations
+			.filter(|(_, operation)| operation_involves(operation, account))
+			.map(|(index, _)| index)
+			.collect(),
+	};
+
+	BlockEffects { block: block.clone(), operation_indexes }
+}
+
+/// Whether `operation` names `account` as a participant: send/set-rep
+/// recipient, modify-permissions account principal, create-identifier
+/// identifier, or receive source/forward. Info, token-admin, and certificate
+/// operations reference no account directly.
+fn operation_involves(operation: &Operation, account: &impl AccountPublicKey) -> bool {
+	match operation {
+		Operation::Send(send) => same_account(&send.to, account),
+		Operation::SetRep(set_rep) => same_account(&set_rep.to, account),
+		Operation::ModifyPermissions(change) => {
+			matches!(&change.principal, ModifyPermissionsPrincipal::Account(principal) if same_account(principal, account))
+		}
+		Operation::CreateIdentifier(create) => same_account(&create.identifier, account),
+		Operation::Receive(receive) => {
+			same_account(&receive.from, account)
+				|| receive
+					.forward
+					.as_ref()
+					.is_some_and(|forward| same_account(forward, account))
+		}
+		Operation::SetInfo(_)
+		| Operation::TokenAdminSupply(_)
+		| Operation::TokenAdminModifyBalance(_)
+		| Operation::ManageCertificate(_) => false,
+	}
+}
+
+/// Whether two accounts share the same public-key identity (algorithm plus
+/// raw key bytes), mirroring the TS `comparePublicKey`.
+fn same_account(candidate: &AccountRef, account: &impl AccountPublicKey) -> bool {
+	candidate.to_keypair_type() == account.to_keypair_type()
+		&& candidate.as_public_key_bytes() == account.as_public_key_bytes()
+}
+
 /// Extract the SEND and RECEIVE operations from a swap-request block.
 fn swap_legs(block: &Block) -> Result<(&Send, &Receive), ClientError> {
 	let mut send = None;
@@ -744,7 +824,7 @@ fn assert_swap_amount(amount: &Amount, expected: &SwapTokenAmount) -> Result<(),
 
 #[cfg(test)]
 mod tests {
-	use keetanetwork_block::testing::generate_ed25519_ref;
+	use keetanetwork_block::testing::{generate_ed25519_ref, generate_identifier_ref};
 
 	use core::mem::discriminant;
 
@@ -830,5 +910,87 @@ mod tests {
 			send: None,
 		};
 		assert_rejects(expectation, false, ClientError::SwapAmountMismatch);
+	}
+
+	type BlockResult = Result<(), Box<dyn core::error::Error>>;
+
+	/// A send from the producing account 1 to `recipient`.
+	fn send_to(recipient: u8) -> Operation {
+		Operation::Send(Send {
+			to: generate_ed25519_ref(recipient),
+			amount: Amount::from(10u64),
+			token: generate_identifier_ref(1, KeyPairType::TOKEN, 0),
+			external: None,
+		})
+	}
+
+	/// A SET_INFO carrying no account references, so it never matches a
+	/// foreign filter.
+	fn set_info() -> Operation {
+		Operation::SetInfo(SetInfo {
+			name: String::new(),
+			description: String::new(),
+			metadata: String::new(),
+			default_permission: None,
+		})
+	}
+
+	/// A signed opening block for account 1 carrying `operations`.
+	fn effects_block(operations: Vec<Operation>) -> Result<Block, Box<dyn core::error::Error>> {
+		let mut builder = keetanetwork_block::BlockBuilder::default()
+			.with_network(0u8)
+			.with_account(generate_ed25519_ref(1))
+			.as_opening();
+		for operation in operations {
+			builder = builder.with_operation(operation);
+		}
+
+		Ok(builder.build()?.sign()?)
+	}
+
+	#[test]
+	fn producer_blocks_keep_every_operation() -> BlockResult {
+		let block = effects_block(vec![send_to(2), set_info()])?;
+
+		let effects = block_effects(&block, &*generate_ed25519_ref(1));
+		assert_eq!(effects.operation_indexes, vec![0, 1]);
+		Ok(())
+	}
+
+	#[test]
+	fn foreign_blocks_drop_operations_not_naming_the_account() -> BlockResult {
+		let block = effects_block(vec![send_to(2), set_info()])?;
+
+		let effects = block_effects(&block, &*generate_ed25519_ref(9));
+		assert!(effects.operation_indexes.is_empty());
+		Ok(())
+	}
+
+	#[test]
+	fn send_recipients_see_only_the_send_operation() -> BlockResult {
+		let block = effects_block(vec![set_info(), send_to(2)])?;
+
+		let effects = block_effects(&block, &*generate_ed25519_ref(2));
+		assert_eq!(effects.operation_indexes, vec![1]);
+		assert!(matches!(effects.operations().next(), Some(Operation::Send(_))));
+		Ok(())
+	}
+
+	#[test]
+	fn receive_forwards_see_the_receive_operation() -> BlockResult {
+		let forward = generate_ed25519_ref(7);
+		let receive = Receive {
+			amount: Amount::from(5u64),
+			token: generate_identifier_ref(1, KeyPairType::TOKEN, 0),
+			from: generate_ed25519_ref(2),
+			exact: true,
+			forward: Some(Arc::clone(&forward)),
+		};
+		let block = effects_block(vec![Operation::Receive(receive)])?;
+
+		let effects = block_effects(&block, &*forward);
+		assert_eq!(effects.operation_indexes, vec![0]);
+		assert!(matches!(effects.operations().next(), Some(Operation::Receive(_))));
+		Ok(())
 	}
 }
