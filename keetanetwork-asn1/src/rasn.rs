@@ -34,6 +34,17 @@ impl AlgorithmIdentifier {
 		Ok(AlgorithmIdentifier { algorithm: oid, parameters: Some(parameters) })
 	}
 
+	/// Decode the parameters as an OBJECT IDENTIFIER
+	///
+	/// Returns `None` when parameters are absent or not an OBJECT IDENTIFIER.
+	pub fn parameters_oid(&self) -> Option<ObjectIdentifier> {
+		let parameters = self.parameters.as_ref()?;
+		let parameter_bytes = parameters.as_bytes();
+		let decoded_oid = rasn::der::decode::<ObjectIdentifier>(parameter_bytes);
+
+		decoded_oid.ok()
+	}
+
 	/// Decode an AlgorithmIdentifier from DER format
 	pub fn from_der(bytes: &[u8]) -> Result<Self, Asn1Error> {
 		Ok(rasn::der::decode::<Self>(bytes)?)
@@ -63,6 +74,7 @@ impl TryFrom<spki::AlgorithmIdentifierOwned> for AlgorithmIdentifier {
 			.map(|p| DerEncode::to_der(&p))
 			.transpose()?
 			.map(Any::new);
+
 		Ok(Self { algorithm: oid, parameters })
 	}
 }
@@ -76,6 +88,7 @@ impl TryFrom<AlgorithmIdentifier> for spki::AlgorithmIdentifierOwned {
 			.parameters
 			.map(|p| DerDecode::from_der(p.as_bytes()))
 			.transpose()?;
+
 		Ok(Self { oid, parameters })
 	}
 }
@@ -542,6 +555,30 @@ mod tests {
 
 		let inner_start = 2 + length_byte_count;
 		assert_eq!(der[inner_start], 0xA0, "version field must be [0] EXPLICIT (0xA0)");
+		Ok(())
+	}
+
+	#[test]
+	fn test_parameters_oid_decodes_oid_parameters() -> Result<(), Asn1Error> {
+		let curve_oid = ObjectIdentifier::from_str(oids::SECP256K1)?;
+		let oid_param = Any::new(rasn::der::encode(&curve_oid)?);
+
+		let alg_with_oid = AlgorithmIdentifier::new_with_params(oids::EC_PUBLIC_KEY, oid_param)?;
+		assert_eq!(alg_with_oid.parameters_oid(), Some(curve_oid));
+		Ok(())
+	}
+
+	#[test]
+	fn test_parameters_oid_rejects_non_oid_parameters() -> Result<(), Asn1Error> {
+		let alg_with_null = AlgorithmIdentifier::new_with_params(oids::RSA_ENCRYPTION, create_null_any())?;
+		assert_eq!(alg_with_null.parameters_oid(), None);
+		Ok(())
+	}
+
+	#[test]
+	fn test_parameters_oid_absent_parameters() -> Result<(), Asn1Error> {
+		let alg_without_params = AlgorithmIdentifier::new(oids::ED25519)?;
+		assert_eq!(alg_without_params.parameters_oid(), None);
 		Ok(())
 	}
 

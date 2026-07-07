@@ -922,7 +922,10 @@ macro_rules! impl_crypto_keypair {
 					.as_ref()
 					.ok_or(AccountError::InvalidConstruction)?;
 
-				Ok(private_key.decrypt(ciphertext.as_ref())?)
+				let ciphertext = ciphertext.as_ref();
+				let plaintext = private_key.decrypt(ciphertext)?;
+
+				Ok(plaintext)
 			}
 
 			fn supports_encryption(&self) -> bool {

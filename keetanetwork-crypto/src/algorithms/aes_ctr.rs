@@ -66,7 +66,8 @@ impl Aes128CtrCipher {
 		// Create CTR cipher instance
 		let mut cipher = Aes128Ctr::new_from_slices(key, iv)?;
 		// CTR mode works in-place, so we need a mutable copy
-		let mut output = data.as_ref().to_vec();
+		let data = data.as_ref();
+		let mut output = data.to_vec();
 
 		cipher.apply_keystream(&mut output);
 
@@ -130,7 +131,8 @@ impl SymmetricEncryption for Aes128CtrCipher {
 		let ciphertext = self.encrypt_with_iv(key, iv_bytes, plaintext)?;
 
 		// Prepend IV to ciphertext
-		Ok(prepend_iv(&iv_bytes, &ciphertext))
+		let result = prepend_iv(&iv_bytes, &ciphertext);
+		Ok(result)
 	}
 
 	/// Decrypt data with IV extracted from the beginning
@@ -141,7 +143,8 @@ impl SymmetricEncryption for Aes128CtrCipher {
 		ensure_key_size(key, 16)?;
 
 		// Extract IV from the beginning
-		let (iv, encrypted_data) = split_iv(ciphertext.as_ref())?;
+		let ciphertext = ciphertext.as_ref();
+		let (iv, encrypted_data) = split_iv(ciphertext)?;
 
 		// Decrypt with the extracted IV
 		self.decrypt_with_iv(key, iv, encrypted_data)

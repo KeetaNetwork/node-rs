@@ -49,10 +49,12 @@ impl SymmetricEncryption for Aes256Cbc {
 		// Create cipher
 		let cipher = Aes256CbcEnc::new_from_slices(key, &iv_bytes)?;
 		// Encrypt with PKCS#7 padding
-		let ciphertext = cipher.encrypt_padded_vec_mut::<Pkcs7>(plaintext.as_ref());
+		let plaintext = plaintext.as_ref();
+		let ciphertext = cipher.encrypt_padded_vec_mut::<Pkcs7>(plaintext);
 
 		// Return IV + ciphertext
-		Ok(prepend_iv(&iv_bytes, &ciphertext))
+		let result = prepend_iv(&iv_bytes, &ciphertext);
+		Ok(result)
 	}
 
 	/// Decrypt data using AES-256-CBC.
@@ -64,7 +66,8 @@ impl SymmetricEncryption for Aes256Cbc {
 		ensure_key_size(key, 32)?;
 
 		// Extract IV and encrypted payload
-		let (iv, encrypted_data) = split_iv(ciphertext.as_ref())?;
+		let ciphertext = ciphertext.as_ref();
+		let (iv, encrypted_data) = split_iv(ciphertext)?;
 		// Create cipher
 		let cipher = Aes256CbcDec::new_from_slices(key, iv)?;
 

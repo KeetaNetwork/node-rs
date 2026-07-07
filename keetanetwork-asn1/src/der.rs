@@ -50,6 +50,16 @@ impl AlgorithmIdentifier {
 	pub fn new_with_params(oid: &str, parameters: Any) -> Result<Self, Asn1Error> {
 		Ok(Self { algorithm: ObjectIdentifier::new(oid)?, parameters: Some(parameters) })
 	}
+
+	/// Decode the parameters as an OBJECT IDENTIFIER
+	///
+	/// Returns `None` when parameters are absent or not an OBJECT IDENTIFIER.
+	pub fn parameters_oid(&self) -> Option<ObjectIdentifier> {
+		let parameters = self.parameters.as_ref()?;
+		let decoded_oid = parameters.decode_as::<ObjectIdentifier>();
+
+		decoded_oid.ok()
+	}
 }
 
 impl TryFrom<spki::AlgorithmIdentifierOwned> for AlgorithmIdentifier {
@@ -227,6 +237,31 @@ mod tests {
 			let key_bytes = vec![0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
 			SubjectPublicKeyInfo::new(alg_id, &key_bytes)?
 		},
+	}
+
+	#[test]
+	fn test_parameters_oid_decodes_oid_parameters() -> Result<(), Asn1Error> {
+		let curve_oid = ObjectIdentifier::new(oids::SECP256K1)?;
+		let oid_param = Any::encode_from(&curve_oid)?;
+
+		let alg_with_oid = AlgorithmIdentifier::new_with_params(oids::EC_PUBLIC_KEY, oid_param)?;
+		assert_eq!(alg_with_oid.parameters_oid(), Some(curve_oid));
+		Ok(())
+	}
+
+	#[test]
+	fn test_parameters_oid_rejects_non_oid_parameters() -> Result<(), Asn1Error> {
+		let null_param = Any::from_der(&[0x05, 0x00])?;
+		let alg_with_null = AlgorithmIdentifier::new_with_params(oids::RSA_ENCRYPTION, null_param)?;
+		assert_eq!(alg_with_null.parameters_oid(), None);
+		Ok(())
+	}
+
+	#[test]
+	fn test_parameters_oid_absent_parameters() -> Result<(), Asn1Error> {
+		let alg_without_params = AlgorithmIdentifier::new(oids::ED25519)?;
+		assert_eq!(alg_without_params.parameters_oid(), None);
+		Ok(())
 	}
 
 	#[test]
