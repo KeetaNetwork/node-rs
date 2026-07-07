@@ -72,7 +72,10 @@ fn java_sdk_transmits_against_e2e_node() -> Result<(), Box<dyn std::error::Error
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	let stderr = String::from_utf8_lossy(&output.stderr);
 	assert!(output.status.success(), "the Java harness must exit zero\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-	assert!(stdout.contains("MULTISIG_OK"), "the Java must confirm a multisig transmit\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(
+		stdout.contains("MULTISIG_OK"),
+		"the Java must confirm a multisig transmit\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+	);
 
 	Ok(())
 }

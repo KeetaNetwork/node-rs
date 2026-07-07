@@ -6,8 +6,8 @@ use keetanetwork_account::KeyPairType;
 use keetanetwork_bindings::client as bindings_client;
 use keetanetwork_bindings::error::CodedError;
 use keetanetwork_bindings::parse;
-use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockPurpose};
-use keetanetwork_client::{ClientError, LedgerSide};
+use keetanetwork_block::{AdjustMethod, Amount, BaseFlag, BlockHash, BlockPurpose, BlockTime};
+use keetanetwork_client::{ClientError, LedgerSide, VoteBlockHash};
 use num_bigint::BigInt;
 use wasm_bindgen::JsValue;
 
@@ -24,6 +24,21 @@ pub fn parse_amount(amount: &str) -> JsResult<Amount> {
 /// Parse a 32-byte hex string into a fixed array.
 pub fn parse_hash32(value: &str, label: &str) -> JsResult<[u8; 32]> {
 	parse::hash32(value, label).map_err(coded)
+}
+
+/// Parse a hex block hash into a [`BlockHash`].
+pub fn parse_block_hash(value: &str) -> JsResult<BlockHash> {
+	Ok(BlockHash::from(parse_hash32(value, "block hash")?))
+}
+
+/// Parse a hex history cursor (staple id) into a [`VoteBlockHash`].
+pub fn parse_history_cursor(value: &str) -> JsResult<VoteBlockHash> {
+	Ok(VoteBlockHash::from(parse_hash32(value, "history cursor")?))
+}
+
+/// Parse an ISO 8601 moment into a [`BlockTime`].
+pub fn parse_moment(value: &str) -> JsResult<BlockTime> {
+	parse::moment(value).map_err(coded)
 }
 
 /// Parse a supply/balance/permission adjustment method.

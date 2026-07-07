@@ -5,8 +5,8 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use keetanetwork_block::{AccountRef, Amount, Block};
-use keetanetwork_vote::{VoteQuote, VoteStaple};
+use keetanetwork_block::{AccountRef, Amount, Block, BlockHash, BlockTime, Operation};
+use keetanetwork_vote::{VoteBlockHash, VoteQuote, VoteStaple};
 
 use crate::error::ClientError;
 use crate::sync::Once;
@@ -123,10 +123,35 @@ pub struct LedgerChecksum {
 pub struct HistoryEntry {
 	/// The verified vote staple.
 	pub staple: VoteStaple,
-	/// Hexadecimal vote staple id.
-	pub id: Option<String>,
-	/// ISO 8601 timestamp.
-	pub timestamp: Option<String>,
+	/// The staple's id: the hash of the block hashes it covers.
+	pub id: Option<VoteBlockHash>,
+	/// The moment the staple was committed.
+	pub timestamp: Option<BlockTime>,
+}
+
+/// One staple block together with the subset of its operations that involve
+/// a filtered account (see
+/// [`UserClient::filter_staple_operations`](crate::UserClient::filter_staple_operations)).
+///
+/// Operations are carried as indexes into the block's operation list, so the
+/// selection survives any boundary the block itself crosses.
+#[derive(Debug, Clone)]
+pub struct BlockEffects {
+	/// The block the operations came from.
+	pub block: Block,
+	/// Indexes into the block's operation list for the operations involving
+	/// the filtered account, in block order.
+	pub operation_indexes: Vec<usize>,
+}
+
+impl BlockEffects {
+	/// The operations involving the filtered account, resolved against the block.
+	pub fn operations(&self) -> impl Iterator<Item = &Operation> {
+		let operations = self.block.data().operations();
+		self.operation_indexes
+			.iter()
+			.filter_map(|&index| operations.get(index))
+	}
 }
 
 /// An access-control entry granting a principal permissions over a target.
@@ -155,12 +180,12 @@ pub struct Certificate {
 ///
 /// `start`/`end` are block-hash cursors; `limit` caps the page size (the node
 /// enforces its own maximum).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ChainQuery {
 	/// Start cursor (block hash) to page from.
-	pub start: Option<String>,
+	pub start: Option<BlockHash>,
 	/// End cursor (block hash) to stop at.
-	pub end: Option<String>,
+	pub end: Option<BlockHash>,
 	/// Maximum entries to return in the page.
 	pub limit: Option<i64>,
 }
@@ -172,18 +197,28 @@ pub struct ChainPage {
 	pub blocks: Vec<Block>,
 	/// Cursor to pass as the next page's [`ChainQuery::start`], or `None` once
 	/// the chain is exhausted.
-	pub next_key: Option<String>,
+	pub next_key: Option<BlockHash>,
 }
 
 /// Pagination/range bounds for
 /// [`KeetaClient::history_page`](crate::KeetaClient::history_page) and
 /// [`KeetaClient::global_history_page`](crate::KeetaClient::global_history_page).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct HistoryQuery {
-	/// Start cursor (block hash) to page from.
-	pub start: Option<String>,
+	/// Start cursor (the previous page's last staple id) to page from.
+	pub start: Option<VoteBlockHash>,
 	/// Maximum entries to return in the page.
 	pub limit: Option<i64>,
+}
+
+/// A single page of history together with the cursor for the next page.
+#[derive(Debug, Clone, Default)]
+pub struct HistoryPage {
+	/// The verified history entries in this page.
+	pub entries: Vec<HistoryEntry>,
+	/// Cursor to pass as the next page's [`HistoryQuery::start`], or `None`
+	/// once the history is exhausted.
+	pub next_key: Option<VoteBlockHash>,
 }
 
 /// Account metadata as set via [`UserClient::set_info`](crate::UserClient::set_info).
@@ -202,8 +237,8 @@ pub struct AccountInfo {
 pub struct AccountState {
 	/// Representative account address, if one is set.
 	pub representative: Option<String>,
-	/// Head block hash (hex), if the account has any blocks.
-	pub head: Option<String>,
+	/// Head block hash, if the account has any blocks.
+	pub head: Option<BlockHash>,
 	/// Head block height, if known.
 	pub height: Option<Amount>,
 	/// Account metadata, if the account reports any.

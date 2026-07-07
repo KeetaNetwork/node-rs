@@ -154,6 +154,13 @@ pub fn vote_from_bytes(bytes: impl Into<Vec<u8>>) -> Result<Vote, CodedError> {
 	Vote::verify(bytes).map_err(CodedError::from)
 }
 
+/// Decode and verify a staple from its compressed hex transport encoding,
+/// enforcing the staple invariants at `moment_millis`.
+pub fn staple_from_hex(value: &str, moment_millis: i64) -> Result<VoteStaple, CodedError> {
+	let bytes = hex::decode(value).map_err(|_| CodedError::new("INVALID_STAPLE", "staple must be hex"))?;
+	VoteStaple::verify(bytes, ValidationConfig::default(), block_time(moment_millis)?).map_err(CodedError::from)
+}
+
 /// Assemble a publishable [`VoteStaple`] from signed `blocks` and the `votes`
 /// endorsing them, enforcing the staple invariants at `moment_millis`.
 pub fn vote_staple_build(blocks: Vec<Block>, votes: Vec<Vote>, moment_millis: i64) -> Result<Vec<u8>, CodedError> {

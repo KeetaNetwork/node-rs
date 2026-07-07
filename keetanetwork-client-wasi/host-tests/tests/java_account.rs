@@ -43,7 +43,6 @@ fn maven() -> String {
 	std::env::var("MAVEN_BIN").unwrap_or_else(|_| String::from("mvn"))
 }
 
-
 /// Reconstruct accounts in Java and return its emitted signatures/ciphertexts.
 fn java_parity(module: &PathBuf, reference: &Value) -> Result<Value, Box<dyn std::error::Error>> {
 	let output = Command::new(maven())
@@ -61,7 +60,10 @@ fn java_parity(module: &PathBuf, reference: &Value) -> Result<Value, Box<dyn std
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	let stderr = String::from_utf8_lossy(&output.stderr);
 	assert!(output.status.success(), "the Java parity run must exit zero\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-	assert!(stdout.contains("ACCOUNT_PARITY_OK"), "the Java SDK must confirm parity\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(
+		stdout.contains("ACCOUNT_PARITY_OK"),
+		"the Java SDK must confirm parity\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+	);
 
 	let line = stdout
 		.lines()

@@ -5,7 +5,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use keetanetwork_client::{
-	AccountInfo, AccountState, Acl, Certificate, HistoryEntry, LedgerChecksum, Representative, TokenBalance,
+	AccountInfo, AccountState, Acl, BlockEffects, Certificate, HistoryEntry, LedgerChecksum, Representative,
+	TokenBalance,
 };
 use serde::Serialize;
 use tsify::Tsify;
@@ -57,13 +58,37 @@ impl From<&AccountState> for AccountStateView {
 	fn from(state: &AccountState) -> Self {
 		Self {
 			representative: state.representative.clone(),
-			head: state.head.clone(),
+			head: state.head.map(|head| head.to_string()),
 			height: state.height.clone().map(amount_to_string),
 			info: state.info.as_ref().map(AccountInfoView::from),
 			supply: state.supply.clone().map(amount_to_string),
 			balances: state.balances.iter().map(TokenBalanceView::from).collect(),
 		}
 	}
+}
+
+/// One staple block (hex) with the indexes of its operations that involve
+/// the filtered account, in block order.
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
+pub struct BlockEffectsView {
+	pub block: String,
+	pub operation_indexes: Vec<usize>,
+}
+
+impl From<&BlockEffects> for BlockEffectsView {
+	fn from(effects: &BlockEffects) -> Self {
+		Self { block: hex::encode(effects.block.to_bytes()), operation_indexes: effects.operation_indexes.clone() }
+	}
+}
+
+/// The per-staple effects of a filter: the staple id with the matching
+/// operations of each of its blocks.
+#[derive(Serialize, Tsify)]
+#[tsify(into_wasm_abi)]
+pub struct StapleEffectsView {
+	pub id: String,
+	pub blocks: Vec<BlockEffectsView>,
 }
 
 /// A history entry: the staple as hex plus its id and timestamp.
@@ -77,7 +102,11 @@ pub struct HistoryEntryView {
 
 impl From<&HistoryEntry> for HistoryEntryView {
 	fn from(entry: &HistoryEntry) -> Self {
-		Self { staple: hex::encode(entry.staple.as_bytes()), id: entry.id.clone(), timestamp: entry.timestamp.clone() }
+		Self {
+			staple: hex::encode(entry.staple.as_bytes()),
+			id: entry.id.map(|id| id.to_string()),
+			timestamp: entry.timestamp.map(|moment| moment.to_string()),
+		}
 	}
 }
 

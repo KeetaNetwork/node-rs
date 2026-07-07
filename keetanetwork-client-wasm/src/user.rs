@@ -1,14 +1,15 @@
 //! JS `UserClient`: a signer-bound facade over [`KeetaClient`](crate::client).
 
-use alloc::string::String;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::str::FromStr;
 
 use keetanetwork_account::KeyPairType;
 use keetanetwork_block::{IdentifierCreateArguments, MultisigCreateArguments, SetInfo};
 use keetanetwork_client::{
-	AcceptSwapRequest, ChainQuery, CreateSwapRequest, HistoryQuery, KeetaClient as Core, Network,
-	UserClient as CoreUser,
+	AcceptSwapRequest, BlockEffects, ChainQuery, CreateSwapRequest, HistoryQuery, InitializeNetwork,
+	KeetaClient as Core, Network, UserClient as CoreUser, VoteBlockHash,
 };
 use num_bigint::BigInt;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -19,10 +20,12 @@ use crate::builder::Builder;
 use crate::certificate::ManageCertificate;
 use crate::client::KeetaClient;
 use crate::convert::{
-	amount_to_string, client_error, parse_adjust_method, parse_amount, parse_identifier_type, parse_ledger_side,
-	JsResult,
+	amount_to_string, client_error, parse_adjust_method, parse_amount, parse_block_hash, parse_hash32,
+	parse_history_cursor, parse_identifier_type, parse_ledger_side, JsResult,
 };
-use crate::dto::{AccountStateView, AclView, CertificateView, HistoryEntryView, TokenBalanceView};
+use crate::dto::{
+	AccountStateView, AclView, BlockEffectsView, CertificateView, HistoryEntryView, StapleEffectsView, TokenBalanceView,
+};
 use crate::options::TransmitOptions;
 use crate::permissions::{PermissionChange, Permissions};
 use crate::swap::SwapExpectation;
@@ -116,7 +119,7 @@ impl UserClient {
 	pub async fn balance(&self, token: &Account) -> JsResult<String> {
 		let amount = self
 			.inner
-			.balance(token.address())
+			.balance(&*token.inner())
 			.await
 			.map_err(client_error)?;
 		Ok(amount_to_string(amount))
@@ -156,6 +159,8 @@ impl UserClient {
 		end: Option<String>,
 		limit: Option<u32>,
 	) -> JsResult<Vec<Block>> {
+		let start = start.as_deref().map(parse_block_hash).transpose()?;
+		let end = end.as_deref().map(parse_block_hash).transpose()?;
 		let query = ChainQuery { start, end, limit: limit.map(i64::from) };
 		let blocks = self.inner.chain_page(query).await.map_err(client_error)?;
 		Ok(blocks.into_iter().map(Block::from).collect())
@@ -183,8 +188,22 @@ impl UserClient {
 	/// and `limit`.
 	#[wasm_bindgen(js_name = historyPage)]
 	pub async fn history_page(&self, start: Option<String>, limit: Option<u32>) -> JsResult<Vec<HistoryEntryView>> {
+		let start = start.as_deref().map(parse_history_cursor).transpose()?;
 		let query = HistoryQuery { start, limit: limit.map(i64::from) };
+
 		let entries = self.inner.history_page(query).await.map_err(client_error)?;
+		Ok(entries.iter().map(HistoryEntryView::from).collect())
+	}
+
+	/// Every entry in the operating account's history, fetched by following
+	/// the node's cursor with `pageLimit` per request.
+	#[wasm_bindgen(js_name = historyAll)]
+	pub async fn history_all(&self, page_limit: u32) -> JsResult<Vec<HistoryEntryView>> {
+		let entries = self
+			.inner
+			.history_all(page_limit)
+			.await
+			.map_err(client_error)?;
 		Ok(entries.iter().map(HistoryEntryView::from).collect())
 	}
 
@@ -216,31 +235,36 @@ impl UserClient {
 
 	/// A single certificate on the operating account by its `hash`, if present.
 	pub async fn certificate(&self, hash: String) -> JsResult<Option<CertificateView>> {
+		let hash = parse_hash32(&hash, "certificate hash")?;
 		let certificate = self.inner.certificate(hash).await.map_err(client_error)?;
 		Ok(certificate.as_ref().map(CertificateView::from))
 	}
 
 	/// The block with hash `block_hash`, if the node has it. `side` selects the
-	/// ledger to read (`"main"`, `"side"`, or `"both"`); the main ledger is
-	/// used when omitted.
+	/// ledger to read.
 	pub async fn block(&self, block_hash: String, side: Option<String>) -> JsResult<Option<Block>> {
 		let side = parse_ledger_side(side)?;
+		let block_hash = parse_block_hash(&block_hash)?;
 		let block = self
 			.inner
 			.block(block_hash, side)
 			.await
 			.map_err(client_error)?;
+
 		Ok(block.map(Block::from))
 	}
 
 	/// The block carrying idempotency `key` on the operating account, if any.
+	/// `side` selects the ledger to search.
 	#[wasm_bindgen(js_name = blockFromIdempotent)]
-	pub async fn block_from_idempotent(&self, key: String) -> JsResult<Option<Block>> {
+	pub async fn block_from_idempotent(&self, key: String, side: Option<String>) -> JsResult<Option<Block>> {
+		let side = parse_ledger_side(side)?;
 		let block = self
 			.inner
-			.block_from_idempotent(key)
+			.block_from_idempotent(key, side)
 			.await
 			.map_err(client_error)?;
+
 		Ok(block.map(Block::from))
 	}
 
@@ -251,11 +275,33 @@ impl UserClient {
 		Ok(quotes.into_iter().map(VoteQuote::from).collect())
 	}
 
+	/// The operations in `staples` that involve `account`, keyed by staple id
+	/// and ordered as published: every operation of a block the account
+	/// produced, plus operations on other accounts' blocks that name it.
+	#[wasm_bindgen(js_name = filterStapleOperations)]
+	pub fn filter_staple_operations(staples: Vec<VoteStaple>, account: &Account) -> Vec<StapleEffectsView> {
+		let staples: Vec<_> = staples
+			.iter()
+			.map(|staple| staple.inner().clone())
+			.collect();
+		staple_effects_views(CoreUser::filter_staple_operations(&staples, &*account.inner()))
+	}
+
+	/// [`filterStapleOperations`](Self::filter_staple_operations) over the
+	/// operating account.
+	#[wasm_bindgen(js_name = stapleEffects)]
+	pub fn staple_effects(&self, staples: Vec<VoteStaple>) -> JsResult<Vec<StapleEffectsView>> {
+		let staples: Vec<_> = staples
+			.iter()
+			.map(|staple| staple.inner().clone())
+			.collect();
+		let effects = self.inner.staple_effects(&staples).map_err(client_error)?;
+		Ok(staple_effects_views(effects))
+	}
+
 	/// Recover the operating account's pending side block, optionally
 	/// republishing. Returns the resulting staple, if any. `options` tunes the
-	/// fee paid for the recovery block (fee-token preference, pre-fetched
-	/// quotes); the bound signer pays the fee when none is set. Omit `options`
-	/// to recover with the bound signer as fee signer.
+	/// fee paid for the recovery block.
 	pub async fn recover(&self, publish: bool, options: Option<TransmitOptions>) -> JsResult<Option<VoteStaple>> {
 		let staple = match options {
 			None => self.inner.recover(publish).await,
@@ -392,6 +438,21 @@ impl UserClient {
 			.map_err(client_error)
 	}
 
+	/// Bootstrap a fresh network: mint `addSupplyAmount` of the base token to
+	/// the operating account and delegate its weight to `delegateTo`.
+	#[wasm_bindgen(js_name = initializeNetwork)]
+	pub async fn initialize_network(&self, add_supply_amount: String, delegate_to: Option<Account>) -> JsResult<bool> {
+		let options = InitializeNetwork {
+			add_supply_amount: parse_amount(&add_supply_amount)?,
+			delegate_to: delegate_to.map(|account| account.inner()),
+			..InitializeNetwork::default()
+		};
+		self.inner
+			.initialize_network(options)
+			.await
+			.map_err(client_error)
+	}
+
 	/// Create an identifier of `kind` (`"network"`, `"token"`, or `"storage"`)
 	/// under the operating account, publish the creating block, and return the
 	/// derived [`Account`].
@@ -446,6 +507,7 @@ impl UserClient {
 			.create_swap_request(request)
 			.await
 			.map_err(client_error)?;
+
 		Ok(Block::from(block))
 	}
 
@@ -460,6 +522,18 @@ impl UserClient {
 			.accept_swap_request(request)
 			.await
 			.map_err(client_error)?;
+
 		Ok(blocks.into_iter().map(Block::from).collect())
 	}
+}
+
+/// Render a core effects map as serializable views, keyed order preserved.
+fn staple_effects_views(effects: BTreeMap<VoteBlockHash, Vec<BlockEffects>>) -> Vec<StapleEffectsView> {
+	effects
+		.into_iter()
+		.map(|(id, blocks)| StapleEffectsView {
+			id: id.to_string(),
+			blocks: blocks.iter().map(BlockEffectsView::from).collect(),
+		})
+		.collect()
 }

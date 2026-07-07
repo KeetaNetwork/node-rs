@@ -17,8 +17,9 @@ pub mod utils;
 
 // Re-export the main types for easier use
 pub use account::{
-	Account, AccountPublicKey, AccountVerifier, Accountable, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1,
-	KeyED25519, KeyMULTISIG, KeyNETWORK, KeyPair, KeyPairType, KeySTORAGE, KeyTOKEN, Keyable, PublicKeyStorage,
+	Account, AccountPrivateKey, AccountPublicKey, AccountVerifier, Accountable, GenericAccount, KeyECDSASECP256K1,
+	KeyECDSASECP256R1, KeyED25519, KeyMULTISIG, KeyNETWORK, KeyPair, KeyPairType, KeySTORAGE, KeyTOKEN, Keyable,
+	PublicKeyStorage,
 };
 pub use cert::{CertSigner, CertVerifier};
 pub use error::AccountError;

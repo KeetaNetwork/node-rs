@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 
 use keetanetwork_account::AccountError;
 use keetanetwork_block::BlockError;
+use keetanetwork_crypto::error::CryptoError;
 use keetanetwork_error::KeetaNetError;
 use keetanetwork_vote::VoteError;
 use num_bigint::ParseBigIntError;
@@ -60,6 +61,21 @@ pub enum ClientError {
 	Amount {
 		/// Underlying parse error.
 		source: ParseBigIntError,
+	},
+
+	/// A hash field (block hash or history cursor) in the response could not
+	/// be parsed.
+	#[snafu(display("malformed hash in node response"))]
+	Hash {
+		/// Underlying hash decoding error.
+		source: CryptoError,
+	},
+
+	/// An ISO 8601 timestamp field in the response could not be parsed.
+	#[snafu(display("malformed timestamp in node response"))]
+	Moment {
+		/// Underlying datetime parse error.
+		source: chrono::ParseError,
 	},
 
 	/// The `/vote` response omitted the vote field.
@@ -171,6 +187,8 @@ impl ClientError {
 			Self::Vote { .. } => "VOTE",
 			Self::Block { .. } => "BLOCK",
 			Self::Amount { .. } => "AMOUNT",
+			Self::Hash { .. } => "HASH",
+			Self::Moment { .. } => "MOMENT",
 			Self::MissingVote => "MISSING_VOTE",
 			Self::MissingQuote => "MISSING_QUOTE",
 			Self::MissingPublish => "MISSING_PUBLISH",

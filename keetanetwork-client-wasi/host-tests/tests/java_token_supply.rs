@@ -74,7 +74,10 @@ fn java_sdk_mints_token_supply_and_credits_a_holder() -> Result<(), Box<dyn std:
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	let stderr = String::from_utf8_lossy(&output.stderr);
 	assert!(output.status.success(), "the Java harness must exit zero\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-	assert!(stdout.contains("TOKEN_OK"), "the Java SDK must confirm the mint on-chain\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(
+		stdout.contains("TOKEN_OK"),
+		"the Java SDK must confirm the mint on-chain\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+	);
 
 	Ok(())
 }

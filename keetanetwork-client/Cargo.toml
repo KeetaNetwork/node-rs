@@ -30,6 +30,7 @@ std = [
 	"keetanetwork-vote/std",
 	"keetanetwork-error/std",
 	"keetanetwork-account/std",
+	"keetanetwork-crypto/std",
 ]
 wasm = ["http"]
 wasi = ["codec"]
@@ -38,9 +39,11 @@ testing = []
 [dependencies]
 keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-vote = { workspace = true, features = ["alloc", "rasn"] }
+keetanetwork-crypto = { workspace = true, features = ["alloc"] }
 keetanetwork-error = { workspace = true, features = ["alloc"] }
 keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
 
+chrono = { workspace = true }
 progenitor-client = { workspace = true, optional = true }
 num-bigint = { workspace = true }
 rand_core = { workspace = true }
@@ -66,6 +69,10 @@ workspace = true
 optional = true
 
 [dependencies.base64]
+workspace = true
+features = ["alloc"]
+
+[dependencies.hex]
 workspace = true
 features = ["alloc"]
 

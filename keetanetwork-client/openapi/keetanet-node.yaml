@@ -1037,6 +1037,16 @@ paths:
           required: true
           schema:
             type: string
+        - name: side
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - main
+              - side
+              - both
+          description: Which ledger storage to search (defaults to main).
       responses:
         '200':
           description: Block

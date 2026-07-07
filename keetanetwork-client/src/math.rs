@@ -3,7 +3,7 @@
 //! transport.
 
 use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 
 use num_bigint::BigInt;
 
@@ -64,19 +64,18 @@ pub fn selection_score(weight_fraction: f64, reliability: f64) -> f64 {
 }
 
 /// The hash observed on the most representatives. Ties break to the
-/// lexicographically smallest hash for determinism. `None` for no
-/// observations.
+/// smallest hash (by `Ord`) for determinism. `None` for no observations.
 #[must_use]
-pub fn most_common_hash(hashes: &[String]) -> Option<String> {
-	let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+pub fn most_common_hash<T: Ord + Clone>(hashes: &[T]) -> Option<T> {
+	let mut counts: BTreeMap<&T, usize> = BTreeMap::new();
 	for hash in hashes {
-		*counts.entry(hash.as_str()).or_insert(0) += 1;
+		*counts.entry(hash).or_insert(0) += 1;
 	}
 
 	counts
 		.into_iter()
 		.max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(left.0)))
-		.map(|(hash, _)| hash.to_string())
+		.map(|(hash, _)| hash.clone())
 }
 
 /// The latest `from` shared by all `(from, to)` validity windows, when their
@@ -165,7 +164,7 @@ mod tests {
 
 	#[test]
 	fn most_common_hash_is_none_without_observations() {
-		assert_eq!(most_common_hash(&[]), None);
+		assert_eq!(most_common_hash::<String>(&[]), None);
 	}
 
 	#[test]

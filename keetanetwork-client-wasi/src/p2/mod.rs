@@ -5,20 +5,20 @@ use core::future::Future;
 use core::str::FromStr;
 use std::sync::Arc;
 
-use keetanetwork_account::KeyPairType;
-use keetanetwork_bindings::client::ledger_side;
-use keetanetwork_bindings::parse::{amount as parse_amount, amount_to_string};
+use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPairType};
+use keetanetwork_bindings::parse::{self, amount as parse_amount, amount_to_string};
+use keetanetwork_bindings::permissions as bindings_permissions;
 use keetanetwork_block::{
-	AccountRef, AdjustMethod, BlockBuilder, BlockHash, CertificateDer, CertificateOrHash, IdentifierCreateArguments,
-	IntermediateCertificates, ManageCertificate, ModifyPermissions, ModifyPermissionsPrincipal,
-	MultisigCreateArguments, SetInfo,
+	AccountRef, AdjustMethod, BaseFlag, BlockBuilder, BlockHash, CertificateDer, CertificateOrHash,
+	IdentifierCreateArguments, IntermediateCertificates, ManageCertificate, ModifyPermissions,
+	ModifyPermissionsPrincipal, MultisigCreateArguments, Permissions, SetInfo,
 };
 use keetanetwork_client::{
 	AcceptSwapRequest, AccountInfo as CoreInfo, AccountState as CoreState, Acl as CoreAcl,
-	Certificate as CoreCertificate, ChainQuery, ClientConfig, ClientError, CreateSwapRequest,
-	HistoryEntry as CoreHistory, HistoryQuery, KeetaClient, LedgerChecksum as CoreChecksum, RepPart,
-	Representative as CoreRep, SwapExpectation, SwapTokenAmount, TransactionBuilder, TransmitOptions, UserClient,
-	WasiRuntime, WasiTransportFactory,
+	BlockEffects as CoreBlockEffects, Certificate as CoreCertificate, ChainQuery, ClientConfig, ClientError,
+	CreateSwapRequest, HistoryEntry as CoreHistory, HistoryQuery, KeetaClient, LedgerChecksum as CoreChecksum,
+	LedgerSide, RepPart, Representative as CoreRep, Runtime, SwapExpectation, SwapTokenAmount, TransactionBuilder,
+	TransmitOptions, UserClient, VoteBlockHash, WasiRuntime, WasiTransportFactory,
 };
 use keetanetwork_x509::certificates::Certificate as X509Certificate;
 use num_bigint::BigInt;
@@ -32,16 +32,33 @@ wit_bindgen::generate!({
 });
 
 use exports::keeta::client::crypto::{
-	Account as WitAccount, AccountBorrow, Certificate as WitCertificate, Guest as CryptoGuest, GuestAccount,
-	GuestCertificate,
+	Account as WitAccount, AccountBorrow, AccountKind as WitAccountKind, Certificate as WitCertificate,
+	Guest as CryptoGuest, GuestAccount, GuestCertificate, KeyAlgorithm as WitKeyAlgorithm,
 };
 use exports::keeta::client::node::{
-	AccountInfo, AccountState, Acl, AdjustMethod as WitAdjustMethod, BlockBuilder as BlockBuilderResource, Certificate,
-	ChainPage, ChainQuery as WitChainQuery, CodedError, Guest, GuestBlockBuilder, GuestClient, GuestTransaction,
-	GuestUserClient, HeadInfo, HistoryEntry, HistoryQuery as WitHistoryQuery, LedgerChecksum, Representative,
+	AccountInfo, AccountState, Acl, AdjustMethod as WitAdjustMethod, BasePermission as WitBasePermission,
+	BlockBuilder as BlockBuilderResource, BlockEffects as WitBlockEffects, Certificate, ChainPage,
+	ChainQuery as WitChainQuery, CodedError, Guest, GuestBlockBuilder, GuestClient, GuestTransaction, GuestUserClient,
+	HeadInfo, HistoryEntry, HistoryQuery as WitHistoryQuery, IdentifierKind as WitIdentifierKind, LedgerChecksum,
+	LedgerSide as WitLedgerSide, Representative, StapleEffects as WitStapleEffects,
 	SwapExpectation as WitSwapExpectation, SwapTokenAmount as WitSwapTokenAmount, TokenBalance,
 	Transaction as TransactionResource, UserClient as UserClientResource,
 };
+
+impl From<WitLedgerSide> for LedgerSide {
+	fn from(side: WitLedgerSide) -> Self {
+		match side {
+			WitLedgerSide::Main => LedgerSide::Main,
+			WitLedgerSide::Side => LedgerSide::Side,
+			WitLedgerSide::Both => LedgerSide::Both,
+		}
+	}
+}
+
+/// The typed account behind a borrowed WIT account resource.
+fn account_of(resource: AccountBorrow<'_>) -> AccountRef {
+	Arc::clone(&resource.get::<AccountResource>().account)
+}
 
 /// Drive an async client call to completion on the `wstd` reactor, projecting
 /// its error to the WIT boundary type.
@@ -64,6 +81,16 @@ fn decode_hash(value: &str) -> Result<[u8; 32], CodedError> {
 		.map_err(|_| CodedError { code: "INVALID_HASH".into(), message: "hash must be 32 bytes".into() })
 }
 
+/// Parse a hex block hash crossing the WIT boundary.
+fn parse_block_hash(value: &str) -> Result<BlockHash, CodedError> {
+	Ok(BlockHash::from(decode_hash(value)?))
+}
+
+/// Parse a hex history cursor (staple id) crossing the WIT boundary.
+fn parse_history_cursor(value: &str) -> Result<VoteBlockHash, CodedError> {
+	Ok(VoteBlockHash::from(decode_hash(value)?))
+}
+
 struct Component;
 
 impl Guest for Component {
@@ -74,14 +101,13 @@ impl Guest for Component {
 
 	fn derive_identifier(
 		signer: AccountBorrow<'_>,
-		kind: String,
+		kind: WitIdentifierKind,
 		previous: Option<String>,
 		op_index: u32,
 	) -> Result<String, CodedError> {
 		let account = &signer.get::<AccountResource>().account;
-		let kind = derivable_identifier_kind(&kind)?;
 		let previous = previous.map(|hash| decode_hash(&hash)).transpose()?;
-		let identifier = pure::generate_identifier(account, kind, previous, op_index)?;
+		let identifier = pure::generate_identifier(account, kind.into(), previous, op_index)?;
 		Ok(pure::account_address(&identifier))
 	}
 }
@@ -109,23 +135,23 @@ struct AccountResource {
 }
 
 impl GuestAccount for AccountResource {
-	fn from_seed(seed: String, index: u32, algorithm: String) -> Result<WitAccount, CodedError> {
-		let account = pure::account_from_seed(&seed, index, &algorithm)?;
+	fn from_seed(seed: String, index: u32, algorithm: WitKeyAlgorithm) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_seed(&seed, index, algorithm_name(algorithm))?;
 		Ok(WitAccount::new(Self { account }))
 	}
 
-	fn from_private_key(key: String, algorithm: String) -> Result<WitAccount, CodedError> {
-		let account = pure::account_from_private_key(&key, &algorithm)?;
+	fn from_private_key(key: String, algorithm: WitKeyAlgorithm) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_private_key(&key, algorithm_name(algorithm))?;
 		Ok(WitAccount::new(Self { account }))
 	}
 
-	fn from_passphrase(words: Vec<String>, index: u32, algorithm: String) -> Result<WitAccount, CodedError> {
-		let account = pure::account_from_passphrase(words, index, &algorithm)?;
+	fn from_passphrase(words: Vec<String>, index: u32, algorithm: WitKeyAlgorithm) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_passphrase(words, index, algorithm_name(algorithm))?;
 		Ok(WitAccount::new(Self { account }))
 	}
 
-	fn from_public_key(key: String, algorithm: String) -> Result<WitAccount, CodedError> {
-		let account = pure::account_from_public_key(&key, &algorithm)?;
+	fn from_public_key(key: String, algorithm: WitKeyAlgorithm) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_public_key(&key, algorithm_name(algorithm))?;
 		Ok(WitAccount::new(Self { account }))
 	}
 
@@ -146,8 +172,16 @@ impl GuestAccount for AccountResource {
 		pure::account_address(&self.account)
 	}
 
-	fn algorithm(&self) -> String {
-		pure::account_algorithm(&self.account)
+	fn kind(&self) -> WitAccountKind {
+		match self.account.to_keypair_type() {
+			KeyPairType::ED25519 => WitAccountKind::Signing(WitKeyAlgorithm::Ed25519),
+			KeyPairType::ECDSASECP256K1 => WitAccountKind::Signing(WitKeyAlgorithm::EcdsaSecp256k1),
+			KeyPairType::ECDSASECP256R1 => WitAccountKind::Signing(WitKeyAlgorithm::EcdsaSecp256r1),
+			KeyPairType::NETWORK => WitAccountKind::Identifier(WitIdentifierKind::Network),
+			KeyPairType::TOKEN => WitAccountKind::Identifier(WitIdentifierKind::Token),
+			KeyPairType::STORAGE => WitAccountKind::Identifier(WitIdentifierKind::Storage),
+			KeyPairType::MULTISIG => WitAccountKind::Identifier(WitIdentifierKind::Multisig),
+		}
 	}
 
 	fn public_key(&self) -> String {
@@ -218,14 +252,56 @@ impl GuestCertificate for CertificateResource {
 	}
 }
 
-/// Parse an identifier kind for local derivation. Unlike the shared parser
-/// (which reserves multisig for the publishing path that supplies its create
-/// arguments), local address derivation accepts every identifier type.
-fn derivable_identifier_kind(kind: &str) -> Result<KeyPairType, CodedError> {
-	match kind {
-		"multisig" => Ok(KeyPairType::MULTISIG),
-		other => Ok(keetanetwork_bindings::parse::identifier_type(other)?),
+/// The canonical name of a signing algorithm, as understood by the shared
+/// account constructors.
+fn algorithm_name(algorithm: WitKeyAlgorithm) -> &'static str {
+	match algorithm {
+		WitKeyAlgorithm::Ed25519 => "ed25519",
+		WitKeyAlgorithm::EcdsaSecp256k1 => "ecdsa_secp256k1",
+		WitKeyAlgorithm::EcdsaSecp256r1 => "ecdsa_secp256r1",
 	}
+}
+
+impl From<WitIdentifierKind> for KeyPairType {
+	fn from(kind: WitIdentifierKind) -> Self {
+		match kind {
+			WitIdentifierKind::Network => KeyPairType::NETWORK,
+			WitIdentifierKind::Token => KeyPairType::TOKEN,
+			WitIdentifierKind::Storage => KeyPairType::STORAGE,
+			WitIdentifierKind::Multisig => KeyPairType::MULTISIG,
+		}
+	}
+}
+
+/// The per-flag mapping between the WIT flags type and the domain base
+/// flags, in on-chain bit order.
+const PERMISSION_FLAGS: [(WitBasePermission, BaseFlag); 15] = [
+	(WitBasePermission::ACCESS, BaseFlag::Access),
+	(WitBasePermission::OWNER, BaseFlag::Owner),
+	(WitBasePermission::ADMIN, BaseFlag::Admin),
+	(WitBasePermission::UPDATE_INFO, BaseFlag::UpdateInfo),
+	(WitBasePermission::SEND_ON_BEHALF, BaseFlag::SendOnBehalf),
+	(WitBasePermission::TOKEN_ADMIN_CREATE, BaseFlag::TokenAdminCreate),
+	(WitBasePermission::TOKEN_ADMIN_SUPPLY, BaseFlag::TokenAdminSupply),
+	(WitBasePermission::TOKEN_ADMIN_MODIFY_BALANCE, BaseFlag::TokenAdminModifyBalance),
+	(WitBasePermission::STORAGE_CREATE, BaseFlag::StorageCreate),
+	(WitBasePermission::STORAGE_CAN_HOLD, BaseFlag::StorageCanHold),
+	(WitBasePermission::STORAGE_DEPOSIT, BaseFlag::StorageDeposit),
+	(WitBasePermission::PERMISSION_DELEGATE_ADD, BaseFlag::PermissionDelegateAdd),
+	(WitBasePermission::PERMISSION_DELEGATE_REMOVE, BaseFlag::PermissionDelegateRemove),
+	(WitBasePermission::MANAGE_CERTIFICATE, BaseFlag::ManageCertificate),
+	(WitBasePermission::MULTISIG_SIGNER, BaseFlag::MultisigSigner),
+];
+
+/// Build a domain permission set from the WIT base-permission flags.
+fn permissions_of(flags: WitBasePermission) -> Result<Permissions, CodedError> {
+	let flags: Vec<BaseFlag> = PERMISSION_FLAGS
+		.iter()
+		.filter(|(wit, _)| flags.contains(*wit))
+		.map(|&(_, base)| base)
+		.collect();
+
+	Ok(bindings_permissions::from_flags(&flags, &[])?)
 }
 
 /// A single-representative KeetaNet client backed by the WASI transport.
@@ -267,7 +343,7 @@ impl From<CoreState> for AccountState {
 	fn from(state: CoreState) -> Self {
 		Self {
 			representative: state.representative,
-			head: state.head,
+			head: state.head.map(|head| head.to_string()),
 			height: state.height.map(amount_to_string),
 			info: state.info.map(AccountInfo::from),
 			supply: state.supply.map(amount_to_string),
@@ -292,19 +368,49 @@ impl From<CoreChecksum> for LedgerChecksum {
 
 impl From<CoreHistory> for HistoryEntry {
 	fn from(entry: CoreHistory) -> Self {
-		Self { staple: pure::staple_to_hex(&entry.staple), id: entry.id, timestamp: entry.timestamp }
+		Self {
+			staple: pure::staple_to_hex(&entry.staple),
+			id: entry.id.map(|id| id.to_string()),
+			timestamp: entry.timestamp.map(|moment| moment.to_string()),
+		}
 	}
 }
 
-impl From<WitChainQuery> for ChainQuery {
-	fn from(query: WitChainQuery) -> Self {
-		Self { start: query.start, end: query.end, limit: query.limit }
+impl From<&CoreBlockEffects> for WitBlockEffects {
+	fn from(effects: &CoreBlockEffects) -> Self {
+		Self {
+			block: pure::block_to_hex(&effects.block),
+			operation_indexes: effects
+				.operation_indexes
+				.iter()
+				.map(|&index| index as u32)
+				.collect(),
+		}
 	}
 }
 
-impl From<WitHistoryQuery> for HistoryQuery {
-	fn from(query: WitHistoryQuery) -> Self {
-		Self { start: query.start, limit: query.limit }
+impl TryFrom<WitChainQuery> for ChainQuery {
+	type Error = CodedError;
+
+	fn try_from(query: WitChainQuery) -> Result<Self, Self::Error> {
+		let start = query.start.as_deref().map(parse_block_hash).transpose()?;
+		let end = query.end.as_deref().map(parse_block_hash).transpose()?;
+
+		Ok(Self { start, end, limit: query.limit })
+	}
+}
+
+impl TryFrom<WitHistoryQuery> for HistoryQuery {
+	type Error = CodedError;
+
+	fn try_from(query: WitHistoryQuery) -> Result<Self, Self::Error> {
+		let start = query
+			.start
+			.as_deref()
+			.map(parse_history_cursor)
+			.transpose()?;
+
+		Ok(Self { start, limit: query.limit })
 	}
 }
 
@@ -329,6 +435,7 @@ impl TryFrom<WitSwapTokenAmount> for SwapTokenAmount {
 			.map(|token| pure::account_from_address(&token))
 			.transpose()?;
 		let amount = leg.amount.map(|amount| parse_amount(&amount)).transpose()?;
+
 		Ok(Self { token, amount })
 	}
 }
@@ -345,6 +452,7 @@ impl TryFrom<WitSwapExpectation> for SwapExpectation {
 			.send
 			.map(SwapTokenAmount::try_from)
 			.transpose()?;
+
 		Ok(Self { receive, send })
 	}
 }
@@ -380,40 +488,47 @@ impl GuestClient for NodeClient {
 		run(self.inner.node_version())
 	}
 
-	fn account_balance(&self, account: String, token: String) -> Result<String, CodedError> {
-		Ok(amount_to_string(run(self.inner.balance(account, token))?))
+	fn account_balance(&self, account: AccountBorrow<'_>, token: AccountBorrow<'_>) -> Result<String, CodedError> {
+		let (account, token) = (account_of(account), account_of(token));
+		Ok(amount_to_string(run(self.inner.balance(&*account, &*token))?))
 	}
 
-	fn account_balances(&self, account: String) -> Result<Vec<TokenBalance>, CodedError> {
-		Ok(run(self.inner.balances(account))?
+	fn account_balances(&self, account: AccountBorrow<'_>) -> Result<Vec<TokenBalance>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.balances(&*account))?
 			.into_iter()
 			.map(|balance| TokenBalance { token: balance.token, amount: amount_to_string(balance.balance) })
 			.collect())
 	}
 
-	fn token_supply(&self, token: String) -> Result<Option<String>, CodedError> {
-		Ok(run(self.inner.token_supply(token))?.map(amount_to_string))
+	fn token_supply(&self, token: AccountBorrow<'_>) -> Result<Option<String>, CodedError> {
+		let token = account_of(token);
+		Ok(run(self.inner.token_supply(&*token))?.map(amount_to_string))
 	}
 
-	fn account_state(&self, account: String) -> Result<AccountState, CodedError> {
-		Ok(AccountState::from(run(self.inner.state(account))?))
+	fn account_state(&self, account: AccountBorrow<'_>) -> Result<AccountState, CodedError> {
+		let account = account_of(account);
+		Ok(AccountState::from(run(self.inner.state(&*account))?))
 	}
 
-	fn head_block(&self, account: String) -> Result<Option<String>, CodedError> {
-		Ok(run(self.inner.head_block(account))?.map(|block| pure::block_to_hex(&block)))
+	fn head_block(&self, account: AccountBorrow<'_>) -> Result<Option<String>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.head_block(&*account))?.map(|block| pure::block_to_hex(&block)))
 	}
 
-	fn block(&self, blockhash: String, side: Option<String>) -> Result<Option<String>, CodedError> {
-		let side = ledger_side(side.as_deref())?;
-		Ok(run(self.inner.block(blockhash, side))?.map(|block| pure::block_to_hex(&block)))
+	fn block(&self, blockhash: String, side: Option<WitLedgerSide>) -> Result<Option<String>, CodedError> {
+		let blockhash = parse_block_hash(&blockhash)?;
+		Ok(run(self.inner.block(blockhash, side.map(Into::into)))?.map(|block| pure::block_to_hex(&block)))
 	}
 
 	fn vote_staple(&self, blockhash: String) -> Result<Option<String>, CodedError> {
+		let blockhash = parse_block_hash(&blockhash)?;
 		Ok(run(self.inner.vote_staple(blockhash))?.map(|staple| pure::staple_to_hex(&staple)))
 	}
 
-	fn representative(&self, rep: String) -> Result<Representative, CodedError> {
-		Ok(Representative::from(run(self.inner.representative(rep))?))
+	fn representative(&self, rep: AccountBorrow<'_>) -> Result<Representative, CodedError> {
+		let rep = account_of(rep);
+		Ok(Representative::from(run(self.inner.representative(&*rep))?))
 	}
 
 	fn representatives(&self) -> Result<Vec<Representative>, CodedError> {
@@ -427,38 +542,55 @@ impl GuestClient for NodeClient {
 		Ok(LedgerChecksum::from(run(self.inner.ledger_checksum())?))
 	}
 
-	fn chain(&self, account: String) -> Result<Vec<String>, CodedError> {
-		Ok(run(self.inner.chain(account))?
+	fn chain(&self, account: AccountBorrow<'_>) -> Result<Vec<String>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.chain(&*account))?
 			.iter()
 			.map(pure::block_to_hex)
 			.collect())
 	}
 
-	fn chain_page(&self, account: String, query: WitChainQuery) -> Result<ChainPage, CodedError> {
+	fn chain_page(&self, account: AccountBorrow<'_>, query: WitChainQuery) -> Result<ChainPage, CodedError> {
+		let account = account_of(account);
 		let page = run(self
 			.inner
-			.chain_page_cursor(account, ChainQuery::from(query)))?;
-		Ok(ChainPage { blocks: page.blocks.iter().map(pure::block_to_hex).collect(), next_key: page.next_key })
+			.chain_page_cursor(&*account, ChainQuery::try_from(query)?))?;
+		Ok(ChainPage {
+			blocks: page.blocks.iter().map(pure::block_to_hex).collect(),
+			next_key: page.next_key.map(|key| key.to_string()),
+		})
 	}
 
-	fn history(&self, account: String) -> Result<Vec<HistoryEntry>, CodedError> {
-		Ok(run(self.inner.history(account))?
+	fn chain_all(&self, account: AccountBorrow<'_>, page_limit: u32) -> Result<Vec<String>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.chain_all(&*account, page_limit))?
+			.iter()
+			.map(pure::block_to_hex)
+			.collect())
+	}
+
+	fn history(&self, account: AccountBorrow<'_>) -> Result<Vec<HistoryEntry>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.history(&*account))?
 			.into_iter()
 			.map(HistoryEntry::from)
 			.collect())
 	}
 
-	fn pending_block(&self, account: String) -> Result<Option<String>, CodedError> {
-		Ok(run(self.inner.pending_block(account))?.map(|block| pure::block_to_hex(&block)))
+	fn pending_block(&self, account: AccountBorrow<'_>) -> Result<Option<String>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.pending_block(&*account))?.map(|block| pure::block_to_hex(&block)))
 	}
 
-	fn account_head_info(&self, account: String) -> Result<Option<HeadInfo>, CodedError> {
-		Ok(run(self.inner.account_head_info(account))?
+	fn account_head_info(&self, account: AccountBorrow<'_>) -> Result<Option<HeadInfo>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.account_head_info(&*account))?
 			.map(|(block, height)| HeadInfo { block: pure::block_to_hex(&block), height: amount_to_string(height) }))
 	}
 
-	fn account_states(&self, accounts: Vec<String>) -> Result<Vec<AccountState>, CodedError> {
-		let refs: Vec<&str> = accounts.iter().map(String::as_str).collect();
+	fn account_states(&self, accounts: Vec<AccountBorrow<'_>>) -> Result<Vec<AccountState>, CodedError> {
+		let accounts: Vec<AccountRef> = accounts.into_iter().map(account_of).collect();
+		let refs: Vec<&GenericAccount> = accounts.iter().map(|account| &**account).collect();
 		Ok(run(self.inner.states(&refs))?
 			.into_iter()
 			.map(AccountState::from)
@@ -466,45 +598,73 @@ impl GuestClient for NodeClient {
 	}
 
 	fn successor_block(&self, blockhash: String) -> Result<Option<String>, CodedError> {
+		let blockhash = parse_block_hash(&blockhash)?;
 		Ok(run(self.inner.successor_block(blockhash))?.map(|block| pure::block_to_hex(&block)))
 	}
 
-	fn block_by_idempotent(&self, account: String, key: String) -> Result<Option<String>, CodedError> {
-		Ok(run(self.inner.block_by_idempotent(account, key))?.map(|block| pure::block_to_hex(&block)))
+	fn block_by_idempotent(
+		&self,
+		account: AccountBorrow<'_>,
+		key: String,
+		side: Option<WitLedgerSide>,
+	) -> Result<Option<String>, CodedError> {
+		let account = account_of(account);
+		let side = side.map(Into::into);
+		Ok(run(self.inner.block_by_idempotent(&*account, key, side))?.map(|block| pure::block_to_hex(&block)))
 	}
 
-	fn history_page(&self, account: String, query: WitHistoryQuery) -> Result<Vec<HistoryEntry>, CodedError> {
-		let entries = run(self.inner.history_page(account, HistoryQuery::from(query)))?;
+	fn history_page(
+		&self,
+		account: AccountBorrow<'_>,
+		query: WitHistoryQuery,
+	) -> Result<Vec<HistoryEntry>, CodedError> {
+		let account = account_of(account);
+		let entries = run(self
+			.inner
+			.history_page(&*account, HistoryQuery::try_from(query)?))?;
 		Ok(entries.into_iter().map(HistoryEntry::from).collect())
+	}
+
+	fn history_all(&self, account: AccountBorrow<'_>, page_limit: u32) -> Result<Vec<HistoryEntry>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.history_all(&*account, page_limit))?
+			.into_iter()
+			.map(HistoryEntry::from)
+			.collect())
 	}
 
 	fn node_representative(&self) -> Result<Representative, CodedError> {
 		Ok(Representative::from(run(self.inner.node_representative())?))
 	}
 
-	fn acls_by_principal(&self, account: String) -> Result<Vec<Acl>, CodedError> {
-		Ok(run(self.inner.acls_by_principal(account))?
+	fn acls_by_principal(&self, account: AccountBorrow<'_>) -> Result<Vec<Acl>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.acls_by_principal(&*account))?
 			.into_iter()
 			.map(Acl::from)
 			.collect())
 	}
 
-	fn acls_by_entity(&self, account: String) -> Result<Vec<Acl>, CodedError> {
-		Ok(run(self.inner.acls_by_entity(account))?
+	fn acls_by_entity(&self, account: AccountBorrow<'_>) -> Result<Vec<Acl>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.acls_by_entity(&*account))?
 			.into_iter()
 			.map(Acl::from)
 			.collect())
 	}
 
-	fn certificates(&self, account: String) -> Result<Vec<Certificate>, CodedError> {
-		Ok(run(self.inner.certificates(account))?
+	fn certificates(&self, account: AccountBorrow<'_>) -> Result<Vec<Certificate>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.certificates(&*account))?
 			.into_iter()
 			.map(Certificate::from)
 			.collect())
 	}
 
-	fn certificate(&self, account: String, hash: String) -> Result<Option<Certificate>, CodedError> {
-		Ok(run(self.inner.certificate(account, hash))?.map(Certificate::from))
+	fn certificate(&self, account: AccountBorrow<'_>, hash: String) -> Result<Option<Certificate>, CodedError> {
+		let account = account_of(account);
+		let hash = decode_hash(&hash)?;
+		Ok(run(self.inner.certificate(&*account, hash))?.map(Certificate::from))
 	}
 
 	fn global_history(&self) -> Result<Vec<HistoryEntry>, CodedError> {
@@ -515,11 +675,14 @@ impl GuestClient for NodeClient {
 	}
 
 	fn global_history_page(&self, query: WitHistoryQuery) -> Result<Vec<HistoryEntry>, CodedError> {
-		let entries = run(self.inner.global_history_page(HistoryQuery::from(query)))?;
+		let entries = run(self
+			.inner
+			.global_history_page(HistoryQuery::try_from(query)?))?;
 		Ok(entries.into_iter().map(HistoryEntry::from).collect())
 	}
 
 	fn vote_staples_after(&self, start: String) -> Result<Vec<String>, CodedError> {
+		let start = parse::moment(&start)?;
 		Ok(run(self.inner.vote_staples_after(start))?
 			.iter()
 			.map(pure::staple_to_hex)
@@ -527,10 +690,24 @@ impl GuestClient for NodeClient {
 	}
 
 	fn vote_staples_after_page(&self, start: String, limit: Option<i64>) -> Result<Vec<String>, CodedError> {
+		let start = parse::moment(&start)?;
 		Ok(run(self.inner.vote_staples_after_page(start, limit))?
 			.iter()
 			.map(pure::staple_to_hex)
 			.collect())
+	}
+
+	fn sync_account(&self, account: AccountBorrow<'_>, publish: bool) -> Result<Option<String>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self.inner.sync_account(&account, publish))?.map(|staple| pure::staple_to_hex(&staple)))
+	}
+
+	fn recover_account(&self, account: AccountBorrow<'_>, publish: bool) -> Result<Option<String>, CodedError> {
+		let account = account_of(account);
+		Ok(run(self
+			.inner
+			.recover_account(&account, publish, TransmitOptions::default()))?
+		.map(|staple| pure::staple_to_hex(&staple)))
 	}
 }
 
@@ -540,8 +717,8 @@ struct AccountClient {
 }
 
 impl GuestUserClient for AccountClient {
-	fn read_only(base_url: String, address: String) -> Result<UserClientResource, CodedError> {
-		let account = pure::account_from_address(&address)?;
+	fn read_only(base_url: String, address: AccountBorrow<'_>) -> Result<UserClientResource, CodedError> {
+		let account = account_of(address);
 		let inner = UserClient::from_parts(single_rep_client(base_url), None).with_account(account);
 		Ok(UserClientResource::new(Self { inner }))
 	}
@@ -551,13 +728,13 @@ impl GuestUserClient for AccountClient {
 		signer: AccountBorrow<'_>,
 		network: String,
 	) -> Result<UserClientResource, CodedError> {
-		let signer = Arc::clone(&signer.get::<AccountResource>().account);
+		let signer = account_of(signer);
 		let network = BigInt::from_str(&network).map_err(|_| CodedError {
 			code: "INVALID_INTEGER".into(),
 			message: "network must be a decimal integer".into(),
 		})?;
-		let client = single_rep_client(base_url).with_network(network);
 
+		let client = single_rep_client(base_url).with_network(network);
 		let inner = UserClient::from_parts(client, Some(signer));
 		Ok(UserClientResource::new(Self { inner }))
 	}
@@ -566,8 +743,9 @@ impl GuestUserClient for AccountClient {
 		Ok(pure::account_address(&self.inner.account()?))
 	}
 
-	fn balance(&self, token: String) -> Result<String, CodedError> {
-		Ok(amount_to_string(run(self.inner.balance(token))?))
+	fn balance(&self, token: AccountBorrow<'_>) -> Result<String, CodedError> {
+		let token = account_of(token);
+		Ok(amount_to_string(run(self.inner.balance(&*token))?))
 	}
 
 	fn all_balances(&self) -> Result<Vec<TokenBalance>, CodedError> {
@@ -593,8 +771,15 @@ impl GuestUserClient for AccountClient {
 	}
 
 	fn chain_page(&self, query: WitChainQuery) -> Result<Vec<String>, CodedError> {
-		let blocks = run(self.inner.chain_page(ChainQuery::from(query)))?;
+		let blocks = run(self.inner.chain_page(ChainQuery::try_from(query)?))?;
 		Ok(blocks.iter().map(pure::block_to_hex).collect())
+	}
+
+	fn chain_all(&self, page_limit: u32) -> Result<Vec<String>, CodedError> {
+		Ok(run(self.inner.chain_all(page_limit))?
+			.iter()
+			.map(pure::block_to_hex)
+			.collect())
 	}
 
 	fn history(&self) -> Result<Vec<HistoryEntry>, CodedError> {
@@ -604,26 +789,105 @@ impl GuestUserClient for AccountClient {
 			.collect())
 	}
 
+	fn history_page(&self, query: WitHistoryQuery) -> Result<Vec<HistoryEntry>, CodedError> {
+		let entries = run(self.inner.history_page(HistoryQuery::try_from(query)?))?;
+		Ok(entries.into_iter().map(HistoryEntry::from).collect())
+	}
+
+	fn history_all(&self, page_limit: u32) -> Result<Vec<HistoryEntry>, CodedError> {
+		Ok(run(self.inner.history_all(page_limit))?
+			.into_iter()
+			.map(HistoryEntry::from)
+			.collect())
+	}
+
 	fn pending_block(&self) -> Result<Option<String>, CodedError> {
 		Ok(run(self.inner.pending_block())?.map(|block| pure::block_to_hex(&block)))
 	}
 
-	fn send(&self, to: String, token: String, amount: String) -> Result<bool, CodedError> {
-		let to = pure::account_from_address(&to)?;
-		let token = pure::account_from_address(&token)?;
+	fn block(&self, blockhash: String, side: Option<WitLedgerSide>) -> Result<Option<String>, CodedError> {
+		let blockhash = parse_block_hash(&blockhash)?;
+		Ok(run(self.inner.block(blockhash, side.map(Into::into)))?.map(|block| pure::block_to_hex(&block)))
+	}
+
+	fn block_from_idempotent(&self, key: String, side: Option<WitLedgerSide>) -> Result<Option<String>, CodedError> {
+		let side = side.map(Into::into);
+		Ok(run(self.inner.block_from_idempotent(key, side))?.map(|block| pure::block_to_hex(&block)))
+	}
+
+	fn staple_effects(&self, staples: Vec<String>) -> Result<Vec<WitStapleEffects>, CodedError> {
+		let moment = WasiRuntime.unix_millis();
+		let staples = staples
+			.iter()
+			.map(|staple| pure::staple_from_hex(staple, moment))
+			.collect::<Result<Vec<_>, _>>()?;
+
+		let effects = self
+			.inner
+			.staple_effects(&staples)
+			.map_err(CodedError::from)?;
+		Ok(effects
+			.into_iter()
+			.map(|(id, blocks)| WitStapleEffects {
+				id: id.to_string(),
+				blocks: blocks.iter().map(WitBlockEffects::from).collect(),
+			})
+			.collect())
+	}
+
+	fn acls(&self) -> Result<Vec<Acl>, CodedError> {
+		Ok(run(self.inner.acls())?.into_iter().map(Acl::from).collect())
+	}
+
+	fn acls_by_entity(&self) -> Result<Vec<Acl>, CodedError> {
+		Ok(run(self.inner.acls_by_entity())?
+			.into_iter()
+			.map(Acl::from)
+			.collect())
+	}
+
+	fn certificates(&self) -> Result<Vec<Certificate>, CodedError> {
+		Ok(run(self.inner.certificates())?
+			.into_iter()
+			.map(Certificate::from)
+			.collect())
+	}
+
+	fn certificate(&self, hash: String) -> Result<Option<Certificate>, CodedError> {
+		let hash = decode_hash(&hash)?;
+		Ok(run(self.inner.certificate(hash))?.map(Certificate::from))
+	}
+
+	fn sync(&self, publish: bool) -> Result<Option<String>, CodedError> {
+		Ok(run(self.inner.sync(publish))?.map(|staple| pure::staple_to_hex(&staple)))
+	}
+
+	fn recover(&self, publish: bool) -> Result<Option<String>, CodedError> {
+		Ok(run(self.inner.recover(publish))?.map(|staple| pure::staple_to_hex(&staple)))
+	}
+
+	fn send(&self, to: AccountBorrow<'_>, token: AccountBorrow<'_>, amount: String) -> Result<bool, CodedError> {
+		let to = account_of(to);
+		let token = account_of(token);
 		let amount = parse_amount(&amount)?;
 		run(self.inner.send(&to, &token, amount))
 	}
 
-	fn send_external(&self, to: String, token: String, amount: String, external: String) -> Result<bool, CodedError> {
-		let to = pure::account_from_address(&to)?;
-		let token = pure::account_from_address(&token)?;
+	fn send_external(
+		&self,
+		to: AccountBorrow<'_>,
+		token: AccountBorrow<'_>,
+		amount: String,
+		external: String,
+	) -> Result<bool, CodedError> {
+		let to = account_of(to);
+		let token = account_of(token);
 		let amount = parse_amount(&amount)?;
 		run(self.inner.send_external(&to, &token, amount, external))
 	}
 
-	fn set_rep(&self, rep: String) -> Result<bool, CodedError> {
-		let rep = pure::account_from_address(&rep)?;
+	fn set_rep(&self, rep: AccountBorrow<'_>) -> Result<bool, CodedError> {
+		let rep = account_of(rep);
 		run(self.inner.set_rep(&rep))
 	}
 
@@ -644,15 +908,13 @@ impl GuestUserClient for AccountClient {
 
 	fn modify_token(
 		&self,
-		token: String,
-		holder: Option<String>,
+		token: AccountBorrow<'_>,
+		holder: Option<AccountBorrow<'_>>,
 		amount: String,
 		method: WitAdjustMethod,
 	) -> Result<bool, CodedError> {
-		let token = pure::account_from_address(&token)?;
-		let holder = holder
-			.map(|holder| pure::account_from_address(&holder))
-			.transpose()?;
+		let token = account_of(token);
+		let holder = holder.map(account_of);
 		let amount = parse_amount(&amount)?;
 
 		run(self
@@ -662,28 +924,23 @@ impl GuestUserClient for AccountClient {
 
 	fn update_permissions(
 		&self,
-		principal: String,
+		principal: AccountBorrow<'_>,
 		method: WitAdjustMethod,
-		permissions: Vec<String>,
-		target: Option<String>,
+		permissions: WitBasePermission,
+		target: Option<AccountBorrow<'_>>,
 	) -> Result<bool, CodedError> {
-		let principal = ModifyPermissionsPrincipal::Account(pure::account_from_address(&principal)?);
+		let principal = ModifyPermissionsPrincipal::Account(account_of(principal));
 		let permissions = match permissions.is_empty() {
 			true => None,
-			false => Some(pure::permissions_from_flags(&permissions, &[])?),
+			false => Some(permissions_of(permissions)?),
 		};
-		let target = target
-			.map(|target| pure::account_from_address(&target))
-			.transpose()?;
+		let target = target.map(account_of);
 		let change = ModifyPermissions { principal, method: AdjustMethod::from(method), permissions, target };
 		run(self.inner.update_permissions(change))
 	}
 
-	fn generate_multisig(&self, signers: Vec<String>, quorum: u32) -> Result<String, CodedError> {
-		let signers = signers
-			.iter()
-			.map(|signer| pure::account_from_address(signer))
-			.collect::<Result<Vec<_>, _>>()?;
+	fn generate_multisig(&self, signers: Vec<AccountBorrow<'_>>, quorum: u32) -> Result<String, CodedError> {
+		let signers = signers.into_iter().map(account_of).collect();
 		let arguments = IdentifierCreateArguments::Multisig(MultisigCreateArguments { signers, quorum: quorum.into() });
 		let identifier = run(self
 			.inner
@@ -691,26 +948,34 @@ impl GuestUserClient for AccountClient {
 		Ok(pure::account_address(&identifier))
 	}
 
-	fn generate_identifier(&self, kind: String) -> Result<String, CodedError> {
-		let kind = keetanetwork_bindings::parse::identifier_type(&kind)?;
-		let identifier = run(self.inner.generate_identifier(kind, None))?;
+	fn generate_identifier(&self, kind: WitIdentifierKind) -> Result<String, CodedError> {
+		// Multisig identifiers require create arguments, supplied only by the
+		// dedicated generate-multisig path.
+		if kind == WitIdentifierKind::Multisig {
+			return Err(CodedError {
+				code: "INVALID_IDENTIFIER_TYPE".into(),
+				message: "multisig identifiers are created through generate-multisig".into(),
+			});
+		}
+
+		let identifier = run(self.inner.generate_identifier(kind.into(), None))?;
 		Ok(pure::account_address(&identifier))
 	}
 
 	fn create_swap(
 		&self,
-		counterparty: String,
-		send_token: String,
+		counterparty: AccountBorrow<'_>,
+		send_token: AccountBorrow<'_>,
 		send_amount: String,
-		receive_token: String,
+		receive_token: AccountBorrow<'_>,
 		receive_amount: String,
 		receive_exact: bool,
 	) -> Result<String, CodedError> {
 		let request = CreateSwapRequest {
-			counterparty: pure::account_from_address(&counterparty)?,
-			send_token: pure::account_from_address(&send_token)?,
+			counterparty: account_of(counterparty),
+			send_token: account_of(send_token),
 			send_amount: parse_amount(&send_amount)?,
-			receive_token: pure::account_from_address(&receive_token)?,
+			receive_token: account_of(receive_token),
 			receive_amount: parse_amount(&receive_amount)?,
 			receive_exact,
 		};
@@ -746,6 +1011,7 @@ impl GuestUserClient for AccountClient {
 			certificate_or_hash: CertificateOrHash::Certificate(certificate),
 			intermediate_certificates: Some(IntermediateCertificates::Bundle(intermediates)),
 		};
+
 		run(self.inner.modify_certificate(manage))
 	}
 
@@ -785,9 +1051,9 @@ struct TransactionState {
 }
 
 impl GuestTransaction for TransactionState {
-	fn send(&self, to: String, token: String, amount: String) -> Result<(), CodedError> {
-		let to = pure::account_from_address(&to)?;
-		let token = pure::account_from_address(&token)?;
+	fn send(&self, to: AccountBorrow<'_>, token: AccountBorrow<'_>, amount: String) -> Result<(), CodedError> {
+		let to = account_of(to);
+		let token = account_of(token);
 		let amount = parse_amount(&amount)?;
 
 		self.builder.borrow_mut().send(&to, &token, amount);
@@ -795,9 +1061,15 @@ impl GuestTransaction for TransactionState {
 		Ok(())
 	}
 
-	fn send_external(&self, to: String, token: String, amount: String, external: String) -> Result<(), CodedError> {
-		let to = pure::account_from_address(&to)?;
-		let token = pure::account_from_address(&token)?;
+	fn send_external(
+		&self,
+		to: AccountBorrow<'_>,
+		token: AccountBorrow<'_>,
+		amount: String,
+		external: String,
+	) -> Result<(), CodedError> {
+		let to = account_of(to);
+		let token = account_of(token);
 		let amount = parse_amount(&amount)?;
 
 		self.builder
@@ -807,8 +1079,8 @@ impl GuestTransaction for TransactionState {
 		Ok(())
 	}
 
-	fn set_rep(&self, rep: String) -> Result<(), CodedError> {
-		let rep = pure::account_from_address(&rep)?;
+	fn set_rep(&self, rep: AccountBorrow<'_>) -> Result<(), CodedError> {
+		let rep = account_of(rep);
 
 		self.builder.borrow_mut().set_rep(&rep);
 
@@ -869,8 +1141,12 @@ fn builder_consumed() -> CodedError {
 }
 
 impl GuestBlockBuilder for BuilderState {
-	fn new(network: u64, account: String) -> Result<BlockBuilderResource, CodedError> {
-		let account = pure::account_from_address(&account)?;
+	fn new(network: String, account: AccountBorrow<'_>) -> Result<BlockBuilderResource, CodedError> {
+		let account = account_of(account);
+		let network = BigInt::from_str(&network).map_err(|_| CodedError {
+			code: "INVALID_INTEGER".into(),
+			message: "network must be a decimal integer".into(),
+		})?;
 		let builder = BlockBuilder::default()
 			.with_network(network)
 			.with_account(account);
@@ -897,43 +1173,40 @@ impl GuestBlockBuilder for BuilderState {
 	}
 
 	fn signer_single(&self, signer: AccountBorrow<'_>) -> Result<(), CodedError> {
-		let account = Arc::clone(&signer.get::<AccountResource>().account);
+		let account = account_of(signer);
 		let signer = pure::signer_single(account);
 		self.stage(|builder| builder.with_signer(signer))
 	}
 
-	fn signer_multisig(&self, multisig: String, members: Vec<AccountBorrow<'_>>) -> Result<(), CodedError> {
-		let multisig = pure::account_from_address(&multisig)?;
-		let members = members
-			.iter()
-			.map(|member| Arc::clone(&member.get::<AccountResource>().account))
-			.collect();
+	fn signer_multisig(&self, multisig: AccountBorrow<'_>, members: Vec<AccountBorrow<'_>>) -> Result<(), CodedError> {
+		let multisig = account_of(multisig);
+		let members = members.into_iter().map(account_of).collect();
 		let signer = pure::signer_multisig(multisig, members);
 		self.stage(|builder| builder.with_signer(signer))
 	}
 
-	fn op_create_multisig(&self, multisig: String, signers: Vec<String>, quorum: u32) -> Result<(), CodedError> {
-		let multisig = pure::account_from_address(&multisig)?;
-		let signers = signers
-			.iter()
-			.map(|signer| pure::account_from_address(signer))
-			.collect::<Result<Vec<_>, _>>()?;
+	fn op_create_multisig(
+		&self,
+		multisig: AccountBorrow<'_>,
+		signers: Vec<AccountBorrow<'_>>,
+		quorum: u32,
+	) -> Result<(), CodedError> {
+		let multisig = account_of(multisig);
+		let signers = signers.into_iter().map(account_of).collect();
 		let operation = pure::op_create_multisig(multisig, signers, quorum);
 		self.stage(|builder| builder.with_operation(operation))
 	}
 
 	fn op_modify_permissions(
 		&self,
-		principal: String,
-		permissions: Vec<String>,
+		principal: AccountBorrow<'_>,
+		permissions: WitBasePermission,
 		method: WitAdjustMethod,
-		target: Option<String>,
+		target: Option<AccountBorrow<'_>>,
 	) -> Result<(), CodedError> {
-		let principal = pure::account_from_address(&principal)?;
-		let permissions = pure::permissions_from_flags(&permissions, &[])?;
-		let target = target
-			.map(|target| pure::account_from_address(&target))
-			.transpose()?;
+		let principal = account_of(principal);
+		let permissions = permissions_of(permissions)?;
+		let target = target.map(account_of);
 		let operation = pure::op_modify_permissions(principal, permissions, AdjustMethod::from(method), target);
 		self.stage(|builder| builder.with_operation(operation))
 	}
@@ -943,18 +1216,15 @@ impl GuestBlockBuilder for BuilderState {
 		name: String,
 		description: String,
 		metadata: String,
-		default_permission: Vec<String>,
+		default_permission: Option<WitBasePermission>,
 	) -> Result<(), CodedError> {
-		let default_permission = match default_permission.is_empty() {
-			true => None,
-			false => Some(pure::permissions_from_flags(&default_permission, &[])?),
-		};
+		let default_permission = default_permission.map(permissions_of).transpose()?;
 		let operation = pure::op_set_info(name, description, metadata, default_permission);
 		self.stage(|builder| builder.with_operation(operation))
 	}
 
-	fn op_set_rep(&self, rep: String) -> Result<(), CodedError> {
-		let rep = pure::account_from_address(&rep)?;
+	fn op_set_rep(&self, rep: AccountBorrow<'_>) -> Result<(), CodedError> {
+		let rep = account_of(rep);
 		let operation = pure::op_set_rep(rep);
 		self.stage(|builder| builder.with_operation(operation))
 	}

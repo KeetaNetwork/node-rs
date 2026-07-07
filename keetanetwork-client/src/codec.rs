@@ -10,11 +10,12 @@ use core::str::FromStr;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use keetanetwork_block::{Amount, Block, BlockTime};
+use keetanetwork_crypto::error::CryptoError;
 use keetanetwork_error::{KeetaNetError, NodeErrorParts, NodeErrorType};
 use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
 use snafu::ResultExt;
 
-use crate::error::{AmountSnafu, BlockSnafu, ClientError, DecodeSnafu, VoteSnafu};
+use crate::error::{AmountSnafu, BlockSnafu, ClientError, DecodeSnafu, HashSnafu, MomentSnafu, VoteSnafu};
 use crate::generated::types;
 use crate::model::{AccountInfo, AccountState, Acl, Certificate, HistoryEntry, Representative, TokenBalance};
 use crate::transport::LedgerSide;
@@ -25,6 +26,16 @@ impl From<LedgerSide> for types::GetBlockSide {
 			LedgerSide::Main => types::GetBlockSide::Main,
 			LedgerSide::Side => types::GetBlockSide::Side,
 			LedgerSide::Both => types::GetBlockSide::Both,
+		}
+	}
+}
+
+impl From<LedgerSide> for types::GetBlockFromIdempotentSide {
+	fn from(side: LedgerSide) -> Self {
+		match side {
+			LedgerSide::Main => types::GetBlockFromIdempotentSide::Main,
+			LedgerSide::Side => types::GetBlockFromIdempotentSide::Side,
+			LedgerSide::Both => types::GetBlockFromIdempotentSide::Both,
 		}
 	}
 }
@@ -145,10 +156,28 @@ pub(crate) fn decode_history(
 		.into_iter()
 		.filter_map(|entry| match decode_staple(entry.vote_staple, moment) {
 			Ok(None) => None,
-			Ok(Some(staple)) => Some(Ok(HistoryEntry { staple, id: entry.id, timestamp: entry.timestamp })),
+			Ok(Some(staple)) => Some(decode_history_entry(staple, entry.id, entry.timestamp)),
 			Err(error) => Some(Err(error)),
 		})
 		.collect()
+}
+
+/// Assemble a verified [`HistoryEntry`] from its decoded staple and the
+/// transport id/timestamp fields.
+fn decode_history_entry(
+	staple: VoteStaple,
+	id: Option<String>,
+	timestamp: Option<String>,
+) -> Result<HistoryEntry, ClientError> {
+	Ok(HistoryEntry { staple, id: decode_hash(id)?, timestamp: decode_moment(timestamp)? })
+}
+
+/// Parse an optional ISO 8601 timestamp field into a [`BlockTime`], treating
+/// an absent field as `None`.
+pub(crate) fn decode_moment(timestamp: Option<String>) -> Result<Option<BlockTime>, ClientError> {
+	timestamp
+		.map(|value| BlockTime::from_str(&value).context(MomentSnafu))
+		.transpose()
 }
 
 /// Decode a transport representative entry.
@@ -204,7 +233,7 @@ pub(crate) fn decode_account_state(
 
 	Ok(AccountState {
 		representative,
-		head,
+		head: decode_hash(head)?,
 		height: height
 			.map(|height| decode_amount(Some(height)))
 			.transpose()?,
@@ -221,6 +250,16 @@ pub(crate) fn decode_amount(balance: Option<String>) -> Result<Amount, ClientErr
 		None => Ok(Amount::default()),
 		Some(value) => Amount::from_str(&value).context(AmountSnafu),
 	}
+}
+
+/// Parse an optional hex hash field into its domain digest type, treating an
+/// absent field as `None`.
+pub(crate) fn decode_hash<T>(hash: Option<String>) -> Result<Option<T>, ClientError>
+where
+	T: FromStr<Err = CryptoError>,
+{
+	hash.map(|value| T::from_str(&value).context(HashSnafu))
+		.transpose()
 }
 
 #[cfg(test)]
@@ -243,10 +282,66 @@ mod tests {
 	}
 
 	#[test]
+	fn decodes_absent_hash_as_none() -> Result<(), ClientError> {
+		let decoded: Option<keetanetwork_block::BlockHash> = decode_hash(None)?;
+		assert_eq!(decoded, None);
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_a_hex_hash() -> Result<(), ClientError> {
+		let hash = keetanetwork_block::BlockHash::from([0xABu8; 32]);
+		let decoded: Option<keetanetwork_block::BlockHash> = decode_hash(Some(hash.to_string()))?;
+		assert_eq!(decoded, Some(hash));
+		Ok(())
+	}
+
+	#[test]
+	fn rejects_a_malformed_hash() {
+		let decoded: Result<Option<keetanetwork_block::BlockHash>, ClientError> =
+			decode_hash(Some(String::from("nope")));
+		assert!(matches!(decoded, Err(ClientError::Hash { .. })));
+	}
+
+	#[test]
+	fn decodes_absent_moment_as_none() -> Result<(), ClientError> {
+		assert_eq!(decode_moment(None)?, None);
+		Ok(())
+	}
+
+	#[test]
+	fn decodes_an_iso_moment() -> Result<(), ClientError> {
+		let decoded = decode_moment(Some(String::from("2025-01-02T03:04:05.123Z")))?;
+		assert_eq!(decoded.map(|moment| moment.to_string()).as_deref(), Some("2025-01-02T03:04:05.123Z"));
+		Ok(())
+	}
+
+	#[test]
+	fn rejects_a_malformed_moment() {
+		assert!(matches!(decode_moment(Some(String::from("nope"))), Err(ClientError::Moment { .. })));
+	}
+
+	#[test]
 	fn maps_block_side_to_the_wire_variant() {
 		assert!(matches!(types::GetBlockSide::from(LedgerSide::Main), types::GetBlockSide::Main));
 		assert!(matches!(types::GetBlockSide::from(LedgerSide::Side), types::GetBlockSide::Side));
 		assert!(matches!(types::GetBlockSide::from(LedgerSide::Both), types::GetBlockSide::Both));
+	}
+
+	#[test]
+	fn maps_idempotent_side_to_the_wire_variant() {
+		assert!(matches!(
+			types::GetBlockFromIdempotentSide::from(LedgerSide::Main),
+			types::GetBlockFromIdempotentSide::Main
+		));
+		assert!(matches!(
+			types::GetBlockFromIdempotentSide::from(LedgerSide::Side),
+			types::GetBlockFromIdempotentSide::Side
+		));
+		assert!(matches!(
+			types::GetBlockFromIdempotentSide::from(LedgerSide::Both),
+			types::GetBlockFromIdempotentSide::Both
+		));
 	}
 
 	#[test]
