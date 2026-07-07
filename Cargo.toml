@@ -154,7 +154,7 @@ path = "keetanetwork-asn1"
 default-features = false
 
 [workspace.dependencies.keetanetwork-account]
-version = "0.3.1"
+version = "0.4.0"
 path = "keetanetwork-account"
 default-features = false
 
@@ -164,12 +164,12 @@ path = "keetanetwork-x509"
 default-features = false
 
 [workspace.dependencies.keetanetwork-block]
-version = "0.3.1"
+version = "0.4.0"
 path = "keetanetwork-block"
 default-features = false
 
 [workspace.dependencies.keetanetwork-vote]
-version = "0.3.2"
+version = "0.4.0"
 path = "keetanetwork-vote"
 default-features = false
 
@@ -179,22 +179,22 @@ path = "keetanetwork-ledger"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client]
-version = "0.3.2"
+version = "0.4.0"
 path = "keetanetwork-client"
 default-features = false
 
 [workspace.dependencies.keetanetwork-bindings]
-version = "0.3.1"
+version = "0.4.0"
 path = "keetanetwork-bindings"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client-wasi]
-version = "0.3.2"
+version = "0.4.0"
 path = "keetanetwork-client-wasi"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client-wasm]
-version = "0.3.1"
+version = "0.4.0"
 path = "keetanetwork-client-wasm"
 default-features = false
 
