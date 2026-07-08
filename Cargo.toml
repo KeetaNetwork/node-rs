@@ -149,7 +149,7 @@ path = "keetanetwork-crypto"
 default-features = false
 
 [workspace.dependencies.keetanetwork-asn1]
-version = "0.2.4"
+version = "0.2.5"
 path = "keetanetwork-asn1"
 default-features = false
 
