@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-bindings"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "hex",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-block"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "hex",
@@ -1342,7 +1342,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-client-wasi"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "hex",
  "keetanetwork-account",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-client-wasm"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "chrono",
  "hex",
@@ -1478,7 +1478,7 @@ dependencies = [
 
 [[package]]
 name = "keetanetwork-x509"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64",
  "chrono",
