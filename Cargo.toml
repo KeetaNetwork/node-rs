@@ -159,12 +159,12 @@ path = "keetanetwork-account"
 default-features = false
 
 [workspace.dependencies.keetanetwork-x509]
-version = "0.3.0"
+version = "0.4.0"
 path = "keetanetwork-x509"
 default-features = false
 
 [workspace.dependencies.keetanetwork-block]
-version = "0.4.0"
+version = "0.4.1"
 path = "keetanetwork-block"
 default-features = false
 
@@ -184,17 +184,17 @@ path = "keetanetwork-client"
 default-features = false
 
 [workspace.dependencies.keetanetwork-bindings]
-version = "0.4.0"
+version = "0.4.1"
 path = "keetanetwork-bindings"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client-wasi]
-version = "0.4.0"
+version = "0.4.1"
 path = "keetanetwork-client-wasi"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client-wasm]
-version = "0.4.0"
+version = "0.4.1"
 path = "keetanetwork-client-wasm"
 default-features = false
 
