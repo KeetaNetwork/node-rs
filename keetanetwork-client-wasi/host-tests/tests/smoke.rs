@@ -35,7 +35,9 @@ struct Abi {
 	last_error_code: TypedFunc<(), i32>,
 	generate_seed: TypedFunc<(), i32>,
 	account_from_seed: TypedFunc<(i32, i32, i32, i32, i32), i32>,
-	account_address: TypedFunc<i32, i32>,
+	account_from_public_key_and_type: TypedFunc<(i32, i32), i32>,
+	account_public_key_string: TypedFunc<i32, i32>,
+	account_public_key_and_type_string: TypedFunc<i32, i32>,
 	account_sign: TypedFunc<(i32, i32, i32), i32>,
 	account_verify: TypedFunc<(i32, i32, i32, i32, i32), i32>,
 	account_encrypt: TypedFunc<(i32, i32, i32), i32>,
@@ -73,7 +75,11 @@ impl Abi {
 			last_error_code: instance.get_typed_func(&mut *store, "keeta_last_error_code")?,
 			generate_seed: instance.get_typed_func(&mut *store, "keeta_generate_seed")?,
 			account_from_seed: instance.get_typed_func(&mut *store, "keeta_account_from_seed")?,
-			account_address: instance.get_typed_func(&mut *store, "keeta_account_address")?,
+			account_from_public_key_and_type: instance
+				.get_typed_func(&mut *store, "keeta_account_from_public_key_and_type")?,
+			account_public_key_string: instance.get_typed_func(&mut *store, "keeta_account_public_key_string")?,
+			account_public_key_and_type_string: instance
+				.get_typed_func(&mut *store, "keeta_account_public_key_and_type_string")?,
 			account_sign: instance.get_typed_func(&mut *store, "keeta_account_sign")?,
 			account_verify: instance.get_typed_func(&mut *store, "keeta_account_verify")?,
 			account_encrypt: instance.get_typed_func(&mut *store, "keeta_account_encrypt")?,
@@ -216,9 +222,9 @@ fn p1_derives_account_and_signs_an_opening_block() -> wasmtime::Result<()> {
 	let user = abi.account_from_seed(&mut store, &seed, 0)?;
 	let rep = abi.account_from_seed(&mut store, &seed, 1)?;
 
-	let address_handle = abi.account_address.call(&mut store, user)?;
-	let address = abi.take_string(&mut store, address_handle)?;
-	assert!(!address.is_empty(), "the account must have an address");
+	let string_handle = abi.account_public_key_string.call(&mut store, user)?;
+	let public_key_string = abi.take_string(&mut store, string_handle)?;
+	assert!(!public_key_string.is_empty(), "the account must have a public-key string");
 
 	let operation = abi.checked(&mut store, &abi.op_set_rep, rep)?;
 
@@ -275,6 +281,40 @@ fn p1_account_signs_verifies_and_encrypts_round_trip() -> wasmtime::Result<()> {
 		.call(&mut store, (account, cipher_ptr, cipher_len))?;
 	let recovered = abi.take(&mut store, raw)?;
 	assert_eq!(recovered.as_slice(), message, "decrypt must recover the plaintext");
+
+	Ok(())
+}
+
+#[test]
+fn p1_account_round_trips_through_public_key_and_type() -> wasmtime::Result<()> {
+	let (mut store, abi) = instantiate()?;
+
+	let account = abi.seeded_account(&mut store, 0)?;
+	let string_handle = abi.account_public_key_string.call(&mut store, account)?;
+	let address = abi.take_string(&mut store, string_handle)?;
+
+	let key_handle = abi
+		.account_public_key_and_type_string
+		.call(&mut store, account)?;
+	let key_and_type = abi.take_string(&mut store, key_handle)?;
+	assert!(key_and_type.starts_with("0x"), "the getter must be 0x-prefixed hex");
+
+	let (hex_ptr, hex_len) = abi.write(&mut store, key_and_type.as_bytes())?;
+	let reopened = abi.checked(&mut store, &abi.account_from_public_key_and_type, (hex_ptr, hex_len))?;
+	let string_handle = abi.account_public_key_string.call(&mut store, reopened)?;
+	let reopened_address = abi.take_string(&mut store, string_handle)?;
+	assert_eq!(reopened_address, address, "the reopened account must keep its address");
+
+	// An empty algorithm must select the default (`ecdsa_secp256k1`,
+	// key type byte 0x00), matching the browser binding and the reference.
+	let seed = abi.generate_seed_string(&mut store)?;
+	let (seed_ptr, seed_len) = abi.write(&mut store, seed.as_bytes())?;
+	let defaulted = abi.checked(&mut store, &abi.account_from_seed, (seed_ptr, seed_len, 0, 0, 0))?;
+	let key_handle = abi
+		.account_public_key_and_type_string
+		.call(&mut store, defaulted)?;
+	let defaulted_key = abi.take_string(&mut store, key_handle)?;
+	assert!(defaulted_key.starts_with("0x00"), "the default algorithm must be ecdsa_secp256k1");
 
 	Ok(())
 }

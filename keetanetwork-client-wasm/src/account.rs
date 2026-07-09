@@ -71,19 +71,29 @@ impl Account {
 			.map_err(coded)
 	}
 
-	/// Build a read-only account from its textual `address`. Suitable as a
-	/// recipient or token operand, but cannot sign.
-	#[wasm_bindgen(js_name = fromAddress)]
-	pub fn from_address(address: String) -> JsResult<Account> {
-		account::account_from_address(&address)
+	/// Build a read-only account from its textual `keeta_…` public-key string.
+	/// Suitable as a recipient or token operand, but cannot sign.
+	#[wasm_bindgen(js_name = fromPublicKeyString)]
+	pub fn from_public_key_string(public_key_string: String) -> JsResult<Account> {
+		account::account_from_public_key_string(&public_key_string)
 			.map(Account::from)
 			.map_err(coded)
 	}
 
-	/// The textual account address.
-	#[wasm_bindgen(getter)]
-	pub fn address(&self) -> String {
-		account::account_address(&self.inner)
+	/// Build a read-only account from the `[key_type_byte || raw_public_key]`
+	/// hex layout (optionally `0x`-prefixed), matching the reference
+	/// `Account.fromPublicKeyAndType`.
+	#[wasm_bindgen(js_name = fromPublicKeyAndType)]
+	pub fn from_public_key_and_type(key_and_type: String) -> JsResult<Account> {
+		account::account_from_public_key_and_type(&key_and_type)
+			.map(Account::from)
+			.map_err(coded)
+	}
+
+	/// The account's textual `keeta_…` public-key string.
+	#[wasm_bindgen(getter, js_name = publicKeyString)]
+	pub fn public_key_string(&self) -> String {
+		account::account_public_key_string(&self.inner)
 	}
 
 	/// The signing algorithm name, or `"other"` for identifier accounts.
@@ -96,6 +106,13 @@ impl Account {
 	#[wasm_bindgen(getter, js_name = publicKey)]
 	pub fn public_key(&self) -> String {
 		account::account_public_key(&self.inner)
+	}
+
+	/// The `0x`-prefixed uppercase `[key_type_byte || raw_public_key]` hex
+	/// string, matching the reference `publicKeyAndTypeString` getter.
+	#[wasm_bindgen(getter, js_name = publicKeyAndTypeString)]
+	pub fn public_key_and_type_string(&self) -> String {
+		account::account_public_key_and_type_string(&self.inner)
 	}
 
 	/// Derive an identifier account of `kind` relative to this account.

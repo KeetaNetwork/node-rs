@@ -38,7 +38,7 @@ public final class FeeTransfer {
 
 			try (Account trusted = keeta.account(trustedSeed, 0, Algorithm.ED25519);
 				 Account recipient = keeta.account(trustedSeed, 7, Algorithm.ED25519);
-				 Account base = keeta.address(baseTokenAddress)) {
+				 Account base = keeta.accountFromPublicKeyString(baseTokenAddress)) {
 				String head = client.headHash(trusted);
 				check(head != null && !head.isBlank(), "funded account must have a head block");
 

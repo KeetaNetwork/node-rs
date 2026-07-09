@@ -46,7 +46,7 @@ public final class ClientOperations {
 
 			try (Account trusted = keeta.account(trustedSeed, 0, Algorithm.ED25519);
 				 Account recipient = keeta.account(trustedSeed, RECIPIENT_INDEX, Algorithm.ED25519);
-				 Account base = keeta.address(baseToken)) {
+				 Account base = keeta.accountFromPublicKeyString(baseToken)) {
 				transferRoundTrip(client, trusted, recipient, base);
 				certificateRoundTrip(keeta, client, trusted, certificateDerHex);
 			}

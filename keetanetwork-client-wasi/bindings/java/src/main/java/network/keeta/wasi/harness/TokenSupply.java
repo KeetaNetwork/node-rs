@@ -42,7 +42,7 @@ public final class TokenSupply {
 				check(trustedHead != null && !trustedHead.isBlank(), "funded account must have a head block");
 
 				try (Account token = trusted.generateIdentifier(IdentifierType.TOKEN, hexDecode(trustedHead), 0)) {
-					System.out.println("[harness] minting token " + token.address());
+					System.out.println("[harness] minting token " + token.publicKeyString());
 
 					mint(keeta, client, trusted, token, holder, network, trustedHead);
 

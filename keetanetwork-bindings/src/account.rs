@@ -7,6 +7,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::str::FromStr;
 
+use hex::FromHex;
 use keetanetwork_account::account::{AccountSigner, AccountVerifier};
 use keetanetwork_account::{
 	Account, AccountPublicKey, Accountable, GenericAccount, KeyECDSASECP256K1, KeyECDSASECP256R1, KeyED25519,
@@ -97,15 +98,37 @@ pub fn account_from_public_key(key: &str, algorithm: &str) -> Result<AccountRef,
 	keyable_account(Keyable::PublicKey(bytes), algorithm)
 }
 
-/// Build a read-only account from its textual `address`.
-pub fn account_from_address(address: &str) -> Result<AccountRef, CodedError> {
-	let account =
-		GenericAccount::from_str(address).map_err(|_| CodedError::new("INVALID_ADDRESS", "invalid account address"))?;
+/// Build a read-only account from its textual `keeta_…` public-key string.
+pub fn account_from_public_key_string(public_key_string: &str) -> Result<AccountRef, CodedError> {
+	let account = GenericAccount::from_str(public_key_string)
+		.map_err(|_| CodedError::new("INVALID_PUBLIC_KEY_STRING", "invalid account public-key string"))?;
 	Ok(Arc::new(account))
 }
 
-/// The textual account address.
-pub fn account_address(account: &AccountRef) -> String {
+/// Build a read-only account from the reference `publicKeyAndType` hex
+/// layout: `[key_type_byte || raw_public_key]`, optionally `0x`-prefixed.
+/// Accepts signing and identifier key types alike, matching the reference
+/// `Account.fromPublicKeyAndType`.
+pub fn account_from_public_key_and_type(key_and_type: impl AsRef<str>) -> Result<AccountRef, CodedError> {
+	let hex_data = key_and_type.as_ref();
+	let hex_data = hex_data
+		.strip_prefix("0x")
+		.or_else(|| hex_data.strip_prefix("0X"))
+		.unwrap_or(hex_data);
+
+	let account = GenericAccount::from_hex(hex_data)
+		.map_err(|_| CodedError::new("INVALID_PUBLIC_KEY_AND_TYPE", "invalid type-prefixed public key hex"))?;
+	Ok(Arc::new(account))
+}
+
+/// The `0x`-prefixed uppercase hex `[key_type_byte || raw_public_key]`
+/// string, matching the reference `publicKeyAndTypeString` getter.
+pub fn account_public_key_and_type_string(account: &AccountRef) -> String {
+	format!("0x{}", hex::encode_upper(account.to_public_key_with_type()))
+}
+
+/// The account's textual `keeta_…` public-key string.
+pub fn account_public_key_string(account: &AccountRef) -> String {
 	account.to_string()
 }
 
@@ -172,13 +195,36 @@ mod tests {
 	}
 
 	#[test]
-	fn account_round_trips_through_seed_and_address() {
+	fn account_round_trips_through_seed_and_public_key_string() {
 		let seed = generate_seed().expect("seed generation must succeed");
 		let account = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("account derivation must succeed");
-		let address = account_address(&account);
-		let reopened = account_from_address(&address).expect("address must parse");
-		assert_eq!(account_address(&reopened), address);
+		let public_key_string = account_public_key_string(&account);
+		let reopened = account_from_public_key_string(&public_key_string).expect("public-key string must parse");
+		assert_eq!(account_public_key_string(&reopened), public_key_string);
 		assert_eq!(account_algorithm(&account), DEFAULT_ALGORITHM);
+	}
+
+	#[test]
+	fn account_round_trips_through_public_key_and_type() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let account = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("account derivation must succeed");
+
+		let key_and_type = account_public_key_and_type_string(&account);
+		assert!(key_and_type.starts_with("0x00"));
+
+		let reopened = account_from_public_key_and_type(&key_and_type).expect("type-prefixed hex must parse");
+		assert_eq!(account_public_key_string(&reopened), account_public_key_string(&account));
+		assert_eq!(account_public_key_and_type_string(&reopened), key_and_type);
+	}
+
+	#[test]
+	fn public_key_and_type_accepts_unprefixed_hex() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let account = account_from_seed(&seed, 0, "ed25519").expect("account derivation must succeed");
+		let unprefixed = hex::encode(account.to_public_key_with_type());
+
+		let reopened = account_from_public_key_and_type(unprefixed).expect("unprefixed hex must parse");
+		assert_eq!(account_public_key_string(&reopened), account_public_key_string(&account));
 	}
 
 	#[test]
@@ -234,10 +280,16 @@ mod tests {
 			"INVALID_PUBLIC_KEY"
 		);
 		assert_eq!(
-			account_from_address("not-an-address")
-				.expect_err("bad address must fail")
+			account_from_public_key_string("not-a-public-key-string")
+				.expect_err("bad public-key string must fail")
 				.code,
-			"INVALID_ADDRESS"
+			"INVALID_PUBLIC_KEY_STRING"
+		);
+		assert_eq!(
+			account_from_public_key_and_type("0xzz")
+				.expect_err("bad type-prefixed hex must fail")
+				.code,
+			"INVALID_PUBLIC_KEY_AND_TYPE"
 		);
 	}
 }

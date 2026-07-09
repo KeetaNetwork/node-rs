@@ -10,7 +10,7 @@ import network.keeta.node.api.NodeApi;
 import network.keeta.node.api.VoteApi;
 import network.keeta.node.invoker.ApiClient;
 import network.keeta.node.invoker.ApiException;
-import network.keeta.node.model.CreateVote200Response;
+import network.keeta.node.model.CreateVoteResponse;
 import network.keeta.node.model.CreateVoteRequest;
 import network.keeta.node.model.PublishVoteStapleRequest;
 import network.keeta.node.model.Vote;
@@ -50,18 +50,18 @@ public final class UserClient {
 
 	/** The {@code account} balance of {@code token} as a 0x-prefixed hexadecimal string. */
 	public String balance(Account account, Account token) {
-		return attempt(() -> ledgerApi.getAccountBalance(account.address(), token.address()).getBalance(), "balance");
+		return attempt(() -> ledgerApi.getAccountBalance(account.publicKeyString(), token.publicKeyString()).getBalance(), "balance");
 	}
 
 	/** The account's current head block hash (hex), or {@code null} for an unopened account. */
 	public String headHash(Account account) {
-		return attempt(() -> ledgerApi.getAccountState(account.address()).getCurrentHeadBlock(), "account state");
+		return attempt(() -> ledgerApi.getAccountState(account.publicKeyString()).getCurrentHeadBlock(), "account state");
 	}
 
 	/** Total supply of {@code token} as a 0x-prefixed hex string (token accounts only); {@code null} when absent. */
 	public String supply(Account token) {
 		return attempt(() -> {
-			var info = ledgerApi.getAccountState(token.address()).getInfo();
+			var info = ledgerApi.getAccountState(token.publicKeyString()).getInfo();
 			return info == null ? null : info.getSupply();
 		}, "token supply");
 	}
@@ -188,11 +188,11 @@ public final class UserClient {
 
 	/** The fee block's previous: {@code feeSigner}'s last block in {@code blocks}, else its ledger head. */
 	private String feeBlockPrevious(Account feeSigner, List<Block.SignedBlock> blocks) {
-		String signerAddress = feeSigner.address();
+		String signerAddress = feeSigner.publicKeyString();
 		String previous = null;
 		for (Block.SignedBlock block : blocks) {
 			try (Account account = block.account()) {
-				if (account.address().equals(signerAddress)) {
+				if (account.publicKeyString().equals(signerAddress)) {
 					previous = block.hashHex();
 				}
 			}
@@ -274,7 +274,7 @@ public final class UserClient {
 		CreateVoteRequest request = new CreateVoteRequest()
 			.blocks(blocksBase64)
 			.votes(priorVoteBase64 == null ? null : List.of(priorVoteBase64));
-		CreateVote200Response response = attempt(() -> voteApi.createVote(request), "vote");
+		CreateVoteResponse response = attempt(() -> voteApi.createVote(request), "vote");
 		Vote vote = response.getVote();
 
 		if (vote == null || vote.get$Binary() == null) {

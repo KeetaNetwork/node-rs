@@ -35,25 +35,25 @@ public final class MultisigSigner {
 			System.out.println("[harness] node version " + version.trim());
 
 			try (Account trusted = keeta.account(trustedSeed, 0, Algorithm.ED25519);
-				 Account base = keeta.address(baseToken);
+				 Account base = keeta.accountFromPublicKeyString(baseToken);
 				 Account signer1 = keeta.account(trustedSeed, 1, Algorithm.ED25519);
 				 Account signer2 = keeta.account(trustedSeed, 2, Algorithm.ED25519);
 				 Account signer3 = keeta.account(trustedSeed, 3, Algorithm.ED25519)) {
-				System.out.println("[harness] funded account " + trusted.address());
+				System.out.println("[harness] funded account " + trusted.publicKeyString());
 				System.out.println("[harness] base balance " + client.balance(trusted, base).trim());
 
 				String openingHead = client.headHash(trusted);
 				check(openingHead != null && !openingHead.isBlank(), "funded account must have a head block");
 
 				try (Account multisig = trusted.generateMultisigIdentifier(hexDecode(openingHead), 0)) {
-					System.out.println("[harness] multisig account " + multisig.address());
+					System.out.println("[harness] multisig account " + multisig.publicKeyString());
 
 					String afterMultisig = createMultisig(keeta, client, trusted, multisig, List.of(signer1, signer2, signer3), network, openingHead);
 					check(client.headHash(trusted).equalsIgnoreCase(afterMultisig), "create-multisig block must be the funded head");
 
 					try (Account customToken = trusted.generateIdentifier(IdentifierType.TOKEN,
 						hexDecode(afterMultisig), 0)) {
-						System.out.println("[harness] custom token " + customToken.address());
+						System.out.println("[harness] custom token " + customToken.publicKeyString());
 
 						String afterToken = createToken(keeta, client, trusted, customToken, network, afterMultisig);
 						check(client.headHash(trusted).equalsIgnoreCase(afterToken), "create-token block must be the funded head");

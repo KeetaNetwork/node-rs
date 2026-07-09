@@ -223,11 +223,12 @@ interface crypto {
 	use types.{coded-error, key-algorithm, account-kind};
 
 	/// A Keeta account: a signer derived from a seed, or a read-only account
-	/// parsed from its textual address.
+	/// parsed from its textual public-key string.
 	resource account {
 		/// Derive an account from a 32-byte hex `seed` at `index` under
-		/// `algorithm`.
-		from-seed: static func(seed: string, index: u32, algorithm: key-algorithm) -> result<account, coded-error>;
+		/// `algorithm`; defaults to `ecdsa-secp256k1` when omitted, matching
+		/// the browser binding and the reference SDK.
+		from-seed: static func(seed: string, index: u32, algorithm: option<key-algorithm>) -> result<account, coded-error>;
 		/// Build an account from a hex-encoded private `key` under `algorithm`.
 		from-private-key: static func(key: string, algorithm: key-algorithm) -> result<account, coded-error>;
 		/// Derive an account from a BIP39 mnemonic `words` at `index` under
@@ -236,19 +237,27 @@ interface crypto {
 		/// Build a read-only account from a hex-encoded public `key` under
 		/// `algorithm`.
 		from-public-key: static func(key: string, algorithm: key-algorithm) -> result<account, coded-error>;
-		/// Parse a read-only account from its textual `keeta_…` address.
-		from-address: static func(address: string) -> result<account, coded-error>;
+		/// Parse a read-only account from its textual `keeta_…` public-key
+		/// string.
+		from-public-key-string: static func(public-key-string: string) -> result<account, coded-error>;
+		/// Build a read-only account from the `[key_type_byte || raw_public_key]`
+		/// hex layout (optionally `0x`-prefixed), matching the reference
+		/// `Account.fromPublicKeyAndType`.
+		from-public-key-and-type: static func(key-and-type: string) -> result<account, coded-error>;
 		/// A fresh random 32-byte seed, hex-encoded.
 		generate-seed: static func() -> string;
 		/// A fresh random BIP39 mnemonic.
 		generate-passphrase: static func() -> list<string>;
-		/// The textual `keeta_…` address.
-		address: func() -> string;
+		/// The textual `keeta_…` public-key string.
+		public-key-string: func() -> string;
 		/// What the account is: a signing account under a key algorithm, or a
 		/// derived identifier account.
 		kind: func() -> account-kind;
 		/// The type-prefixed public key, hex-encoded.
 		public-key: func() -> string;
+		/// The `0x`-prefixed uppercase `[key_type_byte || raw_public_key]` hex
+		/// string, matching the reference `publicKeyAndTypeString` getter.
+		public-key-and-type-string: func() -> string;
 		/// Sign `message`, returning the raw signature bytes.
 		sign: func(message: list<u8>) -> result<list<u8>, coded-error>;
 		/// Whether `signature` is a valid signature of `message` by this account.

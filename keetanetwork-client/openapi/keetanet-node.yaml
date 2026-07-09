@@ -196,6 +196,242 @@ components:
           type: string
           description: Pending balance as a 0x-prefixed hexadecimal BigInt
 
+    CreateVoteResponse:
+      type: object
+      properties:
+        vote:
+          $ref: '#/components/schemas/Vote'
+
+    CreateVoteQuoteResponse:
+      type: object
+      properties:
+        quote:
+          $ref: '#/components/schemas/VoteQuote'
+
+    GetBlockVotesResponse:
+      type: object
+      properties:
+        blockhash:
+          type: string
+        votes:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/Vote'
+
+    GetNodeVersionResponse:
+      type: object
+      properties:
+        node:
+          type: string
+
+    GetAccountStateResponse:
+      type: object
+      properties:
+        account:
+          type: string
+        currentHeadBlock:
+          type: string
+          description: Head block hash as hexadecimal
+        currentHeadBlockHeight:
+          type: string
+          description: Head block height as a 0x-prefixed hexadecimal BigInt
+        representative:
+          type: string
+        info:
+          $ref: '#/components/schemas/AccountInfo'
+        balances:
+          type: array
+          items:
+            $ref: '#/components/schemas/BalanceEntry'
+
+    GetAccountStatesResponseItem:
+      type: object
+      properties:
+        account:
+          type: string
+        currentHeadBlock:
+          type: string
+        currentHeadBlockHeight:
+          type: string
+        representative:
+          type: string
+        info:
+          $ref: '#/components/schemas/AccountInfo'
+        balances:
+          type: array
+          items:
+            $ref: '#/components/schemas/BalanceEntry'
+
+    GetAccountBalancesResponse:
+      type: object
+      properties:
+        account:
+          type: string
+        balances:
+          type: array
+          items:
+            $ref: '#/components/schemas/BalanceEntry'
+
+    GetAccountBalanceResponse:
+      type: object
+      properties:
+        account:
+          type: string
+        token:
+          type: string
+        balance:
+          type: string
+          description: Settled balance as a 0x-prefixed hexadecimal BigInt
+
+    GetAccountHeadResponse:
+      type: object
+      properties:
+        account:
+          type: string
+        block:
+          $ref: '#/components/schemas/Block'
+        height:
+          type: string
+          nullable: true
+          description: Head block height as a 0x-prefixed hexadecimal BigInt
+
+    GetPendingBlockResponse:
+      type: object
+      properties:
+        account:
+          type: string
+        block:
+          $ref: '#/components/schemas/Block'
+
+    GetBlockResponse:
+      type: object
+      properties:
+        blockhash:
+          type: string
+        block:
+          $ref: '#/components/schemas/Block'
+
+    GetSuccessorBlockResponse:
+      type: object
+      properties:
+        blockhash:
+          type: string
+        successorBlock:
+          $ref: '#/components/schemas/Block'
+
+    GetBlockFromIdempotentResponse:
+      type: object
+      properties:
+        block:
+          $ref: '#/components/schemas/Block'
+
+    GetLedgerChecksumResponse:
+      type: object
+      properties:
+        moment:
+          type: string
+        momentRange:
+          type: number
+        checksum:
+          type: string
+          description: Checksum as a 0x-prefixed hexadecimal BigInt
+
+    GetAllRepresentativesResponse:
+      type: object
+      properties:
+        representatives:
+          type: array
+          items:
+            $ref: '#/components/schemas/Representative'
+
+    GetGlobalHistoryResponse:
+      type: object
+      properties:
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryEntry'
+        nextKey:
+          type: string
+
+    GetAccountChainResponse:
+      type: object
+      properties:
+        account:
+          type: string
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/GetAccountChainResponseBlocksItem'
+        nextKey:
+          type: string
+
+    GetAccountChainResponseBlocksItem:
+      type: object
+      properties:
+        block:
+          $ref: '#/components/schemas/Block'
+
+    GetAccountHistoryResponse:
+      type: object
+      properties:
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/HistoryEntry'
+        nextKey:
+          type: string
+
+    ListAclsByPrincipalResponse:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ACLRow'
+
+    ListAclsByEntityResponse:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ACLRow'
+
+    GetAccountCertificatesResponse:
+      type: object
+      properties:
+        account:
+          type: string
+        certificates:
+          type: array
+          items:
+            $ref: '#/components/schemas/Certificate'
+
+    GetCertificateByHashResponse:
+      allOf:
+        - $ref: '#/components/schemas/Certificate'
+        - type: object
+          properties:
+            account:
+              type: string
+
+    GetVoteStaplesAfterResponse:
+      type: object
+      properties:
+        voteStaples:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoteStaple'
+
+    PublishVoteStapleResponse:
+      type: object
+      properties:
+        publish:
+          type: boolean
+          description: Whether the vote staple was successfully published
+
 
 paths:
   /vote:
@@ -233,10 +469,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  vote:
-                    $ref: '#/components/schemas/Vote'
+                $ref: '#/components/schemas/CreateVoteResponse'
         '500':
           description: Server error
           content:
@@ -271,10 +504,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  quote:
-                    $ref: '#/components/schemas/VoteQuote'
+                $ref: '#/components/schemas/CreateVoteQuoteResponse'
         '500':
           description: Server error
           content:
@@ -311,15 +541,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  blockhash:
-                    type: string
-                  votes:
-                    type: array
-                    nullable: true
-                    items:
-                      $ref: '#/components/schemas/Vote'
+                $ref: '#/components/schemas/GetBlockVotesResponse'
         '500':
           description: Server error
           content:
@@ -340,10 +562,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  node:
-                    type: string
+                $ref: '#/components/schemas/GetNodeVersionResponse'
         '500':
           description: Server error
           content:
@@ -371,24 +590,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  account:
-                    type: string
-                  currentHeadBlock:
-                    type: string
-                    description: Head block hash as hexadecimal
-                  currentHeadBlockHeight:
-                    type: string
-                    description: Head block height as a 0x-prefixed hexadecimal BigInt
-                  representative:
-                    type: string
-                  info:
-                    $ref: '#/components/schemas/AccountInfo'
-                  balances:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/BalanceEntry'
+                $ref: '#/components/schemas/GetAccountStateResponse'
         '500':
           description: Server error
           content:
@@ -416,14 +618,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  account:
-                    type: string
-                  balances:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/BalanceEntry'
+                $ref: '#/components/schemas/GetAccountBalancesResponse'
         '500':
           description: Server error
           content:
@@ -457,15 +652,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  account:
-                    type: string
-                  token:
-                    type: string
-                  balance:
-                    type: string
-                    description: Settled balance as a 0x-prefixed hexadecimal BigInt
+                $ref: '#/components/schemas/GetAccountBalanceResponse'
         '500':
           description: Server error
           content:
@@ -493,16 +680,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  account:
-                    type: string
-                  block:
-                    $ref: '#/components/schemas/Block'
-                  height:
-                    type: string
-                    nullable: true
-                    description: Head block height as a 0x-prefixed hexadecimal BigInt
+                $ref: '#/components/schemas/GetAccountHeadResponse'
         '500':
           description: Server error
           content:
@@ -530,12 +708,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  account:
-                    type: string
-                  block:
-                    $ref: '#/components/schemas/Block'
+                $ref: '#/components/schemas/GetPendingBlockResponse'
         '500':
           description: Server error
           content:
@@ -573,12 +746,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  blockhash:
-                    type: string
-                  block:
-                    $ref: '#/components/schemas/Block'
+                $ref: '#/components/schemas/GetBlockResponse'
         '500':
           description: Server error
           content:
@@ -606,12 +774,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  blockhash:
-                    type: string
-                  successorBlock:
-                    $ref: '#/components/schemas/Block'
+                $ref: '#/components/schemas/GetSuccessorBlockResponse'
         '500':
           description: Server error
           content:
@@ -668,15 +831,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  moment:
-                    type: string
-                  momentRange:
-                    type: number
-                  checksum:
-                    type: string
-                    description: Checksum as a 0x-prefixed hexadecimal BigInt
+                $ref: '#/components/schemas/GetLedgerChecksumResponse'
         '500':
           description: Server error
           content:
@@ -739,12 +894,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  representatives:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Representative'
+                $ref: '#/components/schemas/GetAllRepresentativesResponse'
         '500':
           description: Server error
           content:
@@ -772,14 +922,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  history:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/HistoryEntry'
-                  nextKey:
-                    type: string
+                $ref: '#/components/schemas/GetGlobalHistoryResponse'
         '500':
           description: Server error
           content:
@@ -816,19 +959,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  account:
-                    type: string
-                  blocks:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        block:
-                          $ref: '#/components/schemas/Block'
-                  nextKey:
-                    type: string
+                $ref: '#/components/schemas/GetAccountChainResponse'
         '500':
           description: Server error
           content:
@@ -861,14 +992,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  history:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/HistoryEntry'
-                  nextKey:
-                    type: string
+                $ref: '#/components/schemas/GetAccountHistoryResponse'
         '500':
           description: Server error
           content:
@@ -893,12 +1017,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  permissions:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ACLRow'
+                $ref: '#/components/schemas/ListAclsByPrincipalResponse'
         '500':
           description: Server error
           content:
@@ -923,12 +1042,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  permissions:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ACLRow'
+                $ref: '#/components/schemas/ListAclsByEntityResponse'
         '500':
           description: Server error
           content:
@@ -978,14 +1092,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  account:
-                    type: string
-                  certificates:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Certificate'
+                $ref: '#/components/schemas/GetAccountCertificatesResponse'
         '500':
           description: Server error
           content:
@@ -1015,12 +1122,7 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/Certificate'
-                  - type: object
-                    properties:
-                      account:
-                        type: string
+                $ref: '#/components/schemas/GetCertificateByHashResponse'
         '500':
           description: Server error
           content:
@@ -1060,10 +1162,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  block:
-                    $ref: '#/components/schemas/Block'
+                $ref: '#/components/schemas/GetBlockFromIdempotentResponse'
         '500':
           description: Server error
           content:
@@ -1091,22 +1190,7 @@ paths:
               schema:
                 type: array
                 items:
-                  type: object
-                  properties:
-                    account:
-                      type: string
-                    currentHeadBlock:
-                      type: string
-                    currentHeadBlockHeight:
-                      type: string
-                    representative:
-                      type: string
-                    info:
-                      $ref: '#/components/schemas/AccountInfo'
-                    balances:
-                      type: array
-                      items:
-                        $ref: '#/components/schemas/BalanceEntry'
+                  $ref: '#/components/schemas/GetAccountStatesResponseItem'
         '500':
           description: Server error
           content:
@@ -1136,12 +1220,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  voteStaples:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/VoteStaple'
+                $ref: '#/components/schemas/GetVoteStaplesAfterResponse'
         '500':
           description: Server error
           content:
@@ -1174,11 +1253,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  publish:
-                    type: boolean
-                    description: Whether the vote staple was successfully published
+                $ref: '#/components/schemas/PublishVoteStapleResponse'
         '500':
           description: Server error
           content:

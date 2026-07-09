@@ -25,8 +25,8 @@
 //!
 //! // Derive an account (algorithm defaults to ecdsa_secp256k1).
 //! const me = Account.fromSeed(Account.generateSeed(), 0);
-//! const token = Account.fromAddress('keeta_...token...');
-//! const to = Account.fromAddress('keeta_...recipient...');
+//! const token = Account.fromPublicKeyString('keeta_...token...');
+//! const to = Account.fromPublicKeyString('keeta_...recipient...');
 //!
 //! // High-level signed write: send(to, amount, token).
 //! const user = UserClient.fromClient(client, me);
