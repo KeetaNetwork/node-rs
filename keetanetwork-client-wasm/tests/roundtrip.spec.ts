@@ -31,7 +31,7 @@ interface BuilderRoundTrip {
 interface GenerationRoundTrip {
 	seedHexLength: number;
 	passphraseWords: number;
-	derivedAddress: string;
+	derivedPublicKeyString: string;
 	deterministic: boolean;
 	transmitted: boolean;
 	recipientBalance: string;
@@ -86,8 +86,8 @@ test('KeetaClient publishes a send round-trip against a live node', async ({ pag
 
 		const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
 		const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
-		const recipient = Account.fromAddress(cfg.recipient);
-		const token = Account.fromAddress(cfg.baseToken);
+		const recipient = Account.fromPublicKeyString(cfg.recipient);
+		const token = Account.fromPublicKeyString(cfg.baseToken);
 
 		const version = await client.nodeVersion();
 		const before = await client.balance(trusted, token);
@@ -124,14 +124,14 @@ test('UserClient transmits a builder-assembled send', async ({ page }) => {
 				window as unknown as { keeta: typeof Keeta }
 			).keeta;
 
-			const token = Account.fromAddress(cfg.info.baseToken);
+			const token = Account.fromPublicKeyString(cfg.info.baseToken);
 			const trusted = Account.fromSeed(cfg.info.trustedSeedHex, 0, 'ed25519');
 			const recipient = Account.fromSeed(cfg.recipientSeedHex, 0, 'ed25519');
 
 			const client = new KeetaClient(cfg.info.api).withNetwork(cfg.info.network);
 			const user = UserClient.fromClient(client, trusted);
 			const readOnly = user.isReadOnly;
-			const signer = user.account().address;
+			const signer = user.account().publicKeyString;
 
 			const builder = user.initBuilder();
 			builder.send(recipient, cfg.info.amount, token);
@@ -178,6 +178,31 @@ test('errors cross the boundary with a stable code', async ({ page }) => {
 	expect(code, 'a malformed seed must throw an Error carrying code INVALID_SEED').toBe('INVALID_SEED');
 });
 
+test('the type-prefixed public key hex round-trips an account', async ({ page }) => {
+	await page.goto('/tests/index.html');
+	await page.waitForFunction(() => (window as unknown as { wasmReady?: boolean }).wasmReady === true);
+
+	const result: { keyAndType: string; publicKey: string; address: string; reopenedAddress: string } =
+		await page.evaluate(async () => {
+			const { Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
+
+			const account = Account.fromSeed(Account.generateSeed(), 0, 'ed25519');
+			const reopened = Account.fromPublicKeyAndType(account.publicKeyAndTypeString);
+
+			return {
+				keyAndType: account.publicKeyAndTypeString,
+				publicKey: account.publicKey,
+				address: account.publicKeyString,
+				reopenedAddress: reopened.publicKeyString,
+			};
+		});
+
+	expect(result.keyAndType, 'the getter must match the reference layout: 0x + uppercase key-and-type hex').toBe(
+		`0x${result.publicKey.toUpperCase()}`,
+	);
+	expect(result.reopenedAddress, 'the reopened account must keep its address').toBe(result.address);
+});
+
 test('a generated account is recoverable and can be funded', async ({ page }) => {
 	const info = await loadNodeInfo(page.request);
 
@@ -187,18 +212,18 @@ test('a generated account is recoverable and can be funded', async ({ page }) =>
 	const result: GenerationRoundTrip = await page.evaluate(async (cfg: NodeInfo) => {
 		const { KeetaClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
 
-		const token = Account.fromAddress(cfg.baseToken);
+		const token = Account.fromPublicKeyString(cfg.baseToken);
 		const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
 
 		// A freshly minted seed must derive a usable, fundable account.
 		const seedHex = Account.generateSeed();
 		const recipient = Account.fromSeed(seedHex, 0, 'ed25519');
 
-		// A mnemonic must deterministically recover the same address.
+		// A mnemonic must deterministically recover the same public-key string.
 		const words = Account.generatePassphrase();
 		const derived = Account.fromPassphrase(words, 0, 'ed25519');
 		const derivedAgain = Account.fromPassphrase(words, 0, 'ed25519');
-		const deterministic = derived.address === derivedAgain.address;
+		const deterministic = derived.publicKeyString === derivedAgain.publicKeyString;
 
 		const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
 		const transmitted = await client.send(trusted, recipient, cfg.amount, token);
@@ -207,7 +232,7 @@ test('a generated account is recoverable and can be funded', async ({ page }) =>
 		return {
 			seedHexLength: seedHex.length,
 			passphraseWords: words.length,
-			derivedAddress: derived.address,
+			derivedPublicKeyString: derived.publicKeyString,
 			deterministic,
 			transmitted,
 			recipientBalance,
@@ -216,8 +241,8 @@ test('a generated account is recoverable and can be funded', async ({ page }) =>
 
 	expect(result.seedHexLength, 'a generated seed must be 32 bytes of hex').toBe(64);
 	expect(result.passphraseWords, 'a generated mnemonic must be 24 words').toBe(24);
-	expect(result.derivedAddress, 'a mnemonic-derived account must have an address').toMatch(/^keeta_/);
-	expect(result.deterministic, 'the same mnemonic must recover the same address').toBe(true);
+	expect(result.derivedPublicKeyString, 'a mnemonic-derived account must have a public-key string').toMatch(/^keeta_/);
+	expect(result.deterministic, 'the same mnemonic must recover the same public-key string').toBe(true);
 	expect(result.transmitted, 'the node must accept a send to the generated account').toBe(true);
 	expect(BigInt(result.recipientBalance), 'the send must credit the generated account').toBe(BigInt(info.amount));
 });
@@ -319,7 +344,7 @@ test('UserClient builds a swap-request block against a live node', async ({ page
 		async (cfg: { info: NodeInfo; recipientSeedHex: string }) => {
 			const { KeetaClient, UserClient, Account, Block } = (window as unknown as { keeta: typeof Keeta }).keeta;
 
-			const token = Account.fromAddress(cfg.info.baseToken);
+			const token = Account.fromPublicKeyString(cfg.info.baseToken);
 			const trusted = Account.fromSeed(cfg.info.trustedSeedHex, 0, 'ed25519');
 			const counterparty = Account.fromSeed(cfg.recipientSeedHex, 0, 'ed25519');
 
@@ -351,10 +376,10 @@ test('reads return structured, typed views with string amounts', async ({ page }
 
 		const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
 		const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
-		const token = Account.fromAddress(cfg.baseToken);
+		const token = Account.fromPublicKeyString(cfg.baseToken);
 
 		// Drive a send so the trusted account has settled state to read back.
-		await client.send(trusted, Account.fromAddress(cfg.recipient), cfg.amount, token);
+		await client.send(trusted, Account.fromPublicKeyString(cfg.recipient), cfg.amount, token);
 
 		const balances = await client.balances(trusted);
 		let balanceFields: { token: string; balance: string } | null = null;
@@ -491,7 +516,7 @@ test.describe('extended client and user surface', () => {
 					const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
 
 					const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
-					const token = Account.fromAddress(cfg.baseToken);
+					const token = Account.fromPublicKeyString(cfg.baseToken);
 					const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
 					const user = UserClient.fromClient(client, trusted);
 
@@ -517,11 +542,11 @@ test.describe('extended client and user surface', () => {
 				const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
 
 				const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
-				const token = Account.fromAddress(cfg.baseToken);
+				const token = Account.fromPublicKeyString(cfg.baseToken);
 				const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
 				const user = UserClient.fromClient(client, trusted);
 
-				await user.send(Account.fromAddress(cfg.recipient), cfg.amount, token);
+				await user.send(Account.fromPublicKeyString(cfg.recipient), cfg.amount, token);
 
 				const firstPage = await user.chainPage(undefined, undefined, 1);
 				const everyBlock = await user.chainAll(50);
@@ -654,7 +679,7 @@ test.describe('extended client and user surface', () => {
 
 				const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
 				const recipient = Account.fromSeed(cfg.externalRecipientSeedHex, 0, 'ed25519');
-				const token = Account.fromAddress(cfg.baseToken);
+				const token = Account.fromPublicKeyString(cfg.baseToken);
 				const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
 				const user = UserClient.fromClient(client, trusted);
 
@@ -681,11 +706,11 @@ test.describe('extended client and user surface', () => {
 			const { KeetaClient, UserClient, Account } = (window as unknown as { keeta: typeof Keeta }).keeta;
 
 			const trusted = Account.fromSeed(cfg.trustedSeedHex, 0, 'ed25519');
-			const token = Account.fromAddress(cfg.baseToken);
+			const token = Account.fromPublicKeyString(cfg.baseToken);
 			const client = new KeetaClient(cfg.api).withNetwork(cfg.network);
 			const user = UserClient.fromClient(client, trusted);
 
-			await user.send(Account.fromAddress(cfg.recipient), cfg.amount, token);
+			await user.send(Account.fromPublicKeyString(cfg.recipient), cfg.amount, token);
 
 			const head = await user.head();
 			const headHash = head?.hash ?? '';
@@ -750,7 +775,7 @@ test.describe('extended client and user surface', () => {
 
 			const discovery = new KeetaClient(cfg.api).withNetwork(cfg.network);
 			const rep = await discovery.nodeRepresentative();
-			const repAccount = Account.fromAddress(rep.account);
+			const repAccount = Account.fromPublicKeyString(rep.account);
 
 			const endpoint = new RepEndpoint(cfg.api, repAccount, '7');
 			const client = KeetaClient.forRepresentatives([endpoint]).withNetwork(cfg.network);

@@ -21,9 +21,10 @@ use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
 /// The account primitive operations live in the shared `keetanetwork-bindings`
 /// crate so every binding boundary reuses a single definition.
 pub use keetanetwork_bindings::account::{
-	account_address, account_algorithm, account_decrypt, account_encrypt, account_from_address,
-	account_from_passphrase, account_from_private_key, account_from_public_key, account_from_seed, account_public_key,
-	account_sign, account_verify, generate_passphrase, generate_seed, DEFAULT_ALGORITHM,
+	account_algorithm, account_decrypt, account_encrypt, account_from_passphrase, account_from_private_key,
+	account_from_public_key, account_from_public_key_and_type, account_from_public_key_string, account_from_seed,
+	account_public_key, account_public_key_and_type_string, account_public_key_string, account_sign, account_verify,
+	generate_passphrase, generate_seed, DEFAULT_ALGORITHM,
 };
 
 /// The base X.509 certificate primitive operations also live in the shared

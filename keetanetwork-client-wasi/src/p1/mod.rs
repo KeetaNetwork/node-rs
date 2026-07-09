@@ -395,7 +395,13 @@ pub unsafe extern "C" fn keeta_account_from_seed(
 		return 0;
 	};
 
-	match pure::account_from_seed(&seed, index as u32, &algorithm) {
+	// An empty algorithm selects the default, matching the browser binding.
+	let algorithm = if algorithm.is_empty() {
+		pure::DEFAULT_ALGORITHM
+	} else {
+		&algorithm
+	};
+	match pure::account_from_seed(&seed, index as u32, algorithm) {
 		Ok(account) => store_account(account),
 		Err(error) => fail(error),
 	}
@@ -458,23 +464,42 @@ pub unsafe extern "C" fn keeta_account_from_public_key(
 	}
 }
 
-/// Build a read-only account from its textual address; returns an account
-/// handle.
+/// Build a read-only account from its textual `keeta_…` public-key string;
+/// returns an account handle.
 #[no_mangle]
-pub unsafe extern "C" fn keeta_account_from_address(address_ptr: i32, address_len: i32) -> i32 {
-	let Some(address) = string_in(address_ptr, address_len) else {
+pub unsafe extern "C" fn keeta_account_from_public_key_string(string_ptr: i32, string_len: i32) -> i32 {
+	let Some(public_key_string) = string_in(string_ptr, string_len) else {
 		return 0;
 	};
-	match pure::account_from_address(&address) {
+	match pure::account_from_public_key_string(&public_key_string) {
 		Ok(account) => store_account(account),
 		Err(error) => fail(error),
 	}
 }
 
-/// The account address as a bytes handle.
+/// Build a read-only account from the `[key_type_byte || raw_public_key]`
+/// hex layout (optionally `0x`-prefixed); returns an account handle.
 #[no_mangle]
-pub extern "C" fn keeta_account_address(handle: i32) -> i32 {
-	account(handle).map_or(0, |account| store_bytes(pure::account_address(&account).into_bytes()))
+pub unsafe extern "C" fn keeta_account_from_public_key_and_type(hex_ptr: i32, hex_len: i32) -> i32 {
+	let Some(key_and_type) = string_in(hex_ptr, hex_len) else {
+		return 0;
+	};
+	match pure::account_from_public_key_and_type(&key_and_type) {
+		Ok(account) => store_account(account),
+		Err(error) => fail(error),
+	}
+}
+
+/// The `0x`-prefixed uppercase type-prefixed public key hex as a bytes handle.
+#[no_mangle]
+pub extern "C" fn keeta_account_public_key_and_type_string(handle: i32) -> i32 {
+	account(handle).map_or(0, |account| store_bytes(pure::account_public_key_and_type_string(&account).into_bytes()))
+}
+
+/// The account's textual `keeta_…` public-key string as a bytes handle.
+#[no_mangle]
+pub extern "C" fn keeta_account_public_key_string(handle: i32) -> i32 {
+	account(handle).map_or(0, |account| store_bytes(pure::account_public_key_string(&account).into_bytes()))
 }
 
 /// The account algorithm name as a bytes handle.

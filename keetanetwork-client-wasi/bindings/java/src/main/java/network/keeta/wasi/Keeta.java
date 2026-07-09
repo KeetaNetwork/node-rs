@@ -56,6 +56,15 @@ public final class Keeta implements AutoCloseable {
 		return new Account(net, handle);
 	}
 
+	/**
+	 * Derive an account from a hex seed at a derivation index under the
+	 * default algorithm ({@code ecdsa_secp256k1}), matching the reference
+	 * {@code Account.fromSeed(seed, index)} overload.
+	 */
+	public Account account(String seedHex, int index) {
+		return account(seedHex, index, Algorithm.ECDSA_SECP256K1);
+	}
+
 	/** Build an account from a hex-encoded private key. */
 	public Account accountFromPrivateKey(String privateKeyHex, Algorithm algorithm) {
 		byte[] key = privateKeyHex.getBytes(StandardCharsets.UTF_8);
@@ -89,11 +98,22 @@ public final class Keeta implements AutoCloseable {
 		return new Account(net, handle);
 	}
 
-	/** Build a read-only account from its textual address. */
-	public Account address(String address) {
-		byte[] bytes = address.getBytes(StandardCharsets.UTF_8);
+	/** Build a read-only account from its textual {@code keeta_…} public-key string. */
+	public Account accountFromPublicKeyString(String publicKeyString) {
+		byte[] bytes = publicKeyString.getBytes(StandardCharsets.UTF_8);
 		int ptr = net.write(bytes);
-		return new Account(net, net.handle("keeta_account_from_address", ptr, bytes.length));
+		return new Account(net, net.handle("keeta_account_from_public_key_string", ptr, bytes.length));
+	}
+
+	/**
+	 * Build a read-only account from the {@code [key_type_byte || raw_public_key]}
+	 * hex layout (optionally {@code 0x}-prefixed), matching the reference
+	 * {@code Account.fromPublicKeyAndType}.
+	 */
+	public Account accountFromPublicKeyAndType(String keyAndTypeHex) {
+		byte[] bytes = keyAndTypeHex.getBytes(StandardCharsets.UTF_8);
+		int ptr = net.write(bytes);
+		return new Account(net, net.handle("keeta_account_from_public_key_and_type", ptr, bytes.length));
 	}
 
 	/* ---------------------------- certificates -------------------------- */

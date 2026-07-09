@@ -23,9 +23,9 @@ public final class Account implements AutoCloseable {
 		return handle;
 	}
 
-	/** The textual account address. */
-	public String address() {
-		return net.takeString(net.handle("keeta_account_address", handle()));
+	/** The account's textual {@code keeta_…} public-key string. */
+	public String publicKeyString() {
+		return net.takeString(net.handle("keeta_account_public_key_string", handle()));
 	}
 
 	/** The signing algorithm name, or {@code "other"} for identifier accounts. */
@@ -36,6 +36,14 @@ public final class Account implements AutoCloseable {
 	/** The type-prefixed public key, hex-encoded. */
 	public String publicKey() {
 		return net.takeString(net.handle("keeta_account_public_key", handle()));
+	}
+
+	/**
+	 * The {@code 0x}-prefixed uppercase {@code [key_type_byte || raw_public_key]}
+	 * hex string, matching the reference {@code publicKeyAndTypeString} getter.
+	 */
+	public String publicKeyAndTypeString() {
+		return net.takeString(net.handle("keeta_account_public_key_and_type_string", handle()));
 	}
 
 	/** Produce a detached signature over {@code message}. */
@@ -93,7 +101,7 @@ public final class Account implements AutoCloseable {
 
 	@Override
 	public String toString() {
-		return address();
+		return publicKeyString();
 	}
 
 	@Override

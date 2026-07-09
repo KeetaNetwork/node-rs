@@ -58,6 +58,7 @@ public final class AccountParity {
 					address, publicKeyHex, message, referenceSignature, plaintext, referenceCiphertext, result);
 				roundTripPublicKey(keeta, algorithm, name, rawPublicKeyHex, address, publicKeyHex, message,
 					referenceSignature, plaintext, result);
+				roundTripPublicKeyAndType(keeta, name, publicKeyHex, address);
 				checkPassphrase(keeta, algorithm, name, words, index, passphraseAddress);
 			}
 		}
@@ -71,7 +72,7 @@ public final class AccountParity {
 		String address, String publicKeyHex, byte[] message, byte[] referenceSignature, byte[] plaintext,
 		byte[] referenceCiphertext, ObjectNode result) {
 		try (Account account = keeta.accountFromPrivateKey(privateKeyHex, algorithm)) {
-			check(account.address().equals(address), name + " private-key address must match the reference");
+			check(account.publicKeyString().equals(address), name + " private-key address must match the reference");
 			check(account.publicKey().equalsIgnoreCase(publicKeyHex), name + " private-key public key must match");
 			check(account.verify(message, referenceSignature), name + " must verify the reference signature");
 			check(Arrays.equals(account.decrypt(referenceCiphertext), plaintext),
@@ -87,7 +88,7 @@ public final class AccountParity {
 		String address, String publicKeyHex, byte[] message, byte[] referenceSignature, byte[] plaintext,
 		ObjectNode result) {
 		try (Account account = keeta.accountFromPublicKey(rawPublicKeyHex, algorithm)) {
-			check(account.address().equals(address), name + " public-key address must match the reference");
+			check(account.publicKeyString().equals(address), name + " public-key address must match the reference");
 			check(account.publicKey().equalsIgnoreCase(publicKeyHex),
 				name + " read-only public key must match the reference");
 			check(account.verify(message, referenceSignature),
@@ -97,11 +98,21 @@ public final class AccountParity {
 		}
 	}
 
+	/** Reconstruct from the type-prefixed key hex; assert address and getter round-trip. */
+	private static void roundTripPublicKeyAndType(Keeta keeta, String name, String publicKeyHex, String address) {
+		try (Account account = keeta.accountFromPublicKeyAndType(publicKeyHex)) {
+			check(account.publicKeyString().equals(address),
+				name + " public-key-and-type address must match the reference");
+			check(account.publicKeyAndTypeString().equals("0x" + publicKeyHex.toUpperCase()),
+				name + " publicKeyAndTypeString must round-trip the reference key material");
+		}
+	}
+
 	/** Reconstruct from the passphrase; assert the derived address matches the reference. */
 	private static void checkPassphrase(Keeta keeta, Algorithm algorithm, String name, List<String> words,
 		int index, String passphraseAddress) {
 		try (Account account = keeta.accountFromPassphrase(words, index, algorithm)) {
-			check(account.address().equals(passphraseAddress),
+			check(account.publicKeyString().equals(passphraseAddress),
 				name + " passphrase address must match the reference");
 		}
 	}

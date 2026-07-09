@@ -110,7 +110,7 @@ impl Guest for Component {
 		let account = &signer.get::<AccountResource>().account;
 		let previous = previous.map(|hash| decode_hash(&hash)).transpose()?;
 		let identifier = pure::generate_identifier(account, kind.into(), previous, op_index)?;
-		Ok(pure::account_address(&identifier))
+		Ok(pure::account_public_key_string(&identifier))
 	}
 }
 
@@ -137,8 +137,9 @@ struct AccountResource {
 }
 
 impl GuestAccount for AccountResource {
-	fn from_seed(seed: String, index: u32, algorithm: WitKeyAlgorithm) -> Result<WitAccount, CodedError> {
-		let account = pure::account_from_seed(&seed, index, algorithm_name(algorithm))?;
+	fn from_seed(seed: String, index: u32, algorithm: Option<WitKeyAlgorithm>) -> Result<WitAccount, CodedError> {
+		let algorithm = algorithm.map_or(pure::DEFAULT_ALGORITHM, algorithm_name);
+		let account = pure::account_from_seed(&seed, index, algorithm)?;
 		Ok(WitAccount::new(Self { account }))
 	}
 
@@ -157,8 +158,13 @@ impl GuestAccount for AccountResource {
 		Ok(WitAccount::new(Self { account }))
 	}
 
-	fn from_address(address: String) -> Result<WitAccount, CodedError> {
-		let account = pure::account_from_address(&address)?;
+	fn from_public_key_string(public_key_string: String) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_public_key_string(&public_key_string)?;
+		Ok(WitAccount::new(Self { account }))
+	}
+
+	fn from_public_key_and_type(key_and_type: String) -> Result<WitAccount, CodedError> {
+		let account = pure::account_from_public_key_and_type(&key_and_type)?;
 		Ok(WitAccount::new(Self { account }))
 	}
 
@@ -170,8 +176,8 @@ impl GuestAccount for AccountResource {
 		pure::generate_passphrase().unwrap_or_default()
 	}
 
-	fn address(&self) -> String {
-		pure::account_address(&self.account)
+	fn public_key_string(&self) -> String {
+		pure::account_public_key_string(&self.account)
 	}
 
 	fn kind(&self) -> WitAccountKind {
@@ -188,6 +194,10 @@ impl GuestAccount for AccountResource {
 
 	fn public_key(&self) -> String {
 		pure::account_public_key(&self.account)
+	}
+
+	fn public_key_and_type_string(&self) -> String {
+		pure::account_public_key_and_type_string(&self.account)
 	}
 
 	fn sign(&self, message: Vec<u8>) -> Result<Vec<u8>, CodedError> {
@@ -471,7 +481,7 @@ impl TryFrom<WitSwapTokenAmount> for SwapTokenAmount {
 	fn try_from(leg: WitSwapTokenAmount) -> Result<Self, Self::Error> {
 		let token = leg
 			.token
-			.map(|token| pure::account_from_address(&token))
+			.map(|token| pure::account_from_public_key_string(&token))
 			.transpose()?;
 		let amount = leg.amount.map(|amount| parse_amount(&amount)).transpose()?;
 
@@ -780,7 +790,7 @@ impl GuestUserClient for AccountClient {
 	}
 
 	fn address(&self) -> Result<String, CodedError> {
-		Ok(pure::account_address(&self.inner.account()?))
+		Ok(pure::account_public_key_string(&self.inner.account()?))
 	}
 
 	fn balance(&self, token: AccountBorrow<'_>) -> Result<String, CodedError> {
@@ -988,7 +998,7 @@ impl GuestUserClient for AccountClient {
 		let identifier = run(self
 			.inner
 			.generate_identifier(KeyPairType::MULTISIG, Some(arguments)))?;
-		Ok(pure::account_address(&identifier))
+		Ok(pure::account_public_key_string(&identifier))
 	}
 
 	fn generate_identifier(&self, kind: WitIdentifierKind) -> Result<String, CodedError> {
@@ -1002,7 +1012,7 @@ impl GuestUserClient for AccountClient {
 		}
 
 		let identifier = run(self.inner.generate_identifier(kind.into(), None))?;
-		Ok(pure::account_address(&identifier))
+		Ok(pure::account_public_key_string(&identifier))
 	}
 
 	fn create_swap(

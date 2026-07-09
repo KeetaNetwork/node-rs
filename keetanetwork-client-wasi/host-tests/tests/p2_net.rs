@@ -109,24 +109,61 @@ async fn account_from_seed(
 	bindings
 		.keeta_client_crypto()
 		.account()
-		.call_from_seed(&mut *store, seed, index, KeyAlgorithm::Ed25519)
+		.call_from_seed(&mut *store, seed, index, Some(KeyAlgorithm::Ed25519))
 		.await?
 		.map_err(coded)
 }
 
-/// Parse a textual `keeta_…` address into an `account` resource via the
-/// exported `crypto` interface, returning its host handle.
-async fn account_from_address(
+/// Parse a textual `keeta_…` public-key string into an `account` resource via
+/// the exported `crypto` interface, returning its host handle.
+async fn account_from_public_key_string(
 	store: &mut Store<Host>,
 	bindings: &KeetaClient,
-	address: &str,
+	public_key_string: &str,
 ) -> wasmtime::Result<ResourceAny> {
 	bindings
 		.keeta_client_crypto()
 		.account()
-		.call_from_address(&mut *store, address)
+		.call_from_public_key_string(&mut *store, public_key_string)
 		.await?
 		.map_err(coded)
+}
+
+#[tokio::test]
+async fn p2_account_round_trips_through_public_key_and_type() -> wasmtime::Result<()> {
+	let (mut store, bindings) = instantiate().await?;
+	let account_test = bindings.keeta_client_crypto().account();
+
+	let account = account_from_seed(&mut store, &bindings, &trusted_seed(), 0).await?;
+	let address = account_test
+		.call_public_key_string(&mut store, account)
+		.await?;
+	let key_and_type = account_test
+		.call_public_key_and_type_string(&mut store, account)
+		.await?;
+	assert!(key_and_type.starts_with("0x"), "the getter must be 0x-prefixed hex");
+
+	let reopened = account_test
+		.call_from_public_key_and_type(&mut store, &key_and_type)
+		.await?
+		.map_err(coded)?;
+	let reopened_address = account_test
+		.call_public_key_string(&mut store, reopened)
+		.await?;
+	assert_eq!(reopened_address, address, "the reopened account must keep its address");
+
+	// An omitted algorithm must select the default (`ecdsa-secp256k1`,
+	// key type byte 0x00), matching the browser binding and the reference.
+	let defaulted = account_test
+		.call_from_seed(&mut store, &trusted_seed(), 0, None)
+		.await?
+		.map_err(coded)?;
+	let defaulted_key = account_test
+		.call_public_key_and_type_string(&mut store, defaulted)
+		.await?;
+	assert!(defaulted_key.starts_with("0x00"), "the default algorithm must be ecdsa-secp256k1");
+
+	Ok(())
 }
 
 #[tokio::test]
@@ -147,8 +184,8 @@ async fn p2_reads_against_e2e_node() -> wasmtime::Result<()> {
 	let node = bindings.keeta_client_node();
 
 	// Typed account resources for the harness's textual addresses.
-	let trusted_account = account_from_address(&mut store, &bindings, &trusted).await?;
-	let base_token_account = account_from_address(&mut store, &bindings, &base_token).await?;
+	let trusted_account = account_from_public_key_string(&mut store, &bindings, &trusted).await?;
+	let base_token_account = account_from_public_key_string(&mut store, &bindings, &base_token).await?;
 
 	// `node` resource: anonymous client bound to the rep URL.
 	let client = node.client().call_constructor(&mut store, &api).await?;
@@ -567,8 +604,8 @@ async fn p2_writes_against_e2e_node() -> wasmtime::Result<()> {
 	let node = bindings.keeta_client_node();
 
 	// Typed account resources for the harness's textual addresses.
-	let representative_account = account_from_address(&mut store, &bindings, &representative).await?;
-	let base_token_account = account_from_address(&mut store, &bindings, &base_token).await?;
+	let representative_account = account_from_public_key_string(&mut store, &bindings, &representative).await?;
+	let base_token_account = account_from_public_key_string(&mut store, &bindings, &base_token).await?;
 
 	// Bind a signing client to the trusted (genesis) seed; it is its own
 	// operating account.
@@ -952,11 +989,11 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 		.call_address(&mut store, user)
 		.await?
 		.map_err(coded)?;
-	let user_account = account_from_address(&mut store, &bindings, &user_address).await?;
+	let user_account = account_from_public_key_string(&mut store, &bindings, &user_address).await?;
 
 	// Fund the user so it has a settled balance and a head to chain onto.
 	let base_token = ready_field(&harness, "baseToken");
-	let base_token_account = account_from_address(&mut store, &bindings, &base_token).await?;
+	let base_token_account = account_from_public_key_string(&mut store, &bindings, &base_token).await?;
 	let trusted_account = account_from_seed(&mut store, &bindings, &trusted_seed(), 0).await?;
 	let funder = node
 		.user_client()
@@ -982,7 +1019,7 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 		.await?
 		.map_err(coded)?;
 	assert!(!multisig.is_empty(), "the multisig identifier address must derive");
-	let multisig_account = account_from_address(&mut store, &bindings, &multisig).await?;
+	let multisig_account = account_from_public_key_string(&mut store, &bindings, &multisig).await?;
 
 	// User block: create the 2-of-3 multisig and grant it ADMIN over the user.
 	let user_head = node
@@ -1051,7 +1088,7 @@ async fn p2_multisig_signer_against_e2e_node() -> wasmtime::Result<()> {
 		.await?
 		.map_err(coded)?;
 	assert!(!custom_token.is_empty(), "the custom token address must be returned");
-	let custom_token_account = account_from_address(&mut store, &bindings, &custom_token).await?;
+	let custom_token_account = account_from_public_key_string(&mut store, &bindings, &custom_token).await?;
 
 	// Grant the multisig ADMIN on the token's own chain (the entity whose ACL
 	// changes), signed by the trusted creator.
