@@ -69,7 +69,7 @@ public final class FeeTransfer {
 	 * A transmit paying no fee must fail with a typed {@code FEE_REQUIRED}
 	 * before anything is published: the recipient's balance is unchanged
 	 * after. Probes the worst case, a factory that declines by returning
-	 * {@code null}, which shares its gate with the no-factory path.
+	 * {@code null}.
 	 */
 	private static void feeRequiredIsTyped(Keeta keeta, UserClient client, Account trusted, Account recipient,
 		Account base) {
