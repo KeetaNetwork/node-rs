@@ -51,6 +51,15 @@ struct RefreshState {
 	handle: Option<Box<dyn TaskHandle>>,
 }
 
+/// The identity paying a fee block: the `account` whose balance pays and the
+/// `signer` sealing it (distinct under delegated signing, e.g. a storage
+/// account whose owner signs).
+#[derive(Clone, Copy)]
+struct FeePayer<'a> {
+	account: &'a AccountRef,
+	signer: &'a AccountRef,
+}
+
 /// A selection target bound to its live transport: the scoring core yields a
 /// [`RepRef`] (key + weight) which the client joins against its transport
 /// registry to produce this.
@@ -786,7 +795,7 @@ impl KeetaClient {
 	///
 	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to vote
 	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
-	/// - [`ClientError::FeeRequired`] -- the node requires a fee but no `fee_signer` was supplied
+	/// - [`ClientError::FeeRequired`] -- the node requires a fee but `generate_fee_block` is absent
 	/// - [`ClientError::Node`] -- a representative rejected the blocks or staple
 	pub async fn transmit(&self, blocks: &[Block], options: TransmitOptions) -> Result<bool, ClientError> {
 		self.transmit_with_optional_fee(blocks, &options).await
@@ -796,7 +805,7 @@ impl KeetaClient {
 	/// retried on insufficient voting weight.
 	///
 	/// After the temporary round, if the votes require a fee (a non-zero fee
-	/// with no zero-amount option), `options.fee_signer` originates a
+	/// with no zero-amount option), `options.generate_fee_block` supplies a
 	/// [`BlockPurpose::Fee`] block that joins the permanent round and staple.
 	async fn transmit_with_optional_fee(
 		&self,
@@ -834,12 +843,8 @@ impl KeetaClient {
 
 		let mut all = blocks.to_vec();
 		if fees_required(&temporary) {
-			let signer = options
-				.fee_signer
-				.as_ref()
-				.ok_or(ClientError::FeeRequired)?;
 			let fee_block = self
-				.build_fee_block(signer, blocks, &temporary, moment, &options.fee_token_priority)
+				.fee_block_from_options(blocks, &temporary, moment, options)
 				.await?;
 			all.push(fee_block);
 		}
@@ -929,15 +934,15 @@ impl KeetaClient {
 	/// pending successor block from the votes scattered across reps, fetching
 	/// the voted-on blocks, topping up votes, and republishing.
 	///
-	/// `options.fee_signer` originates a fee block if the recovered votes
-	/// require a fee and no permanent votes exist yet. Returns the recovered
-	/// staple, or `None` when there is nothing pending to recover.
+	/// `options.generate_fee_block` supplies a fee block if the recovered
+	/// votes require a fee and no permanent votes exist yet. Returns the
+	/// recovered staple, or `None` when there is nothing pending to recover.
 	///
 	/// # Errors
 	///
 	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to query
 	/// - [`ClientError::RecoverFailed`] -- the pending votes or blocks could not be reassembled
-	/// - [`ClientError::FeeRequired`] -- a fee is required but `options.fee_signer` is absent
+	/// - [`ClientError::FeeRequired`] -- a fee is required but `options.generate_fee_block` is absent
 	/// - [`ClientError::Node`] -- a representative rejected a fetch or publish request
 	pub async fn recover_account(
 		&self,
@@ -1068,12 +1073,8 @@ impl KeetaClient {
 		}
 
 		if votes.perm_votes.is_empty() && fees_required(&votes.temp_votes) {
-			let signer = options
-				.fee_signer
-				.as_ref()
-				.ok_or(ClientError::FeeRequired)?;
 			let fee_block = self
-				.build_fee_block(signer, blocks, &votes.temp_votes, moment, &options.fee_token_priority)
+				.fee_block_from_options(blocks, &votes.temp_votes, moment, options)
 				.await?;
 			blocks.push(fee_block);
 		}
@@ -1183,34 +1184,85 @@ impl KeetaClient {
 	}
 
 	/// Build and sign a [`BlockPurpose::Fee`] block paying the fees declared
-	/// by `votes`, chained after `signer`'s block in `blocks`.
-	async fn build_fee_block(
+	/// by the temporary-round `staple`'s votes.
+	///
+	/// `account` originates the block (its balance pays) and `signer` signs
+	/// it. Pass the same account twice unless signing is delegated (e.g. a
+	/// storage account whose owner signs).
+	///
+	/// `previous` chains after `account`'s tip within the staple when
+	/// present, otherwise the ledger head, so the payer need not already
+	/// appear in the staple.
+	///
+	/// # Errors
+	///
+	/// - [`ClientError::FeeRequired`] -- the votes carry no payable fee entry
+	/// - [`ClientError::Block`] -- the fee block could not be assembled or signed
+	pub async fn build_fee_block(
 		&self,
+		staple: &VoteStaple,
+		account: &AccountRef,
 		signer: &AccountRef,
+		priority: &[AccountRef],
+	) -> Result<Block, ClientError> {
+		let payer = FeePayer { account, signer };
+		self.fee_block_for(payer, staple.blocks(), staple.votes(), self.now_moment(), priority)
+			.await
+	}
+
+	/// [`build_fee_block`](Self::build_fee_block) over raw slices with an
+	/// explicit date, used mid-transmit where the staple is not yet assembled
+	/// and every block must share the round's `moment`.
+	async fn fee_block_for(
+		&self,
+		payer: FeePayer<'_>,
 		blocks: &[Block],
 		votes: &[Vote],
 		moment: BlockTime,
 		priority: &[AccountRef],
 	) -> Result<Block, ClientError> {
-		let previous = blocks
+		let staple_tip = blocks
 			.iter()
 			.rev()
-			.find(|block| block.data().account() == signer)
-			.map(|block| block.hash())
-			.ok_or(ClientError::FeeRequired)?;
+			.find(|block| block.data().account() == payer.account)
+			.map(|block| block.hash());
 
-		let mut builder = self.builder(signer);
-		builder
-			.with_purpose(BlockPurpose::Fee)
-			.with_previous(previous)
-			.with_date(moment);
+		let mut builder = self.builder(payer.account);
+		if payer.signer != payer.account {
+			builder.for_account_with_signer(payer.account, payer.signer);
+		}
+
+		builder.with_purpose(BlockPurpose::Fee).with_date(moment);
+
+		if let Some(previous) = staple_tip {
+			builder.with_previous(previous);
+		}
 
 		for operation in self.fee_operations(votes, priority)? {
 			builder.with_operation(operation);
 		}
 
-		let mut blocks = builder.build().await?;
-		blocks.pop().ok_or(ClientError::FeeRequired)
+		let mut fee_blocks = builder.build().await?;
+		fee_blocks.pop().ok_or(ClientError::FeeRequired)
+	}
+
+	/// Resolve the fee block for a round whose votes require one by invoking
+	/// `options.generate_fee_block` with the temporary-round staple.
+	async fn fee_block_from_options(
+		&self,
+		blocks: &[Block],
+		votes: &[Vote],
+		moment: BlockTime,
+		options: &TransmitOptions,
+	) -> Result<Block, ClientError> {
+		let generate = options
+			.generate_fee_block
+			.as_ref()
+			.ok_or(ClientError::FeeRequired)?;
+
+		let config = ValidationConfig::default();
+		let staple = VoteStaple::try_new(blocks.to_vec(), votes.to_vec(), config, moment).context(VoteSnafu)?;
+		generate(self.clone(), staple, options.fee_token_priority.clone()).await
 	}
 
 	/// Translate the fee schedule carried by `votes` into the `SEND`
@@ -1244,13 +1296,13 @@ impl KeetaClient {
 
 	/// Publish a single block built via [`builder`](Self::builder).
 	///
-	/// `options.fee_signer` pays a fee when the node requires one (absent, a
-	/// required fee fails with [`ClientError::FeeRequired`]).
+	/// `options.generate_fee_block` pays a fee when the node requires one
+	/// (absent, a required fee fails with [`ClientError::FeeRequired`]).
 	///
 	/// # Errors
 	///
 	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to vote
-	/// - [`ClientError::FeeRequired`] -- the node requires a fee but no `fee_signer` was supplied
+	/// - [`ClientError::FeeRequired`] -- the node requires a fee but `generate_fee_block` is absent
 	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
 	/// - [`ClientError::Node`] -- a representative rejected the block or staple
 	pub async fn publish(&self, block: Block, options: TransmitOptions) -> Result<bool, ClientError> {
@@ -1280,7 +1332,7 @@ impl KeetaClient {
 		builder.send(to, token, amount);
 		let blocks = builder.build().await?;
 
-		let options = TransmitOptions { fee_signer: Some(Arc::clone(from)), ..Default::default() };
+		let options = TransmitOptions::default().with_fee_signer(from);
 		let mut accepted = true;
 		for block in blocks {
 			accepted &= self.publish(block, options.clone()).await?;

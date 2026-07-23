@@ -232,7 +232,7 @@ developer:
 		echo "Cargo version: $$(cargo --version)"; \
 		echo "Installing development tools..."; \
 		$(MAKE) coverage-setup; \
-		cargo install cargo-audit --quiet || echo "WARNING: cargo-audit installation failed or already installed"; \
+		cargo install cargo-audit --locked --quiet || echo "WARNING: cargo-audit installation failed or already installed"; \
 		echo "Installing script dependencies..."; \
 		if ! command -v jq > /dev/null 2>&1; then \
 			echo "Installing jq..."; \

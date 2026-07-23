@@ -541,6 +541,27 @@ impl KeetaClient {
 		Ok(staple.map(VoteStaple::from))
 	}
 
+	/// Build and sign the fee block `staple`'s votes require: `account` pays,
+	/// `signer` signs (the same account for a self-signing payer), and
+	/// `priority` orders the token choice when the fee is payable in several.
+	/// The common implementation for a `setGenerateFeeBlock` factory.
+	#[wasm_bindgen(js_name = buildFeeBlock)]
+	pub async fn build_fee_block(
+		&self,
+		staple: &VoteStaple,
+		account: &Account,
+		signer: &Account,
+		priority: Vec<Account>,
+	) -> JsResult<Block> {
+		let priority: Vec<AccountRef> = priority.iter().map(Account::inner).collect();
+		let block = self
+			.inner
+			.build_fee_block(staple.inner(), &account.inner(), &signer.inner(), &priority)
+			.await
+			.map_err(client_error)?;
+		Ok(Block::from(block))
+	}
+
 	/// Start a transaction originated by `account`.
 	pub fn builder(&self, account: &Account) -> Builder {
 		Builder::new(self.inner.builder(&account.inner()))

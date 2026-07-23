@@ -1,13 +1,29 @@
 //! JS `TransmitOptions`: publish-time controls passed to publish/transmit.
 
-use keetanetwork_client::TransmitOptions as Core;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt;
+use core::mem;
+
+use js_sys::{Array, Function, Promise};
+use keetanetwork_block::{AccountRef, Block as CoreBlock};
+use keetanetwork_client::{
+	ClientError, KeetaClient as CoreClient, TransmitOptions as Core, VoteStaple as CoreVoteStaple,
+};
+use wasm_bindgen::convert::TryFromJsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen_futures::JsFuture;
 
 use crate::account::Account;
+use crate::block::{Block, VoteStaple};
+use crate::client::KeetaClient;
 use crate::vote::VoteQuote;
 
 /// Controls for a publish or transmit round. Construct with `new()` for
-/// defaults, then layer on a fee signer, fee-token preference, or quotes.
+/// defaults, then layer on a fee payer, fee-token preference, or quotes.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct TransmitOptions {
@@ -22,11 +38,18 @@ impl TransmitOptions {
 		Self::default()
 	}
 
-	/// Account that originates and signs a fee block when the votes require
-	/// one. Without it, a required fee fails with `FEE_REQUIRED`.
+	/// Account that pays and signs a fee block when the votes require one.
+	/// Without it, a required fee fails with `FEE_REQUIRED`.
 	#[wasm_bindgen(js_name = setFeeSigner)]
 	pub fn set_fee_signer(&mut self, signer: &Account) {
-		self.inner.fee_signer = Some(signer.inner());
+		self.inner = mem::take(&mut self.inner).with_fee_signer(&signer.inner());
+	}
+
+	/// Pay any required fee from `account`, signed by `signer`. For a payer
+	/// that signs for itself, prefer `setFeeSigner`.
+	#[wasm_bindgen(js_name = setFeeBlockFrom)]
+	pub fn set_fee_block_from(&mut self, account: &Account, signer: &Account) {
+		self.inner = mem::take(&mut self.inner).with_fee_block_from(&account.inner(), &signer.inner());
 	}
 
 	/// Append a token to the fee-token preference order, highest priority
@@ -42,6 +65,84 @@ impl TransmitOptions {
 	pub fn add_quote(&mut self, quote: &VoteQuote) {
 		self.inner.quotes.push(quote.inner());
 	}
+
+	/// Custom fee-block factory `(client, staple, priority) => Block`, invoked
+	/// when the votes require a fee; the block it resolves to (a promise is
+	/// awaited) joins the staple. `KeetaClient.buildFeeBlock` is the common
+	/// implementation. For a payer known up front, prefer `setFeeSigner` or
+	/// `setFeeBlockFrom`.
+	#[wasm_bindgen(js_name = setGenerateFeeBlock)]
+	pub fn set_generate_fee_block(&mut self, factory: &Function) {
+		let factory = factory.clone();
+		self.inner.generate_fee_block = Some(Arc::new(move |client, staple, priority| {
+			let factory = factory.clone();
+			Box::pin(async move { generate_via_js(&factory, client, staple, priority).await })
+		}));
+	}
+}
+
+/// Invoke the JS fee-block factory and coerce its settled result to a block.
+async fn generate_via_js(
+	factory: &Function,
+	client: CoreClient,
+	staple: CoreVoteStaple,
+	priority: Vec<AccountRef>,
+) -> Result<CoreBlock, ClientError> {
+	let client = JsValue::from(KeetaClient::from(client));
+	let staple = JsValue::from(VoteStaple::from(staple));
+	let tokens = Array::new();
+	for token in priority {
+		tokens.push(&JsValue::from(Account::from(token)));
+	}
+
+	let returned = factory
+		.call3(&JsValue::NULL, &client, &staple, &tokens)
+		.map_err(factory_failure)?;
+	let settled = JsFuture::from(Promise::resolve(&returned))
+		.await
+		.map_err(factory_failure)?;
+	let block = Block::try_from_js_value(settled)
+		.map_err(|_| factory_failure(JsValue::from_str("fee-block factory must resolve to a Block")))?;
+
+	Ok(block.inner())
+}
+
+/// The thrown JS value, carried across the core error chain: a `JsValue`
+/// cannot itself be a `core::error::Error` source, so its stable `code`
+/// property (when present) and message are captured instead.
+#[derive(Debug)]
+pub(crate) struct FactoryFailure {
+	code: Option<String>,
+	message: String,
+}
+
+impl FactoryFailure {
+	/// The `code` property the thrown value carried, if any.
+	pub(crate) fn code(&self) -> Option<&str> {
+		self.code.as_deref()
+	}
+}
+
+impl fmt::Display for FactoryFailure {
+	fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+		formatter.write_str(&self.message)
+	}
+}
+
+impl core::error::Error for FactoryFailure {}
+
+/// Project a value thrown by the JS factory onto the client error taxonomy.
+fn factory_failure(thrown: JsValue) -> ClientError {
+	let code = js_sys::Reflect::get(&thrown, &JsValue::from_str("code"))
+		.ok()
+		.and_then(|value| value.as_string());
+	let message = thrown
+		.dyn_ref::<js_sys::Error>()
+		.map(|error| String::from(error.message()))
+		.or_else(|| thrown.as_string())
+		.unwrap_or_else(|| String::from("fee-block factory threw a non-Error value"));
+
+	ClientError::FeeBlockFactory { source: Box::new(FactoryFailure { code, message }) }
 }
 
 impl TransmitOptions {

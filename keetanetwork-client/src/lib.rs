@@ -105,8 +105,8 @@ pub use keetanetwork_vote::{Vote, VoteBlockHash, VoteQuote, VoteStaple};
 pub use marker::{MaybeSend, MaybeSync};
 pub use model::{
 	AccountInfo, AccountOrPending, AccountState, Acl, AclPrincipal, BlockEffects, Certificate, ChainPage, ChainQuery,
-	HistoryEntry, HistoryPage, HistoryQuery, LedgerChecksum, PendingAccount, Representative, TokenBalance,
-	TransmitOptions,
+	FeeBlockFuture, GenerateFeeBlock, HistoryEntry, HistoryPage, HistoryQuery, LedgerChecksum, PendingAccount,
+	Representative, TokenBalance, TransmitOptions,
 };
 pub use rep::RepPart;
 pub use runtime::{BoxFuture, Runtime, TaskHandle};

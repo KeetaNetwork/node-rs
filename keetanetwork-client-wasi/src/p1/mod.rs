@@ -8,7 +8,7 @@ use keetanetwork_bindings::error::CodedError;
 use keetanetwork_bindings::parse::adjust_method;
 use keetanetwork_bindings::registry::HandleRegistry;
 use keetanetwork_block::{AccountRef, Block, BlockBuilder, Operation, Permissions, UnsignedBlock};
-use keetanetwork_vote::Vote;
+use keetanetwork_vote::{Vote, VoteStaple};
 use keetanetwork_x509::certificates::Certificate;
 
 use crate::pure;
@@ -23,6 +23,7 @@ struct State {
 	builders: HandleRegistry<BlockBuilder>,
 	unsigned: HandleRegistry<UnsignedBlock>,
 	votes: HandleRegistry<Vote>,
+	staples: HandleRegistry<VoteStaple>,
 	certificates: HandleRegistry<Certificate>,
 	last_error: Option<CodedError>,
 }
@@ -38,6 +39,7 @@ impl Default for State {
 			builders: HandleRegistry::new("builder"),
 			unsigned: HandleRegistry::new("unsigned-block"),
 			votes: HandleRegistry::new("vote"),
+			staples: HandleRegistry::new("staple"),
 			certificates: HandleRegistry::new("certificate"),
 			last_error: None,
 		}
@@ -108,6 +110,12 @@ impl Registered for UnsignedBlock {
 impl Registered for Vote {
 	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
 		&mut state.votes
+	}
+}
+
+impl Registered for VoteStaple {
+	fn table(state: &mut State) -> &mut HandleRegistry<Self> {
+		&mut state.staples
 	}
 }
 
@@ -1178,23 +1186,105 @@ pub unsafe extern "C" fn keeta_vote_staple_build(
 	bytes_result(pure::vote_staple_build(blocks, votes, moment_millis))
 }
 
-/// The fee-paying `SEND` operation `vote` requires, denominated in
-/// `base_token`, with optional `priority` token preference (a buffer of
-/// little-endian `i32` account handles).
+/// [`keeta_vote_staple_build`] as a live staple handle instead of transport
+/// bytes, for querying the round (fees, chaining tips) before publishing.
 ///
 /// # Safety
-/// See [`bytes_in`]; `priority` must be a `(ptr, len)` pair of `i32` handles.
+/// See [`bytes_in`]; both buffers must be `(ptr, len)` pairs of `i32` handles.
 #[no_mangle]
-pub unsafe extern "C" fn keeta_fee_send(vote: i32, base_token: i32, priority_ptr: i32, priority_len: i32) -> i32 {
-	let (Some(vote), Some(base_token), Some(priority)) =
-		(resolve::<Vote>(vote), account(base_token), account_handles(priority_ptr, priority_len))
+pub unsafe extern "C" fn keeta_vote_staple_new(
+	blocks_ptr: i32,
+	blocks_len: i32,
+	votes_ptr: i32,
+	votes_len: i32,
+	moment_millis: i64,
+) -> i32 {
+	let (Some(blocks), Some(votes)) =
+		(resolve_handles::<Block>(blocks_ptr, blocks_len), resolve_handles::<Vote>(votes_ptr, votes_len))
 	else {
 		return 0;
 	};
 
-	match pure::fee_send(&vote, &base_token, &priority) {
-		Some(operation) => store_operation(operation),
+	match pure::vote_staple_new(blocks, votes, moment_millis) {
+		Ok(staple) => store(staple),
+		Err(error) => fail(error),
+	}
+}
+
+/// Release a vote staple handle.
+#[no_mangle]
+pub extern "C" fn keeta_vote_staple_free(handle: i32) {
+	release::<VoteStaple>(handle);
+}
+
+/// 1 when `vote` obliges a fee block (a required, non-optional fee schedule),
+/// 0 otherwise or on a bad handle.
+#[no_mangle]
+pub extern "C" fn keeta_fees_required(vote: i32) -> i32 {
+	resolve::<Vote>(vote).is_some_and(|vote| pure::fees_required(&vote)) as i32
+}
+
+/// Every fee-paying `SEND` operation the staple's votes require, as a bytes
+/// handle of little-endian `i32` operation handles. Returns 0 when no fee is
+/// owed.
+///
+/// # Safety
+/// See [`bytes_in`]; `priority` must be a `(ptr, len)` pair of `i32` handles.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_staple_fee_sends(
+	staple: i32,
+	base_token: i32,
+	priority_ptr: i32,
+	priority_len: i32,
+) -> i32 {
+	let (Some(staple), Some(base_token), Some(priority)) =
+		(resolve::<VoteStaple>(staple), account(base_token), account_handles(priority_ptr, priority_len))
+	else {
+		return 0;
+	};
+
+	let operations = pure::staple_fee_sends(&staple, &base_token, &priority);
+	if operations.is_empty() {
+		return 0;
+	}
+
+	let handles = operations
+		.into_iter()
+		.flat_map(|operation| store_operation(operation).to_le_bytes())
+		.collect();
+	store_bytes(handles)
+}
+
+/// The hex hash (as a bytes handle) of `payer`'s last block in `staple`: the
+/// chaining point for a fee block joining the round. Returns 0 when the payer
+/// has no block in the round.
+#[no_mangle]
+pub extern "C" fn keeta_staple_tip_for(staple: i32, payer: i32) -> i32 {
+	let (Some(staple), Some(payer)) = (resolve::<VoteStaple>(staple), account(payer)) else {
+		return 0;
+	};
+
+	match pure::staple_tip_for(&staple, &payer) {
+		Some(hash) => store_bytes(hash.into_bytes()),
 		None => 0,
+	}
+}
+
+/// The base token account handle for `network` (the implicit fee currency).
+/// Returns 0 on failure.
+#[no_mangle]
+pub extern "C" fn keeta_base_token(network: i64) -> i32 {
+	let Ok(network) = u64::try_from(network) else {
+		fail(CodedError::new("INVALID_NETWORK", "network id must be non-negative"));
+		return 0;
+	};
+
+	match pure::base_token(network) {
+		Ok(token) => store_account(token),
+		Err(error) => {
+			fail(error);
+			0
+		}
 	}
 }
 

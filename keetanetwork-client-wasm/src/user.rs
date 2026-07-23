@@ -307,10 +307,14 @@ impl UserClient {
 			None => self.inner.recover(publish).await,
 			Some(options) => {
 				let account = self.inner.account().map_err(client_error)?;
+
 				let mut core = options.to_core();
-				if core.fee_signer.is_none() {
-					core.fee_signer = self.inner.signer_account().cloned();
+				if core.generate_fee_block.is_none() {
+					if let Some(signer) = self.inner.signer_account() {
+						core = core.with_fee_signer(signer);
+					}
 				}
+
 				self.inner
 					.client()
 					.recover_account(&account, publish, core)

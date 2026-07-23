@@ -255,7 +255,11 @@ impl UserClient {
 	/// - [`ClientError::Node`] -- recovery failed at the node.
 	pub async fn recover(&self, publish: bool) -> Result<Option<VoteStaple>, ClientError> {
 		let account = self.account_or(None)?;
-		let options = TransmitOptions { fee_signer: self.signer.clone(), ..Default::default() };
+		let mut options = TransmitOptions::default();
+		if let Some(signer) = &self.signer {
+			options = options.with_fee_signer(signer);
+		}
+
 		self.client
 			.recover_account(&account, publish, options)
 			.await
@@ -375,7 +379,7 @@ impl UserClient {
 	/// - [`ClientError::Node`] -- the node rejected the staple.
 	pub async fn publish(&self, block: Block, options: TransmitOptions) -> Result<bool, ClientError> {
 		self.client
-			.publish(block, self.with_fee_signer(options)?)
+			.publish(block, self.or_default_fee_payer(options)?)
 			.await
 	}
 
@@ -389,7 +393,7 @@ impl UserClient {
 	/// - [`ClientError::Node`] -- the node rejected the staple.
 	pub async fn transmit(&self, blocks: &[Block], options: TransmitOptions) -> Result<bool, ClientError> {
 		self.client
-			.transmit(blocks, self.with_fee_signer(options)?)
+			.transmit(blocks, self.or_default_fee_payer(options)?)
 			.await
 	}
 
@@ -639,14 +643,15 @@ impl UserClient {
 		Ok(blocks)
 	}
 
-	/// Default the fee signer to the bound signer when the caller left it
-	/// unset.
-	fn with_fee_signer(&self, mut options: TransmitOptions) -> Result<TransmitOptions, ClientError> {
-		if options.fee_signer.is_none() {
-			options.fee_signer = Some(self.signer()?);
+	/// Keep the caller's fee-block factory when supplied, otherwise fall back
+	/// to the bound signer paying for itself.
+	fn or_default_fee_payer(&self, options: TransmitOptions) -> Result<TransmitOptions, ClientError> {
+		if options.generate_fee_block.is_some() {
+			return Ok(options);
 		}
 
-		Ok(options)
+		let signer = self.signer()?;
+		Ok(options.with_fee_signer(&signer))
 	}
 
 	/// Build the operating account's block(s) from `assemble`, then publish.
@@ -687,7 +692,7 @@ impl UserClient {
 	/// stops the run.
 	async fn originate(&self, blocks: Vec<Block>) -> Result<bool, ClientError> {
 		let signer = self.signer()?;
-		let options = TransmitOptions { fee_signer: Some(signer), ..Default::default() };
+		let options = TransmitOptions::default().with_fee_signer(&signer);
 		let mut accepted = true;
 		for block in blocks {
 			accepted &= self.client.publish(block, options.clone()).await?;
@@ -743,7 +748,7 @@ fn operation_involves(operation: &Operation, account: &impl AccountPublicKey) ->
 }
 
 /// Whether two accounts share the same public-key identity (algorithm plus
-/// raw key bytes), mirroring the TS `comparePublicKey`.
+/// raw key bytes).
 fn same_account(candidate: &AccountRef, account: &impl AccountPublicKey) -> bool {
 	candidate.to_keypair_type() == account.to_keypair_type()
 		&& candidate.as_public_key_bytes() == account.as_public_key_bytes()
