@@ -11,6 +11,8 @@ use keetanetwork_client::{ClientError, LedgerSide, VoteBlockHash};
 use num_bigint::BigInt;
 use wasm_bindgen::JsValue;
 
+use crate::options::FactoryFailure;
+
 /// Result whose error is a coded JavaScript `Error` (see module docs).
 pub type JsResult<T> = Result<T, JsValue>;
 
@@ -84,8 +86,20 @@ pub fn coded(error: CodedError) -> JsValue {
 	coded_error(&error.code, &error.message)
 }
 
-/// Convert a [`ClientError`] into a coded JavaScript `Error`.
+/// Convert a [`ClientError`] into a coded JavaScript `Error`. A fee-block
+/// factory failure that carried a coded JS error re-surfaces that code, so a
+/// factory built on client calls keeps its typed failures instead of every
+/// one collapsing to `FEE_BLOCK_FACTORY`.
 pub fn client_error(error: ClientError) -> JsValue {
+	if let ClientError::FeeBlockFactory { source } = &error {
+		let carried = source
+			.downcast_ref::<FactoryFailure>()
+			.and_then(FactoryFailure::code);
+		if let Some(code) = carried {
+			return coded_error(code, &source.to_string());
+		}
+	}
+
 	coded(CodedError::from(error))
 }
 

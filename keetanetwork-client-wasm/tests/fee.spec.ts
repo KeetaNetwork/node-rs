@@ -30,10 +30,28 @@ const PAYER_SEED_HEX = '83'.repeat(32);
 
 // The probes whose transmit must fail with a typed code. Each gets its own
 // funded sender so its abandoned temporary vote cannot collide with the
-// trusted account's later staples.
+// trusted account's later staples. The coded-factory probe proves a coded
+// error thrown by the factory keeps its own code instead of collapsing to
+// FEE_BLOCK_FACTORY.
 const FAILING_PROBES = [
-	{ reason: 'a required fee without a factory', code: 'FEE_REQUIRED', senderSeedHex: '84'.repeat(32) },
-	{ reason: 'a throwing factory', code: 'FEE_BLOCK_FACTORY', senderSeedHex: '85'.repeat(32) },
+	{
+		id: 'missing-factory',
+		reason: 'a required fee without a factory',
+		code: 'FEE_REQUIRED',
+		senderSeedHex: '84'.repeat(32),
+	},
+	{
+		id: 'throwing-factory',
+		reason: 'a throwing factory',
+		code: 'FEE_BLOCK_FACTORY',
+		senderSeedHex: '85'.repeat(32),
+	},
+	{
+		id: 'coded-factory',
+		reason: 'a factory throwing a coded error',
+		code: 'FEE_VETOED',
+		senderSeedHex: '86'.repeat(32),
+	},
 ] as const;
 
 test.describe('fee payment surface', () => {
@@ -153,7 +171,7 @@ test.describe('fee payment surface', () => {
 	for (const probe of FAILING_PROBES) {
 		test(`${probe.reason} throws code ${probe.code}`, async ({ page }) => {
 			const code: string = await page.evaluate(
-				async (cfg: { info: NodeInfo; senderSeedHex: string; senderFund: string; code: string }) => {
+				async (cfg: { info: NodeInfo; senderSeedHex: string; senderFund: string; id: string }) => {
 					const { KeetaClient, UserClient, Account, TransmitOptions } = (
 						window as unknown as { keeta: typeof Keeta }
 					).keeta;
@@ -170,26 +188,31 @@ test.describe('fee payment surface', () => {
 					builder.send(trusted, cfg.info.amount, token);
 					const blocks = await builder.build();
 
-					// One transmitter per expected code. FEE_REQUIRED goes through
-					// the bare KeetaClient: a signer-bound UserClient defaults to
-					// paying its own fee, so the no-factory path never surfaces there.
+					// One transmitter per probe
 					const throwingFactory = new TransmitOptions();
 					throwingFactory.setGenerateFeeBlock(async () => {
 						throw new Error('payer offline');
 					});
-					const transmitByCode: Record<string, () => Promise<boolean>> = {
-						FEE_REQUIRED: () => client.transmit(blocks, new TransmitOptions()),
-						FEE_BLOCK_FACTORY: () => user.transmit(blocks, throwingFactory),
+
+					const codedFactory = new TransmitOptions();
+					codedFactory.setGenerateFeeBlock(async () => {
+						throw Object.assign(new Error('fee vetoed by policy'), { code: 'FEE_VETOED' });
+					});
+
+					const transmitById: Record<string, () => Promise<boolean>> = {
+						'missing-factory': () => client.transmit(blocks, new TransmitOptions()),
+						'throwing-factory': () => user.transmit(blocks, throwingFactory),
+						'coded-factory': () => user.transmit(blocks, codedFactory),
 					};
 
 					try {
-						await transmitByCode[cfg.code]();
+						await transmitById[cfg.id]();
 						return 'NO_THROW';
 					} catch (error) {
 						return (error as { code?: string }).code ?? 'NO_CODE';
 					}
 				},
-				{ info, senderSeedHex: probe.senderSeedHex, senderFund: '2000', code: probe.code },
+				{ info, senderSeedHex: probe.senderSeedHex, senderFund: '2000', id: probe.id },
 			);
 
 			expect(code, `${probe.reason} must throw code ${probe.code}`).toBe(probe.code);

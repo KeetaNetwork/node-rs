@@ -107,14 +107,25 @@ async fn generate_via_js(
 	Ok(block.inner())
 }
 
-/// The thrown JS value, stringified: a `JsValue` cannot itself cross into the
-/// core error chain as a `core::error::Error` source.
+/// The thrown JS value, carried across the core error chain: a `JsValue`
+/// cannot itself be a `core::error::Error` source, so its stable `code`
+/// property (when present) and message are captured instead.
 #[derive(Debug)]
-struct FactoryFailure(String);
+pub(crate) struct FactoryFailure {
+	code: Option<String>,
+	message: String,
+}
+
+impl FactoryFailure {
+	/// The `code` property the thrown value carried, if any.
+	pub(crate) fn code(&self) -> Option<&str> {
+		self.code.as_deref()
+	}
+}
 
 impl fmt::Display for FactoryFailure {
 	fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-		formatter.write_str(&self.0)
+		formatter.write_str(&self.message)
 	}
 }
 
@@ -122,13 +133,16 @@ impl core::error::Error for FactoryFailure {}
 
 /// Project a value thrown by the JS factory onto the client error taxonomy.
 fn factory_failure(thrown: JsValue) -> ClientError {
+	let code = js_sys::Reflect::get(&thrown, &JsValue::from_str("code"))
+		.ok()
+		.and_then(|value| value.as_string());
 	let message = thrown
 		.dyn_ref::<js_sys::Error>()
 		.map(|error| String::from(error.message()))
 		.or_else(|| thrown.as_string())
 		.unwrap_or_else(|| String::from("fee-block factory threw a non-Error value"));
 
-	ClientError::FeeBlockFactory { source: Box::new(FactoryFailure(message)) }
+	ClientError::FeeBlockFactory { source: Box::new(FactoryFailure { code, message }) }
 }
 
 impl TransmitOptions {
