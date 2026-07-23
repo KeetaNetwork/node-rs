@@ -644,8 +644,7 @@ impl UserClient {
 	}
 
 	/// Keep the caller's fee-block factory when supplied, otherwise fall back
-	/// to the bound signer paying for itself, mirroring the reference
-	/// implementation's `UserClient` default `generateFeeBlock`.
+	/// to the bound signer paying for itself.
 	fn or_default_fee_payer(&self, options: TransmitOptions) -> Result<TransmitOptions, ClientError> {
 		if options.generate_fee_block.is_some() {
 			return Ok(options);
@@ -749,7 +748,7 @@ fn operation_involves(operation: &Operation, account: &impl AccountPublicKey) ->
 }
 
 /// Whether two accounts share the same public-key identity (algorithm plus
-/// raw key bytes), mirroring the TS `comparePublicKey`.
+/// raw key bytes).
 fn same_account(candidate: &AccountRef, account: &impl AccountPublicKey) -> bool {
 	candidate.to_keypair_type() == account.to_keypair_type()
 		&& candidate.as_public_key_bytes() == account.as_public_key_bytes()

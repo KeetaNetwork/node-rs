@@ -1,5 +1,4 @@
-//! Domain-typed request/response models exposed by
-//! [`KeetaClient`](crate::KeetaClient).
+//! Domain-typed request/response models exposed by [`KeetaClient`].
 
 use alloc::boxed::Box;
 use alloc::string::String;

@@ -3,8 +3,8 @@ package network.keeta.wasi;
 /**
  * A validated vote staple: the blocks of a round plus the votes endorsing
  * them, with the staple invariants (block/vote matching, validity window,
- * canonical ordering) already enforced by the core module. Handed to a
- * {@link GenerateFeeBlock} factory mid-transmit as the temporary round.
+ * canonical ordering) enforced by the core module at construction. Handed to
+ * a {@link GenerateFeeBlock} factory mid-transmit as the temporary round.
  */
 public final class VoteStaple implements AutoCloseable {
 	private final KeetaNet net;

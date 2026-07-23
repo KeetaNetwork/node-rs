@@ -1270,8 +1270,8 @@ pub extern "C" fn keeta_staple_tip_for(staple: i32, payer: i32) -> i32 {
 	}
 }
 
-/// The base token account handle for `network` (the implicit fee currency);
-/// 0 on failure.
+/// The base token account handle for `network` (the implicit fee currency).
+/// Returns 0 on failure.
 #[no_mangle]
 pub extern "C" fn keeta_base_token(network: i64) -> i32 {
 	let Ok(network) = u64::try_from(network) else {

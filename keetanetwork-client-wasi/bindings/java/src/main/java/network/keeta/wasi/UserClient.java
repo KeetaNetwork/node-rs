@@ -126,7 +126,7 @@ public final class UserClient {
 			List<Block.SignedBlock> all = blocks;
 			List<String> encodedAll = encoded;
 			if (feeBlock != null) {
-				// The fee block joins the permanent round last; the node
+				// The fee block joins the permanent round last. The node
 				// recognizes it by its FEE purpose and escalates the temporary
 				// votes over the original blocks.
 				all = new ArrayList<>(blocks);
@@ -171,7 +171,7 @@ public final class UserClient {
 
 	/**
 	 * Assemble a validated {@link VoteStaple} over {@code blocks} and the
-	 * base64 vote endorsing them, enforcing the staple invariants now.
+	 * base64 vote endorsing them, enforcing the staple invariants.
 	 */
 	private VoteStaple stapleFor(List<Block.SignedBlock> blocks, String voteBase64) {
 		int voteHandle = voteHandle(voteBase64);

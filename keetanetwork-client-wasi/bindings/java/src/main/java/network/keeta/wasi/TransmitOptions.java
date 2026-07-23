@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * Publish-time options for {@link UserClient#transmit(List, TransmitOptions)}.
- * Fee payment is a {@link GenerateFeeBlock} factory;
+ * Fee payment is a {@link GenerateFeeBlock} factory.
  * {@link #withFeeSigner(Account)} and
  * {@link #withFeeBlockFrom(Account, Account)} cover the common shapes.
  */

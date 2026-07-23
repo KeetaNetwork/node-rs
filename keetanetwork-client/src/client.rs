@@ -795,7 +795,7 @@ impl KeetaClient {
 	///
 	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to vote
 	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
-	/// - [`ClientError::FeeRequired`] -- the node requires a fee but no `generate_fee_block` was supplied
+	/// - [`ClientError::FeeRequired`] -- the node requires a fee but `generate_fee_block` is absent
 	/// - [`ClientError::Node`] -- a representative rejected the blocks or staple
 	pub async fn transmit(&self, blocks: &[Block], options: TransmitOptions) -> Result<bool, ClientError> {
 		self.transmit_with_optional_fee(blocks, &options).await
@@ -1247,8 +1247,7 @@ impl KeetaClient {
 	}
 
 	/// Resolve the fee block for a round whose votes require one by invoking
-	/// `options.generate_fee_block` with the temporary-round staple, like the
-	/// reference implementation's `generateFeeBlock`.
+	/// `options.generate_fee_block` with the temporary-round staple.
 	async fn fee_block_from_options(
 		&self,
 		blocks: &[Block],
@@ -1303,7 +1302,7 @@ impl KeetaClient {
 	/// # Errors
 	///
 	/// - [`ClientError::NoRepresentatives`] -- no representative is configured to vote
-	/// - [`ClientError::FeeRequired`] -- the node requires a fee but no `generate_fee_block` was supplied
+	/// - [`ClientError::FeeRequired`] -- the node requires a fee but `generate_fee_block` is absent
 	/// - [`ClientError::QuorumNotReached`] -- the returned votes did not reach quorum weight
 	/// - [`ClientError::Node`] -- a representative rejected the block or staple
 	pub async fn publish(&self, block: Block, options: TransmitOptions) -> Result<bool, ClientError> {

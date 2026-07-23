@@ -106,10 +106,10 @@ pub enum ClientError {
 	#[snafu(display("node response omitted the version"))]
 	MissingVersion,
 
-	/// The node's votes require a fee block but no signer was supplied to
-	/// originate one (use [`send`](crate::KeetaClient::send) or another
-	/// signer-bearing path).
-	#[snafu(display("node votes require a fee block but no signer was supplied"))]
+	/// The node's votes require a fee block but no fee-block factory is set
+	/// to originate one (see
+	/// [`TransmitOptions::generate_fee_block`](crate::TransmitOptions)).
+	#[snafu(display("node votes require a fee block but no fee-block factory is set"))]
 	FeeRequired,
 
 	/// An account address could not be parsed or derived: a malformed address

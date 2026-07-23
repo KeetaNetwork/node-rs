@@ -714,8 +714,7 @@ async fn test_with_fee_signer_third_party_pays() -> Result<(), Box<dyn core::err
 
 /// A hand-written `generate_fee_block` closure calling the public
 /// `build_fee_block` with the temporary-round staple must pay a required fee
-/// from a third party, matching the reference implementation's
-/// `generateFeeBlock` + `computeFeeBlock` pair.
+/// from a third party.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_build_fee_block_via_callback_third_party_pays() -> Result<(), Box<dyn core::error::Error>> {
 	let (_node, client, accounts) = fee_fixture();

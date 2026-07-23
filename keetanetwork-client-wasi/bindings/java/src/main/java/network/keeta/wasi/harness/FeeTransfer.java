@@ -19,8 +19,8 @@ import network.keeta.wasi.UserClient;
  * End-to-end fee harness test exercising the bound Java SDK against a fee-enforcing
  * node.
  *
- * <p>The node charges a flat base-token fee on every transaction. Three probes
- * mirror the Rust client's fee e2e tests:
+ * <p>The node charges a flat base-token fee on every transaction. Three
+ * probes cover the fee paths:
  *
  * <ol>
  * <li>The sender pays its own fee through {@code TransmitOptions.withFeeSigner},
