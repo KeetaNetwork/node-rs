@@ -1,13 +1,16 @@
 package network.keeta.wasi;
 
+import java.util.List;
+
 /**
- * Caller-supplied fee-block factory, invoked mid-transmit with the temporary
- * round; the returned block joins the permanent round and the staple.
- * Receives the transmitting client so it can chain through
- * {@link UserClient#buildFeeBlock(FeeRound, Account, Account)}. Return
- * {@code null} to publish without a fee block (no fee owed).
+ * Factory invoked mid-transmit when {@link TransmitOptions} carries one: build
+ * and sign the block paying the fee the temporary-round {@code staple}
+ * demands, honoring the {@code feeTokenPriority} preference. Return
+ * {@code null} to pay nothing. See
+ * {@link UserClient#buildFeeBlock(VoteStaple, Account, Account, List)} for the
+ * common implementation.
  */
 @FunctionalInterface
 public interface GenerateFeeBlock {
-	Block.SignedBlock generate(UserClient client, FeeRound round);
+	Block.SignedBlock generate(UserClient client, VoteStaple staple, List<Account> feeTokenPriority);
 }

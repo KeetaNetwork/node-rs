@@ -42,7 +42,7 @@ public final class TransmitOptions {
 	 * payer that signs for itself, prefer {@link #withFeeSigner(Account)}.
 	 */
 	public TransmitOptions withFeeBlockFrom(Account account, Account signer) {
-		this.generateFeeBlock = (client, round) -> client.buildFeeBlock(round, account, signer);
+		this.generateFeeBlock = (client, staple, priority) -> client.buildFeeBlock(staple, account, signer, priority);
 		return this;
 	}
 

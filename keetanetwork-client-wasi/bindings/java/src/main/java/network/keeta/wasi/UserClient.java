@@ -1,6 +1,8 @@
 package network.keeta.wasi;
 
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -115,7 +117,9 @@ public final class UserClient {
 
 		Block.SignedBlock feeBlock = null;
 		if (factory != null) {
-			feeBlock = factory.generate(this, new FeeRound(blocks, temporary, options.feeTokenPriority()));
+			try (VoteStaple staple = stapleFor(blocks, temporary)) {
+				feeBlock = factory.generate(this, staple, options.feeTokenPriority());
+			}
 		}
 
 		try {
@@ -150,19 +154,12 @@ public final class UserClient {
 
 	/** Assemble the staple over {@code blocks} plus the permanent vote, and post it. */
 	private void publishStaple(List<Block.SignedBlock> blocks, String permanentVoteBase64) {
-		byte[] voteBytes = Base64.getDecoder().decode(permanentVoteBase64);
-		int votePtr = net.write(voteBytes);
-		int voteHandle = net.handle("keeta_vote_from_bytes", votePtr, voteBytes.length);
+		int voteHandle = voteHandle(permanentVoteBase64);
 		try {
-			int[] blockHandles = new int[blocks.size()];
-			for (int index = 0; index < blockHandles.length; index++) {
-				blockHandles[index] = blocks.get(index).handle();
-			}
-
-			int blocksPtr = net.writeHandles(blockHandles);
+			int blocksPtr = net.writeHandles(blockHandles(blocks));
 			int votesPtr = net.writeHandles(voteHandle);
 			long currentTime = System.currentTimeMillis();
-			int stapleHandle = net.handle("keeta_vote_staple_build", blocksPtr, blockHandles.length * 4, votesPtr, 4,  currentTime);
+			int stapleHandle = net.handle("keeta_vote_staple_build", blocksPtr, blocks.size() * 4, votesPtr, 4, currentTime);
 			byte[] staple = net.takeBytes(stapleHandle);
 			String stapleBase64 = Base64.getEncoder().encodeToString(staple);
 
@@ -173,37 +170,66 @@ public final class UserClient {
 	}
 
 	/**
-	 * Build and sign a fee block paying {@code round}'s required fee:
-	 * {@code account}'s balance pays, {@code signer} signs.
+	 * Assemble a validated {@link VoteStaple} over {@code blocks} and the
+	 * base64 vote endorsing them, enforcing the staple invariants now.
 	 */
-	public Block.SignedBlock buildFeeBlock(FeeRound round, Account account, Account signer) {
-		int voteHandle = voteHandle(round.temporaryVoteBase64());
+	private VoteStaple stapleFor(List<Block.SignedBlock> blocks, String voteBase64) {
+		int voteHandle = voteHandle(voteBase64);
 		try {
-			int feeOpHandle = feeSend(voteHandle, round.feeTokenPriority());
-			if (feeOpHandle == 0) {
-				return null;
+			int blocksPtr = net.writeHandles(blockHandles(blocks));
+			int votesPtr = net.writeHandles(voteHandle);
+			long currentTime = System.currentTimeMillis();
+			int staple = net.handle("keeta_vote_staple_new", blocksPtr, blocks.size() * 4, votesPtr, 4, currentTime);
+
+			return new VoteStaple(net, staple);
+		} finally {
+			net.free("keeta_vote_free", voteHandle);
+		}
+	}
+
+	/**
+	 * Build and sign a fee block paying the fee {@code staple}'s votes
+	 * require: {@code account}'s balance pays, {@code signer} signs (distinct
+	 * under delegated signing, e.g. a storage account whose owner signs).
+	 * Chains atop {@code account}'s block in the staple, else its ledger
+	 * head, so the payer need not appear in the round. Returns {@code null}
+	 * when no fee is owed.
+	 */
+	public Block.SignedBlock buildFeeBlock(VoteStaple staple, Account account, Account signer, List<Account> priority) {
+		int[] feeOpHandles = stapleFeeSends(staple, priority);
+		if (feeOpHandles.length == 0) {
+			return null;
+		}
+
+		String previous = tipHashFor(staple, account);
+		if (previous == null) {
+			previous = headHash(account);
+		}
+
+		Block.Builder builder = keeta.builder()
+			.version(2)
+			.network(network)
+			.account(account)
+			.signer(signer)
+			.purpose("fee")
+			.date(System.currentTimeMillis());
+		Block.Builder positioned = positionAfter(builder, previous);
+
+		List<Operation> feeOps = new ArrayList<>(feeOpHandles.length);
+		try {
+			for (int handle : feeOpHandles) {
+				Operation feeOp = new Operation(net, handle);
+				feeOps.add(feeOp);
+				positioned = positioned.addOperation(feeOp);
 			}
 
-			String previous = tipHashFor(account, round.blocks());
-			if (previous == null) {
-				previous = headHash(account);
-			}
-
-			Block.Builder builder = keeta.builder()
-				.version(2)
-				.network(network)
-				.account(account)
-				.signer(signer)
-				.purpose("fee")
-				.date(System.currentTimeMillis());
-			Block.Builder positioned = positionAfter(builder, previous);
-
-			try (Operation feeOp = new Operation(net, feeOpHandle);
-				 Block.UnsignedBlock unsigned = positioned.addOperation(feeOp).build()) {
+			try (Block.UnsignedBlock unsigned = positioned.build()) {
 				return unsigned.sign();
 			}
 		} finally {
-			net.free("keeta_vote_free", voteHandle);
+			for (Operation feeOp : feeOps) {
+				feeOp.close();
+			}
 		}
 	}
 
@@ -226,10 +252,10 @@ public final class UserClient {
 	}
 
 	/**
-	 * The fee-paying operation handle the vote requires in the base token,
-	 * honoring the {@code priority} token preference; 0 when no fee is owed.
+	 * Handles of every fee-paying operation {@code staple}'s votes require in
+	 * the base token, honoring the {@code priority} token preference.
 	 */
-	private int feeSend(int voteHandle, List<Account> priority) {
+	private int[] stapleFeeSends(VoteStaple staple, List<Account> priority) {
 		int priorityPtr = 0;
 		int priorityLen = 0;
 		if (!priority.isEmpty()) {
@@ -242,24 +268,38 @@ public final class UserClient {
 			priorityLen = priorityHandles.length * 4;
 		}
 
-		return net.callInt("keeta_fee_send", voteHandle, baseToken.handle(), priorityPtr, priorityLen);
-	}
-
-	/** {@code payer}'s last block hash (hex) among {@code blocks}, or {@code null} when absent. */
-	private String tipHashFor(Account payer, List<Block.SignedBlock> blocks) {
-		int[] blockHandles = new int[blocks.size()];
-		for (int index = 0; index < blockHandles.length; index++) {
-			blockHandles[index] = blocks.get(index).handle();
+		int listHandle = net.callInt("keeta_staple_fee_sends", staple.handle(), baseToken.handle(), priorityPtr, priorityLen);
+		if (listHandle == 0) {
+			return new int[0];
 		}
 
-		int blocksPtr = net.writeHandles(blockHandles);
-		int tipHandle = net.callInt("keeta_blocks_tip_for", blocksPtr, blockHandles.length * 4, payer.handle());
+		byte[] bytes = net.takeBytes(listHandle);
+		int[] handles = new int[bytes.length / 4];
+		for (int index = 0; index < handles.length; index++) {
+			handles[index] = ByteBuffer.wrap(bytes, index * 4, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+		}
 
+		return handles;
+	}
+
+	/** {@code payer}'s last block hash (hex) in {@code staple}, or {@code null} when absent. */
+	private String tipHashFor(VoteStaple staple, Account payer) {
+		int tipHandle = net.callInt("keeta_staple_tip_for", staple.handle(), payer.handle());
 		if (tipHandle == 0) {
 			return null;
 		}
 
 		return net.takeString(tipHandle);
+	}
+
+	/** The guest handles of {@code blocks}, in order. */
+	private static int[] blockHandles(List<Block.SignedBlock> blocks) {
+		int[] handles = new int[blocks.size()];
+		for (int index = 0; index < handles.length; index++) {
+			handles[index] = blocks.get(index).handle();
+		}
+
+		return handles;
 	}
 
 	/**

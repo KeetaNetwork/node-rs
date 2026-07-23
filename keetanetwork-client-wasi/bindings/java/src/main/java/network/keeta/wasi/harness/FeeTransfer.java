@@ -23,9 +23,8 @@ import network.keeta.wasi.UserClient;
  * mirror the Rust client's fee e2e tests:
  *
  * <ol>
- * <li>The sender pays its own fee through
- * {@code TransmitOptions.withFeeSigner}, proving the {@code keeta_fee_send}
- * path.</li>
+ * <li>The sender pays its own fee through {@code TransmitOptions.withFeeSigner},
+ * proving the {@code keeta_staple_fee_sends} path.</li>
  * <li>A storage account (no key of its own) pays the fee with its trusted
  * owner signing the fee block through
  * {@code TransmitOptions.withFeeBlockFrom}, proving the delegated
