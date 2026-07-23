@@ -29,9 +29,8 @@ import network.keeta.wasi.UserClient;
  * owner signing the fee block through
  * {@code TransmitOptions.withFeeBlockFrom}, proving the delegated
  * account/signer split.</li>
- * <li>A fee-less transmit fails with a typed {@code FEE_REQUIRED} before
- * anything is published. Last: the node's temporary vote pins the account
- * head until it expires, blocking any further block on that head.</li>
+ * <li>A transmit paying no fee fails with a typed {@code FEE_REQUIRED}
+ * before anything is published.</li>
  * </ol>
  */
 public final class FeeTransfer {
@@ -67,8 +66,10 @@ public final class FeeTransfer {
 	}
 
 	/**
-	 * A fee-less transmit must fail with a typed {@code FEE_REQUIRED} before
-	 * anything is published: the recipient's balance is unchanged after.
+	 * A transmit paying no fee must fail with a typed {@code FEE_REQUIRED}
+	 * before anything is published: the recipient's balance is unchanged
+	 * after. Probes the worst case, a factory that declines by returning
+	 * {@code null}, which shares its gate with the no-factory path.
 	 */
 	private static void feeRequiredIsTyped(Keeta keeta, UserClient client, Account trusted, Account recipient,
 		Account base) {
@@ -76,11 +77,12 @@ public final class FeeTransfer {
 
 		Block.SignedBlock send = sendBlock(keeta, client, trusted, recipient, AMOUNT, base);
 		try (send) {
-			client.transmit(List.of(send));
-			check(false, "a fee-less transmit must throw FEE_REQUIRED");
+			TransmitOptions declines = TransmitOptions.defaults().withGenerateFeeBlock((c, staple, priority) -> null);
+			client.transmit(List.of(send), declines);
+			check(false, "a transmit paying no fee must throw FEE_REQUIRED");
 		} catch (KeetaException exception) {
 			check("FEE_REQUIRED".equals(exception.code()),
-				"a fee-less transmit must fail with FEE_REQUIRED, got " + exception.code());
+				"a transmit paying no fee must fail with FEE_REQUIRED, got " + exception.code());
 		}
 
 		BigInteger recipientAfter = parseHex(client.balance(recipient, base));

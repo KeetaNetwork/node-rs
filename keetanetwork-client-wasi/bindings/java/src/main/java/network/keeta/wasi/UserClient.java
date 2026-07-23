@@ -102,8 +102,8 @@ public final class UserClient {
 	/**
 	 * Publish {@code blocks} as one atomic staple. When {@code options}
 	 * carries a fee-block factory it is invoked with the temporary round, and
-	 * any block it returns joins the permanent round and the staple. Without
-	 * a factory, a vote requiring a fee fails with {@code FEE_REQUIRED}
+	 * any block it returns joins the permanent round and the staple. A vote
+	 * requiring a fee that no fee block pays fails with {@code FEE_REQUIRED}
 	 * before anything is published.
 	 */
 	public void transmit(List<Block.SignedBlock> blocks, TransmitOptions options) {
@@ -111,15 +111,16 @@ public final class UserClient {
 		String temporary = requestVote(encoded, null);
 
 		GenerateFeeBlock factory = options.generateFeeBlock();
-		if (factory == null && feesRequired(temporary)) {
-			throw new KeetaException("FEE_REQUIRED", "votes require a fee but no fee-block factory was supplied");
-		}
-
 		Block.SignedBlock feeBlock = null;
 		if (factory != null) {
 			try (VoteStaple staple = stapleFor(blocks, temporary)) {
 				feeBlock = factory.generate(this, staple, options.feeTokenPriority());
 			}
+		}
+
+		if (feeBlock == null && feesRequired(temporary)) {
+			throw new KeetaException("FEE_REQUIRED",
+				"votes require a fee but no fee block was produced; set a fee-block factory on TransmitOptions");
 		}
 
 		try {
