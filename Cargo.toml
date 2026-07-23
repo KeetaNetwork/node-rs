@@ -179,22 +179,22 @@ path = "keetanetwork-ledger"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client]
-version = "0.4.1"
+version = "0.5.0"
 path = "keetanetwork-client"
 default-features = false
 
 [workspace.dependencies.keetanetwork-bindings]
-version = "0.4.2"
+version = "0.4.3"
 path = "keetanetwork-bindings"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client-wasi]
-version = "0.5.0"
+version = "0.6.0"
 path = "keetanetwork-client-wasi"
 default-features = false
 
 [workspace.dependencies.keetanetwork-client-wasm]
-version = "0.4.2"
+version = "0.5.0"
 path = "keetanetwork-client-wasm"
 default-features = false
 
