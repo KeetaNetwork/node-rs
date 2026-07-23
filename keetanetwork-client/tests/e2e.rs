@@ -11,7 +11,10 @@ use std::sync::Arc;
 
 use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPairType};
 use keetanetwork_block::testing::generate_ed25519_ref;
-use keetanetwork_block::{AccountRef, AdjustMethod, Amount, Block, BlockHash, BlockTime, Hashable, Operation, SetInfo};
+use keetanetwork_block::{
+	AccountRef, AdjustMethod, Amount, BaseFlag, Block, BlockHash, BlockTime, Hashable, ModifyPermissions,
+	ModifyPermissionsPrincipal, Operation, Permissions, SetInfo,
+};
 use keetanetwork_client::{
 	AcceptSwapRequest, ChainQuery, ClientConfig, ClientError, CreateSwapRequest, HistoryQuery, InitializeNetwork,
 	KeetaClient, KeetaNetError, LedgerSide, Network, NodeErrorType, RepEndpoint, TransactionBuilder, TransmitOptions,
@@ -582,6 +585,168 @@ async fn test_transmit_without_signer_when_fee_required_errors() -> Result<(), B
 	);
 
 	Ok(())
+}
+
+/// Seed byte for the third-party fee payer in the fee-payer tests. Each test
+/// boots its own node, so the seed is shared safely across them.
+const FEE_PAYER_SEED_BYTE: u8 = 0x44;
+
+/// Seed byte for the send recipient in the fee-payer tests. Distinct from
+/// the representative so the fee `payTo` credit is not mixed.
+const FEE_RECIPIENT_SEED_BYTE: u8 = 0x45;
+
+/// Funding granted to a fee payer, covering several node fees.
+const PAYER_FUNDING: u64 = FEE_AMOUNT * 10;
+
+/// Publish-time options letting the trusted account pay the fees the setup
+/// transmits themselves incur on a fee-enforcing node.
+fn trusted_fee_options(accounts: &SigningAccounts) -> TransmitOptions {
+	TransmitOptions::default().with_fee_signer(&accounts.trusted)
+}
+
+/// Fund a fresh ed25519 fee payer from the trusted account.
+async fn funded_payer(
+	client: &KeetaClient,
+	accounts: &SigningAccounts,
+) -> Result<AccountRef, Box<dyn core::error::Error>> {
+	let payer = generate_ed25519_ref(FEE_PAYER_SEED_BYTE);
+
+	let amount = Amount::from(PAYER_FUNDING);
+	let funded = client
+		.send(&accounts.trusted, &payer, &accounts.token, amount)
+		.await?;
+	assert!(funded, "funding the fee payer must be accepted");
+
+	Ok(payer)
+}
+
+/// Create a storage account able to pay fees: derive the identifier under the
+/// trusted account, grant it `STORAGE_CAN_HOLD` for the base token, and fund it.
+async fn funded_storage_payer(
+	client: &KeetaClient,
+	accounts: &SigningAccounts,
+) -> Result<AccountRef, Box<dyn core::error::Error>> {
+	let mut create_builder = client.builder(&accounts.trusted);
+	let pending = create_builder.generate_identifier(KeyPairType::STORAGE, None);
+	let create_blocks = create_builder.build().await?;
+	let fee_options = trusted_fee_options(accounts);
+
+	let created = client.transmit(&create_blocks, fee_options).await?;
+	assert!(created, "the create-storage block must be accepted");
+
+	let storage = pending.get()?;
+	let hold_permissions = Permissions::from_flags(&[BaseFlag::StorageCanHold], &[])?;
+	let mut grant_builder = client.builder(&accounts.trusted);
+	grant_builder.for_account_with_signer(&storage, &accounts.trusted);
+	grant_builder.modify_permissions(ModifyPermissions {
+		principal: ModifyPermissionsPrincipal::Account(Arc::clone(&accounts.token)),
+		method: AdjustMethod::Set,
+		permissions: Some(hold_permissions),
+		target: None,
+	});
+	let grant_blocks = grant_builder.build().await?;
+
+	let fee_options = trusted_fee_options(accounts);
+	let granted = client.transmit(&grant_blocks, fee_options).await?;
+	assert!(granted, "the STORAGE_CAN_HOLD grant must be accepted");
+
+	let amount = Amount::from(PAYER_FUNDING);
+	let funded = client
+		.send(&accounts.trusted, &storage, &accounts.token, amount)
+		.await?;
+	assert!(funded, "funding the storage payer must be accepted");
+
+	Ok(storage)
+}
+
+/// Shared assertion for the third-party fee-payer probes: transmit a send
+/// from the trusted account under `options`, then assert the sender was
+/// debited only the send amount, `payer` exactly the fee, and the recipient
+/// credited the send amount.
+async fn assert_third_party_pays_fee(
+	client: &KeetaClient,
+	accounts: &SigningAccounts,
+	payer: &AccountRef,
+	options: TransmitOptions,
+) -> Result<(), Box<dyn core::error::Error>> {
+	let recipient = generate_ed25519_ref(FEE_RECIPIENT_SEED_BYTE);
+
+	let sender_before = client.balance(&*accounts.trusted, &*accounts.token).await?;
+	let payer_before = client.balance(&**payer, &*accounts.token).await?;
+
+	let block = send_block(client, accounts, &recipient, SEND_AMOUNT).await?;
+	let accepted = client.transmit(&[block], options).await?;
+	assert!(accepted, "the node must accept a staple whose fee block a third party originated");
+
+	let sender_after = client.balance(&*accounts.trusted, &*accounts.token).await?;
+	let payer_after = client.balance(&**payer, &*accounts.token).await?;
+	let recipient_balance = client.balance(&*recipient, &*accounts.token).await?;
+
+	let sender_debit = sender_before.as_bigint() - sender_after.as_bigint();
+	let payer_debit = payer_before.as_bigint() - payer_after.as_bigint();
+
+	assert_eq!(
+		sender_debit,
+		BigInt::from(SEND_AMOUNT),
+		"the sender must be debited only the send amount when a third party pays the fee"
+	);
+	assert_eq!(payer_debit, BigInt::from(FEE_AMOUNT), "the fee payer must be debited exactly the required fee");
+	assert_eq!(
+		recipient_balance.as_bigint(),
+		&BigInt::from(SEND_AMOUNT),
+		"the recipient must be credited the send amount"
+	);
+
+	Ok(())
+}
+
+/// The `with_fee_signer` helper must pay a required fee from a third party
+/// that does not appear in the staple, without any hand-written closure,
+/// exercising the ledger-head `previous` fallback.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_with_fee_signer_third_party_pays() -> Result<(), Box<dyn core::error::Error>> {
+	let (_node, client, accounts) = fee_fixture();
+	let payer = funded_payer(&client, &accounts).await?;
+
+	let options = TransmitOptions::default().with_fee_signer(&payer);
+	assert_third_party_pays_fee(&client, &accounts, &payer, options).await
+}
+
+/// A hand-written `generate_fee_block` closure calling the public
+/// `build_fee_block` with the temporary-round staple must pay a required fee
+/// from a third party, matching the reference implementation's
+/// `generateFeeBlock` + `computeFeeBlock` pair.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_build_fee_block_via_callback_third_party_pays() -> Result<(), Box<dyn core::error::Error>> {
+	let (_node, client, accounts) = fee_fixture();
+	let payer = funded_payer(&client, &accounts).await?;
+
+	let closure_payer = Arc::clone(&payer);
+	let options = TransmitOptions {
+		generate_fee_block: Some(Arc::new(move |client, staple, priority| {
+			let payer = Arc::clone(&closure_payer);
+			Box::pin(async move {
+				client
+					.build_fee_block(&staple, &payer, &payer, &priority)
+					.await
+			})
+		})),
+		..Default::default()
+	};
+
+	assert_third_party_pays_fee(&client, &accounts, &payer, options).await
+}
+
+/// A storage account (no key of its own) must pay a required fee with its
+/// owner signing the fee block, exercising the delegated `account`/`signer`
+/// split of `build_fee_block`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_with_fee_block_from_storage_account_pays() -> Result<(), Box<dyn core::error::Error>> {
+	let (_node, client, accounts) = fee_fixture();
+	let storage = funded_storage_payer(&client, &accounts).await?;
+
+	let options = TransmitOptions::default().with_fee_block_from(&storage, &accounts.trusted);
+	assert_third_party_pays_fee(&client, &accounts, &storage, options).await
 }
 
 /// Number of peered representatives the multi-rep cluster boots.

@@ -1,13 +1,18 @@
 //! Domain-typed request/response models exposed by
 //! [`KeetaClient`](crate::KeetaClient).
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::fmt;
+use core::future::Future;
+use core::pin::Pin;
 
 use keetanetwork_block::{AccountRef, Amount, Block, BlockHash, BlockTime, Operation, Permissions};
 use keetanetwork_vote::{VoteBlockHash, VoteQuote, VoteStaple};
 
+use crate::client::KeetaClient;
 use crate::error::ClientError;
 use crate::sync::Once;
 
@@ -265,6 +270,33 @@ pub struct AccountState {
 	pub balances: Vec<TokenBalance>,
 }
 
+/// The future a [`GenerateFeeBlock`] callback returns. The `Send` bound is
+/// required on native targets and dropped on wasm, where futures are single-threaded.
+#[cfg(not(target_family = "wasm"))]
+pub type FeeBlockFuture = Pin<Box<dyn Future<Output = Result<Block, ClientError>> + Send>>;
+
+/// The future a [`GenerateFeeBlock`] callback returns.
+#[cfg(target_family = "wasm")]
+pub type FeeBlockFuture = Pin<Box<dyn Future<Output = Result<Block, ClientError>>>>;
+
+/// Caller-supplied fee-block factory, invoked mid-transmit with the
+/// temporary-round staple and the round's
+/// [`fee_token_priority`](TransmitOptions::fee_token_priority) when the
+/// representatives' votes require a fee. The returned block joins the
+/// permanent round and the published staple.
+///
+/// Receives a clone of the transmitting client so the callback can chain
+/// through [`KeetaClient::build_fee_block`] without capturing one.
+#[cfg(not(target_family = "wasm"))]
+pub type GenerateFeeBlock = Arc<dyn Fn(KeetaClient, VoteStaple, Vec<AccountRef>) -> FeeBlockFuture + Send + Sync>;
+
+/// Caller-supplied fee-block factory, invoked mid-transmit with the
+/// temporary-round staple and the round's
+/// [`fee_token_priority`](TransmitOptions::fee_token_priority) when the
+/// representatives' votes require a fee.
+#[cfg(target_family = "wasm")]
+pub type GenerateFeeBlock = Arc<dyn Fn(KeetaClient, VoteStaple, Vec<AccountRef>) -> FeeBlockFuture>;
+
 /// Optional inputs to [`KeetaClient::transmit`](crate::KeetaClient::transmit).
 ///
 /// Constructed with [`Default`] and overridden field-by-field:
@@ -273,24 +305,68 @@ pub struct AccountState {
 /// use keetanetwork_client::TransmitOptions;
 ///
 /// let options = TransmitOptions::default();
-/// assert!(options.fee_signer.is_none());
+/// assert!(options.generate_fee_block.is_none());
 /// assert!(options.quotes.is_empty());
 /// ```
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct TransmitOptions {
-	/// Account that originates and signs a
-	/// [`BlockPurpose::Fee`](keetanetwork_block::BlockPurpose::Fee) block when
-	/// the representatives' votes require a fee. Absent, a required fee fails
-	/// with [`ClientError::FeeRequired`].
-	pub fee_signer: Option<AccountRef>,
 	/// Pre-fetched vote quotes to attach to the temporary round. Each quote is
 	/// routed to the representative that issued it.
 	pub quotes: Vec<VoteQuote>,
 	/// Tokens to prefer when a fee entry is payable in several tokens, ranked
 	/// highest priority first. An entry with an implicit (`None`) token counts
 	/// as the network base token. Empty (the default) prefers the base-token
-	/// entry, then the first entry.
+	/// entry, then the first entry. Handed to
+	/// [`generate_fee_block`](Self::generate_fee_block) at invocation, so it
+	/// may be set before or after the factory.
 	pub fee_token_priority: Vec<AccountRef>,
+	/// Fee-block factory invoked when the representatives' votes require a
+	/// fee. Absent, a required fee fails with [`ClientError::FeeRequired`].
+	/// See [`with_fee_signer`](Self::with_fee_signer) and
+	/// [`with_fee_block_from`](Self::with_fee_block_from) for the common
+	/// shapes; write the closure by hand only for exotic payment flows.
+	pub generate_fee_block: Option<GenerateFeeBlock>,
+}
+
+impl TransmitOptions {
+	/// Set [`generate_fee_block`](Self::generate_fee_block) to pay any
+	/// required fee from `signer`, signing for itself.
+	pub fn with_fee_signer(self, signer: &AccountRef) -> Self {
+		self.with_fee_block_from(signer, signer)
+	}
+
+	/// Set [`generate_fee_block`](Self::generate_fee_block) to pay any
+	/// required fee from `account`, signed by `signer` (delegated signing,
+	/// e.g. a storage account whose owner signs). For a payer that signs for
+	/// itself, prefer [`with_fee_signer`](Self::with_fee_signer).
+	pub fn with_fee_block_from(mut self, account: &AccountRef, signer: &AccountRef) -> Self {
+		let account = Arc::clone(account);
+		let signer = Arc::clone(signer);
+
+		self.generate_fee_block = Some(Arc::new(move |client, staple, priority| {
+			let account = Arc::clone(&account);
+			let signer = Arc::clone(&signer);
+
+			Box::pin(async move {
+				client
+					.build_fee_block(&staple, &account, &signer, &priority)
+					.await
+			})
+		}));
+
+		self
+	}
+}
+
+impl fmt::Debug for TransmitOptions {
+	fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+		formatter
+			.debug_struct("TransmitOptions")
+			.field("quotes", &self.quotes)
+			.field("fee_token_priority", &self.fee_token_priority)
+			.field("generate_fee_block", &self.generate_fee_block.is_some())
+			.finish()
+	}
 }
 
 /// Liveness and statistics for a single representative, as gathered by

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use num_bigint::BigInt;
 
-use keetanetwork_account::KeyPairType;
+use keetanetwork_account::{Account, KeyNETWORK, KeyPairType};
 use keetanetwork_bindings::error::CodedError;
 use keetanetwork_bindings::parse::{adjust_method, base_flag, bigint_hex, purpose};
 use keetanetwork_bindings::permissions as bindings_permissions;
@@ -16,7 +16,7 @@ use keetanetwork_block::{
 	ManageCertificate, ModifyPermissions, ModifyPermissionsPrincipal, MultisigCreateArguments, Operation, Permissions,
 	Receive, Send, SetInfo, SetRep, Signer, TokenAdminModifyBalance, TokenAdminSupply, UnsignedBlock,
 };
-use keetanetwork_vote::{ValidationConfig, Vote, VoteQuote, VoteStaple};
+use keetanetwork_vote::{Fees, ValidationConfig, Vote, VoteQuote, VoteStaple};
 
 /// The account primitive operations live in the shared `keetanetwork-bindings`
 /// crate so every binding boundary reuses a single definition.
@@ -137,6 +137,34 @@ pub fn quote_to_hex(quote: &VoteQuote) -> String {
 /// The fee-paying `SEND` operation `vote` requires.
 pub fn fee_send(vote: &Vote, base_token: &AccountRef, priority: &[AccountRef]) -> Option<Operation> {
 	vote.fee_send(base_token, priority).map(Operation::from)
+}
+
+/// Whether `vote` obliges a fee block: it carries a required (non-optional)
+/// fee schedule. See [`Fees::required`].
+pub fn fees_required(vote: &Vote) -> bool {
+	vote.fees().is_some_and(Fees::required)
+}
+
+/// The hex hash of `account`'s last block among `blocks`, if any: the
+/// chaining point for a fee block joining the round.
+pub fn blocks_tip_for(blocks: &[Block], account: &AccountRef) -> Option<String> {
+	blocks
+		.iter()
+		.rev()
+		.find(|block| block.data().account() == account)
+		.map(block_hash)
+}
+
+/// The base token (the `TOKEN` identifier at operation index zero of the
+/// network address) for `network`: the implicit fee currency.
+pub fn base_token(network: u64) -> Result<AccountRef, CodedError> {
+	let network_account = Account::<KeyNETWORK>::generate_network_address(network)
+		.map_err(|error| CodedError::new("IDENTIFIER", error.as_ref()))?;
+	let token = network_account
+		.generate_identifier(KeyPairType::TOKEN, None, 0)
+		.map_err(|error| CodedError::new("IDENTIFIER", error.as_ref()))?;
+
+	Ok(Arc::new(token))
 }
 
 /// The staple hash as a hex string.
@@ -378,6 +406,77 @@ fn decode_certificate_der(certificate: &str) -> Result<CertificateDer, CodedErro
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	use keetanetwork_vote::{Fee, VoteBuilder};
+
+	/// A signed opening block carrying one `SET_REP` for `user`.
+	fn signed_block(user: &AccountRef, rep: AccountRef) -> Block {
+		let date = block_time(1_700_000_000_000).expect("timestamp must be in range");
+		let builder = BlockBuilder::default()
+			.with_network(0u64)
+			.with_account(user.clone())
+			.with_signer(signer_single(user.clone()))
+			.with_date(date)
+			.as_opening()
+			.with_operation(op_set_rep(rep));
+
+		let unsigned = build_unsigned(builder).expect("the unsigned block must build");
+		sign_unsigned(unsigned).expect("signing must succeed")
+	}
+
+	/// A signed vote over one block hash, optionally carrying `fees`.
+	fn signed_vote(issuer: &AccountRef, fees: Option<Fees>) -> Vote {
+		let from = block_time(1_700_000_000_000).expect("timestamp must be in range");
+		let to = block_time(1_700_000_600_000).expect("timestamp must be in range");
+		let mut builder = VoteBuilder::new()
+			.serial(1u8)
+			.issuer(Arc::clone(issuer))
+			.validity(from, to)
+			.add_block(BlockHash::from([7u8; 32]));
+
+		if let Some(fees) = fees {
+			builder = builder.fees(fees);
+		}
+
+		builder
+			.build_signed(issuer.as_ref())
+			.expect("the vote must sign")
+	}
+
+	#[test]
+	fn blocks_tip_for_finds_the_accounts_last_block() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let user = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let rep = account_from_seed(&seed, 1, DEFAULT_ALGORITHM).expect("derivation must succeed");
+		let outsider = account_from_seed(&seed, 2, DEFAULT_ALGORITHM).expect("derivation must succeed");
+
+		let block = signed_block(&user, rep);
+		let blocks = [block.clone()];
+		assert_eq!(blocks_tip_for(&blocks, &user), Some(block_hash(&block)));
+		assert_eq!(blocks_tip_for(&blocks, &outsider), None);
+	}
+
+	#[test]
+	fn fees_required_only_for_a_nonzero_schedule_with_no_zero_option() {
+		let seed = generate_seed().expect("seed generation must succeed");
+		let issuer = account_from_seed(&seed, 0, DEFAULT_ALGORITHM).expect("derivation must succeed");
+
+		let fee = |amount: u64| Fee { amount: Amount::from(amount), pay_to: None, token: None };
+		let required = Fees::from_entries(false, vec![fee(10)]).expect("fees must build");
+		let optional = Fees::from_entries(false, vec![fee(10), fee(0)]).expect("fees must build");
+		assert!(!fees_required(&signed_vote(&issuer, None)));
+		assert!(fees_required(&signed_vote(&issuer, Some(required))));
+		assert!(!fees_required(&signed_vote(&issuer, Some(optional))));
+	}
+
+	#[test]
+	fn base_token_is_deterministic_per_network() {
+		let first = base_token(1).expect("the base token must derive");
+		let again = base_token(1).expect("the base token must derive");
+		let other = base_token(2).expect("the base token must derive");
+		assert_eq!(first.to_string(), again.to_string());
+		assert_ne!(first.to_string(), other.to_string());
+	}
 
 	#[test]
 	fn permissions_round_trip_through_bitmaps() {

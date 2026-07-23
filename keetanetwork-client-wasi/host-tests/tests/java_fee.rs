@@ -76,7 +76,15 @@ fn java_sdk_pays_a_required_fee() -> Result<(), Box<dyn std::error::Error>> {
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	let stderr = String::from_utf8_lossy(&output.stderr);
 	assert!(output.status.success(), "the Java harness must exit zero\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(
+		stdout.contains("FEE_REQUIRED_OK"),
+		"the Java SDK must refuse a fee-less transmit with FEE_REQUIRED\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+	);
 	assert!(stdout.contains("FEE_OK"), "the Java SDK must pay the required fee\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
+	assert!(
+		stdout.contains("STORAGE_FEE_OK"),
+		"the Java SDK must pay a fee from a storage account with a delegated signer\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+	);
 
 	Ok(())
 }

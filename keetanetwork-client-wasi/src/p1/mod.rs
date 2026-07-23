@@ -1198,6 +1198,49 @@ pub unsafe extern "C" fn keeta_fee_send(vote: i32, base_token: i32, priority_ptr
 	}
 }
 
+/// 1 when `vote` obliges a fee block (a required, non-optional fee schedule),
+/// 0 otherwise or on a bad handle.
+#[no_mangle]
+pub extern "C" fn keeta_fees_required(vote: i32) -> i32 {
+	resolve::<Vote>(vote).is_some_and(|vote| pure::fees_required(&vote)) as i32
+}
+
+/// The hex hash (as a bytes handle) of `payer`'s last block among the handle
+/// buffer `blocks`: the chaining point for a fee block joining the round.
+/// Returns 0 when the payer has no block in the round.
+///
+/// # Safety
+/// See [`bytes_in`]; `blocks` must be a `(ptr, len)` pair of `i32` handles.
+#[no_mangle]
+pub unsafe extern "C" fn keeta_blocks_tip_for(blocks_ptr: i32, blocks_len: i32, payer: i32) -> i32 {
+	let (Some(blocks), Some(payer)) = (resolve_handles::<Block>(blocks_ptr, blocks_len), account(payer)) else {
+		return 0;
+	};
+
+	match pure::blocks_tip_for(&blocks, &payer) {
+		Some(hash) => store_bytes(hash.into_bytes()),
+		None => 0,
+	}
+}
+
+/// The base token account handle for `network` (the implicit fee currency);
+/// 0 on failure.
+#[no_mangle]
+pub extern "C" fn keeta_base_token(network: i64) -> i32 {
+	let Ok(network) = u64::try_from(network) else {
+		fail(CodedError::new("INVALID_NETWORK", "network id must be non-negative"));
+		return 0;
+	};
+
+	match pure::base_token(network) {
+		Ok(token) => store_account(token),
+		Err(error) => {
+			fail(error);
+			0
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // X.509 certificate objects (handle-based)
 // ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 //! JS `TransmitOptions`: publish-time controls passed to publish/transmit.
 
+use core::mem;
+
 use keetanetwork_client::TransmitOptions as Core;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -22,11 +24,11 @@ impl TransmitOptions {
 		Self::default()
 	}
 
-	/// Account that originates and signs a fee block when the votes require
-	/// one. Without it, a required fee fails with `FEE_REQUIRED`.
+	/// Account that pays and signs a fee block when the votes require one.
+	/// Without it, a required fee fails with `FEE_REQUIRED`.
 	#[wasm_bindgen(js_name = setFeeSigner)]
 	pub fn set_fee_signer(&mut self, signer: &Account) {
-		self.inner.fee_signer = Some(signer.inner());
+		self.inner = mem::take(&mut self.inner).with_fee_signer(&signer.inner());
 	}
 
 	/// Append a token to the fee-token preference order, highest priority

@@ -1160,7 +1160,7 @@ impl GuestTransaction for TransactionState {
 
 	fn commit(&self) -> Result<Vec<String>, CodedError> {
 		let blocks = run(self.builder.borrow_mut().build())?;
-		let options = TransmitOptions { fee_signer: Some(Arc::clone(&self.signer)), ..Default::default() };
+		let options = TransmitOptions::default().with_fee_signer(&self.signer);
 
 		let accepted = run(self.client.transmit(&blocks, options))?;
 		if !accepted {

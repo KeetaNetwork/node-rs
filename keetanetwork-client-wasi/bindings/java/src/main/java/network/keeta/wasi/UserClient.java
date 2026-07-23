@@ -22,6 +22,7 @@ public final class UserClient {
 	private final Keeta keeta;
 	private final KeetaNet net;
 	private final long network;
+	private final Account baseToken;
 	private final NodeApi nodeApi;
 	private final LedgerApi ledgerApi;
 	private final VoteApi voteApi;
@@ -30,9 +31,15 @@ public final class UserClient {
 		this.keeta = keeta;
 		this.net = keeta.runtime();
 		this.network = network;
+		this.baseToken = new Account(net, net.handle("keeta_base_token", network));
+
+		String baseUri = api;
+		if (baseUri.endsWith("/")) {
+			baseUri = baseUri.substring(0, baseUri.length() - 1);
+		}
 
 		ApiClient client = new ApiClient();
-		client.updateBaseUri(api.endsWith("/") ? api.substring(0, api.length() - 1) : api);
+		client.updateBaseUri(baseUri);
 		this.nodeApi = new NodeApi(client);
 		this.ledgerApi = new LedgerApi(client);
 		this.voteApi = new VoteApi(client);
@@ -41,6 +48,11 @@ public final class UserClient {
 	/** The network id this client is bound to (used when building blocks). */
 	public long network() {
 		return network;
+	}
+
+	/** The network's base token (the implicit fee currency), derived from the network id. */
+	public Account baseToken() {
+		return baseToken;
 	}
 
 	/** The node software version string. */
@@ -62,7 +74,11 @@ public final class UserClient {
 	public String supply(Account token) {
 		return attempt(() -> {
 			var info = ledgerApi.getAccountState(token.publicKeyString()).getInfo();
-			return info == null ? null : info.getSupply();
+			if (info == null) {
+				return null;
+			}
+
+			return info.getSupply();
 		}, "token supply");
 	}
 
@@ -74,25 +90,33 @@ public final class UserClient {
 	}
 
 	/**
-	 * Publish several signed blocks as one atomic staple, paying no fee.
+	 * Publish several signed blocks as one atomic staple, paying no fee: a
+	 * vote requiring one fails with {@code FEE_REQUIRED}.
 	 */
 	public void transmit(List<Block.SignedBlock> blocks) {
-		transmit(blocks, null, null);
+		transmit(blocks, TransmitOptions.defaults());
 	}
 
 	/**
-	 * Publish {@code blocks} as one atomic staple. Request a temporary vote
-	 * covering every block; when it declares a required fee and both
-	 * {@code feeSigner} and {@code baseToken} are supplied, originate a fee block
-	 * paying it.
+	 * Publish {@code blocks} as one atomic staple. When {@code options}
+	 * carries a fee-block factory it is invoked with the temporary round, and
+	 * any block it returns joins the permanent round and the staple. Without
+	 * a factory, a vote requiring a fee fails with {@code FEE_REQUIRED}
+	 * before anything is published.
 	 */
-	public void transmit(List<Block.SignedBlock> blocks, Account feeSigner, Account baseToken) {
+	public void transmit(List<Block.SignedBlock> blocks, TransmitOptions options) {
 		List<String> encoded = encode(blocks);
 		String temporary = requestVote(encoded, null);
 
-		Block.SignedBlock feeBlock = (feeSigner == null || baseToken == null)
-			? null
-			: buildFeeBlock(feeSigner, baseToken, blocks, temporary);
+		GenerateFeeBlock factory = options.generateFeeBlock();
+		if (factory == null && feesRequired(temporary)) {
+			throw new KeetaException("FEE_REQUIRED", "votes require a fee but no fee-block factory was supplied");
+		}
+
+		Block.SignedBlock feeBlock = null;
+		if (factory != null) {
+			feeBlock = factory.generate(this, new FeeRound(blocks, temporary, options.feeTokenPriority()));
+		}
 
 		try {
 			List<Block.SignedBlock> all = blocks;
@@ -137,45 +161,42 @@ public final class UserClient {
 
 			int blocksPtr = net.writeHandles(blockHandles);
 			int votesPtr = net.writeHandles(voteHandle);
-			int stapleHandle = net.handle("keeta_vote_staple_build", blocksPtr, blockHandles.length * 4, votesPtr, 4,
-				System.currentTimeMillis());
+			long currentTime = System.currentTimeMillis();
+			int stapleHandle = net.handle("keeta_vote_staple_build", blocksPtr, blockHandles.length * 4, votesPtr, 4,  currentTime);
 			byte[] staple = net.takeBytes(stapleHandle);
 			String stapleBase64 = Base64.getEncoder().encodeToString(staple);
 
-			attempt(() -> nodeApi.publishVoteStaple(new PublishVoteStapleRequest().votesAndBlocks(stapleBase64)),
-				"publish");
+			attempt(() -> nodeApi.publishVoteStaple(new PublishVoteStapleRequest().votesAndBlocks(stapleBase64)), "publish");
 		} finally {
 			net.free("keeta_vote_free", voteHandle);
 		}
 	}
 
 	/**
-	 * Build and sign the fee block paying {@code temporaryVoteBase64}'s required
-	 * fee in {@code baseToken}, chained atop {@code feeSigner}'s block in the
-	 * staple (or its ledger head). Returns {@code null} when no fee is owed.
+	 * Build and sign a fee block paying {@code round}'s required fee:
+	 * {@code account}'s balance pays, {@code signer} signs.
 	 */
-	private Block.SignedBlock buildFeeBlock(Account feeSigner, Account baseToken, List<Block.SignedBlock> blocks,
-		String temporaryVoteBase64) {
-		byte[] voteBytes = Base64.getDecoder().decode(temporaryVoteBase64);
-		int votePtr = net.write(voteBytes);
-		int voteHandle = net.handle("keeta_vote_from_bytes", votePtr, voteBytes.length);
+	public Block.SignedBlock buildFeeBlock(FeeRound round, Account account, Account signer) {
+		int voteHandle = voteHandle(round.temporaryVoteBase64());
 		try {
-			int feeOpHandle = net.callInt("keeta_fee_send", voteHandle, baseToken.handle(), 0, 0);
+			int feeOpHandle = feeSend(voteHandle, round.feeTokenPriority());
 			if (feeOpHandle == 0) {
 				return null;
 			}
 
-			String previous = feeBlockPrevious(feeSigner, blocks);
+			String previous = tipHashFor(account, round.blocks());
+			if (previous == null) {
+				previous = headHash(account);
+			}
+
 			Block.Builder builder = keeta.builder()
 				.version(2)
 				.network(network)
-				.account(feeSigner)
-				.signer(feeSigner)
+				.account(account)
+				.signer(signer)
 				.purpose("fee")
 				.date(System.currentTimeMillis());
-			Block.Builder positioned = (previous == null || previous.isBlank())
-				? builder.opening()
-				: builder.previous(hexDecode(previous));
+			Block.Builder positioned = positionAfter(builder, previous);
 
 			try (Operation feeOp = new Operation(net, feeOpHandle);
 				 Block.UnsignedBlock unsigned = positioned.addOperation(feeOp).build()) {
@@ -186,19 +207,59 @@ public final class UserClient {
 		}
 	}
 
-	/** The fee block's previous: {@code feeSigner}'s last block in {@code blocks}, else its ledger head. */
-	private String feeBlockPrevious(Account feeSigner, List<Block.SignedBlock> blocks) {
-		String signerAddress = feeSigner.publicKeyString();
-		String previous = null;
-		for (Block.SignedBlock block : blocks) {
-			try (Account account = block.account()) {
-				if (account.publicKeyString().equals(signerAddress)) {
-					previous = block.hashHex();
-				}
+	/** Decode a base64 vote into a guest vote handle. */
+	private int voteHandle(String voteBase64) {
+		byte[] voteBytes = Base64.getDecoder().decode(voteBase64);
+		int votePtr = net.write(voteBytes);
+
+		return net.handle("keeta_vote_from_bytes", votePtr, voteBytes.length);
+	}
+
+	/** Whether the base64 vote obliges a fee block. */
+	private boolean feesRequired(String voteBase64) {
+		int voteHandle = voteHandle(voteBase64);
+		try {
+			return net.callInt("keeta_fees_required", voteHandle) != 0;
+		} finally {
+			net.free("keeta_vote_free", voteHandle);
+		}
+	}
+
+	/**
+	 * The fee-paying operation handle the vote requires in the base token,
+	 * honoring the {@code priority} token preference; 0 when no fee is owed.
+	 */
+	private int feeSend(int voteHandle, List<Account> priority) {
+		int priorityPtr = 0;
+		int priorityLen = 0;
+		if (!priority.isEmpty()) {
+			int[] priorityHandles = new int[priority.size()];
+			for (int index = 0; index < priorityHandles.length; index++) {
+				priorityHandles[index] = priority.get(index).handle();
 			}
+
+			priorityPtr = net.writeHandles(priorityHandles);
+			priorityLen = priorityHandles.length * 4;
 		}
 
-		return previous == null ? headHash(feeSigner) : previous;
+		return net.callInt("keeta_fee_send", voteHandle, baseToken.handle(), priorityPtr, priorityLen);
+	}
+
+	/** {@code payer}'s last block hash (hex) among {@code blocks}, or {@code null} when absent. */
+	private String tipHashFor(Account payer, List<Block.SignedBlock> blocks) {
+		int[] blockHandles = new int[blocks.size()];
+		for (int index = 0; index < blockHandles.length; index++) {
+			blockHandles[index] = blocks.get(index).handle();
+		}
+
+		int blocksPtr = net.writeHandles(blockHandles);
+		int tipHandle = net.callInt("keeta_blocks_tip_for", blocksPtr, blockHandles.length * 4, payer.handle());
+
+		if (tipHandle == 0) {
+			return null;
+		}
+
+		return net.takeString(tipHandle);
 	}
 
 	/**
@@ -233,19 +294,30 @@ public final class UserClient {
 	 */
 	private Block.SignedBlock buildSigned(Account account, Operation operation) {
 		String head = headHash(account);
-		boolean opening = head == null || head.isBlank();
 		Block.Builder builder = keeta.builder()
 			.version(2)
 			.network(network)
 			.account(account)
 			.signer(account)
 			.date(System.currentTimeMillis());
-		Block.Builder positioned = opening ? builder.opening() : builder.previous(hexDecode(head));
+		Block.Builder positioned = positionAfter(builder, head);
 
 		try (Operation owned = operation;
 			 Block.UnsignedBlock unsigned = positioned.addOperation(owned).build()) {
 			return unsigned.sign();
 		}
+	}
+
+	/**
+	 * Position {@code builder} atop {@code previous}, or as an opening block
+	 * when the account has no chain yet ({@code previous} null or blank).
+	 */
+	private static Block.Builder positionAfter(Block.Builder builder, String previous) {
+		if (previous == null || previous.isBlank()) {
+			return builder.opening();
+		}
+
+		return builder.previous(hexDecode(previous));
 	}
 
 	private String publish(Block.SignedBlock block) {
@@ -271,9 +343,14 @@ public final class UserClient {
 		// the optional field unset, so the generated client (mapper NON_NULL)
 		// drops it from the body. Round two attaches the temporary vote so the
 		// representative escalates it.
+		List<String> priorVotes = null;
+		if (priorVoteBase64 != null) {
+			priorVotes = List.of(priorVoteBase64);
+		}
+
 		CreateVoteRequest request = new CreateVoteRequest()
 			.blocks(blocksBase64)
-			.votes(priorVoteBase64 == null ? null : List.of(priorVoteBase64));
+			.votes(priorVotes);
 		CreateVoteResponse response = attempt(() -> voteApi.createVote(request), "vote");
 		Vote vote = response.getVote();
 
