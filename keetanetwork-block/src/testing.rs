@@ -1,9 +1,9 @@
-//! Deterministic account, operation, and builder factories shared by
-//! every Keetanetwork test suite.
+//! Account, operation, and builder factories shared by every Keetanetwork
+//! test suite.
 
 use alloc::sync::Arc;
 
-use keetanetwork_account::{Account, Accountable, GenericAccount, KeyED25519, KeyPairType, Keyable};
+use keetanetwork_account::{Account, Accountable, GenericAccount, KeyED25519, KeyPairType, Keyable, Seed};
 use keetanetwork_crypto::prelude::IntoSecret;
 
 use crate::amount::Amount;
@@ -12,15 +12,25 @@ use crate::operation::Send;
 use crate::signer::AccountRef;
 use crate::time::BlockTime;
 
-fn base_account(seed_byte: u8) -> Account<KeyED25519> {
-	let seed = [seed_byte; 32].into_secret();
+fn seeded_account(seed: Seed) -> Account<KeyED25519> {
 	Account::<KeyED25519>::try_from(Accountable::KeyAndType(Keyable::Seed((seed, 0)), KeyPairType::ED25519))
 		.expect("test account construction must succeed")
+}
+
+fn base_account(seed_byte: u8) -> Account<KeyED25519> {
+	seeded_account([seed_byte; 32].into_secret())
 }
 
 /// A deterministic ed25519 keyed account.
 pub fn generate_ed25519_ref(seed_byte: u8) -> AccountRef {
 	Arc::new(GenericAccount::Ed25519(base_account(seed_byte)))
+}
+
+/// A randomly keyed ed25519 account, for tests whose contract is "any
+/// account" rather than a particular key.
+pub fn random_ed25519_ref() -> AccountRef {
+	let seed = Account::<KeyED25519>::generate_random_seed().expect("test seed generation must succeed");
+	Arc::new(GenericAccount::Ed25519(seeded_account(seed)))
 }
 
 /// A deterministic identifier account derived from a seed-byte owner.

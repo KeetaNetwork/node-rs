@@ -10,7 +10,7 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use keetanetwork_account::{AccountPublicKey, GenericAccount, KeyPairType};
-use keetanetwork_block::testing::generate_ed25519_ref;
+use keetanetwork_block::testing::{generate_ed25519_ref, random_ed25519_ref};
 use keetanetwork_block::{
 	AccountRef, AdjustMethod, Amount, BaseFlag, Block, BlockHash, BlockTime, Hashable, ModifyPermissions,
 	ModifyPermissionsPrincipal, Operation, Permissions, SetInfo,
@@ -587,14 +587,6 @@ async fn test_transmit_without_signer_when_fee_required_errors() -> Result<(), B
 	Ok(())
 }
 
-/// Seed byte for the third-party fee payer in the fee-payer tests. Each test
-/// boots its own node, so the seed is shared safely across them.
-const FEE_PAYER_SEED_BYTE: u8 = 0x44;
-
-/// Seed byte for the send recipient in the fee-payer tests. Distinct from
-/// the representative so the fee `payTo` credit is not mixed.
-const FEE_RECIPIENT_SEED_BYTE: u8 = 0x45;
-
 /// Funding granted to a fee payer, covering several node fees.
 const PAYER_FUNDING: u64 = FEE_AMOUNT * 10;
 
@@ -604,12 +596,13 @@ fn trusted_fee_options(accounts: &SigningAccounts) -> TransmitOptions {
 	TransmitOptions::default().with_fee_signer(&accounts.trusted)
 }
 
-/// Fund a fresh ed25519 fee payer from the trusted account.
+/// Fund a fresh fee payer from the trusted account. The fee contract accepts
+/// any account, so the payer is randomly keyed.
 async fn funded_payer(
 	client: &KeetaClient,
 	accounts: &SigningAccounts,
 ) -> Result<AccountRef, Box<dyn core::error::Error>> {
-	let payer = generate_ed25519_ref(FEE_PAYER_SEED_BYTE);
+	let payer = random_ed25519_ref();
 
 	let amount = Amount::from(PAYER_FUNDING);
 	let funded = client
@@ -669,7 +662,9 @@ async fn assert_third_party_pays_fee(
 	payer: &AccountRef,
 	options: TransmitOptions,
 ) -> Result<(), Box<dyn core::error::Error>> {
-	let recipient = generate_ed25519_ref(FEE_RECIPIENT_SEED_BYTE);
+	// A fresh random recipient, necessarily distinct from the representative
+	// the fee is paid to, so the credited balance reflects the send alone.
+	let recipient = random_ed25519_ref();
 
 	let sender_before = client.balance(&*accounts.trusted, &*accounts.token).await?;
 	let payer_before = client.balance(&**payer, &*accounts.token).await?;

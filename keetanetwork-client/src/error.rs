@@ -112,6 +112,18 @@ pub enum ClientError {
 	#[snafu(display("node votes require a fee block but no fee-block factory is set"))]
 	FeeRequired,
 
+	/// A caller-supplied fee-block factory failed to produce a block.
+	#[snafu(display("fee-block factory failed"))]
+	FeeBlockFactory {
+		/// Underlying factory error. `Send + Sync` on native targets, relaxed
+		/// on wasm, where JS callback failures are `!Send`/`!Sync`.
+		#[cfg(not(target_family = "wasm"))]
+		source: Box<dyn core::error::Error + Send + Sync>,
+		/// Underlying factory error.
+		#[cfg(target_family = "wasm")]
+		source: Box<dyn core::error::Error>,
+	},
+
 	/// An account address could not be parsed or derived: a malformed address
 	/// in a node response, or a failed network base-token derivation.
 	#[snafu(display("account parsing or derivation failed"))]
@@ -209,6 +221,7 @@ impl ClientError {
 			Self::MissingPublish => "MISSING_PUBLISH",
 			Self::MissingVersion => "MISSING_VERSION",
 			Self::FeeRequired => "FEE_REQUIRED",
+			Self::FeeBlockFactory { .. } => "FEE_BLOCK_FACTORY",
 			Self::Account { .. } => "ACCOUNT",
 			Self::UnsupportedNetwork => "UNSUPPORTED_NETWORK",
 			Self::NoRepresentatives => "NO_REPRESENTATIVES",

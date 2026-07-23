@@ -18,6 +18,7 @@ const nodeDist = join(harnessRoot, 'node_modules/@keetanetwork/keetanet-node/dis
 const staticRoot = resolve(here, '..');
 
 const PORT = Number(process.env.PORT ?? 5173);
+const FEE = process.env.FEE ?? '';
 const TRUSTED_SEED_HEX = '77'.repeat(32);
 const MINT_AMOUNT = '1000000000';
 const SEND_AMOUNT = '1000';
@@ -39,7 +40,12 @@ interface HarnessResponse {
 	[key: string]: unknown;
 }
 
-const harness = spawn('node', [harnessScript, nodeDist], { stdio: ['pipe', 'pipe', 'inherit'] });
+const harnessArgs = [harnessScript, nodeDist];
+if (FEE !== '') {
+	harnessArgs.push(`--fee=${FEE}`);
+}
+
+const harness = spawn('node', harnessArgs, { stdio: ['pipe', 'pipe', 'inherit'] });
 const harnessStdout = harness.stdout;
 const harnessStdin = harness.stdin;
 if (harnessStdout === null || harnessStdin === null) {
@@ -89,6 +95,7 @@ const info = {
 	recipient: ready.representative,
 	trustedSeedHex: TRUSTED_SEED_HEX,
 	amount: SEND_AMOUNT,
+	fee: FEE,
 };
 
 const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
