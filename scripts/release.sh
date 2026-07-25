@@ -152,7 +152,7 @@ die() {
 require_command() {
     local cmd="$1"
     local install_hint="${2:-}"
-    
+
     if ! command -v "$cmd" &> /dev/null; then
         if [[ -n "$install_hint" ]]; then
             die "$cmd is required but not installed. $install_hint"
@@ -165,18 +165,18 @@ require_command() {
 # Validation functions
 validate_environment() {
     log_info "Validating environment..."
-    
+
     # Check required tools
     require_command "jq" "Please install jq: brew install jq"
     require_command "curl" "Please install curl"
     require_command "cargo" "Please install Rust and Cargo"
     require_command "git" "Please install git"
-    
+
     # Verify we're in a git repository
     if ! git rev-parse --git-dir > /dev/null 2>&1; then
         die "Not in a git repository"
     fi
-    
+
     # Check working directory cleanliness (skip in dry-run or with --allow-dirty)
     if [[ "$DRY_RUN" == "true" ]]; then
         log_dry_run "Skipping working directory clean check in dry-run mode"
@@ -188,7 +188,7 @@ validate_environment() {
         git status --short
         exit 1
     fi
-    
+
     # Ensure we're in the project root
     if [[ ! -f "Cargo.toml" ]] || ! grep -q "^\[workspace\]" "Cargo.toml"; then
         die "Must be run from the workspace root directory"
@@ -214,11 +214,11 @@ get_commits_since_last_release() {
 get_workspace_version() {
     local version
     version=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-    
+
     if [[ -z "$version" ]]; then
         die "Could not extract version from Cargo.toml"
     fi
-    
+
     echo "$version"
 }
 
@@ -226,11 +226,11 @@ get_workspace_version() {
 resolve_package_version() {
     local package_dir="$1"
     local workspace_version="$2"
-    
+
     # Extract version from package Cargo.toml
     local version_line
     version_line=$(grep '^version' "$package_dir/Cargo.toml" | head -1)
-    
+
     if echo "$version_line" | grep -q "workspace = true"; then
         # Use workspace version
         echo "$workspace_version"
@@ -246,20 +246,17 @@ resolve_package_version() {
 # requests without one are rejected with a policy-violation error.
 readonly CRATES_IO_USER_AGENT="node-rs-release-script (https://github.com/KeetaNetwork/node-rs)"
 
-# Fetch a crate's metadata from the crates.io API. Fails (non-zero, message
-# on stderr) on any error other than "crate does not exist", which prints
-# NOT_FOUND: a publish decision must never be made from an unreachable or
-# rejected lookup. Callers run this in a command substitution, so they must
-# die themselves on failure; an exit here only leaves the subshell.
+# Print a crate's metadata, NOT_FOUND for an unpublished crate, or fail.
+# Runs in a command substitution: callers must die on failure themselves.
 fetch_crate_metadata() {
     local package_name="$1"
-    
+
     local response
     if ! response=$(curl -s -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/$package_name" 2>/dev/null); then
         log_error "Could not reach crates.io to look up $package_name"
         return 1
     fi
-    
+
     if echo "$response" | jq -e '.errors' > /dev/null 2>&1; then
         if echo "$response" | jq -e '.errors[] | select(.detail=="Not Found")' > /dev/null 2>&1; then
             echo "NOT_FOUND"
@@ -268,25 +265,25 @@ fetch_crate_metadata() {
         log_error "crates.io rejected the $package_name lookup: $(echo "$response" | jq -r '.errors[0].detail')"
         return 1
     fi
-    
+
     echo "$response"
 }
 
 check_if_published() {
     local package_name="$1"
     local package_version="$2"
-    
+
     log_info "Checking if $package_name v$package_version is already published..."
-    
+
     local response
     if ! response=$(fetch_crate_metadata "$package_name"); then
         die "Aborting release: the $package_name published-version lookup failed"
     fi
-    
+
     if [[ "$response" == "NOT_FOUND" ]]; then
         return 1  # Not published
     fi
-    
+
     if echo "$response" | jq -e ".versions[] | select(.num==\"$package_version\")" > /dev/null 2>&1; then
         return 0  # Already published
     else
@@ -297,28 +294,28 @@ check_if_published() {
 get_package_checksum() {
     local package_name="$1"
     local package_version="$2"
-    
+
     log_info "Getting checksum for $package_name v$package_version..."
-    
+
     local response
     if ! response=$(fetch_crate_metadata "$package_name"); then
         echo "ERROR"
         return 1
     fi
-    
+
     if [[ "$response" == "NOT_FOUND" ]]; then
         echo "ERROR"
         return 1
     fi
-    
+
     local checksum
     checksum=$(echo "$response" | jq -r ".versions[] | select(.num==\"$package_version\") | .checksum" 2>/dev/null)
-    
+
     if [[ "$checksum" == "null" ]] || [[ -z "$checksum" ]]; then
         echo "ERROR"
         return 1
     fi
-    
+
     echo "$checksum"
     return 0
 }
@@ -328,19 +325,18 @@ validate_package() {
     local package_dir="$1"
     local package_name="$2"
     local package_version="$3"
-    
+
     log_dry_run "Validating package $package_name v$package_version from $package_dir"
-    
+
     cd "$package_dir" || die "Failed to change to package directory: $package_dir"
-    
+
     # First try cargo check to validate compilation
     if cargo check --all-features; then
         log_success "Compilation validation passed for $package_name v$package_version"
-        
+
         # Then try cargo package. A batched release cannot fully package a
-        # crate whose workspace dependencies are released in the same run
-        # (they are not on crates.io yet), so that failure is tolerated;
-        # any other packaging failure aborts.
+        # crate whose workspace dependencies are released in the same run,
+        # so that failure is tolerated.
         local package_output
         if package_output=$(cargo package --allow-dirty --all-features 2>&1); then
             log_success "Package validation passed for $package_name v$package_version"
@@ -350,7 +346,7 @@ validate_package() {
             log_error "$package_output"
             die "Package validation failed for $package_name v$package_version"
         fi
-        
+
         cd - > /dev/null || die "$ERR_RETURN_DIR"
         return 0
     else
@@ -364,14 +360,14 @@ publish_package() {
     local package_dir="$1"
     local package_name="$2"
     local package_version="$3"
-    
+
     if [[ "$DRY_RUN" == "true" ]]; then
         validate_package "$package_dir" "$package_name" "$package_version"
         return $?
     fi
-    
+
     log_info "Publishing $package_name v$package_version..."
-    
+
     cd "$package_dir" || die "Failed to change to package directory: $package_dir"
 
     local publish_args=(--all-features)
@@ -420,9 +416,9 @@ create_release_tag() {
     local commit_list="$2"
     local checksums="$3"
     local last_tag="$4"
-    
+
     local tag_name="releases/v${version}"
-    
+
     # Create tag message
     local tag_message="This is ${PROJECT_NAME} v${version} which has the following changes:
 "
@@ -434,7 +430,7 @@ ${commit_list}"
         tag_message="${tag_message}
 - Initial release"
     fi
-    
+
     tag_message="${tag_message}
 
 It includes the following release artifacts on crates.io:
@@ -448,7 +444,7 @@ ${checksums}
 **Full Changelog**:
 https://github.com/KeetaNetwork/${PROJECT_NAME}/compare/${last_tag}...${tag_name}"
     fi
-    
+
     if [[ "$DRY_RUN" == "true" ]]; then
         log_dry_run "Would create signed release tag: $tag_name"
         echo ""
@@ -458,9 +454,9 @@ https://github.com/KeetaNetwork/${PROJECT_NAME}/compare/${last_tag}...${tag_name
         echo "----------------------------------------"
         return 0
     fi
-    
+
     log_info "Creating signed release tag: $tag_name"
-    
+
     # Create signed tag
     if git tag -s "$tag_name" -m "$tag_message"; then
         log_success "Created signed tag: $tag_name"
@@ -476,15 +472,15 @@ discover_workspace_packages() {
     # Use cargo metadata to get package information with dependencies
     local metadata
     metadata=$(cargo metadata --format-version 1 2>/dev/null) || die "Failed to get cargo metadata"
-    
+
     # Get all workspace packages (filter out external dependencies)
     local workspace_packages
     workspace_packages=$(echo "$metadata" | jq -r '.workspace_members[]' | sed 's|.*/||' | sed 's|#.*||' | sort)
-    
+
     if [[ -z "$workspace_packages" ]]; then
         die "No workspace packages found in metadata"
     fi
-    
+
     # Convert to array
     local all_packages=()
     while IFS= read -r package; do
@@ -492,11 +488,11 @@ discover_workspace_packages() {
             all_packages+=("$package")
         fi
     done <<< "$workspace_packages"
-    
+
     if [[ ${#all_packages[@]} -eq 0 ]]; then
         die "No valid workspace packages found"
     fi
-    
+
     # Topological sort based on dependencies from metadata
     topological_sort_packages "$metadata" "${all_packages[@]}"
 }
@@ -505,22 +501,22 @@ topological_sort_packages() {
     local metadata="$1"
     shift
     local all_packages=("$@")
-    
+
     local sorted_packages=()
     local remaining_packages=("${all_packages[@]}")
     local iteration=0
-    
+
     while [[ ${#remaining_packages[@]} -gt 0 && $iteration -lt $MAX_DEPENDENCY_ITERATIONS ]]; do
         local made_progress=false
         local new_remaining=()
-        
+
         for package in "${remaining_packages[@]}"; do
             local has_unresolved_deps=false
-            
+
             # Get dependencies for this package from metadata
             local package_deps
             package_deps=$(echo "$metadata" | jq -r ".packages[] | select(.name==\"$package\") | .dependencies[].name" 2>/dev/null)
-            
+
             for dep in $package_deps; do
                 # Check if this dependency is a workspace package still in remaining packages
                 for remaining in "${remaining_packages[@]}"; do
@@ -530,7 +526,7 @@ topological_sort_packages() {
                     fi
                 done
             done
-            
+
             if [[ "$has_unresolved_deps" == false ]]; then
                 # This package can be processed now
                 sorted_packages+=("$package")
@@ -540,19 +536,19 @@ topological_sort_packages() {
                 new_remaining+=("$package")
             fi
         done
-        
+
         remaining_packages=("${new_remaining[@]}")
-        
+
         if [[ "$made_progress" == false ]]; then
             log_warning "Circular dependency detected or unable to resolve dependencies. Remaining packages: ${remaining_packages[*]}"
             # Add remaining packages in original order
             sorted_packages+=("${remaining_packages[@]}")
             break
         fi
-        
+
         ((iteration++))
     done
-    
+
     # Output the sorted packages
     printf '%s\n' "${sorted_packages[@]}"
 }
@@ -594,30 +590,30 @@ process_packages() {
     local workspace_version="$1"
     shift
     local packages=("$@")
-    
+
     local published_packages=()
     local checksums_list=""
-    
+
     # Publish each package in dependency order
     for package in "${packages[@]}"; do
         if [[ ! -d "$package" ]]; then
             log_warning "Package directory $package not found, skipping"
             continue
         fi
-        
+
         log_info "Processing package: $package"
-        
+
         # Resolve version (workspace or explicit)
         local version
         version=$(resolve_package_version "$package" "$workspace_version")
-        
+
         if [[ -z "$version" ]]; then
             log_warning "Could not extract version for $package, skipping"
             continue
         fi
-        
+
         log_info "Found $package version: $version"
-        
+
         # Check if already published (skip check if --initial flag is used)
         if [[ "$INITIAL_RELEASE" == "true" ]]; then
             log_info "Initial release mode: forcing publication of $package v$version"
@@ -625,10 +621,10 @@ process_packages() {
         else
             local skip_published_check=false
         fi
-        
+
         if [[ "$skip_published_check" == "false" ]] && check_if_published "$package" "$version"; then
             log_warning "$package v$version is already published, skipping"
-            
+
             # Still get checksum for release notes (unless dry-run)
             if [[ "$DRY_RUN" != "true" ]]; then
                 local checksum
@@ -645,12 +641,12 @@ process_packages() {
             # Publish the package
             if publish_package "$package" "$package" "$version"; then
                 published_packages+=("$package@$version")
-                
+
                 if [[ "$DRY_RUN" != "true" ]]; then
                     # Wait for crates.io to process
                     log_info "Waiting for crates.io to process $package..."
                     sleep $CRATES_IO_WAIT_TIME
-                    
+
                     # Get checksum
                     local checksum
                     if checksum=$(get_package_checksum "$package" "$version"); then
@@ -673,7 +669,7 @@ process_packages() {
             fi
         fi
     done
-    
+
     # Output results for main function
     echo "PUBLISHED_PACKAGES:${published_packages[*]}"
     echo "CHECKSUMS_LIST_START"
@@ -687,7 +683,7 @@ finalize_release() {
     local published_packages_str="$3"
     local checksums_list="$4"
     local last_tag="$5"
-    
+
     # Convert string back to array
     IFS=' ' read -ra published_packages <<< "$published_packages_str"
 
@@ -723,11 +719,11 @@ finalize_release() {
                 log_info "- To run for real: make release [--initial]"
             else
                 log_success "Release process completed successfully!"
-                
+
                 if [[ ${#published_packages[@]} -gt 0 ]]; then
                     log_info "Published packages: ${published_packages[*]}"
                 fi
-                
+
                 log_info "Created release tag: releases/v${workspace_version}"
                 log_info "To push the tag to GitHub, run: git push origin releases/v${workspace_version}"
             fi
@@ -754,17 +750,17 @@ main() {
     else
         log_info "Starting release process..."
     fi
-    
+
     if [[ "$INITIAL_RELEASE" == "true" ]]; then
         log_info "Initial release mode: will force publication of all packages"
     fi
-    
+
     # Validate environment and prerequisites
     validate_environment
-    
+
     # Run tests and lints
     run_tests_and_lints
-    
+
     # Get release information
     local last_tag
     last_tag=$(get_last_release_tag)
@@ -773,15 +769,15 @@ main() {
     else
         log_info "No previous release tags found"
     fi
-    
+
     log_info "Getting commits since last release..."
     local commit_list
     commit_list=$(get_commits_since_last_release "$last_tag")
-    
+
     local workspace_version
     workspace_version=$(get_workspace_version)
     log_info "Release version: $workspace_version"
-    
+
     # Discover packages and determine order
     log_info "Discovering workspace packages and dependency order..."
     local packages=()
@@ -790,7 +786,7 @@ main() {
             packages+=("$package")
         fi
     done < <(discover_workspace_packages)
-    
+
     if [[ ${#packages[@]} -eq 0 ]]; then
         die "No workspace packages found"
     fi
@@ -808,16 +804,16 @@ main() {
     fi
 
     log_info "Package publishing order: ${packages[*]}"
-    
+
     # Process packages and collect results
     local process_output
     process_output=$(process_packages "$workspace_version" "${packages[@]}")
-    
+
     local published_packages_str
     local checksums_list
     published_packages_str=$(echo "$process_output" | grep "^PUBLISHED_PACKAGES:" | cut -d: -f2-)
     checksums_list=$(echo "$process_output" | sed -n '/^CHECKSUMS_LIST_START$/,/^CHECKSUMS_LIST_END$/p' | sed '1d;$d')
-    
+
     # Finalize release
     finalize_release "$workspace_version" "$commit_list" "$published_packages_str" "$checksums_list" "$last_tag"
 }
