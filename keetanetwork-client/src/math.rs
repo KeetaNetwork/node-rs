@@ -56,8 +56,8 @@ pub fn weight_fraction(weight: &BigInt, total: &BigInt, count: usize) -> f64 {
 	bigint_ratio(weight, total)
 }
 
-/// The Power-of-Two-Choices effective score: weight fraction scaled by
-/// reliability.
+/// The selection effective score: weight fraction scaled by reliability.
+/// The highest-scored representative serves reads.
 #[must_use]
 pub fn selection_score(weight_fraction: f64, reliability: f64) -> f64 {
 	weight_fraction * reliability

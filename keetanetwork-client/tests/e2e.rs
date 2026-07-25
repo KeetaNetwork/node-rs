@@ -523,6 +523,35 @@ async fn test_conflicting_vote_request_is_typed_node_error() -> Result<(), Box<d
 	Ok(())
 }
 
+/// A transmit whose `previous` went stale between the head read and the
+/// publish surfaces a typed LEDGER conflict, even against a single
+/// representative.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_transmit_built_on_a_stale_head_conflicts() -> Result<(), Box<dyn core::error::Error>> {
+	let fixture = fixture().await;
+
+	// Built before the fixture's send publishes, so this block reads the
+	// same head and its `previous` is stale the moment that staple settles.
+	let stale = send_block(&fixture.client, &fixture.accounts, &fixture.accounts.recipient, SEND_AMOUNT + 1).await?;
+
+	let accepted = fixture
+		.client
+		.transmit(&fixture.blocks, TransmitOptions::default())
+		.await?;
+	assert!(accepted, "the node must accept the first staple");
+
+	let result = fixture
+		.client
+		.transmit(&[stale], TransmitOptions::default())
+		.await;
+	assert!(
+		matches!(&result, Err(ClientError::Node { source }) if source.node_type() == Some(NodeErrorType::Ledger)),
+		"a stale-previous transmit must surface a typed LEDGER conflict, got {result:?}"
+	);
+
+	Ok(())
+}
+
 /// Flat base-token fee a fee-enforcing node charges per transaction.
 const FEE_AMOUNT: u64 = 10;
 
@@ -582,6 +611,37 @@ async fn test_transmit_without_signer_when_fee_required_errors() -> Result<(), B
 	assert!(
 		matches!(result, Err(ClientError::FeeRequired)),
 		"a fee-required transmit without a signer must surface ClientError::FeeRequired, got {result:?}"
+	);
+
+	Ok(())
+}
+
+/// A round that fails after voting abandons its temporary vote on the
+/// representative, and a retry that reworks the block at the same height
+/// conflicts with that vote.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_abandoned_temporary_vote_conflicts_with_a_reworked_retry() -> Result<(), Box<dyn core::error::Error>> {
+	let (_node, client, accounts) = fee_fixture();
+
+	// The fee-less attempt fails only after the vote round, so the rep
+	// keeps a temporary vote for this block.
+	let original = send_block(&client, &accounts, &accounts.recipient, SEND_AMOUNT).await?;
+	let attempt = client
+		.transmit(&[original], TransmitOptions::default())
+		.await;
+	assert!(
+		matches!(attempt, Err(ClientError::FeeRequired)),
+		"the fee-less attempt must fail with ClientError::FeeRequired, got {attempt:?}"
+	);
+
+	// Reworking the transfer yields a different block at the same height.
+	let reworked = send_block(&client, &accounts, &accounts.recipient, SEND_AMOUNT + 1).await?;
+	let retry = client
+		.transmit(&[reworked], trusted_fee_options(&accounts))
+		.await;
+	assert!(
+		matches!(&retry, Err(ClientError::Node { source }) if source.node_type() == Some(NodeErrorType::Ledger)),
+		"the reworked retry must conflict with the abandoned temporary vote, got {retry:?}"
 	);
 
 	Ok(())
