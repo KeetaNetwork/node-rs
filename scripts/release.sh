@@ -241,6 +241,37 @@ resolve_package_version() {
 }
 
 # Crates.io API functions
+
+# The crates.io data access policy requires an identifying User-Agent;
+# requests without one are rejected with a policy-violation error.
+readonly CRATES_IO_USER_AGENT="node-rs-release-script (https://github.com/KeetaNetwork/node-rs)"
+
+# Fetch a crate's metadata from the crates.io API. Fails (non-zero, message
+# on stderr) on any error other than "crate does not exist", which prints
+# NOT_FOUND: a publish decision must never be made from an unreachable or
+# rejected lookup. Callers run this in a command substitution, so they must
+# die themselves on failure; an exit here only leaves the subshell.
+fetch_crate_metadata() {
+    local package_name="$1"
+    
+    local response
+    if ! response=$(curl -s -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/$package_name" 2>/dev/null); then
+        log_error "Could not reach crates.io to look up $package_name"
+        return 1
+    fi
+    
+    if echo "$response" | jq -e '.errors' > /dev/null 2>&1; then
+        if echo "$response" | jq -e '.errors[] | select(.detail=="Not Found")' > /dev/null 2>&1; then
+            echo "NOT_FOUND"
+            return 0
+        fi
+        log_error "crates.io rejected the $package_name lookup: $(echo "$response" | jq -r '.errors[0].detail')"
+        return 1
+    fi
+    
+    echo "$response"
+}
+
 check_if_published() {
     local package_name="$1"
     local package_version="$2"
@@ -248,9 +279,11 @@ check_if_published() {
     log_info "Checking if $package_name v$package_version is already published..."
     
     local response
-    response=$(curl -s "https://crates.io/api/v1/crates/$package_name" 2>/dev/null || echo "ERROR")
+    if ! response=$(fetch_crate_metadata "$package_name"); then
+        die "Aborting release: the $package_name published-version lookup failed"
+    fi
     
-    if [[ "$response" == "ERROR" ]] || echo "$response" | grep -q '"errors"'; then
+    if [[ "$response" == "NOT_FOUND" ]]; then
         return 1  # Not published
     fi
     
@@ -268,9 +301,12 @@ get_package_checksum() {
     log_info "Getting checksum for $package_name v$package_version..."
     
     local response
-    response=$(curl -s "https://crates.io/api/v1/crates/$package_name" 2>/dev/null || echo "ERROR")
+    if ! response=$(fetch_crate_metadata "$package_name"); then
+        echo "ERROR"
+        return 1
+    fi
     
-    if [[ "$response" == "ERROR" ]] || echo "$response" | grep -q '"errors"'; then
+    if [[ "$response" == "NOT_FOUND" ]]; then
         echo "ERROR"
         return 1
     fi
@@ -301,10 +337,17 @@ validate_package() {
     if cargo check --all-features; then
         log_success "Compilation validation passed for $package_name v$package_version"
         
-        # Then try cargo package, but don't fail if dependencies aren't on crates.io yet
-        if cargo package --allow-dirty --all-features 2>/dev/null; then
+        # Then try cargo package. A batched release cannot fully package a
+        # crate whose workspace dependencies are released in the same run
+        # (they are not on crates.io yet), so that failure is tolerated;
+        # any other packaging failure aborts.
+        local package_output
+        if package_output=$(cargo package --allow-dirty --all-features 2>&1); then
             log_success "Package validation passed for $package_name v$package_version"
+        elif echo "$package_output" | grep -q "failed to select a version for the requirement"; then
+            log_warning "Packaging $package_name v$package_version deferred: a workspace dependency is not published yet"
         elif [[ "$INITIAL_RELEASE" == "false" ]]; then
+            log_error "$package_output"
             die "Package validation failed for $package_name v$package_version"
         fi
         

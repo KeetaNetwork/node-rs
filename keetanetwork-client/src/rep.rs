@@ -8,7 +8,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use num_bigint::BigInt;
-use rand_core::RngCore;
 
 use crate::math::{reliability_after_failure, reliability_after_success, selection_score, weight_fraction};
 use crate::sync::RwLock;
@@ -130,30 +129,21 @@ impl RepState {
 		self.reps.iter().map(|rep| rep.weight.clone()).sum()
 	}
 
-	/// Select one representative using Power of Two Choices: pick two random
-	/// indices and return the one with the higher effective score
-	/// (`weight_fraction * reliability`). Equal indices return that rep
-	/// directly, guaranteeing every rep a `1/n^2` baseline.
-	fn pick(&self, rng: &mut impl RngCore) -> Option<RepRef> {
-		let count = self.reps.len();
-		if count == 0 {
-			return None;
-		}
+	/// Select the representative with the highest effective score.
+	fn pick(&self) -> Option<RepRef> {
+		let total = self.total_weight();
+		let leader = self
+			.reps
+			.iter()
+			.fold(None::<(&RepRecord, f64)>, |best, rep| {
+				let score = self.effective_score(rep, &total);
+				match best {
+					Some((_, top)) if top >= score => best,
+					_ => Some((rep, score)),
+				}
+			});
 
-		let chosen = if count == 1 {
-			&self.reps[0]
-		} else {
-			let total = self.total_weight();
-			let index_a = (rng.next_u32() as usize) % count;
-			let index_b = (rng.next_u32() as usize) % count;
-			if self.effective_score(&self.reps[index_a], &total) >= self.effective_score(&self.reps[index_b], &total) {
-				&self.reps[index_a]
-			} else {
-				&self.reps[index_b]
-			}
-		};
-
-		Some(RepRef { key: chosen.key.clone(), weight: chosen.weight.clone() })
+		leader.map(|(chosen, _)| RepRef { key: chosen.key.clone(), weight: chosen.weight.clone() })
 	}
 
 	fn effective_score(&self, rep: &RepRecord, total: &BigInt) -> f64 {
@@ -224,53 +214,12 @@ impl RepBook {
 		(state.snapshot(), state.total_weight())
 	}
 
-	pub(crate) fn pick(&self, rng: &mut impl RngCore) -> Option<RepRef> {
-		self.state.read().pick(rng)
+	pub(crate) fn pick(&self) -> Option<RepRef> {
+		self.state.read().pick()
 	}
 
 	pub(crate) fn update_weights(&self, fetched: &[(String, BigInt)]) {
 		self.state.write().update_weights(fetched);
-	}
-}
-
-/// A minimal `no_std` PRNG (`splitmix64`) for Power-of-Two-Choices selection.
-///
-/// Selection needs only spread, not cryptographic randomness, so a tiny
-/// seed-able generator replaces the std `rand` thread RNG and keeps rep
-/// selection `no_std`. Seed it per pick from a monotonic clock mixed with a
-/// counter so successive picks differ.
-pub(crate) struct SmallRng(u64);
-
-impl SmallRng {
-	/// A generator seeded from `seed`.
-	pub(crate) fn seed_from_u64(seed: u64) -> Self {
-		Self(seed)
-	}
-}
-
-impl RngCore for SmallRng {
-	fn next_u64(&mut self) -> u64 {
-		self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-		let mut z = self.0;
-		z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-		z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-		z ^ (z >> 31)
-	}
-
-	fn next_u32(&mut self) -> u32 {
-		(self.next_u64() >> 32) as u32
-	}
-
-	fn fill_bytes(&mut self, dest: &mut [u8]) {
-		let mut chunks = dest.chunks_exact_mut(8);
-		for chunk in &mut chunks {
-			chunk.copy_from_slice(&self.next_u64().to_le_bytes());
-		}
-		let remainder = chunks.into_remainder();
-		if !remainder.is_empty() {
-			let bytes = self.next_u64().to_le_bytes();
-			remainder.copy_from_slice(&bytes[..remainder.len()]);
-		}
 	}
 }
 
@@ -346,14 +295,51 @@ mod tests {
 	#[test]
 	fn pick_returns_the_only_rep() {
 		let state = RepState::new(vec![record("solo", 1)]);
-		let pick = state.pick(&mut SmallRng::seed_from_u64(1));
+		let pick = state.pick();
 		assert!(matches!(pick, Some(chosen) if chosen.key == "solo"));
 	}
 
 	#[test]
 	fn pick_on_empty_state_is_none() {
 		let state = RepState::new(Vec::new());
-		assert!(state.pick(&mut SmallRng::seed_from_u64(1)).is_none());
+		assert!(state.pick().is_none());
+	}
+
+	#[test]
+	fn pick_always_returns_the_highest_weight_rep() {
+		let state = RepState::new(vec![record("light", 1), record("heavy", 99)]);
+
+		let heavy_picks = (0..100)
+			.filter(|_| matches!(state.pick(), Some(chosen) if chosen.key == "heavy"))
+			.count();
+
+		assert_eq!(heavy_picks, 100);
+	}
+
+	#[test]
+	fn pick_fails_over_when_the_leader_reliability_decays() {
+		let mut state = RepState::new(vec![record("heavy", 99), record("light", 1)]);
+
+		// 0.99 weight * 0.01 reliability < 0.01 weight * 1.0 reliability.
+		state.decay("heavy", 0.01, 0.001);
+
+		assert!(matches!(state.pick(), Some(chosen) if chosen.key == "light"));
+	}
+
+	#[test]
+	fn pick_restores_the_leader_once_its_reliability_recovers() {
+		let mut state = RepState::new(vec![record("heavy", 99), record("light", 1)]);
+		state.decay("heavy", 0.01, 0.001);
+
+		state.boost("heavy", 1.0);
+
+		assert!(matches!(state.pick(), Some(chosen) if chosen.key == "heavy"));
+	}
+
+	#[test]
+	fn pick_keeps_the_earlier_rep_on_a_score_tie() {
+		let state = RepState::new(vec![record("first", 5), record("second", 5)]);
+		assert!(matches!(state.pick(), Some(chosen) if chosen.key == "first"));
 	}
 
 	#[test]

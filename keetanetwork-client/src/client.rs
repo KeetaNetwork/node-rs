@@ -8,7 +8,6 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::future::Future;
 use core::str::FromStr;
-use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
 use futures::future::{select, Either};
@@ -31,7 +30,7 @@ use crate::model::{
 	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryPage, HistoryQuery, LedgerChecksum,
 	Representative, TokenBalance, TransmitOptions,
 };
-use crate::rep::{RepBook, RepPart, RepRecord, RepRef, SmallRng};
+use crate::rep::{RepBook, RepPart, RepRecord, RepRef};
 use crate::runtime::{Runtime, TaskHandle};
 use crate::sync::{Mutex, RwLock};
 use crate::transport::{LedgerSide, NodeTransport, TransportFactory};
@@ -115,9 +114,6 @@ struct Inner {
 	/// discovery transport-agnostic.
 	factory: Arc<dyn TransportFactory>,
 	runtime: Arc<dyn Runtime>,
-	/// Per-pick counter mixed with the runtime clock to seed selection's
-	/// [`SmallRng`] so successive picks differ.
-	rng_counter: AtomicU64,
 	network: RwLock<Option<BigInt>>,
 	subnet: RwLock<Option<BigInt>>,
 	/// `true` for the single anonymous-rep client built by [`KeetaClient::new`];
@@ -137,9 +133,8 @@ impl Drop for Inner {
 
 /// Async, durable client for a KeetaNet network.
 ///
-/// Talks to a set of representatives: reads pick one rep (power-of-two
-/// choices, weighted by reliability) with retry, backoff, and timeout; votes,
-/// quotes, and publishes fan out to every rep and aggregate by quorum weight.
+/// Talks to a set of representatives: reads go to the rep with the highest
+/// effective score with retry, backoff, and timeout.
 ///
 /// See the [crate-level example](crate) for building and transmitting a block.
 #[derive(Clone, Debug)]
@@ -206,8 +201,8 @@ impl KeetaClient {
 	}
 
 	/// Create a multi-representative client over `reps`, fanning votes and
-	/// publishes across them and selecting reps for reads by weighted
-	/// reliability.
+	/// publishes across them and routing reads to the rep with the highest
+	/// effective score (voting weight scaled by reliability).
 	#[cfg(feature = "http")]
 	pub fn with_representatives(reps: impl IntoIterator<Item = RepEndpoint>, config: ClientConfig) -> Self {
 		let http = reqwest::Client::new();
@@ -256,7 +251,6 @@ impl KeetaClient {
 				config,
 				factory,
 				runtime,
-				rng_counter: AtomicU64::new(0),
 				network: RwLock::new(None),
 				subnet: RwLock::new(None),
 				single_rep,
@@ -285,12 +279,9 @@ impl KeetaClient {
 		self.bind_transports(self.inner.reps.snapshot())
 	}
 
-	/// Select one representative bound to its transport.
+	/// Select the current best-scored representative bound to its transport.
 	fn pick_target(&self) -> Option<RepPick> {
-		let now = self.inner.runtime.now_millis();
-		let counter = self.inner.rng_counter.fetch_add(1, Ordering::Relaxed);
-		let mut rng = SmallRng::seed_from_u64(now ^ counter);
-		let chosen = self.inner.reps.pick(&mut rng)?;
+		let chosen = self.inner.reps.pick()?;
 		let transports = self.inner.transports.read();
 		transports.get(&chosen.key).map(|transport| RepPick {
 			key: chosen.key,

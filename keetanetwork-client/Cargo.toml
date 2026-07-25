@@ -46,7 +46,6 @@ keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
 chrono = { workspace = true }
 progenitor-client = { workspace = true, optional = true }
 num-bigint = { workspace = true }
-rand_core = { workspace = true }
 spin = { workspace = true, features = ["mutex", "spin_mutex", "rwlock", "once"] }
 async-trait = { workspace = true }
 futures = { workspace = true, features = ["alloc"] }
