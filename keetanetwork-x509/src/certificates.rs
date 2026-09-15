@@ -2161,7 +2161,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_bundle_try_from_rejects_overflow_length_without_panic() {
+	fn test_bundle_try_from_rejects_overflow_length_without_panic() -> Result<(), CertificateError> {
 		// Regression: a valid certificate followed by an element whose DER
 		// long-form length is close to usize::MAX must not overflow the length
 		// arithmetic into an out-of-range slice (which panics/aborts). The
@@ -2179,7 +2179,7 @@ mod tests {
 				assert_eq!(parsed.into_iter().count(), 1);
 			}
 			Ok(())
-		});
+		})
 	}
 
 	#[test]
