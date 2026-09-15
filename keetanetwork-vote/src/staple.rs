@@ -350,11 +350,25 @@ fn staple_decode_error(error: keetanetwork_asn1::Asn1Error) -> VoteError {
 const ZLIB_DEFAULT_LEVEL: u8 = 6;
 
 /// Upper bound on the *uncompressed* size of a staple bundle accepted from the
-/// wire. A staple carries a small set of blocks and their endorsing votes, so
-/// its canonical form is comfortably within a few megabytes; anything larger is
-/// treated as malformed. This cap prevents a hostile peer from sending a tiny
-/// zlib stream that inflates into an enormous allocation (a decompression bomb)
-/// before any signature or content validation runs.
+/// wire. It exists only to stop a decompression bomb: a hostile peer sending a
+/// tiny zlib stream that inflates into an enormous allocation before any
+/// signature or content validation runs.
+///
+/// Why 8 MiB is safe (never rejects a legitimate staple):
+/// a staple's canonical form is `SEQUENCE { blocks SEQUENCE OF OCTET STRING,
+/// votes SEQUENCE OF OCTET STRING }`. A staple endorses one confirmed set of
+/// blocks and carries at most one vote per representative (votes are
+/// de-duplicated by issuer in `validate_vote_invariants`). Blocks are small:
+/// their text fields are individually length-capped (see
+/// `keetanetwork-block` validation, e.g. 1024-byte external data) and a block
+/// serializes to a few KB at most; a vote certificate is an X.509-shaped record
+/// of similar order. So even a large round — hundreds of blocks and hundreds of
+/// representative votes at a few KB each — stays in the low single-digit
+/// megabytes. 8 MiB leaves comfortable headroom above any realistic staple while
+/// still bounding the allocation an attacker can force by ~3 orders of
+/// magnitude below the previously-unbounded case. The repository does not define
+/// a hard protocol maximum staple size; if one is established, tighten this
+/// constant to it.
 const MAX_STAPLE_UNCOMPRESSED_BYTES: usize = 8 * 1024 * 1024;
 
 fn deflate(input: &[u8]) -> Result<Vec<u8>, VoteError> {
