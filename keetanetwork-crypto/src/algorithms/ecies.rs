@@ -378,8 +378,13 @@ impl Ecies for EciesSecp256r1 {
 		// Extract just the ciphertext part (skip the IV that was prepended)
 		let ciphertext_only = &iv_and_ciphertext[16..];
 
-		// Calculate HMAC-SHA512 over the ciphertext only
+		// Calculate HMAC-SHA512 over the IV and the ciphertext. The IV must be
+		// authenticated: with AES-CBC the first plaintext block is
+		// P0 = D(C0) XOR IV, so an unauthenticated IV lets an attacker flip
+		// bits of the first recovered block while the MAC still validates. The
+		// secp256k1 and X25519 variants already authenticate the IV.
 		let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).or_encryption_failed()?;
+		mac.update(&iv);
 		mac.update(ciphertext_only);
 		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
@@ -425,8 +430,11 @@ impl Ecies for EciesSecp256r1 {
 		// Derive keys using KDF
 		let (encryption_key, mac_key) = Self::derive_keys(ephemeral_public_bytes, shared_secret_x)?;
 
-		// Verify HMAC before decryption (HMAC is over ciphertext + fixed IV length value)
+		// Verify HMAC before decryption. The IV is authenticated alongside the
+		// ciphertext (see encrypt): an unauthenticated IV would allow targeted
+		// bit flips in the first decrypted block while still passing the MAC.
 		let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).or_decryption_failed()?;
+		mac.update(iv);
 		mac.update(encrypted_data);
 		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
@@ -509,4 +517,25 @@ mod tests {
 	crate::test_utils::test_ecies!(secp256k1_tests, EciesSecp256k1, create_secp256k1_keypair);
 	crate::test_utils::test_ecies!(secp256r1_tests, EciesSecp256r1, create_secp256r1_keypair);
 	crate::test_utils::test_ecies!(x25519_tests, EciesX25519, create_x25519_keypair);
+
+	/// Regression: the trailing IV is authenticated, so tampering with it must
+	/// fail decryption rather than silently flipping the first plaintext block.
+	#[test]
+	fn secp256r1_rejects_iv_tampering() {
+		let seed = core::str::from_utf8(crate::test_utils::TEST_SEED).unwrap();
+		let (private_key, public_key) = create_secp256r1_keypair(seed, None).unwrap();
+		let plaintext = b"A whole message that spans more than one AES-CBC block!!";
+
+		let mut ciphertext = EciesSecp256r1::encrypt(&public_key, plaintext).unwrap();
+		// Sanity: it decrypts cleanly untampered.
+		assert_eq!(EciesSecp256r1::decrypt(&private_key, &ciphertext).unwrap(), plaintext);
+
+		// Flip a bit in the trailing 16-byte IV.
+		let iv_start = ciphertext.len() - 16;
+		ciphertext[iv_start] ^= 0x01;
+
+		// Must now fail authentication instead of returning a mangled plaintext.
+		let result = EciesSecp256r1::decrypt(&private_key, &ciphertext);
+		assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
+	}
 }
