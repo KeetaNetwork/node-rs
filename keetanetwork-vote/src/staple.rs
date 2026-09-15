@@ -28,7 +28,7 @@
 use alloc::vec::Vec;
 
 use miniz_oxide::deflate::compress_to_vec_zlib;
-use miniz_oxide::inflate::decompress_to_vec_zlib;
+use miniz_oxide::inflate::decompress_to_vec_zlib_with_limit;
 
 use keetanetwork_account::AccountPublicKey;
 use keetanetwork_asn1::vote as transport;
@@ -349,14 +349,23 @@ fn staple_decode_error(error: keetanetwork_asn1::Asn1Error) -> VoteError {
 // `compress_to_vec_zlib`'s level argument follows the zlib convention (0-10)
 const ZLIB_DEFAULT_LEVEL: u8 = 6;
 
+/// Upper bound on the *uncompressed* size of a staple bundle accepted from the
+/// wire. A staple carries a small set of blocks and their endorsing votes, so
+/// its canonical form is comfortably within a few megabytes; anything larger is
+/// treated as malformed. This cap prevents a hostile peer from sending a tiny
+/// zlib stream that inflates into an enormous allocation (a decompression bomb)
+/// before any signature or content validation runs.
+const MAX_STAPLE_UNCOMPRESSED_BYTES: usize = 8 * 1024 * 1024;
+
 fn deflate(input: &[u8]) -> Result<Vec<u8>, VoteError> {
 	Ok(compress_to_vec_zlib(input, ZLIB_DEFAULT_LEVEL))
 }
 
 fn inflate(input: &[u8]) -> Result<Vec<u8>, VoteError> {
 	// Reference treats failed zlib inflation of a staple as a malformed
-	// staple (with a fallback to raw bytes).
-	decompress_to_vec_zlib(input).map_err(|_| VoteError::MalformedStaple)
+	// staple (with a fallback to raw bytes). Decompress under a fixed output
+	// cap so untrusted input cannot force an unbounded allocation.
+	decompress_to_vec_zlib_with_limit(input, MAX_STAPLE_UNCOMPRESSED_BYTES).map_err(|_| VoteError::MalformedStaple)
 }
 
 #[cfg(test)]
@@ -390,6 +399,25 @@ mod tests {
 	fn test_inflate_rejects_garbage() {
 		let result = inflate(&[0xFFu8; 16]);
 		assert!(result.is_err());
+	}
+
+	#[test]
+	fn test_inflate_rejects_decompression_bomb() {
+		// A tiny compressed input that would inflate past the cap must be
+		// rejected as malformed rather than allocated.
+		let oversized = alloc::vec![0u8; MAX_STAPLE_UNCOMPRESSED_BYTES + 1];
+		let compressed = deflate(&oversized).expect("deflate");
+		assert!(compressed.len() < MAX_STAPLE_UNCOMPRESSED_BYTES);
+		let result = inflate(&compressed);
+		assert!(matches!(result, Err(VoteError::MalformedStaple)));
+	}
+
+	#[test]
+	fn test_inflate_accepts_within_cap() {
+		let payload = b"within-cap staple payload";
+		let compressed = deflate(payload).expect("deflate");
+		let inflated = inflate(&compressed).expect("inflate");
+		assert_eq!(inflated, payload);
 	}
 
 	#[test]
