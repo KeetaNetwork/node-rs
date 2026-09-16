@@ -43,6 +43,8 @@ use {
 	crate::generated::Client as Transport, crate::model::RepStatus, crate::runtime::TokioRuntime, std::sync::OnceLock,
 };
 
+const DEFAULT_REP_REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Bookkeeping for the background representative-refresh task.
 #[derive(Debug, Default)]
 struct RefreshState {
@@ -418,7 +420,11 @@ impl KeetaClient {
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
 			let client = self.clone();
-			requests.push(async move { client.run_call(pick.transport.representatives()).await });
+			requests.push(async move {
+				client
+					.run_rep_refresh_call(pick.transport.representatives())
+					.await
+			});
 		}
 
 		let mut responses = Vec::new();
@@ -528,8 +534,29 @@ impl KeetaClient {
 			return Some(future.await);
 		}
 
-		let duration = Duration::from_millis(timeout_ms);
-		let timer = self.inner.runtime.sleep(duration);
+		self.run_call_with_timeout(future, Duration::from_millis(timeout_ms))
+			.await
+	}
+
+	/// Await a representative-refresh call with a finite deadline, even when
+	/// general requests have no configured timeout.
+	async fn run_rep_refresh_call<T>(
+		&self,
+		future: impl Future<Output = Result<T, ClientError>>,
+	) -> Option<Result<T, ClientError>> {
+		let timeout = match self.inner.config.request_timeout_ms {
+			0 => DEFAULT_REP_REFRESH_TIMEOUT,
+			timeout_ms => Duration::from_millis(timeout_ms),
+		};
+		self.run_call_with_timeout(future, timeout).await
+	}
+
+	async fn run_call_with_timeout<T>(
+		&self,
+		future: impl Future<Output = Result<T, ClientError>>,
+		timeout: Duration,
+	) -> Option<Result<T, ClientError>> {
+		let timer = self.inner.runtime.sleep(timeout);
 		pin_mut!(future);
 		pin_mut!(timer);
 
@@ -2176,7 +2203,7 @@ mod tests {
 	use keetanetwork_block::BlockHash;
 	use keetanetwork_vote::{Fee, Fees, VoteBuilder};
 
-	use crate::runtime::TokioRuntime;
+	use crate::runtime::{BoxFuture, TokioRuntime};
 	use crate::transport::GeneratedTransport;
 
 	const ISSUER_SEED: u8 = 0xA1;
@@ -2197,6 +2224,33 @@ mod tests {
 		fn create(&self, url: &str) -> Arc<dyn NodeTransport> {
 			self.urls.lock().push(url.to_owned());
 			Arc::new(GeneratedTransport::new(url, reqwest::Client::new()))
+		}
+	}
+
+	#[derive(Debug)]
+	struct ImmediateRuntime;
+
+	#[derive(Debug)]
+	struct NoopTask;
+
+	impl TaskHandle for NoopTask {
+		fn abort(&self) {}
+	}
+
+	#[async_trait::async_trait]
+	impl Runtime for ImmediateRuntime {
+		async fn sleep(&self, _duration: Duration) {}
+
+		fn spawn(&self, _future: BoxFuture) -> Box<dyn TaskHandle> {
+			Box::new(NoopTask)
+		}
+
+		fn now_millis(&self) -> u64 {
+			0
+		}
+
+		fn unix_millis(&self) -> i64 {
+			0
 		}
 	}
 
@@ -2530,6 +2584,21 @@ mod tests {
 	fn representative_consensus_does_not_shrink_when_peers_timeout() {
 		let colluding = vec![("a".to_owned(), 999_999.into(), None)];
 		assert!(consensus_rep_entries(vec![colluding.clone(), colluding], 4).is_empty());
+	}
+
+	#[test]
+	fn representative_refresh_bounds_calls_when_request_timeout_is_unset() {
+		let factory = Arc::new(RecordingFactory::default());
+		let client = KeetaClient::with_parts(
+			[RepPart { key: "a".to_owned(), url: "http://127.0.0.1:8001".to_owned(), weight: 1.into() }],
+			factory,
+			Arc::new(ImmediateRuntime),
+			ClientConfig::default(),
+			false,
+		);
+		let pending = core::future::pending::<Result<(), ClientError>>();
+
+		assert!(matches!(resolve(client.run_rep_refresh_call(pending)), Some(None)));
 	}
 
 	#[test]
