@@ -413,6 +413,7 @@ impl KeetaClient {
 		if picks.is_empty() {
 			return Err(ClientError::NoRepresentatives);
 		}
+		let peer_count = picks.len();
 
 		let mut requests = FuturesUnordered::new();
 		for pick in picks {
@@ -433,7 +434,7 @@ impl KeetaClient {
 			);
 		}
 
-		Ok(consensus_rep_entries(responses))
+		Ok(consensus_rep_entries(responses, peer_count))
 	}
 
 	/// Apply fetched representative entries to the shared state: refresh the
@@ -1949,9 +1950,8 @@ type RepEntry = (String, BigInt, Option<String>);
 
 /// Resolve peer-advertised representative data by strict majority. A response
 /// contributes at most one weight and URL per representative key.
-fn consensus_rep_entries(responses: Vec<Vec<RepEntry>>) -> Vec<RepEntry> {
-	let response_count = responses.len();
-	if response_count < 2 {
+fn consensus_rep_entries(responses: Vec<Vec<RepEntry>>, peer_count: usize) -> Vec<RepEntry> {
+	if peer_count < 2 {
 		return Vec::new();
 	}
 
@@ -1978,7 +1978,7 @@ fn consensus_rep_entries(responses: Vec<Vec<RepEntry>>) -> Vec<RepEntry> {
 		}
 	}
 
-	let majority = response_count / 2;
+	let majority = peer_count / 2;
 	weight_votes
 		.into_iter()
 		.filter_map(|(key, votes)| {
@@ -2509,8 +2509,8 @@ mod tests {
 			("b".to_owned(), 999_999.into(), Some("https://b.example.com".to_owned())),
 		];
 
-		assert!(consensus_rep_entries(vec![malicious.clone()]).is_empty());
-		let consensus = consensus_rep_entries(vec![honest.clone(), honest, malicious]);
+		assert!(consensus_rep_entries(vec![malicious.clone()], 3).is_empty());
+		let consensus = consensus_rep_entries(vec![honest.clone(), honest, malicious], 3);
 		let client = multi_rep_client(Arc::new(RecordingFactory::default()));
 		client.apply_reps(&consensus, false);
 
@@ -2524,6 +2524,12 @@ mod tests {
 			.expect("rep b");
 		assert_eq!(malicious_rep_weight, BigInt::from(40));
 		assert!(!meets_quorum(&malicious_rep_weight, &total, 0.5));
+	}
+
+	#[test]
+	fn representative_consensus_does_not_shrink_when_peers_timeout() {
+		let colluding = vec![("a".to_owned(), 999_999.into(), None)];
+		assert!(consensus_rep_entries(vec![colluding.clone(), colluding], 4).is_empty());
 	}
 
 	#[test]
