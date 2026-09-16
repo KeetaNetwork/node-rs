@@ -6,7 +6,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::net::IpAddr;
+use core::net::{IpAddr, Ipv4Addr};
 use core::str::FromStr;
 
 use num_bigint::BigInt;
@@ -110,7 +110,11 @@ fn valid_port(port: &str) -> bool {
 fn is_public_ip(ip: IpAddr) -> bool {
 	match ip {
 		IpAddr::V4(ip) => {
-			!(ip.is_private()
+			let octets = ip.octets();
+			!(octets[0] == 0
+				|| is_shared_address(ip)
+				|| ip == Ipv4Addr::new(168, 63, 129, 16)
+				|| ip.is_private()
 				|| ip.is_loopback()
 				|| ip.is_link_local()
 				|| ip.is_unspecified()
@@ -118,8 +122,8 @@ fn is_public_ip(ip: IpAddr) -> bool {
 				|| ip.is_multicast())
 		}
 		IpAddr::V6(ip) => {
-			if let Some(mapped) = ip.to_ipv4_mapped() {
-				return is_public_ip(IpAddr::V4(mapped));
+			if let Some(embedded) = ip.to_ipv4() {
+				return is_public_ip(IpAddr::V4(embedded));
 			}
 			let first = ip.segments()[0];
 			!(ip.is_loopback()
@@ -129,6 +133,11 @@ fn is_public_ip(ip: IpAddr) -> bool {
 				|| first & 0xffc0 == 0xfe80)
 		}
 	}
+}
+
+fn is_shared_address(ip: Ipv4Addr) -> bool {
+	let octets = ip.octets();
+	octets[0] == 100 && octets[1] & 0xc0 == 0x40
 }
 
 /// A cloned selection target: the representative's key and weight. The live
@@ -480,12 +489,19 @@ mod tests {
 			"gopher://example.com",
 			"http://localhost/admin",
 			"http://service.localhost/admin",
+			"http://0.1.2.3/admin",
 			"http://127.0.0.1/admin",
 			"http://2130706433/admin",
 			"http://0x7f000001/admin",
 			"http://10.0.0.1/admin",
+			"http://100.64.0.1/admin",
+			"http://100.100.100.200/latest/meta-data",
+			"http://100.127.255.254/admin",
+			"http://168.63.129.16/machine?comp=goalstate",
 			"http://169.254.169.254/latest/meta-data",
 			"http://[::1]/admin",
+			"http://[::127.0.0.1]/admin",
+			"http://[::100.100.100.200]/latest/meta-data",
 			"http://[fe80::1]/admin",
 			"http://[fc00::1]/admin",
 			"http://metadata.google.internal/computeMetadata/v1",
