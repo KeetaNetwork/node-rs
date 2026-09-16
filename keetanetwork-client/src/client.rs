@@ -2009,7 +2009,8 @@ where
 
 		match next_key {
 			Some(next) if Some(next) != cursor => cursor = Some(next),
-			// End of sequence (`None`) or a cursor that did not advance: stop.
+			// Repeated cursor: the node did not advance, so reject rather than
+			// loop on a replay. `None` below is the legitimate end of sequence.
 			Some(_) => return Err(ClientError::PaginationLimitExceeded),
 			None => break,
 		}
@@ -2194,6 +2195,27 @@ mod tests {
 
 		let result = resolve(drain_cursor_pages(fetch)).ok_or("ready future")?;
 		assert!(matches!(result, Err(ClientError::PaginationLimitExceeded)));
+		Ok(())
+	}
+
+	#[test]
+	fn drain_cursor_pages_rejects_when_advancing_pages_exceed_the_item_ceiling() -> TestResult {
+		// A node that keeps returning non-empty pages with strictly advancing
+		// cursors must still be rejected once the aggregate item ceiling is
+		// crossed; cursor progress alone is not enough.
+		let calls = core::cell::Cell::new(0u32);
+		let page_len = MAX_DRAINED_ITEMS / 4 + 1;
+		let fetch = |_: Option<u32>| {
+			let call = calls.get();
+			calls.set(call + 1);
+			core::future::ready(Ok((alloc::vec![(); page_len], Some(call))))
+		};
+
+		let result = resolve(drain_cursor_pages(fetch)).ok_or("ready future")?;
+		assert!(matches!(result, Err(ClientError::PaginationLimitExceeded)));
+		// Four advancing pages cross the ceiling; a non-advancing cursor would
+		// have failed on the second call.
+		assert_eq!(calls.get(), 4);
 		Ok(())
 	}
 
