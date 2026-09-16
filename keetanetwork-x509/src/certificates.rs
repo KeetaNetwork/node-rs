@@ -681,15 +681,25 @@ impl TryFrom<&[u8]> for CertificateBundle {
 		while offset < data.len() {
 			// Parse DER length to get exact certificate size
 			if let Some((cert_len, header_len)) = parse_der_length(&data[offset..]) {
-				let total_len = header_len + cert_len;
+				// Use checked arithmetic: an attacker-controlled long-form DER
+				// length can be close to `usize::MAX`, and unchecked addition
+				// would wrap `offset + total_len` below `data.len()`, letting a
+				// start > end slice pass the bounds check and panic (aborting
+				// the process under `panic = "abort"`).
+				let Some(total_len) = header_len.checked_add(cert_len) else {
+					break;
+				};
+				let Some(end) = offset.checked_add(total_len) else {
+					break;
+				};
 
 				// Extract the complete certificate DER data
-				if offset + total_len <= data.len() {
-					let cert_data = &data[offset..offset + total_len];
+				if end <= data.len() {
+					let cert_data = &data[offset..end];
 
 					if let Ok(cert) = Certificate::try_from(cert_data) {
 						certificates.push(cert);
-						offset += total_len;
+						offset = end;
 					} else {
 						break;
 					}
@@ -2148,6 +2158,28 @@ mod tests {
 		}
 
 		Ok(())
+	}
+
+	#[test]
+	fn test_bundle_try_from_rejects_overflow_length_without_panic() -> Result<(), CertificateError> {
+		// Regression: a valid certificate followed by an element whose DER
+		// long-form length is close to usize::MAX must not overflow the length
+		// arithmetic into an out-of-range slice (which panics/aborts). The
+		// parser should stop cleanly and keep only the certificates it could
+		// safely parse.
+		test_all_certificate_sets(|bundle| {
+			let CertificateTestBundle { client_cert, .. } = bundle;
+			let mut data = client_cert.to_der()?;
+			// SEQUENCE tag, long-form 8-byte length = 0xFFFFFFFFFFFFFFF5 (~usize::MAX)
+			data.extend_from_slice(&[0x30, 0x88, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF5]);
+
+			// Must return (Ok or Err) without panicking; if Ok, only the leading
+			// valid certificate is retained.
+			if let Ok(parsed) = CertificateBundle::try_from(data.as_slice()) {
+				assert_eq!(parsed.into_iter().count(), 1);
+			}
+			Ok(())
+		})
 	}
 
 	#[test]
