@@ -6,6 +6,8 @@
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::net::IpAddr;
+use core::str::FromStr;
 
 use num_bigint::BigInt;
 
@@ -28,6 +30,104 @@ impl RepRecord {
 	/// A record for a freshly known representative, scored as fully reliable.
 	pub(crate) fn new(key: impl Into<String>, url: impl Into<String>, weight: impl Into<BigInt>) -> Self {
 		Self { key: key.into(), url: url.into(), weight: weight.into(), score: 1.0 }
+	}
+}
+
+/// Whether an untrusted, peer-advertised API URL is safe to use for
+/// representative discovery. Configured URLs do not pass through this check.
+pub(crate) fn is_safe_advertised_url(url: &str) -> bool {
+	let Some(rest) = url
+		.strip_prefix("http://")
+		.or_else(|| url.strip_prefix("https://"))
+	else {
+		return false;
+	};
+	let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+	if authority.is_empty() || authority.contains('@') {
+		return false;
+	}
+
+	let host = if let Some(bracketed) = authority.strip_prefix('[') {
+		let Some((host, suffix)) = bracketed.split_once(']') else {
+			return false;
+		};
+		if !valid_port_suffix(suffix) {
+			return false;
+		}
+		host
+	} else {
+		let mut parts = authority.split(':');
+		let host = parts.next().unwrap_or_default();
+		if let Some(port) = parts.next() {
+			if parts.next().is_some() || !valid_port(port) {
+				return false;
+			}
+		}
+		host
+	};
+
+	if host.is_empty()
+		|| !host
+			.bytes()
+			.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':'))
+	{
+		return false;
+	}
+
+	let normalized = host.trim_end_matches('.').to_ascii_lowercase();
+	if normalized == "localhost"
+		|| normalized.ends_with(".localhost")
+		|| normalized == "metadata.google.internal"
+		|| normalized.ends_with(".metadata.google.internal")
+	{
+		return false;
+	}
+
+	match IpAddr::from_str(&normalized) {
+		Ok(ip) => is_public_ip(ip),
+		// Reject non-canonical numeric hosts such as `2130706433` and
+		// `0x7f000001`, which URL clients may normalize to loopback.
+		Err(_)
+			if normalized
+				.bytes()
+				.all(|byte| byte.is_ascii_digit() || byte == b'.') =>
+		{
+			false
+		}
+		Err(_) if normalized.starts_with("0x") => false,
+		Err(_) => true,
+	}
+}
+
+fn valid_port_suffix(suffix: &str) -> bool {
+	suffix.is_empty() || suffix.strip_prefix(':').is_some_and(valid_port)
+}
+
+fn valid_port(port: &str) -> bool {
+	!port.is_empty() && port.parse::<u16>().is_ok()
+}
+
+fn is_public_ip(ip: IpAddr) -> bool {
+	match ip {
+		IpAddr::V4(ip) => {
+			!(ip.is_private()
+				|| ip.is_loopback()
+				|| ip.is_link_local()
+				|| ip.is_unspecified()
+				|| ip.is_broadcast()
+				|| ip.is_multicast())
+		}
+		IpAddr::V6(ip) => {
+			if let Some(mapped) = ip.to_ipv4_mapped() {
+				return is_public_ip(IpAddr::V4(mapped));
+			}
+			let first = ip.segments()[0];
+			!(ip.is_loopback()
+				|| ip.is_unspecified()
+				|| ip.is_multicast()
+				|| first & 0xfe00 == 0xfc00
+				|| first & 0xffc0 == 0xfe80)
+		}
 	}
 }
 
@@ -371,5 +471,39 @@ mod tests {
 		let (snapshot, total) = book.snapshot_with_total();
 		assert!(snapshot.iter().any(|rep| rep.key == "a"));
 		assert_eq!(total, BigInt::from(1));
+	}
+
+	#[test]
+	fn advertised_urls_reject_local_and_non_http_targets() {
+		for url in [
+			"file:///etc/passwd",
+			"gopher://example.com",
+			"http://localhost/admin",
+			"http://service.localhost/admin",
+			"http://127.0.0.1/admin",
+			"http://2130706433/admin",
+			"http://0x7f000001/admin",
+			"http://10.0.0.1/admin",
+			"http://169.254.169.254/latest/meta-data",
+			"http://[::1]/admin",
+			"http://[fe80::1]/admin",
+			"http://[fc00::1]/admin",
+			"http://metadata.google.internal/computeMetadata/v1",
+			"http://user@example.com",
+		] {
+			assert!(!is_safe_advertised_url(url), "{url}");
+		}
+	}
+
+	#[test]
+	fn advertised_urls_allow_public_http_endpoints() {
+		for url in [
+			"https://rep.example.com/api",
+			"http://rep.example.com:8080/api",
+			"https://8.8.8.8/api",
+			"https://[2606:4700:4700::1111]/api",
+		] {
+			assert!(is_safe_advertised_url(url), "{url}");
+		}
 	}
 }
