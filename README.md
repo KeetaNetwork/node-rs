@@ -35,5 +35,5 @@ make check
 - [Overview](docs/README.md)
 - [Quickstart](docs/QUICKSTART.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Crate notes](docs/README.md#crate-notes)
+- [Crate docs](docs/README.md#crate-docs)
 - [Documentation Standard](docs/STANDARD.md)

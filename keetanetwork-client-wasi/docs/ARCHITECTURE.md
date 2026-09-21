@@ -18,13 +18,13 @@ Feature `p1` on `wasm32-wasip1` is a core module. It exposes the pure surface ov
 
 A WASI build enables exactly one of `p1` or `p2`. The `compile_error!` in `keetanetwork-client-wasi/src/lib.rs` is the enforcement point. Off a WASI target both features compile out and leave `pure`.
 
-Host tests live under `keetanetwork-client-wasi/host-tests/`. [Quickstart](../QUICKSTART.md) names `make build-wasi` and `make test-wasi`. Those targets select `p1` for `wasm32-wasip1` and `p2` for `wasm32-wasip2`.
+Host tests live under `keetanetwork-client-wasi/host-tests/`. [Quickstart](../../docs/QUICKSTART.md) names `make build-wasi` and `make test-wasi`. Those targets select `p1` for `wasm32-wasip1` and `p2` for `wasm32-wasip2`.
 
 ## Who this crate projects
 
 This crate always depends on `keetanetwork-account`, `keetanetwork-block`, `keetanetwork-crypto`, `keetanetwork-vote`, `keetanetwork-x509`, and `keetanetwork-bindings`. Feature `p2` adds `keetanetwork-client`.
 
-[Client](client.md) holds the `wasi` feature that supplies codec types without Tokio. [Bindings](bindings.md) holds the shared projection. [Architecture](../ARCHITECTURE.md) holds the collaboration path.
+[Client](../../keetanetwork-client/docs/ARCHITECTURE.md) holds the `wasi` feature that supplies codec types without Tokio. [Bindings](../../keetanetwork-bindings/docs/ARCHITECTURE.md) holds the shared projection. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
 
 ## Feature contract
 

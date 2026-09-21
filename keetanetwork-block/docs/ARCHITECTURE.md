@@ -20,7 +20,7 @@ Field lists stay in rustdoc.
 
 `keetanetwork-vote` covers block hashes. `keetanetwork-client` assembles blocks through `TransactionBuilder` and transmits them inside a staple. `keetanetwork-bindings` and the host ABI crates project the same block types.
 
-[Account](account.md) holds the identity types. [Vote](vote.md) holds the commitment that covers those hashes. [Architecture](../ARCHITECTURE.md) holds the collaboration path.
+[Account](../../keetanetwork-account/docs/ARCHITECTURE.md) holds the identity types. [Vote](../../keetanetwork-vote/docs/ARCHITECTURE.md) holds the commitment that covers those hashes. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
 
 ## Feature contract
 
@@ -28,7 +28,7 @@ Default features are `std` and `rasn`. `std` implies `alloc`. Features `der` and
 
 This crate depends on `keetanetwork-error`, `keetanetwork-utils`, `keetanetwork-crypto` with `signature`, `keetanetwork-account`, `keetanetwork-asn1`, and `keetanetwork-x509`.
 
-A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](asn1.md) holds the codec contract.
+A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the codec contract.
 
 ## Falsified by
 

@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This page is the consumer contract for `keetanetwork-utils`. The crate owns shared test macros, optional ASN.1 build helpers, and the `node-harness` feature that talks to the private GitHub Packages package. [Quickstart](../QUICKSTART.md) holds the operator steps for that gate.
+This page is the consumer contract for `keetanetwork-utils`. The crate owns shared test macros, optional ASN.1 build helpers, and the `node-harness` feature that talks to the private GitHub Packages package. [Quickstart](../../docs/QUICKSTART.md) holds the operator steps for that gate.
 
 ## Purpose
 
@@ -14,13 +14,13 @@ An engineer reads this page before adding a workspace-wide test helper or changi
 
 Feature `build` enables `rasn-compiler` and the `build` module. `keetanetwork-asn1` and `keetanetwork-x509` use that feature from their build scripts.
 
-Feature `node-harness` enables the harness client. `keetanetwork-utils/node-harness/.npmrc` sets `@keetanetwork:registry=https://npm.pkg.github.com`. [Quickstart](../QUICKSTART.md) holds the Packages token steps and the cargo-only path.
+Feature `node-harness` enables the harness client. `keetanetwork-utils/node-harness/.npmrc` sets `@keetanetwork:registry=https://npm.pkg.github.com`. [Quickstart](../../docs/QUICKSTART.md) holds the Packages token steps and the cargo-only path.
 
 ## Who consumes this crate
 
 Account, crypto, asn1, x509, block, and vote crates depend on this crate for shared helpers. Test binaries enable `std` and `node-harness` when they talk to a live node.
 
-This crate is not on the signed-write collaboration path in [Architecture](../ARCHITECTURE.md). It is the shared tooling under that path.
+This crate is not on the signed-write collaboration path in [Architecture](../../docs/ARCHITECTURE.md). It is the shared tooling under that path.
 
 ## Feature contract
 

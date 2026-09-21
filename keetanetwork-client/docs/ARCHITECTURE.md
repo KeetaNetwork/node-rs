@@ -14,7 +14,7 @@ An engineer reads this page before changing client construction, HTTP generation
 
 HTTP transport is generated at build time from `keetanetwork-client/openapi/keetanet-node.yaml` through progenitor. The generated types are exposed as the `generated` module when the `codec` feature is on.
 
-The rustdoc example in `keetanetwork-client/src/lib.rs` constructs `KeetaClient::new("http://localhost:8080/api")` and `.with_network(0u8)`. A live harness cookbook lives in `keetanetwork-client/tests/e2e.rs`. `UserClient` signing tests live in `keetanetwork-client/tests/user_signing.rs`. [Quickstart](../QUICKSTART.md) cites those examples.
+The rustdoc example in `keetanetwork-client/src/lib.rs` constructs `KeetaClient::new("http://localhost:8080/api")` and `.with_network(0u8)`. A live harness cookbook lives in `keetanetwork-client/tests/e2e.rs`. `UserClient` signing tests live in `keetanetwork-client/tests/user_signing.rs`. [Quickstart](../../docs/QUICKSTART.md) cites those examples.
 
 The crate re-exports `Vote`, `VoteQuote`, `VoteStaple`, and `VoteBlockHash` from `keetanetwork-vote`. It also re-exports `KeetaNetError` and `NodeErrorType` from `keetanetwork-error`.
 
@@ -30,7 +30,7 @@ The orchestrator is `no_std` plus `alloc` when `std`, `http`, and `wasi` are off
 
 `keetanetwork-client-wasm` enables the `wasm` feature. `keetanetwork-client-wasi` enables this crate only on feature `p2`. `keetanetwork-bindings` takes this crate behind its `client` feature.
 
-[Block](block.md) and [Vote](vote.md) hold the signed objects. [Bindings](bindings.md) holds the shared host projection. [Architecture](../ARCHITECTURE.md) holds the collaboration path.
+[Block](../../keetanetwork-block/docs/ARCHITECTURE.md) and [Vote](../../keetanetwork-vote/docs/ARCHITECTURE.md) hold the signed objects. [Bindings](../../keetanetwork-bindings/docs/ARCHITECTURE.md) holds the shared host projection. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
 
 ## Falsified by
 

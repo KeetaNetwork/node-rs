@@ -20,7 +20,7 @@ Field lists stay in rustdoc.
 
 `keetanetwork-client-wasm` depends on this crate with the `client` feature. `keetanetwork-client-wasi` depends on this crate on every build. Feature `p2` on the WASI crate also enables `keetanetwork-bindings/client`.
 
-[Client wasm](client-wasm.md) holds the browser ABI conventions. [Client WASI](client-wasi.md) holds the `p1` / `p2` contract. [Architecture](../ARCHITECTURE.md) holds the collaboration path.
+[Client wasm](../../keetanetwork-client-wasm/docs/ARCHITECTURE.md) holds the browser ABI conventions. [Client WASI](../../keetanetwork-client-wasi/docs/ARCHITECTURE.md) holds the `p1` / `p2` contract. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
 
 ## Feature contract
 

@@ -14,13 +14,13 @@ An engineer reads this page before changing the browser ABI or adding a JavaScri
 
 Amounts are decimal strings such as `"1000"`. They are not JavaScript `number` values. Cryptographic bytes are `Uint8Array`. Hashes and keys are hex strings. Errors are JavaScript `Error` objects that carry a stable `error.code`.
 
-`make build-wasm` runs `wasm-pack build` for this crate. Playwright cookbooks live in `keetanetwork-client-wasm/tests/roundtrip.spec.ts` and `keetanetwork-client-wasm/tests/fee.spec.ts`. [Quickstart](../QUICKSTART.md) names the Make targets and the Packages gate.
+`make build-wasm` runs `wasm-pack build` for this crate. Playwright cookbooks live in `keetanetwork-client-wasm/tests/roundtrip.spec.ts` and `keetanetwork-client-wasm/tests/fee.spec.ts`. [Quickstart](../../docs/QUICKSTART.md) names the Make targets and the Packages gate.
 
 ## Who this crate projects
 
 This crate depends on `keetanetwork-client` with the `wasm` feature. It depends on `keetanetwork-bindings` with the `client` feature. It also depends on `keetanetwork-account`, `keetanetwork-block`, `keetanetwork-crypto`, `keetanetwork-x509`, and `keetanetwork-asn1`.
 
-[Client](client.md) holds the orchestrator and the `http` plus `wasm` pairing. [Bindings](bindings.md) holds the shared projection. [Architecture](../ARCHITECTURE.md) holds the collaboration path.
+[Client](../../keetanetwork-client/docs/ARCHITECTURE.md) holds the orchestrator and the `http` plus `wasm` pairing. [Bindings](../../keetanetwork-bindings/docs/ARCHITECTURE.md) holds the shared projection. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
 
 ## Feature contract
 

@@ -20,7 +20,7 @@ Cookbooks live in `keetanetwork-vote/tests/e2e_node.rs`, `keetanetwork-vote/test
 
 `keetanetwork-client` depends on this crate and re-exports `Vote`, `VoteQuote`, `VoteStaple`, and `VoteBlockHash` from `keetanetwork-client/src/lib.rs`. `keetanetwork-bindings` and `keetanetwork-client-wasi` depend on this crate so host ABIs can project vote types.
 
-[Block](block.md) holds the hashes a vote covers. [Client](client.md) holds the transmit path. [Architecture](../ARCHITECTURE.md) holds the collaboration path.
+[Block](../../keetanetwork-block/docs/ARCHITECTURE.md) holds the hashes a vote covers. [Client](../../keetanetwork-client/docs/ARCHITECTURE.md) holds the transmit path. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
 
 ## Feature contract
 
@@ -28,7 +28,7 @@ Default features are `std` and `rasn`. `std` implies `alloc`. Features `der` and
 
 This crate depends on `keetanetwork-error`, `keetanetwork-utils`, `keetanetwork-crypto` with `signature`, `keetanetwork-account`, `keetanetwork-asn1`, and `keetanetwork-block`.
 
-A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](asn1.md) holds the codec contract.
+A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the codec contract.
 
 ## Falsified by
 

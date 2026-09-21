@@ -26,13 +26,13 @@ Crate rustdoc on `keetanetwork-account/src/lib.rs` names those types. Field list
 | `keetanetwork-client` | `KeetaClient` and `UserClient` take an `AccountRef` |
 | `keetanetwork-bindings` | Host ABIs map account algorithms through this crate |
 
-[Architecture](../ARCHITECTURE.md) holds the collaboration graph. This page does not redraw it.
+[Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph. This page does not redraw it.
 
 ## Feature contract
 
 Default features are `std` and `rasn`. `std` implies `alloc`. Features `der` and `rasn` forward to `keetanetwork-asn1` and `keetanetwork-crypto`.
 
-A `no_std` consumer enables `alloc` and at least one of `der` or `rasn` when it needs the ASN.1 path. [ASN.1](asn1.md) holds the at-least-one codec contract.
+A `no_std` consumer enables `alloc` and at least one of `der` or `rasn` when it needs the ASN.1 path. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the at-least-one codec contract.
 
 This crate depends on `keetanetwork-crypto` with `signature` and `encryption`. It depends on `keetanetwork-error` and `keetanetwork-utils`. `keetanetwork-asn1` is optional behind `der` and `rasn`.
 

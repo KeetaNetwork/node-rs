@@ -27,15 +27,17 @@ A page MUST NOT carry the following. The source is the one correct home for each
 
 - Barrel maps, export lists, or directory listings.
 - Field tables that repeat crate rustdoc without adding operator semantics.
-- One README per workspace crate that only restates that crate `Cargo.toml` and `pub use`.
-- A product page for `keetanetwork-node` or `keetanetwork-ledger` while those crates remain empty stubs.
+- One crate-root README that only restates that crate `Cargo.toml` and `pub use`.
+- A product Architecture page for `keetanetwork-node` or `keetanetwork-ledger` while those crates remain empty stubs.
 - A decision log, a changelog of past reviews, or a ticket or phase diary.
 
 One body of knowledge takes one page as its home. A second page that needs it MUST link to that home rather than restate it. The [Overview](README.md) names the living pages.
 
-[Architecture](ARCHITECTURE.md) holds the workspace collaboration graph and the interaction path. A page under `docs/crates/` holds one product crate's consumer contract and the crates that call it. That page MUST add collaboration or feature-gate substance that rustdoc on a single type cannot hold. It MUST NOT restate that crate `pub use` list.
+[Architecture](ARCHITECTURE.md) holds the workspace collaboration graph and the interaction path. Product-crate architecture lives under that crate `docs/ARCHITECTURE.md`. That page MUST add collaboration or feature-gate substance that rustdoc on a single type cannot hold. It MUST NOT restate that crate `pub use` list. The [Overview](README.md) is the table of contents into those paths.
 
-A concept page under `docs/concepts/` lands only when it still holds a non-rustdoc invariant after the Architecture draft and the crate note. A candidate that collapses to a field list MUST NOT land.
+A crate `docs/README.md` MAY stay a thin pointer into that crate `docs/ARCHITECTURE.md`. A stub crate MAY carry a minimal `docs/README.md` that names the reserved crate. It MUST NOT carry a product Architecture page.
+
+A concept page under `docs/concepts/` lands only when it still holds a non-rustdoc invariant after the workspace Architecture draft and the crate architecture. A candidate that collapses to a field list MUST NOT land.
 
 When a page must name a symbol, it cites that symbol as `Symbol` in `path/to/file`. The source carries its own detail.
 
@@ -58,7 +60,7 @@ Each register addresses its reader differently. A page MUST hold one register th
 
 ## Page shape
 
-Every page under `docs/**` MUST carry the following sections, in the following order.
+Every shaped page under workspace `docs/` and every crate `docs/ARCHITECTURE.md` MUST carry the following sections, in the following order.
 
 1. **Title.** The subject of the page, as a noun phrase.
 2. **Abstract.** Two or three sentences on what the page holds.
@@ -70,7 +72,7 @@ The closing section is the maintenance contract. It MUST name the code or tree c
 
 A page SHOULD cite the test or rustdoc example that encodes an invariant when that file is the enforcement point. One citation replaces a prose argument that the guarantee holds.
 
-The root `README.md` MAY stay a thin pointer. It does not use this page shape. It MUST NOT redeclare Requirements Language.
+The root `README.md` and each crate `docs/README.md` MAY stay a thin pointer. Those pages do not use this page shape. They MUST NOT redeclare Requirements Language.
 
 Navigation and audience live on the [Overview](README.md). This page MUST NOT carry a page index.
 

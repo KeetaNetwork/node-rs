@@ -2,21 +2,21 @@
 
 ## Abstract
 
-This page states how the `node-rs` workspace crates depend on each other and how they collaborate on a signed write. It holds the crate-boundary graph and the interaction path that no single crate rustdoc can show. Per-crate consumer contracts live under [Crate notes](crates/account.md) and the sibling pages listed on [Overview](README.md).
+This page states how the `node-rs` workspace crates depend on each other and how they collaborate on a signed write. It holds the crate-boundary graph and the interaction path that no single crate rustdoc can show. Per-crate architecture lives under each product crate `docs/ARCHITECTURE.md` listed on [Overview](README.md).
 
 ## Purpose
 
-An engineer reads this page to learn how work moves from an account identity through a block, a vote staple, the HTTP client, and the host ABIs. After reading, the engineer can name the crate that owns each step and open the crate note that holds that crate's consumer contract.
+An engineer reads this page to learn how work moves from an account identity through a block, a vote staple, the HTTP client, and the host ABIs. After reading, the engineer can name the crate that owns each step and open that crate `docs/ARCHITECTURE.md`.
 
 ## Related documents
 
-- [Overview](README.md) for the cultural map and the crate-note table of contents.
+- [Overview](README.md) for the table of contents into crate `docs/` entries.
 - [Quickstart](QUICKSTART.md) for install, build, test, and first use.
 - [Documentation Standard](STANDARD.md) for the inclusion test and page shape.
 
 ## Collaboration graph
 
-Root `Cargo.toml` `[workspace].members` lists the workspace crates. Each product crate listed on [Overview](README.md) has a crate note. `keetanetwork-node` and `keetanetwork-ledger` keep reserved names. Their `lib.rs` files export no types.
+Root `Cargo.toml` `[workspace].members` lists the workspace crates. Each product crate listed on [Overview](README.md) holds architecture under that crate `docs/ARCHITECTURE.md`. `keetanetwork-node` and `keetanetwork-ledger` keep reserved names. Their `lib.rs` files export no types. Those crates hold a minimal `docs/README.md` only.
 
 The arrows follow member `Cargo.toml` path dependencies that the product path uses. Foundation crates feed identity. Identity feeds signed objects. Signed objects feed the client. The client and the shared bindings crate feed the browser and WASI ABIs.
 
@@ -57,7 +57,7 @@ flowchart TB
 
 `crate_node` and `crate_ledger` sit in the workspace with no product types. The `crate_client` to `crate_wasi` arrow is the `p2` feature. Feature `p1` stays on the pure surface.
 
-Each crate note names the remaining `Cargo.toml` edges that this diagram omits, such as `keetanetwork-asn1` into `keetanetwork-block` and `keetanetwork-vote`.
+Each crate architecture names the remaining `Cargo.toml` edges that this diagram omits, such as `keetanetwork-asn1` into `keetanetwork-block` and `keetanetwork-vote`.
 
 ## How the crates interact
 
@@ -87,29 +87,29 @@ These statements are the positive feature contracts that more than one crate mus
 
 Workspace crates share the `std` and `alloc` feature names so a `no_std` consumer can stay on `alloc` through the identity and object crates.
 
-## Crate-note homes
+## Crate architecture homes
 
-Each product crate has one note. The note holds that crate's consumer contract and the crates that call it. This page does not copy those contracts.
+Each product crate holds architecture under that crate `docs/ARCHITECTURE.md`. That page holds the crate's consumer contract and the crates that call it. This page does not copy those contracts.
 
-| Crate | Note |
+| Crate | Architecture |
 | --- | --- |
-| `keetanetwork-account` | [Account](crates/account.md) |
-| `keetanetwork-error` | [Error](crates/error.md) |
-| `keetanetwork-crypto` | [Crypto](crates/crypto.md) |
-| `keetanetwork-x509` | [X.509](crates/x509.md) |
-| `keetanetwork-asn1` | [ASN.1](crates/asn1.md) |
-| `keetanetwork-utils` | [Utils](crates/utils.md) |
-| `keetanetwork-block` | [Block](crates/block.md) |
-| `keetanetwork-vote` | [Vote](crates/vote.md) |
-| `keetanetwork-client` | [Client](crates/client.md) |
-| `keetanetwork-bindings` | [Bindings](crates/bindings.md) |
-| `keetanetwork-client-wasm` | [Client wasm](crates/client-wasm.md) |
-| `keetanetwork-client-wasi` | [Client WASI](crates/client-wasi.md) |
-
-`keetanetwork-node` and `keetanetwork-ledger` have no crate note. Those `lib.rs` files export no types. This page is the home that names them as stubs.
+| `keetanetwork-account` | [Account](../keetanetwork-account/docs/ARCHITECTURE.md) |
+| `keetanetwork-error` | [Error](../keetanetwork-error/docs/ARCHITECTURE.md) |
+| `keetanetwork-crypto` | [Crypto](../keetanetwork-crypto/docs/ARCHITECTURE.md) |
+| `keetanetwork-x509` | [X.509](../keetanetwork-x509/docs/ARCHITECTURE.md) |
+| `keetanetwork-asn1` | [ASN.1](../keetanetwork-asn1/docs/ARCHITECTURE.md) |
+| `keetanetwork-utils` | [Utils](../keetanetwork-utils/docs/ARCHITECTURE.md) |
+| `keetanetwork-block` | [Block](../keetanetwork-block/docs/ARCHITECTURE.md) |
+| `keetanetwork-vote` | [Vote](../keetanetwork-vote/docs/ARCHITECTURE.md) |
+| `keetanetwork-client` | [Client](../keetanetwork-client/docs/ARCHITECTURE.md) |
+| `keetanetwork-bindings` | [Bindings](../keetanetwork-bindings/docs/ARCHITECTURE.md) |
+| `keetanetwork-client-wasm` | [Client wasm](../keetanetwork-client-wasm/docs/ARCHITECTURE.md) |
+| `keetanetwork-client-wasi` | [Client WASI](../keetanetwork-client-wasi/docs/ARCHITECTURE.md) |
+| `keetanetwork-node` | [Node](../keetanetwork-node/docs/README.md) |
+| `keetanetwork-ledger` | [Ledger](../keetanetwork-ledger/docs/README.md) |
 
 Crate identity, versions, and field lists live in each member `Cargo.toml` and in rustdoc. This tree does not copy those lists.
 
 ## Falsified by
 
-A change to the workspace `members` or `exclude` lists in root `Cargo.toml`. A change that adds product types to `keetanetwork-node/src/lib.rs` or `keetanetwork-ledger/src/lib.rs`. A change to the `compile_error!` gates in `keetanetwork-asn1/src/lib.rs`, `keetanetwork-client/src/lib.rs` (`http` runtime pairing), or `keetanetwork-client-wasi/src/lib.rs` (`p1` / `p2`). A change that moves the OpenAPI document away from `keetanetwork-client/openapi/keetanet-node.yaml`. A change to the product-crate set that [Overview](README.md) indexes under `docs/crates/`.
+A change to the workspace `members` or `exclude` lists in root `Cargo.toml`. A change that adds product types to `keetanetwork-node/src/lib.rs` or `keetanetwork-ledger/src/lib.rs`. A change to the `compile_error!` gates in `keetanetwork-asn1/src/lib.rs`, `keetanetwork-client/src/lib.rs` (`http` runtime pairing), or `keetanetwork-client-wasi/src/lib.rs` (`p1` / `p2`). A change that moves the OpenAPI document away from `keetanetwork-client/openapi/keetanet-node.yaml`. A change to the product-crate set that [Overview](README.md) indexes under each crate `docs/` directory.

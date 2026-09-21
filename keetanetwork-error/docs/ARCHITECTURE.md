@@ -20,7 +20,7 @@ Field lists and variant payloads stay in rustdoc.
 
 `keetanetwork-crypto` takes this crate only when the `std` feature is on.
 
-[Architecture](../ARCHITECTURE.md) holds the collaboration graph.
+[Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph.
 
 ## Feature contract
 

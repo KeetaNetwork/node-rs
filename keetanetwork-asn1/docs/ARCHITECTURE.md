@@ -12,7 +12,7 @@ An engineer reads this page before changing a codec feature or adding a third AS
 
 `keetanetwork-asn1` owns ASN.1 structures and codec utilities used by certificates and related encodings. Crate rustdoc in `keetanetwork-asn1/src/lib.rs` lists the features and states the at-least-one contract.
 
-This crate depends on `keetanetwork-utils`. The `build` feature on that crate supplies generation helpers. [Utils](utils.md) holds that helper.
+This crate depends on `keetanetwork-utils`. The `build` feature on that crate supplies generation helpers. [Utils](../../keetanetwork-utils/docs/ARCHITECTURE.md) holds that helper.
 
 ## Feature contract
 
@@ -24,7 +24,7 @@ Higher crates expose `der` and `rasn` under the same names and forward them here
 
 ## Who consumes this crate
 
-Block, vote, x509, account, crypto, and bindings crates depend on this crate when they encode or decode shared structures. [Architecture](../ARCHITECTURE.md) holds the collaboration graph.
+Block, vote, x509, account, crypto, and bindings crates depend on this crate when they encode or decode shared structures. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph.
 
 ## Falsified by
 

@@ -20,15 +20,15 @@ Builder, bundle, and validation cookbooks live in `keetanetwork-x509/tests/build
 
 `keetanetwork-block` depends on this crate so a block can carry certificate material. `keetanetwork-bindings`, `keetanetwork-client-wasm`, and `keetanetwork-client-wasi` depend on this crate so host ABIs can project certificates.
 
-[Account](account.md) holds the signer and verifier traits. [Architecture](../ARCHITECTURE.md) holds the collaboration graph.
+[Account](../../keetanetwork-account/docs/ARCHITECTURE.md) holds the signer and verifier traits. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph.
 
 ## Feature contract
 
 Default features are `std`, `serde`, and `rasn`. `std` implies `alloc`. Features `der` and `rasn` forward to `keetanetwork-asn1`, `keetanetwork-crypto`, and `keetanetwork-account`.
 
-The crate build depends on `keetanetwork-utils` with the `build` feature. [Utils](utils.md) holds that helper.
+The crate build depends on `keetanetwork-utils` with the `build` feature. [Utils](../../keetanetwork-utils/docs/ARCHITECTURE.md) holds that helper.
 
-A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](asn1.md) holds the at-least-one codec contract.
+A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the at-least-one codec contract.
 
 ## Falsified by
 

@@ -27,7 +27,7 @@ Field lists stay in rustdoc.
 | `keetanetwork-client` | Depends on `alloc` for client-side hashing |
 | `keetanetwork-bindings` | Depends on `alloc` and `signature` for host ABIs |
 
-[Architecture](../ARCHITECTURE.md) holds the collaboration graph.
+[Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph.
 
 ## Feature contract
 
@@ -35,7 +35,7 @@ Default features are `std`, `signature`, `encryption`, and `rasn`. `std` implies
 
 `keetanetwork-error` is optional and comes on with `std`. `keetanetwork-utils` is a path dependency.
 
-A `no_std` consumer enables `alloc` plus `signature` or `encryption` as the call site needs. [ASN.1](asn1.md) holds the codec contract when `der` or `rasn` is on.
+A `no_std` consumer enables `alloc` plus `signature` or `encryption` as the call site needs. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the codec contract when `der` or `rasn` is on.
 
 ## Falsified by
 
