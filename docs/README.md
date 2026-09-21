@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This guide is the cultural map for the `node-rs` workspace. Invariant detail lives on [Architecture](ARCHITECTURE.md). Install and build steps live on [Quickstart](QUICKSTART.md).
+This guide is the cultural map for the `node-rs` workspace. Invariant detail lives on [Architecture](ARCHITECTURE.md). Install, build, and test steps live on [Quickstart](QUICKSTART.md).
 
 ## Purpose
 
@@ -11,7 +11,7 @@ An engineer reads this guide in the first week on the workspace. After reading, 
 | Next question | The page |
 | --- | --- |
 | What is always true across crate boundaries? | [Architecture](ARCHITECTURE.md) |
-| How does a reader install and build? | [Quickstart](QUICKSTART.md) |
+| How does a reader install, build, and test? | [Quickstart](QUICKSTART.md) |
 | How does a writer review a page in this tree? | [Documentation Standard](STANDARD.md) |
 
 ## What this workspace is
@@ -30,21 +30,7 @@ Make owns the build. The [package README](../README.md) and the `Makefile` drive
 
 Crate rustdoc is the API reference. `make do-docs` generates it. This tree does not copy export lists.
 
-## Planned concept pages
-
-A later Architecture draft filters these candidates. A page lands only when it still holds a non-rustdoc invariant.
-
-| Planned page | Topic the candidate would hold |
-| --- | --- |
-| `docs/concepts/features-and-no-std.md` | Shared `std` / `alloc` / `der` / `rasn` consumer gates |
-| `docs/concepts/accounts.md` | Account identities consumed across crates |
-| `docs/concepts/blocks.md` | Block signing and opening-hash rules |
-| `docs/concepts/votes.md` | Vote, quote, and staple rules |
-| `docs/concepts/certificates.md` | X.509 builders and certificate stores |
-| `docs/concepts/client.md` | Client transport and generated HTTP |
-| `docs/concepts/bindings.md` | Shared bindings plus wasm and WASI projections |
-
-Those paths are not living pages until the files exist.
+[Architecture](ARCHITECTURE.md) holds the crate-boundary contracts. Feature gates, identity consumption, client generation, and binding ABIs live there. A `docs/concepts/` page lands only when it still holds a non-rustdoc invariant that Architecture does not already carry.
 
 ## Where the tree lives
 
@@ -53,8 +39,8 @@ Those paths are not living pages until the files exist.
 | Root `README.md` | Thin pointer into this tree |
 | `docs/README.md` | This overview |
 | `docs/STANDARD.md` | Documentation contract |
-| `docs/ARCHITECTURE.md` | Crate boundaries and later invariants |
-| `docs/QUICKSTART.md` | Install and build procedure |
+| `docs/ARCHITECTURE.md` | Crate boundaries and cross-file contracts |
+| `docs/QUICKSTART.md` | Install, build, test, and first use |
 | `docs/concepts/*` | Single-topic pages that pass the inclusion test |
 
 GitHub issues and pull requests stay the history home.
@@ -65,6 +51,7 @@ GitHub issues and pull requests stay the history home.
 
 - The toolchain pin is Rust `1.94.0` in `rust-toolchain.toml`.
 - The primary targets are `make developer`, `make build`, `make build release=1`, and `make check`.
+- `make test` and the wasm or WASI test targets need GitHub Packages read. [Quickstart](QUICKSTART.md) holds the cargo-only path.
 - Crate rustdoc opens through `make do-docs`.
 
 ### Where to put work
@@ -91,6 +78,7 @@ GitHub issues and pull requests stay the history home.
 - **Release build is `make build release=1`.** That target is not `make release`.
 - **Stubs stay stubs.** `keetanetwork-node` and `keetanetwork-ledger` have no product types on this tip.
 - **rustdoc is the API reference.** This tree holds cross-file contracts.
+- **Packages read is a test gate.** `cargo check` and `cargo build` stay open without it.
 
 ## Falsified by
 
