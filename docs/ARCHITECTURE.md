@@ -16,7 +16,7 @@ An engineer reads this page to learn how work moves from an account identity thr
 
 ## Collaboration graph
 
-The workspace lists fourteen members in root `Cargo.toml`. Twelve of those members are product crates. `keetanetwork-node` and `keetanetwork-ledger` keep reserved names. Their `lib.rs` files export no types on this tip.
+Root `Cargo.toml` `[workspace].members` lists the workspace crates. Each product crate listed on [Overview](README.md) has a crate note. `keetanetwork-node` and `keetanetwork-ledger` keep reserved names. Their `lib.rs` files export no types.
 
 The arrows follow member `Cargo.toml` path dependencies that the product path uses. Foundation crates feed identity. Identity feeds signed objects. Signed objects feed the client. The client and the shared bindings crate feed the browser and WASI ABIs.
 

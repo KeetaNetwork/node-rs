@@ -28,11 +28,11 @@ An engineer reads this guide in the first week on the workspace. After reading, 
 
 ## What this workspace is
 
-This repository is a Cargo workspace of Keeta Network node crates. Root `Cargo.toml` lists the workspace members. Crate identity lives in each member `Cargo.toml` `description` plus rustdoc on that crate `lib.rs`.
+This repository is a Cargo workspace of Keeta Network node crates. Root `Cargo.toml` `[workspace].members` is the member list. Crate identity lives in each member `Cargo.toml` `description` plus rustdoc on that crate `lib.rs`.
 
-Twelve members are product crates. Each product crate has one note under `docs/crates/`. `keetanetwork-node` and `keetanetwork-ledger` are empty stubs on this tip. Those crates do not hold product types. [Architecture](ARCHITECTURE.md) names that boundary.
+Each product crate listed on this guide has one note under `docs/crates/`. `keetanetwork-node` and `keetanetwork-ledger` are empty stubs. Those crates do not hold product types. [Architecture](ARCHITECTURE.md) names that boundary.
 
-Each member crate carries its own version in that crate `Cargo.toml`. This guide does not treat the unused workspace package version as the repository version.
+Each member crate carries its own version in that crate `Cargo.toml`. This guide does not treat the unused workspace package version as the repository version. This table of contents does not stamp versions.
 
 The files state three license strings. Root `LICENSE` is the Keeta Token Network Community License (v1.0). Workspace `Cargo.toml` `license` is `MIT`. `keetanetwork-utils/node-harness/package.json` `license` is `Keeta Token Network Community License`. This guide cites those files as written.
 
@@ -48,22 +48,22 @@ Crate rustdoc is the API reference. `make do-docs` generates it. This tree does 
 
 These pages are the living table of contents for product crates. [Architecture](ARCHITECTURE.md) draws the graph. Each note names the crates that call that crate.
 
-| Crate | Version on this tip | Note |
-| --- | --- | --- |
-| `keetanetwork-account` | `0.4.0` | [Account](crates/account.md) |
-| `keetanetwork-error` | `0.2.1` | [Error](crates/error.md) |
-| `keetanetwork-crypto` | `0.3.0` | [Crypto](crates/crypto.md) |
-| `keetanetwork-x509` | `0.4.0` | [X.509](crates/x509.md) |
-| `keetanetwork-asn1` | `0.2.5` | [ASN.1](crates/asn1.md) |
-| `keetanetwork-utils` | `0.2.1` | [Utils](crates/utils.md) |
-| `keetanetwork-block` | `0.4.1` | [Block](crates/block.md) |
-| `keetanetwork-vote` | `0.4.0` | [Vote](crates/vote.md) |
-| `keetanetwork-client` | `0.5.1` | [Client](crates/client.md) |
-| `keetanetwork-bindings` | `0.4.4` | [Bindings](crates/bindings.md) |
-| `keetanetwork-client-wasm` | `0.5.1` | [Client wasm](crates/client-wasm.md) |
-| `keetanetwork-client-wasi` | `0.6.1` | [Client WASI](crates/client-wasi.md) |
+| Crate | Note |
+| --- | --- |
+| `keetanetwork-account` | [Account](crates/account.md) |
+| `keetanetwork-error` | [Error](crates/error.md) |
+| `keetanetwork-crypto` | [Crypto](crates/crypto.md) |
+| `keetanetwork-x509` | [X.509](crates/x509.md) |
+| `keetanetwork-asn1` | [ASN.1](crates/asn1.md) |
+| `keetanetwork-utils` | [Utils](crates/utils.md) |
+| `keetanetwork-block` | [Block](crates/block.md) |
+| `keetanetwork-vote` | [Vote](crates/vote.md) |
+| `keetanetwork-client` | [Client](crates/client.md) |
+| `keetanetwork-bindings` | [Bindings](crates/bindings.md) |
+| `keetanetwork-client-wasm` | [Client wasm](crates/client-wasm.md) |
+| `keetanetwork-client-wasi` | [Client WASI](crates/client-wasi.md) |
 
-`keetanetwork-node` `0.2.1` and `keetanetwork-ledger` `0.2.1` have no crate note. Those `lib.rs` files export no types.
+`keetanetwork-node` and `keetanetwork-ledger` have no crate note. Those `lib.rs` files export no types.
 
 ## Where the tree lives
 
@@ -111,7 +111,7 @@ GitHub issues and pull requests stay the history home.
 - **Make owns the build.** Prefer the `Makefile` targets over raw tool invocations.
 - **The toolchain file wins after clone.** `rust-toolchain.toml` selects Rust `1.94.0`.
 - **Release build is `make build release=1`.** That target is not `make release`.
-- **Stubs stay stubs.** `keetanetwork-node` and `keetanetwork-ledger` have no product types on this tip.
+- **Stubs stay stubs.** `keetanetwork-node` and `keetanetwork-ledger` have no product types.
 - **rustdoc is the API reference.** This tree holds cross-file contracts.
 - **Packages read is a test gate.** `cargo check` and `cargo build` stay open without it.
 
@@ -120,5 +120,4 @@ GitHub issues and pull requests stay the history home.
 - A change to the living documentation map that the first-week links follow.
 - A change to the workspace `members` list in root `Cargo.toml`.
 - A change that adds product types to `keetanetwork-node` or `keetanetwork-ledger`.
-- A change to a product-crate version in that crate `Cargo.toml`.
 - A change to the license strings in root `LICENSE`, workspace `Cargo.toml`, or `keetanetwork-utils/node-harness/package.json`.
