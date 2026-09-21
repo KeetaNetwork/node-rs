@@ -30,7 +30,7 @@ use crate::model::{
 	AccountState, Acl, Certificate, ChainPage, ChainQuery, HistoryEntry, HistoryPage, HistoryQuery, LedgerChecksum,
 	Representative, TokenBalance, TransmitOptions,
 };
-use crate::rep::{RepBook, RepPart, RepRecord, RepRef};
+use crate::rep::{is_safe_advertised_url, RepBook, RepPart, RepRecord, RepRef};
 use crate::runtime::{Runtime, TaskHandle};
 use crate::sync::{Mutex, RwLock};
 use crate::transport::{LedgerSide, NodeTransport, TransportFactory};
@@ -42,6 +42,8 @@ use {crate::network::Network, crate::rep::RepEndpoint, crate::transport::Generat
 use {
 	crate::generated::Client as Transport, crate::model::RepStatus, crate::runtime::TokioRuntime, std::sync::OnceLock,
 };
+
+const DEFAULT_REP_REFRESH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Bookkeeping for the background representative-refresh task.
 #[derive(Debug, Default)]
@@ -371,8 +373,8 @@ impl KeetaClient {
 		refresh.handle = Some(handle);
 	}
 
-	/// Refresh known representatives' voting weights from
-	/// `GET /representatives`, matching by account.
+	/// Refresh known representatives' voting weights from a strict majority of
+	/// configured peers, matching by account.
 	async fn update_reps(&self) -> Result<(), ClientError> {
 		let signature = self.inner.reps.sorted_keys().join(",");
 		let ttl = Duration::from_millis(self.inner.config.reps_cache_ttl_ms);
@@ -381,7 +383,9 @@ impl KeetaClient {
 			Some(cached) => cached,
 			None => {
 				let entries = self.fetch_rep_entries().await?;
-				store_representatives(&self.inner.runtime, &signature, &entries);
+				if !entries.is_empty() {
+					store_representatives(&self.inner.runtime, &signature, &entries);
+				}
 				entries
 			}
 		};
@@ -404,14 +408,39 @@ impl KeetaClient {
 		Ok(())
 	}
 
-	/// Fetch the representative set as `(key, weight, api_url)` entries.
+	/// Fetch representative lists from every configured peer and retain only
+	/// values on which a strict majority of at least two peers agree.
 	async fn fetch_rep_entries(&self) -> Result<Vec<RepEntry>, ClientError> {
-		let representatives = self.representatives().await?;
-		let entries = representatives
-			.into_iter()
-			.map(|rep| (rep.account.to_string(), rep.weight.as_bigint().clone(), rep.api_url))
-			.collect();
-		Ok(entries)
+		let picks = self.snapshot_picks();
+		if picks.is_empty() {
+			return Err(ClientError::NoRepresentatives);
+		}
+		let peer_count = picks.len();
+
+		let mut requests = FuturesUnordered::new();
+		for pick in picks {
+			let client = self.clone();
+			requests.push(async move {
+				client
+					.run_rep_refresh_call(pick.transport.representatives())
+					.await
+			});
+		}
+
+		let mut responses = Vec::new();
+		while let Some(result) = requests.next().await {
+			let Some(Ok(representatives)) = result else {
+				continue;
+			};
+			responses.push(
+				representatives
+					.into_iter()
+					.map(|rep| (rep.account.to_string(), rep.weight.as_bigint().clone(), rep.api_url))
+					.collect(),
+			);
+		}
+
+		Ok(consensus_rep_entries(responses, peer_count))
 	}
 
 	/// Apply fetched representative entries to the shared state: refresh the
@@ -432,7 +461,7 @@ impl KeetaClient {
 			let Some(api) = api_url else {
 				continue;
 			};
-			if !self.inner.reps.contains(key) {
+			if !self.inner.reps.contains(key) && is_safe_advertised_url(api) {
 				self.inner
 					.reps
 					.add(RepRecord::new(key.clone(), api.clone(), weight.clone()));
@@ -505,8 +534,29 @@ impl KeetaClient {
 			return Some(future.await);
 		}
 
-		let duration = Duration::from_millis(timeout_ms);
-		let timer = self.inner.runtime.sleep(duration);
+		self.run_call_with_timeout(future, Duration::from_millis(timeout_ms))
+			.await
+	}
+
+	/// Await a representative-refresh call with a finite deadline, even when
+	/// general requests have no configured timeout.
+	async fn run_rep_refresh_call<T>(
+		&self,
+		future: impl Future<Output = Result<T, ClientError>>,
+	) -> Option<Result<T, ClientError>> {
+		let timeout = match self.inner.config.request_timeout_ms {
+			0 => DEFAULT_REP_REFRESH_TIMEOUT,
+			timeout_ms => Duration::from_millis(timeout_ms),
+		};
+		self.run_call_with_timeout(future, timeout).await
+	}
+
+	async fn run_call_with_timeout<T>(
+		&self,
+		future: impl Future<Output = Result<T, ClientError>>,
+		timeout: Duration,
+	) -> Option<Result<T, ClientError>> {
+		let timer = self.inner.runtime.sleep(timeout);
 		pin_mut!(future);
 		pin_mut!(timer);
 
@@ -1925,6 +1975,53 @@ impl KeetaClient {
 /// advertised API URL (when the node provided one).
 type RepEntry = (String, BigInt, Option<String>);
 
+/// Resolve peer-advertised representative data by strict majority. A response
+/// contributes at most one weight and URL per representative key.
+fn consensus_rep_entries(responses: Vec<Vec<RepEntry>>, peer_count: usize) -> Vec<RepEntry> {
+	if peer_count < 2 {
+		return Vec::new();
+	}
+
+	let mut weight_votes: BTreeMap<String, BTreeMap<BigInt, usize>> = BTreeMap::new();
+	let mut url_votes: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+	for response in responses {
+		let unique: BTreeMap<String, (BigInt, Option<String>)> = response
+			.into_iter()
+			.map(|(key, weight, api_url)| (key, (weight, api_url)))
+			.collect();
+		for (key, (weight, api_url)) in unique {
+			*weight_votes
+				.entry(key.clone())
+				.or_default()
+				.entry(weight)
+				.or_default() += 1;
+			if let Some(api_url) = api_url.filter(|url| is_safe_advertised_url(url)) {
+				*url_votes
+					.entry(key)
+					.or_default()
+					.entry(api_url)
+					.or_default() += 1;
+			}
+		}
+	}
+
+	let majority = peer_count / 2;
+	weight_votes
+		.into_iter()
+		.filter_map(|(key, votes)| {
+			let weight = votes
+				.into_iter()
+				.find_map(|(weight, count)| (count > majority).then_some(weight))?;
+			let api_url = url_votes.remove(&key).and_then(|votes| {
+				votes
+					.into_iter()
+					.find_map(|(url, count)| (count > majority).then_some(url))
+			});
+			Some((key, weight, api_url))
+		})
+		.collect()
+}
+
 /// Process-shared representative cache, keyed by rep-set signature, so
 /// concurrent clients/clones over the same reps refresh from one fetch. The
 /// timestamp is the runtime's monotonic millisecond tick at storage time.
@@ -2106,6 +2203,7 @@ mod tests {
 	use keetanetwork_block::BlockHash;
 	use keetanetwork_vote::{Fee, Fees, VoteBuilder};
 
+	use crate::runtime::{BoxFuture, TokioRuntime};
 	use crate::transport::GeneratedTransport;
 
 	const ISSUER_SEED: u8 = 0xA1;
@@ -2115,6 +2213,58 @@ mod tests {
 
 	fn test_client() -> KeetaClient {
 		KeetaClient::new("http://localhost").with_network(BigInt::from(TEST_NETWORK))
+	}
+
+	#[derive(Debug, Default)]
+	struct RecordingFactory {
+		urls: Mutex<Vec<String>>,
+	}
+
+	impl TransportFactory for RecordingFactory {
+		fn create(&self, url: &str) -> Arc<dyn NodeTransport> {
+			self.urls.lock().push(url.to_owned());
+			Arc::new(GeneratedTransport::new(url, reqwest::Client::new()))
+		}
+	}
+
+	#[derive(Debug)]
+	struct ImmediateRuntime;
+
+	#[derive(Debug)]
+	struct NoopTask;
+
+	impl TaskHandle for NoopTask {
+		fn abort(&self) {}
+	}
+
+	#[async_trait::async_trait]
+	impl Runtime for ImmediateRuntime {
+		async fn sleep(&self, _duration: Duration) {}
+
+		fn spawn(&self, _future: BoxFuture) -> Box<dyn TaskHandle> {
+			Box::new(NoopTask)
+		}
+
+		fn now_millis(&self) -> u64 {
+			0
+		}
+
+		fn unix_millis(&self) -> i64 {
+			0
+		}
+	}
+
+	fn multi_rep_client(factory: Arc<RecordingFactory>) -> KeetaClient {
+		KeetaClient::with_parts(
+			[
+				RepPart { key: "a".to_owned(), url: "http://127.0.0.1:8001".to_owned(), weight: 60.into() },
+				RepPart { key: "b".to_owned(), url: "http://127.0.0.1:8002".to_owned(), weight: 40.into() },
+			],
+			factory,
+			Arc::new(TokioRuntime),
+			ClientConfig::default(),
+			false,
+		)
 	}
 
 	fn fee(amount: u64, pay_to: Option<AccountRef>, token: Option<AccountRef>) -> Fee {
@@ -2400,5 +2550,69 @@ mod tests {
 		assert_eq!(contacts.len(), 1);
 		assert_eq!(contacts[0].key, rep_a.to_string());
 		Ok(())
+	}
+
+	#[test]
+	fn representative_weights_require_multi_peer_consensus() {
+		let honest = vec![
+			("a".to_owned(), 60.into(), Some("https://a.example.com".to_owned())),
+			("b".to_owned(), 40.into(), Some("https://b.example.com".to_owned())),
+		];
+		let malicious = vec![
+			("a".to_owned(), 1.into(), Some("https://a.example.com".to_owned())),
+			("b".to_owned(), 999_999.into(), Some("https://b.example.com".to_owned())),
+		];
+
+		assert!(consensus_rep_entries(vec![malicious.clone()], 3).is_empty());
+		let consensus = consensus_rep_entries(vec![honest.clone(), honest, malicious], 3);
+		let client = multi_rep_client(Arc::new(RecordingFactory::default()));
+		client.apply_reps(&consensus, false);
+
+		let (snapshot, total) = client.inner.reps.snapshot_with_total();
+		assert_eq!(total, BigInt::from(100));
+		assert_eq!(client.inner.reps.pick().map(|pick| pick.key), Some("a".to_owned()));
+		let malicious_rep_weight = snapshot
+			.iter()
+			.find(|rep| rep.key == "b")
+			.map(|rep| rep.weight.clone())
+			.expect("rep b");
+		assert_eq!(malicious_rep_weight, BigInt::from(40));
+		assert!(!meets_quorum(&malicious_rep_weight, &total, 0.5));
+	}
+
+	#[test]
+	fn representative_consensus_does_not_shrink_when_peers_timeout() {
+		let colluding = vec![("a".to_owned(), 999_999.into(), None)];
+		assert!(consensus_rep_entries(vec![colluding.clone(), colluding], 4).is_empty());
+	}
+
+	#[test]
+	fn representative_refresh_bounds_calls_when_request_timeout_is_unset() {
+		let factory = Arc::new(RecordingFactory::default());
+		let client = KeetaClient::with_parts(
+			[RepPart { key: "a".to_owned(), url: "http://127.0.0.1:8001".to_owned(), weight: 1.into() }],
+			factory,
+			Arc::new(ImmediateRuntime),
+			ClientConfig::default(),
+			false,
+		);
+		let pending = core::future::pending::<Result<(), ClientError>>();
+
+		assert!(matches!(resolve(client.run_rep_refresh_call(pending)), Some(None)));
+	}
+
+	#[test]
+	fn discovery_does_not_create_transport_for_unsafe_advertised_url() {
+		let factory = Arc::new(RecordingFactory::default());
+		let client = multi_rep_client(Arc::clone(&factory));
+		assert_eq!(factory.urls.lock().len(), 2);
+
+		client.apply_reps(
+			&[("attacker".to_owned(), BigInt::from(1), Some("http://169.254.169.254/latest/meta-data".to_owned()))],
+			true,
+		);
+
+		assert_eq!(factory.urls.lock().len(), 2);
+		assert!(!client.inner.reps.contains("attacker"));
 	}
 }
