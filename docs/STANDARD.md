@@ -33,7 +33,9 @@ A page MUST NOT carry the following. The source is the one correct home for each
 
 One body of knowledge takes one page as its home. A second page that needs it MUST link to that home rather than restate it. The [Overview](README.md) names the living pages.
 
-A concept page under `docs/concepts/` lands only when it still holds a non-rustdoc invariant after the Architecture draft. A candidate that collapses to a field list MUST NOT land.
+[Architecture](ARCHITECTURE.md) holds the workspace collaboration graph and the interaction path. A page under `docs/crates/` holds one product crate's consumer contract and the crates that call it. That page MUST add collaboration or feature-gate substance that rustdoc on a single type cannot hold. It MUST NOT restate that crate `pub use` list.
+
+A concept page under `docs/concepts/` lands only when it still holds a non-rustdoc invariant after the Architecture draft and the crate note. A candidate that collapses to a field list MUST NOT land.
 
 When a page must name a symbol, it cites that symbol as `Symbol` in `path/to/file`. The source carries its own detail.
 
