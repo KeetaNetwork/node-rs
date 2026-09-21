@@ -1,12 +1,21 @@
+//! ISO 20022 schema refresh is optional on RO/docs.rs.
+//! Rust outputs stay under `OUT_DIR`.
+//! `src/generated.rs` stays the committed `include!` stub.
+
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::io::{self, ErrorKind};
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use keetanetwork_utils::build::{compile_asn1_directory_with_full_config, Asn1CompileConfig};
 
 fn main() {
+	println!("cargo:rerun-if-env-changed=DOCS_RS");
+	println!("cargo:rerun-if-changed=asn1");
+	println!("cargo:rerun-if-changed=oids.json");
+
 	// Get OUT_DIR for generated files (required by cargo for publishable crates)
 	let out_dir = env::var("OUT_DIR").expect("OUT_DIR must be set by cargo");
 	let generated_dir = Path::new(&out_dir).join("generated");
@@ -18,14 +27,23 @@ fn main() {
 		.to_str()
 		.expect("OUT_DIR path must be valid UTF-8");
 
-	// Generate OID schema tokens
-	generate_schema();
-	// Generate OIDs from JSON
+	let schema_content = render_iso20022_schema();
+	let compile_asn_dir = stage_asn1_inputs(&generated_dir, &schema_content);
+	let compile_asn_dir_str = compile_asn_dir
+		.to_str()
+		.expect("OUT_DIR path must be valid UTF-8");
+	refresh_source_iso20022_schema(&schema_content);
 	generate_oids_from_json(generated_dir_str);
 
-	// Use OUT_DIR includes pattern for cargo publish compatibility
-	let config = Asn1CompileConfig::new("asn1", generated_dir_str)
+	let generated_rs_path = Path::new(&out_dir).join("generated.rs");
+	let generated_rs_path_str = generated_rs_path
+		.to_str()
+		.expect("OUT_DIR path must be valid UTF-8");
+
+	let config = Asn1CompileConfig::new(compile_asn_dir_str, generated_dir_str)
 		.with_out_dir_includes(true)
+		.with_generated_rs_path(generated_rs_path_str)
+		.with_clippy_fixes(false)
 		.with_strip_prebuilt_methods(true)
 		.with_methods_to_strip("algorithm_identifier_definitions", vec!["new"])
 		.with_methods_to_strip("subject_public_key_info_definitions", vec!["new"])
@@ -109,9 +127,8 @@ fn generate_sequence_fields_with_context_tags(
 	}
 }
 
-fn generate_schema() {
+fn render_iso20022_schema() -> String {
 	let oids = load_oids_json();
-	let dest_path = Path::new("asn1").join("iso20022.asn");
 	let mut schema_content = String::new();
 
 	// Add ASN.1 module header
@@ -137,19 +154,76 @@ fn generate_schema() {
 	// Add module footer
 	schema_content.push_str("END\n");
 
-	// Ensure the asn1 directory exists
-	if let Some(parent) = dest_path.parent() {
-		fs::create_dir_all(parent).expect("Failed to create asn1 directory");
+	ensure_single_newline_ending(&mut schema_content);
+	schema_content
+}
+
+/// Copy `asn1/*.asn` into `OUT_DIR` and overlay the rendered ISO 20022 schema.
+/// Compile reads this writable `OUT_DIR` tree so rasn always sees a writable asn1 input set.
+fn stage_asn1_inputs(generated_dir: &Path, iso20022_schema: &str) -> PathBuf {
+	let staged = generated_dir.join("asn1");
+	fs::create_dir_all(&staged).expect("OUT_DIR must be writable during build");
+
+	let source_dir = Path::new("asn1");
+	let entries = fs::read_dir(source_dir).expect("asn1 inputs must be readable");
+	for entry in entries {
+		let entry = entry.expect("asn1 entry must be readable");
+		let path = entry.path();
+		let Some(name) = path.file_name() else {
+			continue;
+		};
+		if path.extension().and_then(|ext| ext.to_str()) != Some("asn") {
+			continue;
+		}
+		if name == "iso20022.asn" {
+			continue;
+		}
+		fs::copy(&path, staged.join(name)).expect("OUT_DIR must be writable during build");
 	}
 
-	ensure_single_newline_ending(&mut schema_content);
+	fs::write(staged.join("iso20022.asn"), iso20022_schema).expect("OUT_DIR must be writable during build");
+	staged
+}
 
-	// Only write when the generated schema actually differs.
+fn docs_rs_build() -> bool {
+	env::var_os("DOCS_RS").is_some()
+}
+
+fn is_source_ro_error(err: &io::Error) -> bool {
+	matches!(err.kind(), ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem)
+}
+
+/// Refresh crate-source `asn1/iso20022.asn` when that tree is writable.
+/// On docs.rs or a read-only source error, keep the committed input and return.
+fn refresh_source_iso20022_schema(schema_content: &str) {
+	if docs_rs_build() {
+		return;
+	}
+
+	let dest_path = Path::new("asn1").join("iso20022.asn");
 	let unchanged = fs::read_to_string(&dest_path)
 		.map(|existing| existing == schema_content)
 		.unwrap_or(false);
-	if !unchanged {
-		fs::write(&dest_path, schema_content).expect("Failed to write iso20022.asn");
+	if unchanged {
+		return;
+	}
+
+	if let Some(parent) = dest_path.parent() {
+		if let Err(e) = fs::create_dir_all(parent) {
+			if is_source_ro_error(&e) {
+				println!("cargo:warning=skipping iso20022.asn refresh: {e}");
+				return;
+			}
+			panic!("Failed to create asn1 directory: {e}");
+		}
+	}
+
+	match fs::write(&dest_path, schema_content) {
+		Ok(()) => {}
+		Err(e) if is_source_ro_error(&e) => {
+			println!("cargo:warning=skipping iso20022.asn refresh: {e}");
+		}
+		Err(e) => panic!("Failed to write iso20022.asn: {e}"),
 	}
 }
 

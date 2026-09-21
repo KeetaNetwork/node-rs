@@ -11,7 +11,8 @@
 //! - `rasn` - Use the `rasn` crate for ASN.1 handling
 //! - `serde` - Enable serde serialization support
 //!
-//! Exactly one of `der` or `rasn` must be enabled.
+//! Enable at least one of the `der` and `rasn` features.
+//! Both features may be on together.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 

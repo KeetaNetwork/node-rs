@@ -37,6 +37,9 @@
 //! assert_eq!(decoded.hash(), block.hash());
 //! # Ok::<(), keetanetwork_block::BlockError>(())
 //! ```
+//!
+//! A live harness cookbook lives in
+//! [keetanetwork-block/tests/e2e.rs](https://github.com/KeetaNetwork/node-rs/blob/e34666e6693eca47d587b48172fd5058e607e019/keetanetwork-block/tests/e2e.rs#L116-L124).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 

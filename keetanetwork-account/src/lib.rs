@@ -1,4 +1,11 @@
 //! Account management and cryptographic identities for Keetanetwork.
+//!
+//! [`Account`] is the typed identity bound to one [`KeyPairType`].
+//! [`GenericAccount`] is the type-erased account used at crate boundaries.
+//! [`KeyPairType`] names signing algorithms and identifier accounts.
+//! [`CertSigner`] signs X.509-shaped artifacts in certificate mode.
+//! [`CertVerifier`] verifies those certificate-mode signatures.
+//! Block, vote, x509, client, and bindings crates consume these identities.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
