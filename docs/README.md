@@ -69,7 +69,6 @@ These entries are the living table of contents for crate documentation. [Archite
 | `docs/QUICKSTART.md` | Install, build, test, and first use |
 | `keetanetwork-*/docs/README.md` | Thin crate docs entry |
 | `keetanetwork-*/docs/ARCHITECTURE.md` | Product-crate architecture |
-| `docs/concepts/*` | Single-topic pages that pass the inclusion test |
 
 GitHub issues and pull requests stay the history home.
 
