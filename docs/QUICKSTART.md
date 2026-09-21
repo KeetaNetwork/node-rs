@@ -100,15 +100,15 @@ You can also run crate tests that do not enable the `node-harness` feature. `mak
 
 Start from the rustdoc examples that already live in the crates. This tree does not add an `examples/` directory.
 
-Construct a `KeetaClient` against the local API from [`keetanetwork-client/src/lib.rs`](https://github.com/KeetaNetwork/node-rs/blob/4590bb7cba4b89455a15cba0fa7b709efa5225aa/keetanetwork-client/src/lib.rs#L11-L37).
+Construct a `KeetaClient` against the local API from [`keetanetwork-client/src/lib.rs`](https://github.com/KeetaNetwork/node-rs/blob/285ce02435bbcc120e86a7c78d2865a034679453/keetanetwork-client/src/lib.rs#L11-L37).
 
 ```rust
 let client = KeetaClient::new("http://localhost:8080/api").with_network(0u8);
 ```
 
-`UserClient` signing tests live in [`keetanetwork-client/tests/user_signing.rs`](https://github.com/KeetaNetwork/node-rs/blob/4590bb7cba4b89455a15cba0fa7b709efa5225aa/keetanetwork-client/tests/user_signing.rs#L8-L20). A live harness cookbook lives in [`keetanetwork-client/tests/e2e.rs`](https://github.com/KeetaNetwork/node-rs/blob/4590bb7cba4b89455a15cba0fa7b709efa5225aa/keetanetwork-client/tests/e2e.rs#L164).
+`UserClient` signing tests live in [`keetanetwork-client/tests/user_signing.rs`](https://github.com/KeetaNetwork/node-rs/blob/285ce02435bbcc120e86a7c78d2865a034679453/keetanetwork-client/tests/user_signing.rs#L8-L20). A live harness cookbook lives in [`keetanetwork-client/tests/e2e.rs`](https://github.com/KeetaNetwork/node-rs/blob/285ce02435bbcc120e86a7c78d2865a034679453/keetanetwork-client/tests/e2e.rs#L164).
 
-Build a signed opening block from [`keetanetwork-block/src/lib.rs`](https://github.com/KeetaNetwork/node-rs/blob/4590bb7cba4b89455a15cba0fa7b709efa5225aa/keetanetwork-block/src/lib.rs#L8-L39).
+Build a signed opening block from [`keetanetwork-block/src/lib.rs`](https://github.com/KeetaNetwork/node-rs/blob/285ce02435bbcc120e86a7c78d2865a034679453/keetanetwork-block/src/lib.rs#L8-L39).
 
 ```rust
 let unsigned = BlockBuilder::default()
@@ -119,7 +119,7 @@ let unsigned = BlockBuilder::default()
 let block = unsigned.sign()?;
 ```
 
-A harness opening-block cookbook lives in [`keetanetwork-block/tests/e2e.rs`](https://github.com/KeetaNetwork/node-rs/blob/4590bb7cba4b89455a15cba0fa7b709efa5225aa/keetanetwork-block/tests/e2e.rs#L116-L119).
+A harness opening-block cookbook lives in [`keetanetwork-block/tests/e2e.rs`](https://github.com/KeetaNetwork/node-rs/blob/285ce02435bbcc120e86a7c78d2865a034679453/keetanetwork-block/tests/e2e.rs#L116-L119).
 
 ## Falsified by
 
