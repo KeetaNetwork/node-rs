@@ -2,29 +2,40 @@
 
 ## Abstract
 
-This page is the consumer contract for `keetanetwork-client-wasi`. The crate is the WASI ABI over a shared `pure` module. A WASI build selects exactly one of `p1` or `p2`. Feature `p2` pulls `keetanetwork-client`. Feature `p1` stays on the pure surface.
+This page is the internal design of `keetanetwork-client-wasi`. The crate is two feature-selected WASI flavors over one shared `pure` module. Feature `p2` networks. Feature `p1` stays on the pure surface.
 
 ## Purpose
 
-An engineer reads this page before changing a WASI feature or adding a second networking path on `p1`. After reading, the engineer knows which feature a P1 or P2 build enables and which crate supplies HTTP.
+An engineer reads this page before changing a WASI feature or adding a second networking path on `p1`. After reading, the engineer knows which module is shared, which module is P1, and which module is P2.
 
-## Ownership
+## Internal design
 
-`keetanetwork-client-wasi` owns two feature-selected flavors over one shared `pure` module in `keetanetwork-client-wasi/src/lib.rs`.
+`pure` is always compiled. It re-exports account and certificate helpers from `keetanetwork-bindings` and adds block, vote, and identifier operations that both ABIs call. Off a WASI target, `p1` and `p2` compile out and leave `pure`.
 
-Feature `p2` on `wasm32-wasip2` is a `wit-bindgen` component. It networks over `wasi:http` and exposes the pure surface. That feature pulls `keetanetwork-client` with the `wasi` feature and enables `keetanetwork-bindings/client`.
+`p1` is present when feature `p1` is on and the target is WASI. It is a core module over a flat ABI. P1 has no outbound `connect`. The host dials.
 
-Feature `p1` on `wasm32-wasip1` is a core module. It exposes the pure surface over a flat ABI. P1 has no outbound `connect`. The host dials.
+`p2` is present when feature `p2` is on and the target is WASI. It is a `wit-bindgen` component that networks over `wasi:http`. That feature pulls `keetanetwork-client` with the `wasi` feature and enables `keetanetwork-bindings/client`.
 
-A WASI build enables exactly one of `p1` or `p2`. The `compile_error!` in `keetanetwork-client-wasi/src/lib.rs` is the enforcement point. Off a WASI target both features compile out and leave `pure`.
+A WASI build enables exactly one of `p1` or `p2`. The `compile_error!` in `keetanetwork-client-wasi/src/lib.rs` is the enforcement point.
 
-Host tests live under `keetanetwork-client-wasi/host-tests/`. [Quickstart](../../docs/QUICKSTART.md) names `make build-wasi` and `make test-wasi`. Those targets select `p1` for `wasm32-wasip1` and `p2` for `wasm32-wasip2`.
+```mermaid
+flowchart TB
+	mod_pure[pure]
+	mod_p1[p1]
+	mod_p2[p2]
+	crate_bindings[keetanetwork-bindings]
+	crate_client[keetanetwork-client]
+	crate_bindings --> mod_pure
+	mod_pure --> mod_p1
+	mod_pure --> mod_p2
+	crate_client -->|feature p2| mod_p2
+```
 
-## Who this crate projects
+## Collaboration
 
-This crate always depends on `keetanetwork-account`, `keetanetwork-block`, `keetanetwork-crypto`, `keetanetwork-vote`, `keetanetwork-x509`, and `keetanetwork-bindings`. Feature `p2` adds `keetanetwork-client`.
+Inbound: this crate always depends on account, block, crypto, vote, x509, and bindings. Feature `p2` adds `keetanetwork-client`.
 
-[Client](../../keetanetwork-client/docs/ARCHITECTURE.md) holds the `wasi` feature that supplies codec types without Tokio. [Bindings](../../keetanetwork-bindings/docs/ARCHITECTURE.md) holds the shared projection. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
+Outbound: host tests under `keetanetwork-client-wasi/host-tests/` exercise P1 and P2 artifacts. `make build-wasi` and `make test-wasi` select `p1` for `wasm32-wasip1` and `p2` for `wasm32-wasip2`.
 
 ## Feature contract
 

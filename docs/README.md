@@ -31,7 +31,7 @@ An engineer reads this guide to find the page that holds each inbound question. 
 
 This repository is a Cargo workspace of Keeta Network node crates. Root `Cargo.toml` `[workspace].members` is the member list. Crate identity lives in each member `Cargo.toml` `description` plus rustdoc on that crate `lib.rs`.
 
-Each product crate listed on this guide holds architecture on that crate `docs/ARCHITECTURE.md`. The crate `docs/README.md` is the thin entry. `keetanetwork-node` and `keetanetwork-ledger` are empty stubs. Those crates hold a minimal `docs/README.md` only. [Architecture](ARCHITECTURE.md) names that boundary.
+Each product crate listed on this guide holds architecture on that crate `docs/ARCHITECTURE.md`. The crate `docs/README.md` states purpose, Quickstart, and examples. `keetanetwork-node` and `keetanetwork-ledger` are empty stubs. Those crates hold a minimal `docs/README.md` only. [Architecture](ARCHITECTURE.md) names that boundary.
 
 Each member crate carries its own version in that crate `Cargo.toml`. This guide does not treat the unused workspace package version as the repository version. This table of contents does not stamp versions.
 
@@ -67,7 +67,7 @@ These entries are the living table of contents for crate documentation. [Archite
 | `docs/STANDARD.md` | Documentation contract |
 | `docs/ARCHITECTURE.md` | Collaboration graph and interaction path |
 | `docs/QUICKSTART.md` | Install, build, test, and first use |
-| `keetanetwork-*/docs/README.md` | Crate purpose, quickstart, and example |
+| `keetanetwork-*/docs/README.md` | Crate purpose, Quickstart, and examples |
 | `keetanetwork-*/docs/ARCHITECTURE.md` | Product-crate architecture |
 
 GitHub issues and pull requests stay the history home.

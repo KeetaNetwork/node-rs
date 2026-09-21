@@ -2,34 +2,51 @@
 
 ## Abstract
 
-This page is the consumer contract for `keetanetwork-block`. The crate owns `Block`, `BlockBuilder`, `Operation`, and `AccountRef`. Opening-hash and signing rules live here. The client builder uses the same rules.
+This page is the internal design of `keetanetwork-block`. The crate turns an account identity and a list of operations into a signed block. Opening-hash and successor rules live here. Vote and client consume the resulting hashes and bytes.
 
 ## Purpose
 
-An engineer reads this page before changing how a first block or a successor is signed. After reading, the engineer knows which types this crate owns and which crates must keep using them.
+An engineer reads this page before changing how a first block or a successor is signed. After reading, the engineer can name the path from `BlockBuilder` through `UnsignedBlock` to `Block`, and which operation variants that builder accepts.
 
-## Ownership
+## Internal design
 
-`keetanetwork-block` owns the signed block and the operations it carries. `AccountRef` wraps a `GenericAccount` from `keetanetwork-account`. Opening-hash calculation and `sign` live on the block types.
+`builder` owns `BlockBuilder`. The builder collects network, account, previous hash, and operations. `as_opening` selects the opening previous. `with_previous` selects a successor. `build` produces `UnsignedBlock`.
 
-The rustdoc example in `keetanetwork-block/src/lib.rs` builds a signed opening block through `BlockBuilder::default()`, `as_opening`, and `sign`. A live harness cookbook lives in `keetanetwork-block/tests/e2e.rs`. TypeScript compatibility tests live in `keetanetwork-block/tests/typescript_compat.rs`.
+`block` owns `UnsignedBlock`, `Block`, `BlockData`, `BlockPurpose`, and `Signature`. `UnsignedBlock::sign` attaches the account signature and yields `Block`. `Block::try_from` decodes bytes. `Hashable` comes from `keetanetwork-crypto` and is re-exported as `BlockHash`.
 
-Field lists stay in rustdoc.
+`operation` owns `Operation` and `OperationType`. Variants are `Send`, `SetRep`, `SetInfo`, `ModifyPermissions`, `CreateIdentifier`, `TokenAdminSupply`, `TokenAdminModifyBalance`, `Receive`, and `ManageCertificate`. Each variant validates itself against the surrounding block.
 
-## Who consumes this crate
+`signer` owns `AccountRef` and `Signer`. `AccountRef` wraps `GenericAccount` from the account crate. `account_util` is crate-private dispatch over `GenericAccount` variants for parse, verify, and equality. `amount` owns `Amount`. `permissions` owns permission flags and groups. `time` owns `BlockTime`. `validation` owns `ValidationConfig` and text rules. `transport` owns byte encoding. `error` owns `BlockError`. `testing` is present when the `testing` feature is on.
 
-`keetanetwork-vote` covers block hashes. `keetanetwork-client` assembles blocks through `TransactionBuilder` and transmits them inside a staple. `keetanetwork-bindings` and the host ABI crates project the same block types.
+```mermaid
+flowchart LR
+	crate_account[keetanetwork-account]
+	type_ref[AccountRef]
+	type_op[Operation]
+	type_builder[BlockBuilder]
+	type_unsigned[UnsignedBlock]
+	type_block[Block]
+	crate_vote[keetanetwork-vote]
+	crate_client[keetanetwork-client]
+	crate_account -->|GenericAccount| type_ref
+	type_ref --> type_builder
+	type_op --> type_builder
+	type_builder -->|build| type_unsigned
+	type_unsigned -->|sign| type_block
+	type_block -->|block hash| crate_vote
+	type_block --> crate_client
+```
 
-[Account](../../keetanetwork-account/docs/ARCHITECTURE.md) holds the identity types. [Vote](../../keetanetwork-vote/docs/ARCHITECTURE.md) holds the commitment that covers those hashes. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
+## Collaboration
+
+Inbound: `keetanetwork-account` supplies the identity inside `AccountRef`. `keetanetwork-crypto` supplies `Hashable` and signatures. `keetanetwork-asn1` and `keetanetwork-x509` supply encoding and certificate material for `ManageCertificate`.
+
+Outbound: `keetanetwork-vote` covers block hashes. `keetanetwork-client` assembles blocks through `TransactionBuilder` using the same opening-hash and signing rules. Bindings and host ABI crates project the same block types.
 
 ## Feature contract
 
-Default features are `std` and `rasn`. `std` implies `alloc`. Features `der` and `rasn` forward to `keetanetwork-asn1`, `keetanetwork-account`, `keetanetwork-crypto`, and `keetanetwork-x509`.
-
-This crate depends on `keetanetwork-error`, `keetanetwork-utils`, `keetanetwork-crypto` with `signature`, `keetanetwork-account`, `keetanetwork-asn1`, and `keetanetwork-x509`.
-
-A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the codec contract.
+Default features are `std` and `rasn`. `std` implies `alloc`. Features `der` and `rasn` forward to asn1, account, crypto, and x509. A `no_std` consumer enables `alloc` and at least one codec.
 
 ## Falsified by
 
-A change to `Block`, `BlockBuilder`, `Operation`, or `AccountRef` ownership. A change that lets `keetanetwork-client` compute an opening hash without this crate. A change to the rustdoc example in `keetanetwork-block/src/lib.rs`. A change to the `der` / `rasn` forwarding in `keetanetwork-block/Cargo.toml`.
+A change to `Block`, `BlockBuilder`, `UnsignedBlock`, `Operation`, or `AccountRef` ownership. A change that lets the client compute an opening hash without this crate. A change to the rustdoc example in `keetanetwork-block/src/lib.rs`.

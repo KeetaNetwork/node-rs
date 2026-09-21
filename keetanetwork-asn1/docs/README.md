@@ -12,9 +12,11 @@ cargo test -p keetanetwork-asn1
 
 `make test-feat` also runs this crate with `std,der` and `std,rasn`.
 
-## Example
+## Examples
 
-From `keetanetwork-asn1/tests/vote_codec_vectors.rs` `staple` and `test_vote_staple_reference_bytes`.
+### Encode a vote staple
+
+From `keetanetwork-asn1/tests/vote_codec_vectors.rs` `test_vote_staple_reference_bytes`.
 
 ```rust
 use keetanetwork_asn1::vote::{codec, VoteStapleBundle};
@@ -25,6 +27,22 @@ let bundle = VoteStapleBundle {
 };
 let encoded = codec::encode_vote_staple(&bundle).expect("encode staple");
 assert!(!encoded.is_empty());
+```
+
+### Decode a vote staple
+
+From `keetanetwork-asn1/tests/vote_codec_vectors.rs` `test_vote_staple_reference_bytes`.
+
+```rust
+use keetanetwork_asn1::vote::{codec, VoteStapleBundle};
+
+let bundle = VoteStapleBundle {
+	blocks: vec![vec![1, 2, 3]],
+	votes: vec![vec![4, 5, 6]],
+};
+let encoded = codec::encode_vote_staple(&bundle).expect("encode staple");
+let decoded = codec::decode_vote_staple(&encoded).expect("decode staple");
+assert_eq!(decoded, bundle);
 ```
 
 ## Related documents

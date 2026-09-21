@@ -2,32 +2,48 @@
 
 ## Abstract
 
-This page is the consumer contract for `keetanetwork-error`. The crate owns shared error types that higher crates return and that the client re-exports. It also names the node error categories that a decoded envelope can carry.
+This page is the internal design of `keetanetwork-error`. The crate is a single-module envelope. It turns a node error `type` field into `NodeErrorType`, then builds a typed `KeetaNetError` from decoded parts.
 
 ## Purpose
 
-An engineer reads this page before introducing a crate-local error envelope that callers must learn twice. After reading, the engineer knows which types this crate owns and which crate re-exports them to HTTP callers.
+An engineer reads this page before adding a crate-local error envelope that callers must learn twice. After reading, the engineer knows how a node envelope becomes `Code`, `Ledger`, `LedgerVote`, or `LedgerIdempotent`.
 
-## Ownership
+## Internal design
 
-`keetanetwork-error` owns `KeetaNetError` and `NodeErrorType` in `keetanetwork-error/src/lib.rs`. `NodeErrorType` is the category taken from the `type` field of a node error envelope. The known categories are `Account`, `Api`, `Block`, `Certificate`, `Client`, `Kv`, `Ledger`, `Permissions`, `Vote`, and `Generic`.
+The crate has no submodule split. `NodeErrorType` is the category taken from the envelope `type` field. Known categories are `Account`, `Api`, `Block`, `Certificate`, `Client`, `Kv`, `Ledger`, `Permissions`, `Vote`, and `Generic`.
 
-Field lists and variant payloads stay in rustdoc.
+`NodeErrorParts` is the decoded envelope used to construct `KeetaNetError`. Non-ledger kinds collapse to `KeetaNetError::Code`. Ledger codes in `LEDGER_NOT_SUCCESSOR` and `LEDGER_NOT_OPENING` become `LedgerVote` when accounts are present. `LEDGER_IDEMPOTENT_KEY_EXISTS` becomes `LedgerIdempotent` when both block hashes are present. Other ledger codes become `Ledger` and may carry retry data.
 
-## Who consumes this crate
+`KeetaNetError` also has `Internal`, `Unknown`, and `NotImplemented` for local failures that are not node envelopes. `node_type` recovers a category from a coded variant by reading the code prefix.
 
-`keetanetwork-account`, `keetanetwork-block`, `keetanetwork-vote`, `keetanetwork-x509`, and `keetanetwork-client` depend on this crate. `keetanetwork-client` re-exports `KeetaNetError` and `NodeErrorType` from `keetanetwork-client/src/lib.rs`.
+```mermaid
+flowchart TD
+	type_parts[NodeErrorParts]
+	type_kind[NodeErrorType]
+	var_code[KeetaNetError_Code]
+	var_ledger[KeetaNetError_Ledger]
+	var_vote[KeetaNetError_LedgerVote]
+	var_idem[KeetaNetError_LedgerIdempotent]
+	var_internal[KeetaNetError_Internal]
+	type_local[local failure]
+	type_parts --> type_kind
+	type_kind -->|non ledger| var_code
+	type_kind -->|ledger base| var_ledger
+	type_kind -->|ledger vote codes| var_vote
+	type_kind -->|ledger idempotent codes| var_idem
+	type_local --> var_internal
+```
 
-`keetanetwork-crypto` takes this crate only when the `std` feature is on.
+## Collaboration
 
-[Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph.
+Inbound: this crate depends only on `snafu`. It does not depend on other workspace crates.
+
+Outbound: `keetanetwork-account`, `keetanetwork-block`, `keetanetwork-vote`, `keetanetwork-x509`, and `keetanetwork-client` return or wrap these types. `keetanetwork-client` re-exports `KeetaNetError` and `NodeErrorType`. `keetanetwork-crypto` takes this crate only when `std` is on.
 
 ## Feature contract
 
 Default features include `std`. `std` implies `alloc`. The crate builds under `no_std` with `alloc`.
 
-A higher crate that needs formatted errors on native targets enables `keetanetwork-error/std`. A `no_std` consumer enables `alloc` only.
-
 ## Falsified by
 
-A change to `KeetaNetError` or `NodeErrorType` in `keetanetwork-error/src/lib.rs`. A change that drops the client re-export of those two types from `keetanetwork-client/src/lib.rs`. A change to the `std` / `alloc` features in `keetanetwork-error/Cargo.toml`.
+A change to `KeetaNetError` or `NodeErrorType` in `keetanetwork-error/src/lib.rs`. A change that drops the client re-export of those two types. A change to the ledger code tables that select `LedgerVote` or `LedgerIdempotent`.

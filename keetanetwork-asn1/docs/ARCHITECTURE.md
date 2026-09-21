@@ -2,30 +2,52 @@
 
 ## Abstract
 
-This page is the consumer contract for `keetanetwork-asn1`. The crate owns the encoding codecs that identity, certificate, block, and vote types share. A build enables at least one of `der` or `rasn`.
+This page is the internal design of `keetanetwork-asn1`. The crate is the shared codec layer. Identity, certificate, block, and vote types encode through at least one of `der` or `rasn`.
 
 ## Purpose
 
-An engineer reads this page before changing a codec feature or adding a third ASN.1 stack. After reading, the engineer knows the at-least-one feature contract and which crates forward `der` and `rasn` into this crate.
+An engineer reads this page before changing a codec feature or adding a third ASN.1 stack. After reading, the engineer knows how the `der` and `rasn` backends sit under the block and vote transport modules.
 
-## Ownership
+## Internal design
 
-`keetanetwork-asn1` owns ASN.1 structures and codec utilities used by certificates and related encodings. Crate rustdoc in `keetanetwork-asn1/src/lib.rs` lists the features and states the at-least-one contract.
+`der` is the `der` crate backend. `rasn` is the `rasn` crate backend. When both features are on, unprefixed re-exports prefer `der` so x509, account, and crypto keep their legacy surface. `BitStringExt` and `ObjectIdentifierExt` surface whenever `rasn` is on.
 
-This crate depends on `keetanetwork-utils`. The `build` feature on that crate supplies generation helpers. [Utils](../../keetanetwork-utils/docs/ARCHITECTURE.md) holds that helper.
+`block` and `vote` are backend-neutral transport modules. They require `chrono` plus at least one codec. `asn1_time` owns `Asn1Time`. `oids` owns shared object identifiers. `utils` owns small codec helpers. `error` owns `Asn1Error`.
+
+`generated` and `schema_codec` are rasn-only generation and positional DER paths. `testing` is present when `testing` and `der` are on.
+
+```mermaid
+flowchart TB
+	feat_der[feature_der]
+	feat_rasn[feature_rasn]
+	mod_der[der]
+	mod_rasn[rasn]
+	mod_block[block]
+	mod_vote[vote]
+	crate_x509[keetanetwork-x509]
+	crate_block[keetanetwork-block]
+	crate_vote[keetanetwork-vote]
+	feat_der --> mod_der
+	feat_rasn --> mod_rasn
+	mod_der --> mod_block
+	mod_rasn --> mod_block
+	mod_der --> mod_vote
+	mod_rasn --> mod_vote
+	mod_der --> crate_x509
+	mod_block --> crate_block
+	mod_vote --> crate_vote
+```
+
+## Collaboration
+
+Inbound: `keetanetwork-utils` is a path dependency. The `build` feature on that crate supplies generation helpers used by this crate's build script.
+
+Outbound: account, crypto, x509, block, vote, and bindings crates depend on this crate when they encode or decode shared structures. Those crates expose `der` and `rasn` under the same names and forward them here.
 
 ## Feature contract
 
-A consumer enables at least one of `der` or `rasn`. Both features may be on together. The `compile_error!` in `keetanetwork-asn1/src/lib.rs` is the enforcement point.
-
-Default features are `std`, `serde`, and `rasn`. `std` implies `alloc`.
-
-Higher crates expose `der` and `rasn` under the same names and forward them here. Those crates include `keetanetwork-account`, `keetanetwork-crypto`, `keetanetwork-x509`, `keetanetwork-block`, and `keetanetwork-vote`.
-
-## Who consumes this crate
-
-Block, vote, x509, account, crypto, and bindings crates depend on this crate when they encode or decode shared structures. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph.
+A consumer enables at least one of `der` or `rasn`. Both features may be on together. The `compile_error!` in `keetanetwork-asn1/src/lib.rs` is the enforcement point. Default features are `std`, `serde`, and `rasn`. `std` implies `alloc`.
 
 ## Falsified by
 
-A change to the `compile_error!` in `keetanetwork-asn1/src/lib.rs` that no longer requires at least one of `der` or `rasn`. A change that adds a third codec feature without updating this page and the rustdoc feature list. A change that stops `keetanetwork-account`, `keetanetwork-block`, or `keetanetwork-vote` from forwarding `der` and `rasn` here.
+A change to the `compile_error!` that no longer requires at least one of `der` or `rasn`. A change that adds a third codec feature without updating this page. A change that stops account, block, or vote from forwarding `der` and `rasn` here.

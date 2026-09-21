@@ -1,16 +1,18 @@
 # keetanetwork-error
 
-This crate owns shared error types that higher crates return. `KeetaNetError` carries an internal failure or a node-emitted coded error. `NodeErrorType` is the category taken from the `type` field of a node error envelope. `keetanetwork-client` re-exports both types.
+This crate owns shared error types that higher crates return. `KeetaNetError` carries an internal failure or a node-emitted coded error. `NodeErrorType` is the category taken from the `type` field of a node error envelope.
 
 ## Quickstart
 
-Default features include `std`. `std` implies `alloc`. The crate builds under `no_std` with `alloc`.
+Default features include `std`. `std` implies `alloc`.
 
 ```bash
 cargo test -p keetanetwork-error
 ```
 
-## Example
+## Examples
+
+### Coded node envelope
 
 From `keetanetwork-error/src/lib.rs` `non_ledger_collapses_to_code`.
 
@@ -25,6 +27,17 @@ let parts = NodeErrorParts {
 };
 let error = KeetaNetError::from(parts);
 assert!(matches!(error, KeetaNetError::Code { code, .. } if code == "API_INVALID_SIDE"));
+```
+
+### Internal construction
+
+From `keetanetwork-error/src/lib.rs` `KeetaNetError::Internal`.
+
+```rust
+use keetanetwork_error::KeetaNetError;
+
+let error = KeetaNetError::Internal;
+assert_eq!(error.node_type(), None);
 ```
 
 ## Related documents

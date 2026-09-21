@@ -33,9 +33,9 @@ A page MUST NOT carry the following. The source is the one correct home for each
 
 One body of knowledge takes one page as its home. A second page that needs it MUST link to that home rather than restate it. The [Overview](README.md) names the living pages.
 
-[Architecture](ARCHITECTURE.md) holds the workspace collaboration graph and the interaction path. Product-crate architecture lives under that crate `docs/ARCHITECTURE.md`. That page MUST add collaboration or feature-gate substance that rustdoc on a single type cannot hold. It MUST NOT restate that crate `pub use` list. The [Overview](README.md) is the table of contents into those paths.
+[Architecture](ARCHITECTURE.md) holds the workspace collaboration graph and the interaction path. Product-crate architecture lives under that crate `docs/ARCHITECTURE.md`. That page MUST describe internal module responsibilities. It MUST include at least one Mermaid diagram with keyword-safe ids. It MUST name inbound and outbound neighbor crates. It MUST state feature and build contracts in the positive. It MUST NOT restate that crate `pub use` list. It MUST NOT carry fenced rust or JavaScript examples. The [Overview](README.md) is the table of contents into those paths.
 
-A product-crate `docs/README.md` MUST state what the crate is for. It MUST name the features and the `cargo test -p` command or Make target. It MUST include at least one fenced code example copied from crate rustdoc or a test. It MUST link to that crate `docs/ARCHITECTURE.md` and the workspace [Overview](README.md). A stub crate MAY carry a minimal `docs/README.md` that names the reserved crate. It MUST NOT carry a product Architecture page.
+A product-crate `docs/README.md` MUST state what the crate is for. It MUST name the features and the `cargo test -p` command or Make target. It MUST include at least two labeled fenced code examples copied from crate rustdoc or a test. It MUST link to that crate `docs/ARCHITECTURE.md` and the workspace [Overview](README.md). A stub crate MAY carry a minimal `docs/README.md` that names the reserved crate. It MUST NOT carry a product Architecture page.
 
 A concept page under `docs/concepts/` lands only when it still holds a non-rustdoc invariant after the workspace Architecture draft and the crate architecture. A candidate that collapses to a field list MUST NOT land.
 

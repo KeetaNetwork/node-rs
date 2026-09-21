@@ -1,6 +1,6 @@
 # keetanetwork-account
 
-This crate owns typed and type-erased identities for the workspace. `Account` is bound to one `KeyPairType`. `GenericAccount` is the type-erased account used at crate boundaries. `CertSigner` and `CertVerifier` sign and verify X.509-shaped artifacts. Block, vote, x509, client, and bindings crates consume these identities.
+This crate owns typed and type-erased identities for the workspace. `Account` is bound to one `KeyPairType`. `GenericAccount` is the type-erased account used at crate boundaries. `CertSigner` and `CertVerifier` sign and verify X.509-shaped artifacts.
 
 ## Quickstart
 
@@ -12,7 +12,9 @@ cargo test -p keetanetwork-account
 
 `make test-feat` also runs this crate with `std,der` and `std,rasn`.
 
-## Example
+## Examples
+
+### Create from seed and sign
 
 From `keetanetwork-account/src/account.rs` rustdoc.
 
@@ -28,8 +30,19 @@ let account = Account::<KeyED25519>::from(private_key);
 
 let message = b"Hello, Keeta Network!";
 let signature = account.sign(message, None)?;
-let is_valid = account.verify(message, &signature, None);
-assert!(is_valid.is_ok());
+assert!(account.verify(message, &signature, None).is_ok());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+### Identifier account
+
+From `keetanetwork-account/src/account.rs` rustdoc.
+
+```rust
+use keetanetwork_account::{Account, KeyNETWORK, KeyPairType};
+
+let network_account = Account::<KeyNETWORK>::generate_network_address(12345)?;
+let token_account = network_account.generate_identifier(KeyPairType::TOKEN, None, 0)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

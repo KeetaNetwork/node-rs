@@ -1,6 +1,6 @@
 # keetanetwork-utils
 
-This crate owns shared test macros, optional ASN.1 build helpers, and the `node-harness` feature that talks to the private GitHub Packages package. Workspace crates use the macros in tests. `keetanetwork-asn1` and `keetanetwork-x509` use the `build` feature from their build scripts.
+This crate owns shared test macros, optional ASN.1 build helpers, and the `node-harness` feature that talks to the private GitHub Packages package.
 
 ## Quickstart
 
@@ -12,7 +12,9 @@ cargo test -p keetanetwork-utils
 
 [Workspace Quickstart](../../docs/QUICKSTART.md) holds the Packages token steps for `node-harness`.
 
-## Example
+## Examples
+
+### Error variant tests
 
 From `keetanetwork-utils/src/testing.rs` `test_error_variants`.
 
@@ -40,6 +42,25 @@ test_error_variants! {
 		TestError::WithData { message: "test".to_string() },
 	]
 }
+```
+
+### Source error From impls
+
+From `keetanetwork-utils/src/errors.rs` rustdoc on `impl_source_error_from`.
+
+```rust
+use keetanetwork_utils::impl_source_error_from;
+
+#[derive(Debug)]
+enum MyError {
+	IoError { source: std::io::Error },
+	ParseError { source: std::num::ParseIntError },
+}
+
+impl_source_error_from!(MyError, {
+	std::io::Error => IoError,
+	std::num::ParseIntError => ParseError,
+});
 ```
 
 ## Related documents
