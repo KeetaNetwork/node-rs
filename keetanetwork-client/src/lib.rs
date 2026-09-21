@@ -36,6 +36,11 @@
 //! # }
 //! ```
 //!
+//! A live harness cookbook lives in
+//! [keetanetwork-client/tests/e2e.rs](https://github.com/KeetaNetwork/node-rs/blob/e34666e6693eca47d587b48172fd5058e607e019/keetanetwork-client/tests/e2e.rs#L164).
+//! `UserClient` signing tests live in
+//! [keetanetwork-client/tests/user_signing.rs](https://github.com/KeetaNetwork/node-rs/blob/e34666e6693eca47d587b48172fd5058e607e019/keetanetwork-client/tests/user_signing.rs#L15-L20).
+//!
 //! ## `no_std`
 //!
 //! The orchestrator ([`KeetaClient`]) is `no_std`+`alloc`: it is written
