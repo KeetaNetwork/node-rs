@@ -16,7 +16,7 @@ An engineer reads this guide in the first week on the workspace. After reading, 
 
 ## What this workspace is
 
-This repository is a Cargo workspace of Keeta Network node crates. Root `Cargo.toml` lists the fourteen members. Crate identity lives in each member `Cargo.toml` `description` plus rustdoc on that crate `lib.rs`.
+This repository is a Cargo workspace of Keeta Network node crates. Root `Cargo.toml` lists the workspace members. Crate identity lives in each member `Cargo.toml` `description` plus rustdoc on that crate `lib.rs`.
 
 `keetanetwork-node` and `keetanetwork-ledger` are empty stubs on this tip. Those crates do not hold product types. [Architecture](ARCHITECTURE.md) names that boundary.
 
@@ -30,7 +30,7 @@ Make owns the build. The [package README](../README.md) and the `Makefile` drive
 
 Crate rustdoc is the API reference. `make do-docs` generates it. This tree does not copy export lists.
 
-[Architecture](ARCHITECTURE.md) holds the crate-boundary contracts. Feature gates, identity consumption, client generation, and binding ABIs live there. A `docs/concepts/` page lands only when it still holds a non-rustdoc invariant that Architecture does not already carry.
+[Architecture](ARCHITECTURE.md) holds the crate-boundary contracts. Forces that split crates, illegal states, and SSOT homes for cross-cutting contracts live there. A `docs/concepts/` page lands only when it still holds a non-rustdoc invariant that Architecture does not already carry.
 
 ## Where the tree lives
 
@@ -39,7 +39,7 @@ Crate rustdoc is the API reference. `make do-docs` generates it. This tree does 
 | Root `README.md` | Thin pointer into this tree |
 | `docs/README.md` | This overview |
 | `docs/STANDARD.md` | Documentation contract |
-| `docs/ARCHITECTURE.md` | Crate boundaries and cross-file contracts |
+| `docs/ARCHITECTURE.md` | Workspace split, illegal states, and SSOT homes |
 | `docs/QUICKSTART.md` | Install, build, test, and first use |
 | `docs/concepts/*` | Single-topic pages that pass the inclusion test |
 
