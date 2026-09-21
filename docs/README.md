@@ -1,0 +1,100 @@
+# Overview
+
+## Abstract
+
+This guide is the cultural map for the `node-rs` workspace. Invariant detail lives on [Architecture](ARCHITECTURE.md). Install and build steps live on [Quickstart](QUICKSTART.md).
+
+## Purpose
+
+An engineer reads this guide in the first week on the workspace. After reading, the engineer can name the page that holds each inbound question. The engineer can also find the living documentation map.
+
+| Next question | The page |
+| --- | --- |
+| What is always true across crate boundaries? | [Architecture](ARCHITECTURE.md) |
+| How does a reader install and build? | [Quickstart](QUICKSTART.md) |
+| How does a writer review a page in this tree? | [Documentation Standard](STANDARD.md) |
+
+## What this workspace is
+
+This repository is a Cargo workspace of Keeta Network node crates. Root `Cargo.toml` lists the fourteen members. Crate identity lives in each member `Cargo.toml` `description` plus rustdoc on that crate `lib.rs`.
+
+`keetanetwork-node` and `keetanetwork-ledger` are empty stubs on this tip. Those crates do not hold product types. [Architecture](ARCHITECTURE.md) names that boundary.
+
+Each member crate carries its own version in that crate `Cargo.toml`. This guide does not treat the unused workspace package version as the repository version.
+
+The files state three license strings. Root `LICENSE` is the Keeta Token Network Community License (v1.0). Workspace `Cargo.toml` `license` is `MIT`. `keetanetwork-utils/node-harness/package.json` `license` is `Keeta Token Network Community License`. This guide cites those files as written.
+
+## How the pieces fit together
+
+Make owns the build. The [package README](../README.md) and the `Makefile` drive setup, build, check, test, and publish. [Quickstart](QUICKSTART.md) holds the commands.
+
+Crate rustdoc is the API reference. `make do-docs` generates it. This tree does not copy export lists.
+
+## Planned concept pages
+
+A later Architecture draft filters these candidates. A page lands only when it still holds a non-rustdoc invariant.
+
+| Planned page | Topic the candidate would hold |
+| --- | --- |
+| `docs/concepts/features-and-no-std.md` | Shared `std` / `alloc` / `der` / `rasn` consumer gates |
+| `docs/concepts/accounts.md` | Account identities consumed across crates |
+| `docs/concepts/blocks.md` | Block signing and opening-hash rules |
+| `docs/concepts/votes.md` | Vote, quote, and staple rules |
+| `docs/concepts/certificates.md` | X.509 builders and certificate stores |
+| `docs/concepts/client.md` | Client transport and generated HTTP |
+| `docs/concepts/bindings.md` | Shared bindings plus wasm and WASI projections |
+
+Those paths are not living pages until the files exist.
+
+## Where the tree lives
+
+| Path | Role |
+| --- | --- |
+| Root `README.md` | Thin pointer into this tree |
+| `docs/README.md` | This overview |
+| `docs/STANDARD.md` | Documentation contract |
+| `docs/ARCHITECTURE.md` | Crate boundaries and later invariants |
+| `docs/QUICKSTART.md` | Install and build procedure |
+| `docs/concepts/*` | Single-topic pages that pass the inclusion test |
+
+GitHub issues and pull requests stay the history home.
+
+## Day-to-day
+
+### Tooling
+
+- The toolchain pin is Rust `1.94.0` in `rust-toolchain.toml`.
+- The primary targets are `make developer`, `make build`, `make build release=1`, and `make check`.
+- Crate rustdoc opens through `make do-docs`.
+
+### Where to put work
+
+| Change | Place |
+| --- | --- |
+| A crate-boundary invariant | The crate source, then [Architecture](ARCHITECTURE.md) |
+| An install or build step | `Makefile`, then [Quickstart](QUICKSTART.md) |
+| A documentation page | This tree, then the next-question table on this guide. Writers follow [Documentation Standard](STANDARD.md). |
+| A public type contract | rustdoc on that type |
+
+### First-week reading order
+
+1. This guide.
+2. [Architecture](ARCHITECTURE.md).
+3. [Quickstart](QUICKSTART.md).
+4. [Documentation Standard](STANDARD.md) before a docs edit.
+5. The crate `lib.rs` rustdoc for the crate under change.
+
+## Cultural one-liners
+
+- **Make owns the build.** Prefer the `Makefile` targets over raw tool invocations.
+- **The toolchain file wins after clone.** `rust-toolchain.toml` selects Rust `1.94.0`.
+- **Release build is `make build release=1`.** That target is not `make release`.
+- **Stubs stay stubs.** `keetanetwork-node` and `keetanetwork-ledger` have no product types on this tip.
+- **rustdoc is the API reference.** This tree holds cross-file contracts.
+
+## Falsified by
+
+- A change to the living documentation map that the first-week links follow.
+- A change to the workspace `members` list in root `Cargo.toml`.
+- A change that adds product types to `keetanetwork-node` or `keetanetwork-ledger`.
+- A change to the license strings in root `LICENSE`, workspace `Cargo.toml`, or `keetanetwork-utils/node-harness/package.json`.

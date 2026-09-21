@@ -1,86 +1,38 @@
 # node-rs
 
-A Rust implementation of KeetaNet node
+This repository is a Rust workspace for Keeta Network node crates.
 
-## Development
+The toolchain pin is Rust `1.94.0` in `rust-toolchain.toml`.
 
-### Quick Start
+## Commands
 
-For first-time setup, simply run:
+First-time setup:
 
 ```bash
 make developer
 ```
 
-This will:
-
-- Install Rust (if not already installed)
-- Install development tools
-- Run initial build and tests
-
-### Building
+Debug build:
 
 ```bash
-# Debug build
 make build
+```
 
-# Release build
-make release
+Release build:
 
-# Check compilation without building
+```bash
+make build release=1
+```
+
+Check compilation without a full build:
+
+```bash
 make check
 ```
 
-### Testing
+## Documentation
 
-```bash
-# Test defaults with all features
-make test
-
-# Test all features individually from packages with features
-make test-feat
-
-# Test everything
-make test-all
-```
-
-### Code Coverage
-
-```bash
-# Generate HTML coverage report (opens in browser)
-make coverage
-```
-
-### Linting
-
-```bash
-# Format code and run clippy
-make do-lint
-```
-
-### Documentation
-
-```bash
-# Generate documentation and open it
-make do-docs
-```
-
-### Other Commands
-
-```bash
-# Clean build artifacts
-make clean
-
-# Show all available commands
-make help
-```
-
-### CI Commands
-
-```bash
-# Generate LCOV coverage report for CI
-make coverage-ci
-
-# Format code and clippy without fixes
-make do-lint-ci
-```
+- [Overview](docs/README.md)
+- [Quickstart](docs/QUICKSTART.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Documentation Standard](docs/STANDARD.md)
