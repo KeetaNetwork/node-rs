@@ -30,36 +30,6 @@ The crate build depends on `keetanetwork-utils` with the `build` feature. [Utils
 
 A `no_std` consumer enables `alloc` and at least one of `der` or `rasn`. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the at-least-one codec contract.
 
-## Example
-
-From `keetanetwork-x509/src/builder.rs` rustdoc.
-
-```rust
-use keetanetwork_account::{Account, KeyED25519};
-use keetanetwork_asn1::SubjectPublicKeyInfo;
-use keetanetwork_crypto::algorithms::ed25519::Ed25519Derivation;
-use keetanetwork_crypto::prelude::KeyDerivation;
-use keetanetwork_crypto::utils::generate_random_seed;
-use keetanetwork_x509::builder::CertificateBuilder;
-use keetanetwork_x509::{oids, utils, SerialNumber};
-
-let seed = generate_random_seed()?;
-let private_key = Ed25519Derivation::derive_from_seed(seed)?;
-let account = Account::<KeyED25519>::from(private_key);
-let public_key_info = SubjectPublicKeyInfo::from(account.keypair.to_public_key());
-let subject_dn = utils::create_dn(&[(oids::CN, "Example Certificate")])?;
-
-let certificate = CertificateBuilder::new()
-	.with_subject_public_key(public_key_info.clone())
-	.with_subject_dn(subject_dn.clone())
-	.with_issuer_dn(subject_dn)
-	.with_serial_number(SerialNumber::from(1u64))
-	.with_validity_days(365)
-	.build(&account)?;
-assert!(certificate.verify_signature(&public_key_info).is_ok());
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
 ## Falsified by
 
 A change that moves certificate builders or stores off `keetanetwork-x509`. A change that adds a signer trait on this crate that duplicates `CertSigner` or `CertVerifier`. A change to the `der` / `rasn` forwarding in `keetanetwork-x509/Cargo.toml`.

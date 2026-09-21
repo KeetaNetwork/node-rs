@@ -28,29 +28,6 @@ Default features include `std`. Feature `build` is opt-in. Feature `node-harness
 
 A docs or compile-only change does not need `node-harness`. `make test`, `make test-wasm`, and `make test-wasi` do.
 
-## Example
-
-From `keetanetwork-utils/src/testing.rs` `test_error_variants`.
-
-```rust
-use keetanetwork_utils::test_error_variants;
-
-#[derive(Debug, PartialEq, Eq)]
-enum TestError {
-	Simple,
-}
-
-impl std::fmt::Display for TestError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "Simple error")
-	}
-}
-
-test_error_variants! {
-	test_error_formatting, [TestError::Simple]
-}
-```
-
 ## Falsified by
 
 A change to the `build` or `node-harness` features in `keetanetwork-utils/Cargo.toml`. A change to the registry line in `keetanetwork-utils/node-harness/.npmrc`. A change that moves workspace test macros out of `keetanetwork-utils/src/lib.rs`.

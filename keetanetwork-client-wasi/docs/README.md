@@ -19,13 +19,16 @@ cargo test -p keetanetwork-client-wasi
 
 ## Example
 
-From `keetanetwork-client-wasi/src/pure.rs` re-export of `keetanetwork-bindings/src/account.rs` `generated_seed_is_32_byte_hex`.
+From `keetanetwork-bindings/src/account.rs` `account_round_trips_through_seed_and_public_key_string`, re-exported by `keetanetwork-client-wasi/src/pure.rs`.
 
 ```rust
 use keetanetwork_client_wasi::pure;
 
 let seed = pure::generate_seed().expect("seed generation must succeed");
-assert_eq!(seed.len(), 64);
+let account = pure::account_from_seed(&seed, 0, pure::DEFAULT_ALGORITHM)
+	.expect("account derivation must succeed");
+let public_key_string = pure::account_public_key_string(&account);
+assert!(!public_key_string.is_empty());
 ```
 
 ## Related documents

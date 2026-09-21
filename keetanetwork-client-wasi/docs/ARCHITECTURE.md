@@ -30,20 +30,6 @@ This crate always depends on `keetanetwork-account`, `keetanetwork-block`, `keet
 
 Select exactly one of `p1` or `p2` per WASI build. Feature `p2` is the only edge from this crate to `keetanetwork-client`. Feature `p1` stays on the pure surface.
 
-## Example
-
-From `keetanetwork-bindings/src/account.rs` `account_round_trips_through_seed_and_public_key_string`, re-exported by `keetanetwork-client-wasi/src/pure.rs`.
-
-```rust
-use keetanetwork_client_wasi::pure;
-
-let seed = pure::generate_seed().expect("seed generation must succeed");
-let account = pure::account_from_seed(&seed, 0, pure::DEFAULT_ALGORITHM)
-	.expect("account derivation must succeed");
-let public_key_string = pure::account_public_key_string(&account);
-assert!(!public_key_string.is_empty());
-```
-
 ## Falsified by
 
 A change to the `compile_error!` in `keetanetwork-client-wasi/src/lib.rs`. A change that lets a WASI build enable both `p1` and `p2`, or neither. A change that pulls `keetanetwork-client` on feature `p1`. A change to the `p1` / `p2` selection in the `Makefile` `build-wasi` or `test-wasi` targets.

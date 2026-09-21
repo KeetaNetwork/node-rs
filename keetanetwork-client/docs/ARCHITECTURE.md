@@ -32,16 +32,6 @@ The orchestrator is `no_std` plus `alloc` when `std`, `http`, and `wasi` are off
 
 [Block](../../keetanetwork-block/docs/ARCHITECTURE.md) and [Vote](../../keetanetwork-vote/docs/ARCHITECTURE.md) hold the signed objects. [Bindings](../../keetanetwork-bindings/docs/ARCHITECTURE.md) holds the shared host projection. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration path.
 
-## Example
-
-From `keetanetwork-client/src/lib.rs` rustdoc.
-
-```rust
-use keetanetwork_client::KeetaClient;
-
-let client = KeetaClient::new("http://localhost:8080/api").with_network(0u8);
-```
-
 ## Falsified by
 
 A change to `KeetaClient`, `UserClient`, or `TransactionBuilder` ownership. A change that moves the OpenAPI document away from `keetanetwork-client/openapi/keetanet-node.yaml`. A change to the `compile_error!` that pairs `http` with a runtime. A change that drops the vote or error re-exports from `keetanetwork-client/src/lib.rs`.

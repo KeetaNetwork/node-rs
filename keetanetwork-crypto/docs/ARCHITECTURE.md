@@ -37,17 +37,6 @@ Default features are `std`, `signature`, `encryption`, and `rasn`. `std` implies
 
 A `no_std` consumer enables `alloc` plus `signature` or `encryption` as the call site needs. [ASN.1](../../keetanetwork-asn1/docs/ARCHITECTURE.md) holds the codec contract when `der` or `rasn` is on.
 
-## Example
-
-From `keetanetwork-crypto/src/hash.rs` `hash_default`.
-
-```rust
-use keetanetwork_crypto::hash::hash_default;
-
-let digest = hash_default(b"hello world");
-assert_eq!(digest.len(), 32);
-```
-
 ## Falsified by
 
 A change that moves hashing or signing primitives out of `keetanetwork-crypto`. A change that lets `keetanetwork-account`, `keetanetwork-block`, or `keetanetwork-vote` sign without this crate. A change to the `signature`, `encryption`, `der`, or `rasn` features in `keetanetwork-crypto/Cargo.toml`.

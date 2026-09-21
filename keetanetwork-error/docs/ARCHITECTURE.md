@@ -28,23 +28,6 @@ Default features include `std`. `std` implies `alloc`. The crate builds under `n
 
 A higher crate that needs formatted errors on native targets enables `keetanetwork-error/std`. A `no_std` consumer enables `alloc` only.
 
-## Example
-
-From `keetanetwork-error/src/lib.rs` `non_ledger_collapses_to_code`.
-
-```rust
-use keetanetwork_error::{KeetaNetError, NodeErrorParts, NodeErrorType};
-
-let parts = NodeErrorParts {
-	kind: NodeErrorType::Api,
-	code: "API_INVALID_SIDE".into(),
-	message: "boom".into(),
-	..Default::default()
-};
-let error = KeetaNetError::from(parts);
-assert!(matches!(error, KeetaNetError::Code { code, .. } if code == "API_INVALID_SIDE"));
-```
-
 ## Falsified by
 
 A change to `KeetaNetError` or `NodeErrorType` in `keetanetwork-error/src/lib.rs`. A change that drops the client re-export of those two types from `keetanetwork-client/src/lib.rs`. A change to the `std` / `alloc` features in `keetanetwork-error/Cargo.toml`.

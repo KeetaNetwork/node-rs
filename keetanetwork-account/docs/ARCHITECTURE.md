@@ -40,24 +40,6 @@ This crate depends on `keetanetwork-crypto` with `signature` and `encryption`. I
 
 Account seed, identifier, and signature cookbooks live in `keetanetwork-account/tests/account_creation.rs`, `keetanetwork-account/tests/seed_derivation.rs`, `keetanetwork-account/tests/identifier_accounts.rs`, and `keetanetwork-account/tests/signatures.rs`.
 
-## Example
-
-From `keetanetwork-account/src/account.rs` rustdoc.
-
-```rust
-use keetanetwork_account::{Account, KeyED25519};
-use keetanetwork_crypto::algorithms::ed25519::Ed25519Derivation;
-use keetanetwork_crypto::prelude::KeyDerivation;
-use keetanetwork_crypto::utils::generate_random_seed;
-
-let seed = generate_random_seed()?;
-let private_key = Ed25519Derivation::derive_from_seed(seed)?;
-let account = Account::<KeyED25519>::from(private_key);
-let signature = account.sign(b"hello", None)?;
-assert!(account.verify(b"hello", &signature, None).is_ok());
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
 ## Falsified by
 
 A change that moves `Account`, `GenericAccount`, `KeyPairType`, `CertSigner`, or `CertVerifier` off this crate. A change that adds a second identity model in `keetanetwork-block`, `keetanetwork-vote`, `keetanetwork-x509`, `keetanetwork-client`, or `keetanetwork-bindings`. A change to the `der` / `rasn` forwarding in `keetanetwork-account/Cargo.toml`.

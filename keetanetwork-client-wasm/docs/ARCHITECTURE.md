@@ -26,18 +26,6 @@ This crate depends on `keetanetwork-client` with the `wasm` feature. It depends 
 
 The client `wasm` feature enables `http` on `wasm32-unknown-unknown`. That pairing satisfies the `compile_error!` in `keetanetwork-client/src/lib.rs`.
 
-## Example
-
-From `keetanetwork-client-wasm/src/lib.rs` rustdoc.
-
-```js
-import init, { KeetaClient, Account } from './pkg/keetanetwork_client_wasm.js';
-
-await init();
-const client = KeetaClient.forNetwork('test');
-const me = Account.fromSeed(Account.generateSeed(), 0);
-```
-
 ## Falsified by
 
 A change that accepts a JavaScript `number` as an amount. A change that drops `error.code` from thrown errors. A change that builds this crate without `keetanetwork-client` feature `wasm` or `keetanetwork-bindings` feature `client`. A change to the rustdoc example in `keetanetwork-client-wasm/src/lib.rs`.
