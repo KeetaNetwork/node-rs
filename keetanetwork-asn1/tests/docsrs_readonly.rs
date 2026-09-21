@@ -1,7 +1,7 @@
-//! docs.rs sets `DOCS_RS=1` and mounts crate source read-only.
-//!
-//! `generate_schema()` still writes `asn1/iso20022.asn` under the crate root, so
-//! rustdoc fails before any crate docs are emitted. This test drives that path.
+//! Docs.rs sets `DOCS_RS` and mounts crate source read-only.
+//! This test stages a writable `OUT_DIR` build.
+//! It asserts `cargo build -p keetanetwork-asn1` succeeds because ASN.1 staging
+//! and generated Rust stay under `OUT_DIR`.
 
 #![cfg(all(feature = "std", feature = "rasn", feature = "serde"))]
 

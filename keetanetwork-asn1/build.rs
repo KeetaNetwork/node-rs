@@ -1,3 +1,7 @@
+//! ISO 20022 schema refresh is optional on RO/docs.rs.
+//! Rust outputs stay under `OUT_DIR`.
+//! `src/generated.rs` stays the committed `include!` stub.
+
 use std::env;
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -23,9 +27,6 @@ fn main() {
 		.to_str()
 		.expect("OUT_DIR path must be valid UTF-8");
 
-	// ISO 20022 schema refresh is optional on RO/docs.rs. Rust outputs stay
-	// under OUT_DIR. src/generated.rs is a committed include! stub and is
-	// not rewritten.
 	let schema_content = render_iso20022_schema();
 	let compile_asn_dir = stage_asn1_inputs(&generated_dir, &schema_content);
 	let compile_asn_dir_str = compile_asn_dir
@@ -157,8 +158,8 @@ fn render_iso20022_schema() -> String {
 	schema_content
 }
 
-/// Copy `asn1/*.asn` into OUT_DIR and overlay the rendered ISO 20022 schema.
-/// Compile reads this writable tree so RO crate source cannot break rasn.
+/// Copy `asn1/*.asn` into `OUT_DIR` and overlay the rendered ISO 20022 schema.
+/// Compile reads this writable `OUT_DIR` tree so rasn always sees a writable asn1 input set.
 fn stage_asn1_inputs(generated_dir: &Path, iso20022_schema: &str) -> PathBuf {
 	let staged = generated_dir.join("asn1");
 	fs::create_dir_all(&staged).expect("OUT_DIR must be writable during build");
@@ -192,8 +193,8 @@ fn is_source_ro_error(err: &io::Error) -> bool {
 	matches!(err.kind(), ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem)
 }
 
-/// Refresh crate-source `asn1/iso20022.asn` only when that tree is writable.
-/// docs.rs and PermissionDenied keep the committed input and do not panic.
+/// Refresh crate-source `asn1/iso20022.asn` when that tree is writable.
+/// On docs.rs or a read-only source error, keep the committed input and return.
 fn refresh_source_iso20022_schema(schema_content: &str) {
 	if docs_rs_build() {
 		return;

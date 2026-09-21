@@ -4,8 +4,8 @@
 //! This module contains all the generated ASN.1 structures and re-exports them
 //! for use throughout the library.
 //!
-//! Committed `include!` stub. Module bodies are generated under `OUT_DIR`.
-//! `build.rs` does not rewrite this file.
+//! This file is a committed `include!` stub.
+//! Module bodies are generated under `OUT_DIR`.
 
 #[allow(unused_imports, unused_variables, dead_code, non_camel_case_types, clippy::too_many_arguments)]
 mod algorithm_identifier_definitions {
