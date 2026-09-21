@@ -2,7 +2,7 @@
 
 ## Abstract
 
-This page is the install, build, test, and first-use path for the `node-rs` workspace. It records the Makefile targets that are true on this tip. It also states the GitHub Packages gate and the cargo-only path.
+This page is the install, build, test, and first-use path for the `node-rs` workspace. It records the Makefile targets from the repository Makefile. It also states the GitHub Packages gate and the cargo-only path.
 
 ## Purpose
 

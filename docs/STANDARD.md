@@ -45,7 +45,7 @@ A page uses full sentences and keeps their articles. A sentence holds one topic.
 
 A page uses the exact technical noun, in code font, on every mention of the same thing. A page uses the ASCII hyphen only and writes each relation as words. A page prefers a table, a list, or a diagram when that form reorganizes substance.
 
-A page states contracts in the positive. A page names the command or path that is true on this tip.
+A page states contracts in the positive. A page names the command or path that Makefile, Cargo.toml, rust-toolchain.toml, or the cited source file states.
 
 Each register addresses its reader differently. A page MUST hold one register throughout.
 
@@ -80,7 +80,7 @@ A Mermaid diagram, when used, MUST give every node and participant an id that is
 
 A `///` comment MUST add signal that the signature cannot carry. It MUST NOT narrate the next line. It MUST NOT add a historical aside. Happy-path comments MUST state the contract in the positive.
 
-Public surfaces that already have rustdoc examples MUST keep a short snippet. Full flows belong as GitHub line links into tests on the branch tip. This tree MUST NOT invent an `examples/` directory.
+Public surfaces that already have rustdoc examples MUST keep a short snippet. Full flows belong as GitHub line links into tests in the repository. This tree MUST NOT invent an `examples/` directory.
 
 ## Falsified by
 
