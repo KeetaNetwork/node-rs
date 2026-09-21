@@ -28,6 +28,17 @@ Default features include `std`. Feature `client` is opt-in and enables `keetanet
 
 A target crate that only needs the pure projection leaves `client` off. A target crate that needs the HTTP orchestrator enables `client`.
 
+## Example
+
+From `keetanetwork-bindings/src/parse.rs` `amount_round_trips_decimal_strings`.
+
+```rust
+use keetanetwork_bindings::parse::{amount, amount_to_string};
+
+let parsed = amount("1000").expect("a decimal string must parse");
+assert_eq!(amount_to_string(parsed), "1000");
+```
+
 ## Falsified by
 
 A change that moves account-algorithm mapping or core-error reduction into `keetanetwork-client-wasm` or `keetanetwork-client-wasi` without this crate. A change to the `client` feature in `keetanetwork-bindings/Cargo.toml`. A change that drops this crate from either host ABI crate.

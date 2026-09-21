@@ -67,7 +67,7 @@ These entries are the living table of contents for crate documentation. [Archite
 | `docs/STANDARD.md` | Documentation contract |
 | `docs/ARCHITECTURE.md` | Collaboration graph and interaction path |
 | `docs/QUICKSTART.md` | Install, build, test, and first use |
-| `keetanetwork-*/docs/README.md` | Thin crate docs entry |
+| `keetanetwork-*/docs/README.md` | Crate purpose, quickstart, and example |
 | `keetanetwork-*/docs/ARCHITECTURE.md` | Product-crate architecture |
 
 GitHub issues and pull requests stay the history home.

@@ -26,6 +26,18 @@ Higher crates expose `der` and `rasn` under the same names and forward them here
 
 Block, vote, x509, account, crypto, and bindings crates depend on this crate when they encode or decode shared structures. [Architecture](../../docs/ARCHITECTURE.md) holds the collaboration graph.
 
+## Example
+
+From `keetanetwork-asn1/tests/vote_codec_vectors.rs` `test_vote_staple_reference_bytes`.
+
+```rust
+use keetanetwork_asn1::vote::{codec, VoteStapleBundle};
+
+let bundle = VoteStapleBundle { blocks: vec![vec![1, 2, 3]], votes: vec![vec![4, 5, 6]] };
+let encoded = codec::encode_vote_staple(&bundle).expect("encode staple");
+assert!(!encoded.is_empty());
+```
+
 ## Falsified by
 
 A change to the `compile_error!` in `keetanetwork-asn1/src/lib.rs` that no longer requires at least one of `der` or `rasn`. A change that adds a third codec feature without updating this page and the rustdoc feature list. A change that stops `keetanetwork-account`, `keetanetwork-block`, or `keetanetwork-vote` from forwarding `der` and `rasn` here.

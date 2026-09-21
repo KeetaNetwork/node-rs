@@ -35,7 +35,7 @@ One body of knowledge takes one page as its home. A second page that needs it MU
 
 [Architecture](ARCHITECTURE.md) holds the workspace collaboration graph and the interaction path. Product-crate architecture lives under that crate `docs/ARCHITECTURE.md`. That page MUST add collaboration or feature-gate substance that rustdoc on a single type cannot hold. It MUST NOT restate that crate `pub use` list. The [Overview](README.md) is the table of contents into those paths.
 
-A crate `docs/README.md` MAY stay a thin pointer into that crate `docs/ARCHITECTURE.md`. A stub crate MAY carry a minimal `docs/README.md` that names the reserved crate. It MUST NOT carry a product Architecture page.
+A product-crate `docs/README.md` MUST state what the crate is for. It MUST name the features and the `cargo test -p` command or Make target. It MUST include at least one fenced code example copied from crate rustdoc or a test. It MUST link to that crate `docs/ARCHITECTURE.md` and the workspace [Overview](README.md). A stub crate MAY carry a minimal `docs/README.md` that names the reserved crate. It MUST NOT carry a product Architecture page.
 
 A concept page under `docs/concepts/` lands only when it still holds a non-rustdoc invariant after the workspace Architecture draft and the crate architecture. A candidate that collapses to a field list MUST NOT land.
 
@@ -72,7 +72,7 @@ The closing section is the maintenance contract. It MUST name the code or tree c
 
 A page SHOULD cite the test or rustdoc example that encodes an invariant when that file is the enforcement point. One citation replaces a prose argument that the guarantee holds.
 
-The root `README.md` and each crate `docs/README.md` MAY stay a thin pointer. Those pages do not use this page shape. They MUST NOT redeclare Requirements Language.
+The root `README.md` MAY stay a thin pointer. A stub crate `docs/README.md` MAY stay a thin pointer. Those pages do not use this page shape. They MUST NOT redeclare Requirements Language. A product-crate `docs/README.md` uses the crate-entry sections above instead of this page shape.
 
 Navigation and audience live on the [Overview](README.md). This page MUST NOT carry a page index.
 
