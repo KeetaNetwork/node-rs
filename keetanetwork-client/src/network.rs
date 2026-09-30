@@ -262,12 +262,7 @@ mod tests {
 
 	#[test]
 	fn every_network_config_resolves() -> Result<(), ClientError> {
-		let expected = [
-			(Network::Main, 4usize),
-			(Network::Staging, 4),
-			(Network::Test, 2),
-			(Network::Dev, 1),
-		];
+		let expected = [(Network::Main, 4usize), (Network::Staging, 4), (Network::Test, 2), (Network::Dev, 1)];
 		for (network, count) in expected {
 			let config = network.config()?;
 			assert_eq!(config.representatives.len(), count, "{network} must publish {count} representatives");
