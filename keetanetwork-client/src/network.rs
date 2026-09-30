@@ -76,7 +76,7 @@ impl Network {
 	/// use keetanetwork_client::Network;
 	///
 	/// let config = Network::Test.config()?;
-	/// assert_eq!(config.representatives.len(), 4);
+	/// assert_eq!(config.representatives.len(), 2);
 	/// # Ok::<(), keetanetwork_client::ClientError>(())
 	/// ```
 	pub fn config(self) -> Result<NetworkConfig, ClientError> {
@@ -97,12 +97,8 @@ impl Network {
 		match self {
 			Network::Dev => {
 				let trusted = account_from_seed(DEV_TRUSTED_INDEX)?;
-				let mut reps = Vec::with_capacity(4);
-				for index in 1u32..=4 {
-					let account = account_from_seed(index)?;
-					reps.push(RepEndpoint::new(self.rep_api_url(index), account, SEED_WEIGHT));
-				}
-				Ok((trusted, reps))
+				let account = account_from_seed(1)?;
+				Ok((trusted, vec![RepEndpoint::new(self.rep_api_url(1), account, SEED_WEIGHT)]))
 			}
 			Network::Main => self.keyed_reps(MAIN_TRUSTED, &MAIN_REPS),
 			Network::Staging => self.keyed_reps(STAGING_TRUSTED, &STAGING_REPS),
@@ -217,11 +213,9 @@ const STAGING_REPS: [&str; 4] = [
 ];
 
 const TEST_TRUSTED: &str = "keeta_aabmvemiol5wrs67e4rfiyibopwav4e77sleiqaqvbdprbuxrifn7fgg4cchhia";
-const TEST_REPS: [&str; 4] = [
+const TEST_REPS: [&str; 2] = [
 	"keeta_aabi4bd3f7jrt67mxcq44ozj65bh4bp2mygmrkedxggu2rxwn2ztuw3b6exivbq",
 	"keeta_aabf7dz5asq2n2lrldct33x2ww65cophxp7egfiixbb7tbyat5r3kcbcez7ftpi",
-	"keeta_aab3cxegizwhtim3zlyuwjhiqd5ikkhxg42smhwc3wx6yn7ep2t6lwo6emvw4wa",
-	"keeta_aabznoicrzvte6ql5rxbgugmfrjqubbnjuo5l6ivopowy4rpkqgs5fco3oaezcq",
 ];
 
 #[cfg(test)]
@@ -250,10 +244,9 @@ mod tests {
 	}
 
 	#[test]
-	fn keyed_config_parses_four_reps_and_trusted_account() -> Result<(), ClientError> {
+	fn keyed_config_parses_test_reps_and_trusted_account() -> Result<(), ClientError> {
 		let config = Network::Test.config()?;
-
-		assert_eq!(config.representatives.len(), 4, "the test network publishes four representatives");
+		assert_eq!(config.representatives.len(), 2, "the test network publishes two representatives");
 		assert_eq!(config.initial_trusted_account.to_string(), TEST_TRUSTED, "trusted account must parse verbatim");
 		assert_eq!(
 			config.representatives[0].api_url(),
@@ -269,9 +262,15 @@ mod tests {
 
 	#[test]
 	fn every_network_config_resolves() -> Result<(), ClientError> {
-		for network in [Network::Main, Network::Staging, Network::Test, Network::Dev] {
+		let expected = [
+			(Network::Main, 4usize),
+			(Network::Staging, 4),
+			(Network::Test, 2),
+			(Network::Dev, 1),
+		];
+		for (network, count) in expected {
 			let config = network.config()?;
-			assert_eq!(config.representatives.len(), 4, "every network must publish four representatives");
+			assert_eq!(config.representatives.len(), count, "{network} must publish {count} representatives");
 		}
 		Ok(())
 	}
@@ -279,8 +278,7 @@ mod tests {
 	#[test]
 	fn dev_config_derives_reps_from_seed() -> Result<(), ClientError> {
 		let config = Network::Dev.config()?;
-
-		assert_eq!(config.representatives.len(), 4, "the dev network derives four representatives");
+		assert_eq!(config.representatives.len(), 1, "the dev network derives one representative");
 		assert_eq!(
 			config.representatives[0].api_url(),
 			"https://rep1.dev.api.keeta.com/api",
