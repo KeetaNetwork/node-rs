@@ -1972,9 +1972,16 @@ fn store_representatives(_runtime: &Arc<dyn Runtime>, _signature: &str, _reps: &
 
 /// Drain a cursor-paged read: call `fetch` with no cursor, then with each
 /// page's `next_key`, until the node reports the end of the sequence.
+///
+/// Safety ceiling on the total number of items a single cursor-paged read may
+/// accumulate from an untrusted node before it is treated as abusive. This is a
+/// backstop for the cursor-progress guard below; adjust or make configurable if
+/// a legitimate sequence can exceed it.
+const MAX_DRAINED_ITEMS: usize = 1_000_000;
+
 async fn drain_cursor_pages<ITEM, CURSOR, FETCH, PAGE>(fetch: FETCH) -> Result<Vec<ITEM>, ClientError>
 where
-	CURSOR: Copy,
+	CURSOR: Copy + PartialEq,
 	FETCH: Fn(Option<CURSOR>) -> PAGE,
 	PAGE: Future<Output = Result<(Vec<ITEM>, Option<CURSOR>), ClientError>>,
 {
@@ -1990,8 +1997,21 @@ where
 
 		items.extend(page);
 
+		// The remote node controls both the page contents and the `next_key`
+		// cursor. Without these guards a malicious or buggy node could return a
+		// non-empty page plus a cursor forever (e.g. by replaying one page or
+		// echoing a constant cursor), driving unbounded memory growth or a
+		// non-terminating loop. Require the cursor to advance and cap the total
+		// number of accumulated items as a safety net.
+		if items.len() > MAX_DRAINED_ITEMS {
+			return Err(ClientError::PaginationLimitExceeded);
+		}
+
 		match next_key {
-			Some(next) => cursor = Some(next),
+			Some(next) if Some(next) != cursor => cursor = Some(next),
+			// Repeated cursor: the node did not advance, so reject rather than
+			// loop on a replay. `None` below is the legitimate end of sequence.
+			Some(_) => return Err(ClientError::PaginationLimitExceeded),
 			None => break,
 		}
 	}
@@ -2164,6 +2184,38 @@ mod tests {
 		let items = resolve(drain_cursor_pages(fetch)).ok_or("ready future")??;
 		assert_eq!(items, alloc::vec![1, 2]);
 		assert_eq!(calls.get(), 2);
+		Ok(())
+	}
+
+	#[test]
+	fn drain_cursor_pages_rejects_a_non_advancing_cursor() -> TestResult {
+		// A malicious node that always returns a non-empty page plus the same
+		// (non-advancing) cursor must be rejected rather than looped forever.
+		let fetch = |_: Option<u8>| core::future::ready(Ok((alloc::vec![1u8], Some(7u8))));
+
+		let result = resolve(drain_cursor_pages(fetch)).ok_or("ready future")?;
+		assert!(matches!(result, Err(ClientError::PaginationLimitExceeded)));
+		Ok(())
+	}
+
+	#[test]
+	fn drain_cursor_pages_rejects_when_advancing_pages_exceed_the_item_ceiling() -> TestResult {
+		// A node that keeps returning non-empty pages with strictly advancing
+		// cursors must still be rejected once the aggregate item ceiling is
+		// crossed; cursor progress alone is not enough.
+		let calls = core::cell::Cell::new(0u32);
+		let page_len = MAX_DRAINED_ITEMS / 4 + 1;
+		let fetch = |_: Option<u32>| {
+			let call = calls.get();
+			calls.set(call + 1);
+			core::future::ready(Ok((alloc::vec![(); page_len], Some(call))))
+		};
+
+		let result = resolve(drain_cursor_pages(fetch)).ok_or("ready future")?;
+		assert!(matches!(result, Err(ClientError::PaginationLimitExceeded)));
+		// Four advancing pages cross the ceiling; a non-advancing cursor would
+		// have failed on the second call.
+		assert_eq!(calls.get(), 4);
 		Ok(())
 	}
 

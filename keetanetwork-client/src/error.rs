@@ -141,6 +141,11 @@ pub enum ClientError {
 	#[snafu(display("no representatives available"))]
 	NoRepresentatives,
 
+	/// A cursor-paged read exceeded its safety ceiling or the node returned a
+	/// non-advancing cursor, indicating an unbounded or looping response.
+	#[snafu(display("paginated response exceeded its safety limit or did not make progress"))]
+	PaginationLimitExceeded,
+
 	/// A request exceeded the configured per-request timeout.
 	#[snafu(display("request timed out"))]
 	Timeout,
@@ -225,6 +230,7 @@ impl ClientError {
 			Self::Account { .. } => "ACCOUNT",
 			Self::UnsupportedNetwork => "UNSUPPORTED_NETWORK",
 			Self::NoRepresentatives => "NO_REPRESENTATIVES",
+			Self::PaginationLimitExceeded => "PAGINATION_LIMIT_EXCEEDED",
 			Self::Timeout => "TIMEOUT",
 			Self::QuorumNotReached => "QUORUM_NOT_REACHED",
 			Self::SyncPublishFailed => "SYNC_PUBLISH_FAILED",
