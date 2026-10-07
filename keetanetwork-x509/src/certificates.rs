@@ -52,6 +52,10 @@ use crate::oids;
 use crate::utils::{self, parse_authority_key_identifier, parse_key_identifier};
 use crate::utils::{dn_to_string, parse_der_length, time_to_utc};
 
+/// keyCertSign (bit 5) in the first byte of the Key Usage BIT STRING.
+/// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.3>
+const KEY_USAGE_KEY_CERT_SIGN: u8 = 0x04;
+
 /// Basic Constraints extension according to RFC 5280 Section 4.2.1.9.
 /// See: <https://datatracker.ietf.org/doc/html/rfc5280#section-4.2.1.9>
 ///
@@ -982,12 +986,6 @@ pub struct Certificate {
 /// Apply a single extension to the accumulated base extensions.
 fn apply_base_extension(base_extensions: &mut BaseExtensions, ext: &Extension) {
 	match ext.extn_id.to_string().as_str() {
-		// Basic Constraints
-		oids::BASIC_CONSTRAINTS => {
-			if let Ok(constraints) = BasicConstraints::from_der(ext.extn_value.as_bytes()) {
-				base_extensions.basic_constraints = Some(constraints);
-			}
-		}
 		// Subject Key Identifier is an OCTET STRING containing the key identifier
 		oids::SUBJECT_KEY_IDENTIFIER => {
 			if let Some(key_id) = parse_key_identifier(ext.extn_value.as_bytes()) {
@@ -1160,34 +1158,62 @@ impl Certificate {
 			.flat_map(|exts| exts.iter())
 	}
 
-	/// Check if this is a CA certificate (has Basic Constraints CA=true)
+	/// Get the decoded Basic Constraints extension, if present and well-formed
+	pub fn basic_constraints(&self) -> Option<BasicConstraints> {
+		let extension = self.extension(oids::BASIC_CONSTRAINTS)?;
+		BasicConstraints::from_der(extension.extn_value.as_bytes()).ok()
+	}
+
+	/// Check if this is a CA certificate (has Basic Constraints CA=true).
+	///
+	/// A missing or malformed extension means the certificate is not a CA.
 	pub fn is_ca(&self) -> bool {
-		if let Some(basic_constraints) = self.extension(oids::BASIC_CONSTRAINTS) {
-			match BasicConstraints::from_der(basic_constraints.extn_value.as_bytes()) {
-				Ok(constraints) => constraints.ca,
-				Err(_) => false, // Invalid extension, assume not a CA
-			}
-		} else {
-			// No Basic Constraints extension means not a CA
-			false
+		self.basic_constraints()
+			.is_some_and(|constraints| constraints.ca)
+	}
+
+	/// Check if this certificate may sign other certificates.
+	///
+	/// Per RFC 5280 Section 6.1.4 (k) and (n), the certificate must be a CA and,
+	/// when the Key Usage extension is present, it must assert keyCertSign. A
+	/// malformed Key Usage extension fails closed.
+	pub fn can_sign_certificates(&self) -> bool {
+		if !self.is_ca() {
+			return false;
+		}
+
+		let Some(key_usage) = self.extension(oids::KEY_USAGE) else {
+			return true;
+		};
+		let Ok(key_usage_bits) = der::asn1::BitString::from_der(key_usage.extn_value.as_bytes()) else {
+			return false;
+		};
+
+		key_usage_bits
+			.raw_bytes()
+			.first()
+			.is_some_and(|first_byte| first_byte & KEY_USAGE_KEY_CERT_SIGN != 0)
+	}
+
+	/// Check if this CA's pathLenConstraint allows `intermediates_below`
+	/// non-self-issued intermediate CA certificates beneath it in a path.
+	///
+	/// See RFC 5280 Section 6.1.4 (l) and (m). A CA without a pathLenConstraint
+	/// allows any path length.
+	pub(crate) fn allows_path_length(&self, intermediates_below: usize) -> bool {
+		let path_len_constraint = self
+			.basic_constraints()
+			.and_then(|constraints| constraints.path_len_constraint);
+
+		match path_len_constraint {
+			Some(max_intermediates) => intermediates_below <= max_intermediates as usize,
+			None => true,
 		}
 	}
 
 	/// Check if this certificate and another form a valid issuer-subject relationship
 	pub fn is_valid_issuer_subject_pair(&self, issuer: &Certificate) -> Result<bool, CertificateError> {
-		// Check DN matching
-		if !self.has_matching_issuer_subject_dn(issuer) {
-			return Ok(false);
-		}
-
-		// Check Authority/Subject Key Identifier matching
-		if !self.has_valid_authority_key_identifier(issuer) {
-			return Ok(false);
-		}
-
-		// Check signature
-		let issuer_public_key = SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone())?;
-		if !self.verify_signature(&issuer_public_key)? {
+		if !self.issuer_link_holds(issuer)? {
 			return Ok(false);
 		}
 
@@ -1249,7 +1275,7 @@ impl Certificate {
 
 	/// Parse base extensions from certificate.
 	pub fn parse_base_extensions(&self) -> BaseExtensions {
-		let mut base_extensions = BaseExtensions::default();
+		let mut base_extensions = BaseExtensions { basic_constraints: self.basic_constraints(), ..Default::default() };
 		if let Some(extensions) = &self.tbs_certificate.extensions {
 			for ext in extensions {
 				apply_base_extension(&mut base_extensions, ext);
@@ -1303,6 +1329,18 @@ impl Certificate {
 			}
 		}
 
+		// Enforce each issuer's pathLenConstraint. Self-issued certificates are
+		// not counted as intermediates (RFC 5280 Section 6.1.4 (l)).
+		let mut intermediates_below = 0;
+		for issuer_cert in &path[1..] {
+			if !issuer_cert.allows_path_length(intermediates_below) {
+				return Ok(false);
+			}
+			if !issuer_cert.is_self_signed() {
+				intermediates_below += 1;
+			}
+		}
+
 		// The last certificate should be self-signed (trust anchor)
 		let trust_anchor = &path[path.len() - 1];
 		if !trust_anchor.is_self_signed() {
@@ -1312,16 +1350,30 @@ impl Certificate {
 		Ok(true)
 	}
 
-	/// Check if this certificate was issued by the given issuer
+	/// Check if this certificate was issued by the given issuer.
+	///
+	/// An error while checking the signature counts as not issued.
 	pub fn is_issued_by(&self, issuer: &Certificate) -> bool {
-		let issuer_public_key =
-			match SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone()) {
-				Ok(key) => key,
-				Err(_) => return false,
-			};
-		self.has_matching_issuer_subject_dn(issuer)
-			&& self.has_valid_authority_key_identifier(issuer)
-			&& self.verify_signature(&issuer_public_key).unwrap_or(false)
+		self.issuer_link_holds(issuer).unwrap_or(false)
+	}
+
+	/// Check the issuer-to-subject link: DN match, issuer authority to sign
+	/// certificates (RFC 5280 Section 6.1.4 (k) and (n)), key identifier
+	/// match, and signature.
+	fn issuer_link_holds(&self, issuer: &Certificate) -> Result<bool, CertificateError> {
+		if !self.has_matching_issuer_subject_dn(issuer) {
+			return Ok(false);
+		}
+		if !issuer.can_sign_certificates() {
+			return Ok(false);
+		}
+		if !self.has_valid_authority_key_identifier(issuer) {
+			return Ok(false);
+		}
+
+		let issuer_public_key = SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone())?;
+		let signature_valid = self.verify_signature(&issuer_public_key)?;
+		Ok(signature_valid)
 	}
 
 	/// Validate RFC 5280 compliance for this certificate
@@ -1392,7 +1444,7 @@ impl Certificate {
 		let Some(basic_constraints_ext) = self.extension(oids::BASIC_CONSTRAINTS) else {
 			return Ok(());
 		};
-		let Ok(basic_constraints) = BasicConstraints::from_der(basic_constraints_ext.extn_value.as_bytes()) else {
+		let Some(basic_constraints) = self.basic_constraints() else {
 			return Ok(());
 		};
 
@@ -1475,6 +1527,9 @@ impl Certificate {
 		let mut chain_set = BTreeSet::new();
 		chain_set.insert(self_clone);
 
+		// Non-self-issued intermediates already in the chain, for pathLenConstraint
+		let mut intermediates_below = 0;
+
 		// Build the chain by following issuer certificates
 		loop {
 			if current.is_self_signed() {
@@ -1482,25 +1537,23 @@ impl Certificate {
 				break;
 			}
 
-			// Look for the issuer in the certificate collection
-			// Skips certificates that are identical to self
-			let issuer = certificates
-				.iter()
-				.find(|cert| **cert != *self && current.is_issued_by(cert));
-
-			if let Some(issuer_cert) = issuer {
-				// Only add if not already in the chain
-				if !chain_set.contains(issuer_cert) {
-					let cloned = issuer_cert.clone();
-					chain_set.insert(cloned.clone());
-					ordered_chain.push(cloned);
-				}
-
-				current = issuer_cert;
-			} else {
+			// Look for the issuer in the certificate collection. A certificate
+			// joins the chain at most once, so an issuer cycle ends the walk.
+			let issuer = certificates.iter().find(|cert| {
+				!chain_set.contains(*cert) && current.is_issued_by(cert) && cert.allows_path_length(intermediates_below)
+			});
+			let Some(issuer_cert) = issuer else {
 				// Cannot find issuer, chain is incomplete
 				break;
+			};
+
+			chain_set.insert(issuer_cert.clone());
+			ordered_chain.push(issuer_cert.clone());
+			if !issuer_cert.is_self_signed() {
+				intermediates_below += 1;
 			}
+
+			current = issuer_cert;
 		}
 
 		ordered_chain.into_iter()
