@@ -1175,6 +1175,14 @@ impl Certificate {
 
 	/// Check if this certificate and another form a valid issuer-subject relationship
 	pub fn is_valid_issuer_subject_pair(&self, issuer: &Certificate) -> Result<bool, CertificateError> {
+		// RFC 5280 §6.1.4(k): certificates used to issue other certificates
+		// must assert basicConstraints cA=TRUE. Without this check, a
+		// compromised end-entity key can mint child certificates that path
+		// validation would otherwise accept.
+		if !issuer.is_ca() {
+			return Ok(false);
+		}
+
 		// Check DN matching
 		if !self.has_matching_issuer_subject_dn(issuer) {
 			return Ok(false);
@@ -1294,18 +1302,36 @@ impl Certificate {
 			return Ok(false);
 		}
 
-		// Validate each link in the chain
+		// Validate each link in the chain (includes cA=TRUE on every issuer)
 		for i in 0..path.len() - 1 {
 			let subject_cert = &path[i];
 			let issuer_cert = &path[i + 1];
 			if !subject_cert.is_valid_issuer_subject_pair(issuer_cert)? {
 				return Ok(false);
 			}
+
+			// Enforce pathLenConstraint when present on the issuer (RFC 5280
+			// §4.2.1.9 / §6.1.4). `remaining` is the number of CA certificates
+			// that follow this issuer in the path (excluding the trust anchor
+			// itself when counting subsequent non-self-issued CAs).
+			if let Some(basic) = issuer_cert.extension(oids::BASIC_CONSTRAINTS) {
+				if let Ok(constraints) = BasicConstraints::from_der(basic.extn_value.as_bytes()) {
+					if let Some(max_path_len) = constraints.path_len_constraint {
+						let cas_after_issuer = path[i + 2..]
+							.iter()
+							.filter(|cert| cert.is_ca() && !cert.is_self_signed())
+							.count();
+						if cas_after_issuer > max_path_len as usize {
+							return Ok(false);
+						}
+					}
+				}
+			}
 		}
 
-		// The last certificate should be self-signed (trust anchor)
+		// The last certificate should be a self-signed CA trust anchor
 		let trust_anchor = &path[path.len() - 1];
-		if !trust_anchor.is_self_signed() {
+		if !trust_anchor.is_self_signed() || !trust_anchor.is_ca() {
 			return Ok(false);
 		}
 
@@ -1314,6 +1340,12 @@ impl Certificate {
 
 	/// Check if this certificate was issued by the given issuer
 	pub fn is_issued_by(&self, issuer: &Certificate) -> bool {
+		// Mirror `is_valid_issuer_subject_pair`: non-CA certificates must not
+		// be treated as issuers when building or trusting chains.
+		if !issuer.is_ca() {
+			return false;
+		}
+
 		let issuer_public_key =
 			match SubjectPublicKeyInfo::try_from(issuer.tbs_certificate.subject_public_key_info.clone()) {
 				Ok(key) => key,

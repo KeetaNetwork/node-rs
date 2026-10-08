@@ -429,4 +429,23 @@ mod tests {
 			VoteError::InvalidVersion
 		));
 	}
+
+	#[test]
+	fn test_collect_extensions_allows_empty_hash_list() {
+		// Empty hash lists are rejected at UnsignedVote::try_new / VoteBuilder.
+		// collect_extensions only requires the HASH_DATA extension to be present.
+		use keetanetwork_asn1::vote as transport;
+		let hash_data = transport::HashData {
+			algorithm: transport::oids::SHA3_256,
+			hashes: vec![],
+		};
+		let value = transport::encode_hash_data(&hash_data).expect("encode");
+		let ext = transport::Extension {
+			oid: transport::oids::HASH_DATA,
+			critical: true,
+			value,
+		};
+		let result = collect_extensions(&[ext]);
+		assert!(matches!(result, Ok(blocks) if blocks.0.is_empty()));
+	}
 }
