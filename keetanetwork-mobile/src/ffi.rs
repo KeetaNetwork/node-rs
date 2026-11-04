@@ -64,14 +64,19 @@ impl PhraseDraft {
 impl PhraseDraft {
 	#[uniffi::constructor]
 	pub fn new() -> Arc<Self> {
-		let words = (0..PHRASE_WORDS).map(|_| Zeroizing::new(String::new())).collect();
+		let words = (0..PHRASE_WORDS)
+			.map(|_| Zeroizing::new(String::new()))
+			.collect();
 		Arc::new(Self { state: Mutex::new(DraftState { words, warning_accepted: false }) })
 	}
 
 	pub fn generate(&self) -> Result<(), WalletError> {
 		let phrase = generate_phrase()?;
 		let mut state = self.state();
-		state.words = phrase.split(' ').map(|word| Zeroizing::new(word.to_owned())).collect();
+		state.words = phrase
+			.split(' ')
+			.map(|word| Zeroizing::new(word.to_owned()))
+			.collect();
 		state.warning_accepted = false;
 		Ok(())
 	}
@@ -94,7 +99,10 @@ impl PhraseDraft {
 	/// Returns one word for display on a protected screen.
 	pub fn word(&self, index: u32) -> Result<Vec<u8>, WalletError> {
 		let state = self.state();
-		let word = state.words.get(index as usize).ok_or(WalletError::InvalidPhrase)?;
+		let word = state
+			.words
+			.get(index as usize)
+			.ok_or(WalletError::InvalidPhrase)?;
 		Ok(word.as_bytes().to_vec())
 	}
 
@@ -129,7 +137,9 @@ impl PhraseDraft {
 
 	pub fn clear(&self) {
 		let mut state = self.state();
-		state.words = (0..PHRASE_WORDS).map(|_| Zeroizing::new(String::new())).collect();
+		state.words = (0..PHRASE_WORDS)
+			.map(|_| Zeroizing::new(String::new()))
+			.collect();
 		state.warning_accepted = false;
 	}
 }
