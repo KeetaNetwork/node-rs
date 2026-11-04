@@ -1,0 +1,15 @@
+{
+	"message": "6b65657461206d6f62696c652070726f746f7479706520766563746f72",
+	"vectors": [
+		{
+			"phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon",
+			"publicKey": "keeta_aabz6jojexqmv3uioo5fa6htsyjqwjkfjf4v76eg72rcn5gcbzduikz62zykory",
+			"signature": "21740315bbd99cdfebee1668f71b6764a33f0d3d2f1f0421326fd97426f95b8b081f429aee5e79842ccea0169e51ffda21f59adb443a77d48f55ae794db5eaae"
+		},
+		{
+			"phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon keetaword",
+			"publicKey": "keeta_aabmc4443bwu32p3ylip7aj4opsyidknta2nxomjyzqlljl4vbqflgkpuvjqpca",
+			"signature": "1b17d0048f1c46c80493c6091db68f8bf62dd69cc1cef7f12084afdedf1a485018fc9d0421adb33404d51b2f89fb01676425bc1baf54fe248b5397bc3f0ff1ea"
+		}
+	]
+}
