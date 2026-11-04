@@ -22,8 +22,6 @@ const CHECKSUM_BITS: usize = 8;
 
 mod allocator;
 pub mod ffi;
-#[cfg(feature = "probe")]
-pub mod probe;
 
 uniffi::setup_scaffolding!();
 

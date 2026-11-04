@@ -117,20 +117,6 @@ fn web_ciphertext_decrypts_in_rust() {
 	assert_eq!(encrypt("not a key", &message), Err(WalletError::InvalidPublicKey));
 }
 
-#[cfg(feature = "probe")]
-#[test]
-fn web_vector_probe_checks_every_account() {
-	let accounts: usize = fixture()
-		.vectors
-		.iter()
-		.map(|vector| vector.accounts.len())
-		.sum();
-	assert_eq!(
-		keetanetwork_mobile::probe::run_web_vector_probe(),
-		Ok(u32::try_from(accounts).expect("count must fit"))
-	);
-}
-
 #[test]
 fn generated_phrase_has_24_words_and_a_valid_checksum() {
 	let phrase = generate_phrase().expect("generation must succeed");

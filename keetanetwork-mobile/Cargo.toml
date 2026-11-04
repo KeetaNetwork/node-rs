@@ -19,12 +19,9 @@ required-features = ["cli"]
 
 [features]
 cli = ["uniffi/cli"]
-probe = ["dep:hex", "dep:serde_json"]
 
 [dependencies]
 bip39-dict = { workspace = true }
-hex = { workspace = true, features = ["alloc"], optional = true }
-serde_json = { workspace = true, optional = true }
 keetanetwork-account = { workspace = true, features = ["alloc", "rasn"] }
 keetanetwork-bindings = { workspace = true, features = ["std"] }
 keetanetwork-block = { workspace = true, features = ["alloc", "rasn"] }
