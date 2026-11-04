@@ -1,4 +1,5 @@
 use keetanetwork_crypto::prelude::SigningOptions;
+use keetanetwork_mobile::ffi::PhraseDraft;
 use keetanetwork_mobile::{
 	generate_phrase, phrase_from_entropy, phrase_status, validate_phrase, verify, PhraseStatus, Wallet, WalletError,
 };
@@ -130,6 +131,42 @@ fn phrase_with_a_wrong_checksum_is_rejected() {
 fn phrase_status_matches_the_web_import_states() {
 	let valid = fixture().vectors.remove(0).phrase;
 	assert_eq!(phrase_status(&valid), PhraseStatus::Valid);
+
+	let draft = PhraseDraft::new();
+	assert_eq!(draft.status(), PhraseStatus::Incomplete);
+	let words: Vec<&str> = valid.split(' ').collect();
+	for (index, word) in (0u32..).zip(&words) {
+		draft
+			.set_word(index, format!(" {} ", word.to_uppercase()).into_bytes())
+			.expect("index must exist");
+	}
+	assert_eq!(draft.status(), PhraseStatus::Valid);
+	assert_eq!(draft.phrase_bytes(), valid.as_bytes());
+	assert_eq!(draft.word(23).expect("index must exist"), words[23].as_bytes());
+	assert!(draft.word_matches(0, words[0].to_uppercase().into_bytes()));
+	assert!(!draft.word_matches(0, b"keetaword".to_vec()));
+	assert!(!draft.word_matches(24, words[0].as_bytes().to_vec()));
+	assert_eq!(draft.set_word(24, b"abandon".to_vec()), Err(WalletError::InvalidPhrase));
+	assert_eq!(
+		draft.open_wallet().expect("24 words must open").public_key(0),
+		Wallet::from_phrase(&valid).expect("phrase must be valid").public_key(0)
+	);
+
+	draft.set_word(1, b"keetaword".to_vec()).expect("index must exist");
+	assert_eq!(draft.status(), PhraseStatus::InvalidWords { indices: vec![1] });
+	draft.accept_warning();
+	assert!(draft.is_warning_accepted());
+	draft.set_word(1, b"keetaword".to_vec()).expect("index must exist");
+	assert!(draft.is_warning_accepted());
+	draft.set_word(1, b"abandon".to_vec()).expect("index must exist");
+	assert!(!draft.is_warning_accepted());
+
+	draft.generate().expect("generation must succeed");
+	assert_eq!(draft.status(), PhraseStatus::Valid);
+	draft.clear();
+	assert_eq!(draft.status(), PhraseStatus::Incomplete);
+	assert_eq!(draft.phrase_bytes(), " ".repeat(23).into_bytes());
+
 	assert_eq!(phrase_status(&format!("  {}  ", valid.to_uppercase().replace(' ', "   "))), PhraseStatus::Valid);
 	assert_eq!(phrase_status("abandon abandon"), PhraseStatus::Incomplete);
 	assert_eq!(phrase_status(""), PhraseStatus::Incomplete);

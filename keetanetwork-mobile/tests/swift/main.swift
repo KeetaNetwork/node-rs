@@ -25,6 +25,13 @@ let generated = try generatePhraseBytes()
 let generatedWallet = try MobileWallet.fromPhraseBytes(phrase: generated)
 check(try generatedWallet.publicKey(index: 0).hasPrefix("keeta_"), "generated phrase opens a wallet")
 
+let draft = PhraseDraft()
+for (index, word) in webPhrase.split(separator: " ").enumerated() {
+	try draft.setWord(index: UInt32(index), word: Data(word.utf8))
+}
+check(draft.status() == .valid, "draft reports a valid phrase")
+check(try draft.openWallet().publicKey(index: 0) == webPublicKey, "draft opens the web wallet")
+
 do {
 	_ = try MobileWallet.fromPhraseBytes(phrase: Data("not a phrase".utf8))
 	check(false, "invalid phrase is rejected")

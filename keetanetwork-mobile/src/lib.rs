@@ -20,11 +20,15 @@ const ENTROPY_BYTES: usize = 32;
 const PHRASE_WORDS: usize = 24;
 const CHECKSUM_BITS: usize = 8;
 
+mod allocator;
 pub mod ffi;
 #[cfg(feature = "probe")]
 pub mod probe;
 
 uniffi::setup_scaffolding!();
+
+#[global_allocator]
+static ALLOCATOR: allocator::ZeroizingAllocator = allocator::ZeroizingAllocator;
 
 #[derive(Debug, PartialEq, Eq, uniffi::Error)]
 pub enum WalletError {

@@ -3,11 +3,14 @@
 //! Phrases cross as bytes, because a host can overwrite a byte buffer but
 //! cannot overwrite a Swift or Kotlin string.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use zeroize::Zeroizing;
 
-use crate::{generate_phrase, phrase_from_entropy, phrase_status, verify, PhraseStatus, Wallet, WalletError};
+use crate::{
+	generate_phrase, normalize_phrase, phrase_from_entropy, phrase_status, verify, PhraseStatus, Wallet, WalletError,
+	PHRASE_WORDS,
+};
 
 fn phrase_text(phrase: &[u8]) -> Result<&str, WalletError> {
 	std::str::from_utf8(phrase).map_err(|_| WalletError::InvalidPhrase)
@@ -29,10 +32,106 @@ pub fn verify_signature(public_key: String, message: Vec<u8>, signature: Vec<u8>
 	verify(&public_key, &message, &signature)
 }
 
+fn normalized_word(word: Vec<u8>) -> Result<Zeroizing<String>, WalletError> {
+	let word = Zeroizing::new(word);
+	Ok(Zeroizing::new(normalize_phrase(phrase_text(&word)?)))
+}
+
+struct DraftState {
+	words: Vec<Zeroizing<String>>,
+	warning_accepted: bool,
+}
+
+/// Holds the phrase during onboarding, so the host keeps only this handle.
+#[derive(uniffi::Object)]
+pub struct PhraseDraft {
+	state: Mutex<DraftState>,
+}
+
+impl PhraseDraft {
+	fn state(&self) -> MutexGuard<'_, DraftState> {
+		self.state.lock().unwrap_or_else(PoisonError::into_inner)
+	}
+
+	fn phrase(&self) -> Zeroizing<String> {
+		let state = self.state();
+		let words: Vec<&str> = state.words.iter().map(|word| word.as_str()).collect();
+		Zeroizing::new(words.join(" "))
+	}
+}
+
 #[uniffi::export]
-pub fn phrase_status_bytes(phrase: Vec<u8>) -> Result<PhraseStatus, WalletError> {
-	let phrase = Zeroizing::new(phrase);
-	Ok(phrase_status(phrase_text(&phrase)?))
+impl PhraseDraft {
+	#[uniffi::constructor]
+	pub fn new() -> Arc<Self> {
+		let words = (0..PHRASE_WORDS).map(|_| Zeroizing::new(String::new())).collect();
+		Arc::new(Self { state: Mutex::new(DraftState { words, warning_accepted: false }) })
+	}
+
+	pub fn generate(&self) -> Result<(), WalletError> {
+		let phrase = generate_phrase()?;
+		let mut state = self.state();
+		state.words = phrase.split(' ').map(|word| Zeroizing::new(word.to_owned())).collect();
+		state.warning_accepted = false;
+		Ok(())
+	}
+
+	/// An edit that changes the word also withdraws an accepted warning.
+	pub fn set_word(&self, index: u32, word: Vec<u8>) -> Result<(), WalletError> {
+		let word = normalized_word(word)?;
+		let mut state = self.state();
+		let slot = state
+			.words
+			.get_mut(index as usize)
+			.ok_or(WalletError::InvalidPhrase)?;
+		if *slot != word {
+			*slot = word;
+			state.warning_accepted = false;
+		}
+		Ok(())
+	}
+
+	/// Returns one word for display on a protected screen.
+	pub fn word(&self, index: u32) -> Result<Vec<u8>, WalletError> {
+		let state = self.state();
+		let word = state.words.get(index as usize).ok_or(WalletError::InvalidPhrase)?;
+		Ok(word.as_bytes().to_vec())
+	}
+
+	pub fn word_matches(&self, index: u32, word: Vec<u8>) -> bool {
+		let Ok(word) = normalized_word(word) else {
+			return false;
+		};
+		self.state().words.get(index as usize) == Some(&word)
+	}
+
+	pub fn status(&self) -> PhraseStatus {
+		phrase_status(&self.phrase())
+	}
+
+	pub fn accept_warning(&self) {
+		self.state().warning_accepted = true;
+	}
+
+	pub fn is_warning_accepted(&self) -> bool {
+		self.state().warning_accepted
+	}
+
+	pub fn open_wallet(&self) -> Result<Arc<MobileWallet>, WalletError> {
+		let wallet = Wallet::from_unverified_phrase(&self.phrase())?;
+		Ok(Arc::new(MobileWallet { wallet }))
+	}
+
+	/// Returns the whole phrase for the vault to encrypt. The caller must overwrite these bytes.
+	pub fn phrase_bytes(&self) -> Vec<u8> {
+		self.phrase().as_bytes().to_vec()
+	}
+
+	pub fn clear(&self) {
+		let mut state = self.state();
+		state.words = (0..PHRASE_WORDS).map(|_| Zeroizing::new(String::new())).collect();
+		state.warning_accepted = false;
+	}
 }
 
 #[derive(uniffi::Object)]
