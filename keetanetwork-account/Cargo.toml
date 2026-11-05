@@ -24,7 +24,6 @@ snafu = { workspace = true }
 strum.workspace = true
 strum_macros.workspace = true
 zeroize = { version = "1.8.1", default-features = false, features = ["derive"] }
-rand_core = { workspace = true, features = ["os_rng"] }
 
 [dev-dependencies]
 base64.workspace = true
@@ -39,7 +38,6 @@ std = [
 	"keetanetwork-asn1?/std",
 	"hex/std",
 	"snafu/std",
-	"rand_core/std",
 	"zeroize/std",
 ]
 alloc = ["keetanetwork-error/alloc", "zeroize/alloc"]

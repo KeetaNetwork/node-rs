@@ -115,8 +115,8 @@ mod tests {
 			keetanetwork_crypto::error::CryptoError::InvalidKeyMaterial,
 			keetanetwork_crypto::error::CryptoError::SignatureError,
 			keetanetwork_asn1::error::Asn1Error::InvalidOid { reason: "test".to_string() },
-			der::asn1::ObjectIdentifier::from_der(&[0xFF, 0xFF, 0xFF]).unwrap_err(),
-			der::asn1::ObjectIdentifier::new("").unwrap_err(),
+			<der::asn1::ObjectIdentifier>::from_der(&[0xFF, 0xFF, 0xFF]).unwrap_err(),
+			<der::asn1::ObjectIdentifier>::new("").unwrap_err(),
 			base64::DecodeError::InvalidByte(0, b'!'),
 		]
 	}

@@ -40,7 +40,7 @@ where
 	I: IntoIterator<Item = B>,
 	B: AsRef<[u8]>,
 {
-	let tag = Tag::ContextSpecific { constructed: true, number: TagNumber::new(number) };
+	let tag = Tag::ContextSpecific { constructed: true, number: TagNumber(u32::from(number)) };
 	join_with_tag(tag, parts)
 }
 

@@ -39,28 +39,27 @@ default-features = false
 features = ["zeroize"]
 
 [dependencies.hkdf]
-version = "0.12.4"
+version = "0.13.0"
 default-features = false
 
 [dependencies.pbkdf2]
-version = "0.12.2"
+version = "0.13.0"
 default-features = false
-features = ["hmac", "sha2"]
+features = ["sha2"]
 
 [dependencies.sha2]
-version = "0.10.9"
+version = "0.11.1"
 
 [dependencies.sha3]
-version = "0.10.8"
+version = "0.11.0"
 default-features = false
 
 [dependencies.zeroize]
 version = "1.8.1"
 features = ["derive"]
 
-[dependencies.rand_core]
+[dependencies.getrandom]
 workspace = true
-features = ["os_rng"]
 
 [dependencies.snafu]
 workspace = true
@@ -74,22 +73,22 @@ features = ["alloc"]
 optional = true
 
 [dependencies.aead]
-version = "0.5"
+version = "0.6.1"
 default-features = false
 features = ["alloc"]
 optional = true
 
 [dependencies.aes]
-version = "0.8"
+version = "0.9.4"
 optional = true
 
 [dependencies.cbc]
-version = "0.1.2"
-features = ["alloc"]
+version = "0.2.1"
+features = ["alloc", "block-padding"]
 optional = true
 
 [dependencies.ctr]
-version = "0.9.2"
+version = "0.10.1"
 features = ["zeroize"]
 optional = true
 
@@ -99,17 +98,13 @@ default-features = false
 optional = true
 
 [dependencies.hmac]
-version = "0.12.1"
-optional = true
-
-[dependencies.rand]
-workspace = true
+version = "0.13.0"
 optional = true
 
 [dependencies.aes-gcm]
-version = "0.10.3"
+version = "0.11.1"
 default-features = false
-features = ["alloc", "aes", "getrandom"]
+features = ["alloc", "aes", "getrandom", "zeroize"]
 
 # Utilities
 [dependencies.bip39-dict]
@@ -168,22 +163,12 @@ std = [
 	"alloc",
 	"snafu/std",
 	"ed25519-dalek/alloc",
-	"hkdf/std",
-	"pbkdf2/std",
-	"pbkdf2/parallel",
-	"rand_core/std",
-	"aes-gcm/std",
+	"getrandom/std",
 	"strum/std",
 	"hex/std",
-	"sha2/asm",
-	"sha2/asm-aarch64",
-	"sha2/sha2-asm",
-	"sha3/asm",
 	"dep:chrono",
 	"dep:keetanetwork-error",
 	"keetanetwork-utils/std",
-	"aead?/std",
-	"rand?/std",
 ]
 alloc = []
 signature = ["dep:signature"]
@@ -193,7 +178,6 @@ encryption = [
 	"dep:cbc",
 	"dep:ctr",
 	"dep:hmac",
-	"dep:rand",
 	"dep:subtle",
 ]
 der = ["keetanetwork-asn1/der"]

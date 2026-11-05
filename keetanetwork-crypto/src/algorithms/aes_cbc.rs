@@ -5,7 +5,7 @@
 use alloc::vec::Vec;
 
 use aes::Aes256;
-use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cbc::cipher::{block_padding::Pkcs7, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 
 use crate::algorithms::aes_common::{ensure_key_size, prepend_iv, resolve_iv, split_iv};
@@ -50,7 +50,7 @@ impl SymmetricEncryption for Aes256Cbc {
 		let cipher = Aes256CbcEnc::new_from_slices(key, &iv_bytes)?;
 		// Encrypt with PKCS#7 padding
 		let plaintext = plaintext.as_ref();
-		let ciphertext = cipher.encrypt_padded_vec_mut::<Pkcs7>(plaintext);
+		let ciphertext = cipher.encrypt_padded_vec::<Pkcs7>(plaintext);
 
 		// Return IV + ciphertext
 		let result = prepend_iv(&iv_bytes, &ciphertext);
@@ -72,7 +72,7 @@ impl SymmetricEncryption for Aes256Cbc {
 		let cipher = Aes256CbcDec::new_from_slices(key, iv)?;
 
 		// Decrypt with PKCS#7 padding removal
-		let decrypted = cipher.decrypt_padded_vec_mut::<Pkcs7>(encrypted_data)?;
+		let decrypted = cipher.decrypt_padded_vec::<Pkcs7>(encrypted_data)?;
 		Ok(decrypted)
 	}
 

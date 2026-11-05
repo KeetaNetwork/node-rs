@@ -100,8 +100,8 @@ impl_variant_error_from!(CryptoError, {
 });
 
 #[cfg(feature = "encryption")]
-impl From<rand_core::OsError> for CryptoError {
-	fn from(error: rand_core::OsError) -> Self {
+impl From<getrandom::Error> for CryptoError {
+	fn from(error: getrandom::Error) -> Self {
 		CryptoError::InternalError { message: error.to_string() }
 	}
 }
@@ -111,7 +111,7 @@ impl_variant_error_from!(CryptoError, {
 	cbc::cipher::InvalidLength => InvalidKeySize,
 	cbc::cipher::inout::PadError => DecryptionFailed,
 	cbc::cipher::inout::NotEqualError => DecryptionFailed,
-	cbc::cipher::block_padding::UnpadError => DecryptionFailed,
+	cbc::cipher::block_padding::Error => DecryptionFailed,
 });
 
 #[cfg(feature = "encryption")]
@@ -190,7 +190,7 @@ mod tests {
 		test_cbc_error_conversions, CryptoError, [
 			cbc::cipher::inout::PadError,
 			cbc::cipher::inout::NotEqualError,
-			cbc::cipher::block_padding::UnpadError,
+			cbc::cipher::block_padding::Error,
 		]
 	}
 

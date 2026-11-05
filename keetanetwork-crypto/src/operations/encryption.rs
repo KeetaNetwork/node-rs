@@ -8,7 +8,8 @@ use alloc::vec::Vec;
 use crate::error::CryptoError;
 
 // Re-export key RustCrypto AEAD traits for easier use
-pub use aead::{Aead, AeadCore, AeadInPlace, KeyInit};
+#[allow(deprecated)]
+pub use aead::{Aead, AeadCore, AeadInOut, AeadInPlace, KeyInit};
 
 /// AEAD operations that extend RustCrypto's Aead trait.
 ///

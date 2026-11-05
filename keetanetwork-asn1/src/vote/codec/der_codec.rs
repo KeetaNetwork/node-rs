@@ -23,13 +23,13 @@ use super::VoteDecodeContext;
 use crate::Asn1Error;
 use crate::Asn1Time;
 
-const VERSION_TAG: TagNumber = TagNumber::N0;
-const EXTENSIONS_TAG: TagNumber = TagNumber::N3;
-const HASH_DATA_OUTER_TAG: TagNumber = TagNumber::N0;
-const FEE_OUTER_TAG: TagNumber = TagNumber::N0;
-const FEE_MULTIPLE_TAG: TagNumber = TagNumber::N0;
-const FEE_PAY_TO_TAG: TagNumber = TagNumber::N0;
-const FEE_TOKEN_TAG: TagNumber = TagNumber::N1;
+const VERSION_TAG: TagNumber = TagNumber(0);
+const EXTENSIONS_TAG: TagNumber = TagNumber(3);
+const HASH_DATA_OUTER_TAG: TagNumber = TagNumber(0);
+const FEE_OUTER_TAG: TagNumber = TagNumber(0);
+const FEE_MULTIPLE_TAG: TagNumber = TagNumber(0);
+const FEE_PAY_TO_TAG: TagNumber = TagNumber(0);
+const FEE_TOKEN_TAG: TagNumber = TagNumber(1);
 const VOTE_VERSION_VALUE: u8 = 2;
 
 // ---------------------------------------------------------------------------
@@ -650,7 +650,7 @@ fn read_set<'a>(reader: &mut SliceReader<'a>) -> Result<&'a [u8], Asn1Error> {
 }
 
 fn read_octet<'a>(reader: &mut SliceReader<'a>) -> Result<&'a [u8], Asn1Error> {
-	Ok(OctetStringRef::decode(reader)?.as_bytes())
+	Ok(<&OctetStringRef>::decode(reader)?.as_bytes())
 }
 
 fn read_bool(reader: &mut SliceReader<'_>) -> Result<bool, Asn1Error> {

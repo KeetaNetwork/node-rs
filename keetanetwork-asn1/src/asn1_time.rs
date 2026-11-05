@@ -151,9 +151,9 @@ mod der_impls {
 	impl EncodeValue for Asn1Time {
 		fn value_len(&self) -> der::Result<Length> {
 			let len = if self.0.timestamp_subsec_millis() == 0 {
-				TRANSPORT_LEN_PLAIN as u16
+				TRANSPORT_LEN_PLAIN as u32
 			} else {
-				TRANSPORT_LEN_FRACTIONAL as u16
+				TRANSPORT_LEN_FRACTIONAL as u32
 			};
 			Ok(Length::new(len))
 		}
@@ -164,8 +164,10 @@ mod der_impls {
 	}
 
 	impl<'a> DecodeValue<'a> for Asn1Time {
+		type Error = der::Error;
+
 		fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
-			let length = u32::from(header.length) as usize;
+			let length = u32::from(header.length()) as usize;
 			if length != TRANSPORT_LEN_PLAIN && length != TRANSPORT_LEN_FRACTIONAL {
 				return Err(der::Error::new(der::ErrorKind::DateTime, reader.position()));
 			}
