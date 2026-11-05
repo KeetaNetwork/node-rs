@@ -65,7 +65,7 @@ pub fn create_dn<S1: AsRef<str>, S2: AsRef<str>>(pairs: &[(S1, S2)]) -> Result<D
 			RelativeDistinguishedName::try_from(vec![attr]).or_invalid_certificate()
 		})
 		.collect::<Result<Vec<_>, _>>()
-		.map(RdnSequence)
+		.map(RdnSequence::from)
 }
 
 /// Generate a key identifier from a public key using SHA-3-256.
@@ -119,9 +119,9 @@ pub fn generate_key_identifier<T: AsRef<[u8]>>(public_key_bytes: T) -> Result<Ve
 /// ```
 #[cfg(feature = "serde")]
 pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
-	dn.0.iter()
+	dn.iter()
 		.flat_map(|rdn_set| {
-			rdn_set.0.iter().map(|attr| {
+			rdn_set.iter().map(|attr| {
 				let name = match attr.oid.to_string().as_str() {
 					oids::CN => "commonName".to_string(),
 					oids::C => "countryName".to_string(),
@@ -165,7 +165,7 @@ pub fn dn_to_name_value_pairs(dn: &DistinguishedName) -> Vec<NameValuePair> {
 /// ];
 ///
 /// let dn = name_value_pairs_to_dn(&pairs)?;
-/// assert_eq!(dn.0.len(), 2);
+/// assert_eq!(dn.len(), 2);
 /// # Ok(())
 /// # }
 /// # #[cfg(not(feature = "serde"))]
@@ -196,7 +196,7 @@ pub fn name_value_pairs_to_dn(pairs: &[NameValuePair]) -> Result<DistinguishedNa
 			RelativeDistinguishedName::try_from(vec![attr]).or_invalid_certificate()
 		})
 		.collect::<Result<Vec<_>, _>>()
-		.map(RdnSequence)
+		.map(RdnSequence::from)
 }
 
 /// Parse Subject Key Identifier from extension bytes.
@@ -249,18 +249,18 @@ pub fn parse_authority_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>
 
 	// Decode the SEQUENCE header
 	let sequence_header = Header::decode(&mut reader).ok()?;
-	if sequence_header.tag != Tag::Sequence {
+	if sequence_header.tag() != Tag::Sequence {
 		return None;
 	}
 
 	// Check if we have enough remaining bytes for the sequence content
 	let remaining_len = reader.remaining_len();
-	if remaining_len < sequence_header.length {
+	if remaining_len < sequence_header.length() {
 		return None;
 	}
 
 	// Read the sequence content bytes
-	let sequence_bytes = reader.read_slice(sequence_header.length).ok()?;
+	let sequence_bytes = reader.read_slice(sequence_header.length()).ok()?;
 	let mut content_reader = SliceReader::new(sequence_bytes).ok()?;
 
 	// Look for [0] IMPLICIT KeyIdentifier (tag 0x80)
@@ -268,7 +268,7 @@ pub fn parse_authority_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>
 		let element = Any::decode(&mut content_reader).ok()?;
 
 		// Check if this is a context-specific tag [0] (0x80)
-		if element.tag().number() == TagNumber::N0 && element.tag().is_context_specific() {
+		if element.tag().number() == TagNumber(0) && element.tag().is_context_specific() {
 			// For IMPLICIT tag, the content is directly the key identifier bytes
 			return Some(element.value().to_vec());
 		}
@@ -298,8 +298,8 @@ pub fn parse_authority_key_identifier(bytes: impl AsRef<[u8]>) -> Option<Vec<u8>
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn dn_to_string(dn: &DistinguishedName) -> String {
-	dn.0.iter()
-		.flat_map(|rdn| rdn.0.iter())
+	dn.iter()
+		.flat_map(|rdn| rdn.iter())
 		.map(|attr| {
 			// Try to decode as IA5String first, fall back to raw bytes if that fails
 			let value = if let Ok(ia5_string) = attr.value.decode_as::<Ia5String>() {
@@ -712,14 +712,13 @@ mod tests {
 
 			if should_succeed {
 				let dn = result?;
-				assert_eq!(dn.0.len(), expected_len, "Failed for pairs: {pairs:?}");
+				assert_eq!(dn.len(), expected_len, "Failed for pairs: {pairs:?}");
 
 				// Verify each attribute is correctly stored
 				for (i, (expected_oid, expected_value)) in pairs.iter().enumerate() {
-					let rdn = &dn.0[i];
+					let rdn = dn.iter().nth(i).expect("rdn present");
 					// Access the first attribute using iterator
 					let attr = rdn
-						.0
 						.iter()
 						.next()
 						.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
@@ -765,7 +764,7 @@ mod tests {
 
 		for (pairs, should_contain, should_not_contain) in test_cases {
 			let dn = if pairs.is_empty() {
-				RdnSequence(Vec::new())
+				RdnSequence::default()
 			} else {
 				create_dn(pairs)?
 			};
@@ -921,7 +920,7 @@ mod tests {
 	#[cfg(feature = "serde")]
 	fn test_dn_to_name_value_pairs() -> Result<(), CertificateError> {
 		// Test with empty DN
-		let empty_dn: DistinguishedName = RdnSequence(Vec::new());
+		let empty_dn: DistinguishedName = RdnSequence::default();
 		let empty_pairs = dn_to_name_value_pairs(&empty_dn);
 		assert_eq!(empty_pairs.len(), 0);
 
@@ -981,17 +980,16 @@ mod tests {
 		// Test with empty pairs
 		let empty_pairs: Vec<NameValuePair> = vec![];
 		let empty_dn = name_value_pairs_to_dn(&empty_pairs)?;
-		assert_eq!(empty_dn.0.len(), 0);
+		assert_eq!(empty_dn.len(), 0);
 
 		// Test with single pair using common name
 		let single_pairs = vec![NameValuePair { name: "commonName".to_string(), value: "example.com".to_string() }];
 		let single_dn = name_value_pairs_to_dn(&single_pairs)?;
-		assert_eq!(single_dn.0.len(), 1);
+		assert_eq!(single_dn.len(), 1);
 
-		let rdn = &single_dn.0[0];
+		let rdn = single_dn.iter().next().expect("rdn present");
 		// Access the first attribute using iterator
 		let attr = rdn
-			.0
 			.iter()
 			.next()
 			.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
@@ -1012,7 +1010,7 @@ mod tests {
 		];
 
 		let multi_dn = name_value_pairs_to_dn(&multi_pairs)?;
-		assert_eq!(multi_dn.0.len(), 7);
+		assert_eq!(multi_dn.len(), 7);
 
 		// Verify each attribute
 		let expected = [
@@ -1025,10 +1023,9 @@ mod tests {
 			(oids::EMAIL_ADDRESS, "admin@example.com"),
 		];
 		for (i, (expected_oid, expected_value)) in expected.iter().enumerate() {
-			let rdn = &multi_dn.0[i];
+			let rdn = multi_dn.iter().nth(i).expect("rdn present");
 			// Access the first attribute using iterator
 			let attr = rdn
-				.0
 				.iter()
 				.next()
 				.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
@@ -1041,11 +1038,10 @@ mod tests {
 		// Test with direct OID
 		let oid_pairs = vec![NameValuePair { name: oids::CN.to_string(), value: "direct_oid.com".to_string() }];
 		let oid_dn = name_value_pairs_to_dn(&oid_pairs)?;
-		assert_eq!(oid_dn.0.len(), 1);
+		assert_eq!(oid_dn.len(), 1);
 
-		let rdn = &oid_dn.0[0];
+		let rdn = oid_dn.iter().next().expect("rdn present");
 		let attr = rdn
-			.0
 			.iter()
 			.next()
 			.ok_or_else(|| CertificateError::ValidationFailed { reason: "no attribute".to_string() })?;
@@ -1077,12 +1073,12 @@ mod tests {
 		let original_dn = create_dn(original_pairs)?;
 		let name_value_pairs = dn_to_name_value_pairs(&original_dn);
 		let reconstructed_dn = name_value_pairs_to_dn(&name_value_pairs)?;
-		assert_eq!(original_dn.0.len(), reconstructed_dn.0.len());
+		assert_eq!(original_dn.len(), reconstructed_dn.len());
 
 		// Each attribute should match
-		for (original_rdn, reconstructed_rdn) in original_dn.0.iter().zip(reconstructed_dn.0.iter()) {
-			assert_eq!(original_rdn.0.len(), reconstructed_rdn.0.len());
-			for (original_attr, reconstructed_attr) in original_rdn.0.iter().zip(reconstructed_rdn.0.iter()) {
+		for (original_rdn, reconstructed_rdn) in original_dn.iter().zip(reconstructed_dn.iter()) {
+			assert_eq!(original_rdn.len(), reconstructed_rdn.len());
+			for (original_attr, reconstructed_attr) in original_rdn.iter().zip(reconstructed_rdn.iter()) {
 				assert_eq!(original_attr.oid, reconstructed_attr.oid);
 				assert_eq!(original_attr.value.value(), reconstructed_attr.value.value());
 			}

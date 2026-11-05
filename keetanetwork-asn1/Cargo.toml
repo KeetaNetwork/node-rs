@@ -12,7 +12,7 @@ description = "ASN.1 definitions and utilities for Keetanetwork"
 path = "src/lib.rs"
 
 [dependencies.spki]
-version = "0.7.3"
+version = "0.8.1"
 default-features = false
 features = ["alloc"]
 
@@ -72,7 +72,6 @@ std = [
 	"hex/std",
 	"der/std",
 	"rasn?/std",
-	"const-oid?/std",
 	"spki/std",
 	"chrono?/std",
 	"chrono?/clock",

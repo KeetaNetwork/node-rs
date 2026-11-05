@@ -3,8 +3,6 @@
 
 use alloc::vec::Vec;
 
-use rand_core::{OsRng, TryRngCore};
-
 use crate::error::CryptoError;
 
 /// AES block/IV size in bytes.
@@ -31,7 +29,7 @@ pub(crate) fn resolve_iv(iv: Option<&[u8]>) -> Result<[u8; IV_SIZE], CryptoError
 
 			iv_array.copy_from_slice(iv_slice);
 		}
-		None => OsRng.try_fill_bytes(&mut iv_array)?,
+		None => getrandom::fill(&mut iv_array)?,
 	}
 
 	Ok(iv_array)

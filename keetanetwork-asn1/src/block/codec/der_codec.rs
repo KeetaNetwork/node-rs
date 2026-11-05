@@ -18,11 +18,11 @@ use num_bigint::BigInt;
 // --- Transport constants ------------------------------------------------------
 
 /// Context tag number of the V2 block wrapper.
-const V2_TAG: TagNumber = TagNumber::N1;
+const V2_TAG: TagNumber = TagNumber(1);
 /// Context tag of a certificate principal in MODIFY_PERMISSIONS.
-const CERTIFICATE_PRINCIPAL_TAG: TagNumber = TagNumber::N1;
+const CERTIFICATE_PRINCIPAL_TAG: TagNumber = TagNumber(1);
 /// Context tag of multisig create arguments (the MULTISIG key type value).
-const MULTISIG_ARGUMENTS_TAG: TagNumber = TagNumber::N7;
+const MULTISIG_ARGUMENTS_TAG: TagNumber = TagNumber(7);
 
 fn unexpected_tag(actual: Tag) -> Asn1Error {
 	Asn1Error::DerError { source: ::der::Error::new(ErrorKind::TagUnexpected { expected: None, actual }, Length::ZERO) }
@@ -77,7 +77,7 @@ fn wrap_context(number: TagNumber, content: &[u8]) -> Result<Vec<u8>, Asn1Error>
 // --- Decoding helpers ----------------------------------------------------
 
 fn read_octet<'a>(reader: &mut SliceReader<'a>) -> Result<&'a [u8], Asn1Error> {
-	Ok(OctetStringRef::decode(reader)?.as_bytes())
+	Ok(<&OctetStringRef>::decode(reader)?.as_bytes())
 }
 
 fn read_bigint(reader: &mut SliceReader<'_>) -> Result<BigInt, Asn1Error> {
@@ -515,15 +515,15 @@ fn decode_operations(reader: &mut SliceReader<'_>) -> Result<Vec<Operation>, Asn
 
 fn operation_tag(operation: &Operation) -> TagNumber {
 	match operation {
-		Operation::Send(_) => TagNumber::N0,
-		Operation::SetRep(_) => TagNumber::N1,
-		Operation::SetInfo(_) => TagNumber::N2,
-		Operation::ModifyPermissions(_) => TagNumber::N3,
-		Operation::CreateIdentifier(_) => TagNumber::N4,
-		Operation::TokenAdminSupply(_) => TagNumber::N5,
-		Operation::TokenAdminModifyBalance(_) => TagNumber::N6,
-		Operation::Receive(_) => TagNumber::N7,
-		Operation::ManageCertificate(_) => TagNumber::N8,
+		Operation::Send(_) => TagNumber(0),
+		Operation::SetRep(_) => TagNumber(1),
+		Operation::SetInfo(_) => TagNumber(2),
+		Operation::ModifyPermissions(_) => TagNumber(3),
+		Operation::CreateIdentifier(_) => TagNumber(4),
+		Operation::TokenAdminSupply(_) => TagNumber(5),
+		Operation::TokenAdminModifyBalance(_) => TagNumber(6),
+		Operation::Receive(_) => TagNumber(7),
+		Operation::ManageCertificate(_) => TagNumber(8),
 	}
 }
 

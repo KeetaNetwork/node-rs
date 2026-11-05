@@ -28,9 +28,8 @@ use der::asn1::{ObjectIdentifier, OctetString};
 use der::{Decode, Encode, Sequence, ValueOrd};
 use keetanetwork_asn1::SubjectPublicKeyInfo;
 use keetanetwork_crypto::prelude::HashAlgorithm;
-use x509_cert::certificate::{CertificateInner, Profile, TbsCertificateInner};
-use x509_cert::ext::Extension as X509Extension;
-use x509_cert::name::{DistinguishedName, Name};
+use x509_cert::certificate::{CertificateInner, Profile, Raw, TbsCertificateInner};
+use x509_cert::name::{DistinguishedName, RdnSequence};
 use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::{AlgorithmIdentifierOwned, SubjectPublicKeyInfoOwned};
 use x509_cert::time::Validity;
@@ -283,8 +282,12 @@ pub struct TbsCertificate {
 	pub serial_number: SerialNumber,
 	pub signature_algorithm: AlgorithmIdentifierOwned,
 	pub issuer: DistinguishedName,
-	pub validity: Validity,
-	pub subject: Name,
+	/// Encoded with the `Raw` profile so times keep the exact `Time` variant
+	/// they were built or decoded with. The `Rfc5280` profile in x509-cert 0.3
+	/// rewrites pre-2050 `GeneralizedTime` to `UTCTime` on encode, which would
+	/// change certificate bytes (and the signed TBS) compared with earlier releases.
+	pub validity: Validity<Raw>,
+	pub subject: DistinguishedName,
 	pub subject_public_key_info: SubjectPublicKeyInfoOwned,
 	#[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
 	pub issuer_unique_id: Option<der::asn1::BitString>,
@@ -298,25 +301,26 @@ impl<P: Profile> TryFrom<TbsCertificateInner<P>> for TbsCertificate {
 	type Error = CertificateError;
 
 	fn try_from(tbs: TbsCertificateInner<P>) -> Result<Self, Self::Error> {
-		let extensions = match tbs.extensions {
+		let extensions = match tbs.extensions() {
 			Some(ext_vec) => {
 				let converted: Result<Vec<Extension>, CertificateError> =
-					ext_vec.into_iter().map(Extension::try_from).collect();
+					ext_vec.iter().cloned().map(Extension::try_from).collect();
 				Some(converted?)
 			}
 			None => None,
 		};
+		let validity = tbs.validity();
 
 		Ok(Self {
-			version: tbs.version,
-			serial_number: SerialNumber::new(tbs.serial_number.as_bytes())?,
-			signature_algorithm: tbs.signature,
-			issuer: tbs.issuer,
-			validity: tbs.validity,
-			subject: tbs.subject,
-			subject_public_key_info: tbs.subject_public_key_info,
-			issuer_unique_id: tbs.issuer_unique_id,
-			subject_unique_id: tbs.subject_unique_id,
+			version: tbs.version(),
+			serial_number: SerialNumber::new(tbs.serial_number().as_bytes())?,
+			signature_algorithm: tbs.signature().clone(),
+			issuer: RdnSequence::from(tbs.issuer().clone()),
+			validity: Validity::new(validity.not_before, validity.not_after),
+			subject: RdnSequence::from(tbs.subject().clone()),
+			subject_public_key_info: tbs.subject_public_key_info().clone(),
+			issuer_unique_id: tbs.issuer_unique_id().clone(),
+			subject_unique_id: tbs.subject_unique_id().clone(),
 			extensions,
 		})
 	}
@@ -326,27 +330,9 @@ impl<P: Profile> TryFrom<TbsCertificate> for TbsCertificateInner<P> {
 	type Error = CertificateError;
 
 	fn try_from(tbs: TbsCertificate) -> Result<Self, Self::Error> {
-		let extensions = match tbs.extensions {
-			Some(ext_vec) => {
-				let converted: Result<Vec<X509Extension>, CertificateError> =
-					ext_vec.into_iter().map(X509Extension::try_from).collect();
-				Some(converted?)
-			}
-			None => None,
-		};
-
-		Ok(Self {
-			version: tbs.version,
-			serial_number: SerialNumber::new(tbs.serial_number.as_bytes())?,
-			signature: tbs.signature_algorithm,
-			issuer: tbs.issuer,
-			validity: tbs.validity,
-			subject: tbs.subject,
-			subject_public_key_info: tbs.subject_public_key_info,
-			issuer_unique_id: tbs.issuer_unique_id,
-			subject_unique_id: tbs.subject_unique_id,
-			extensions,
-		})
+		// x509-cert 0.3 keeps `TbsCertificateInner` fields private, so it can
+		// only be built by decoding. Both types share the RFC 5280 encoding.
+		Ok(Self::from_der(&tbs.to_der()?)?)
 	}
 }
 
@@ -1079,7 +1065,8 @@ impl Certificate {
 
 	/// Get the validity period as chrono DateTimes
 	pub fn to_validity_period(&self) -> Validity {
-		self.tbs_certificate.validity
+		let validity = self.tbs_certificate.validity;
+		Validity::new(validity.not_before, validity.not_after)
 	}
 
 	/// Get the not_before time as chrono DateTime
@@ -1666,9 +1653,9 @@ impl<P: Profile> TryFrom<CertificateInner<P>> for Certificate {
 
 	fn try_from(cert: CertificateInner<P>) -> Result<Self, Self::Error> {
 		Ok(Self {
-			tbs_certificate: TbsCertificate::try_from(cert.tbs_certificate)?,
-			signature_algorithm: cert.signature_algorithm,
-			signature: cert.signature,
+			tbs_certificate: TbsCertificate::try_from(cert.tbs_certificate().clone())?,
+			signature_algorithm: cert.signature_algorithm().clone(),
+			signature: cert.signature().clone(),
 		})
 	}
 }
@@ -1677,11 +1664,9 @@ impl<P: Profile> TryFrom<Certificate> for CertificateInner<P> {
 	type Error = CertificateError;
 
 	fn try_from(cert: Certificate) -> Result<Self, Self::Error> {
-		Ok(Self {
-			tbs_certificate: TbsCertificateInner::try_from(cert.tbs_certificate)?,
-			signature_algorithm: cert.signature_algorithm,
-			signature: cert.signature,
-		})
+		// x509-cert 0.3 keeps `CertificateInner` fields private, so it can
+		// only be built by decoding. Both types share the RFC 5280 encoding.
+		Ok(Self::from_der(&cert.to_der()?)?)
 	}
 }
 
@@ -1822,6 +1807,7 @@ mod tests {
 	use keetanetwork_asn1::oids;
 	use keetanetwork_asn1::AlgorithmIdentifier;
 	use keetanetwork_asn1::BitString;
+	use x509_cert::ext::Extension as X509Extension;
 	use x509_cert::name::RdnSequence;
 	use x509_cert::serial_number::SerialNumber;
 
@@ -2981,9 +2967,9 @@ mod tests {
 
 		// Test DN validation error cases
 		let dn_test_cases = [
-			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")])?, Some(false)),
-			(RdnSequence(Vec::new()), utils::create_dn(&[(oids::CN, "Test Issuer")])?, None),
-			(utils::create_dn(&[(oids::CN, "Test Subject")])?, RdnSequence(Vec::new()), None),
+			(RdnSequence::default(), utils::create_dn(&[(oids::CN, "Test Issuer")])?, Some(false)),
+			(RdnSequence::default(), utils::create_dn(&[(oids::CN, "Test Issuer")])?, None),
+			(utils::create_dn(&[(oids::CN, "Test Subject")])?, RdnSequence::default(), None),
 		];
 
 		for (subject, issuer, san_critical) in dn_test_cases {

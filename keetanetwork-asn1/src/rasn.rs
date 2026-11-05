@@ -186,9 +186,11 @@ impl_try_from_rasn_encode!(Extension);
 macro_rules! impl_der_bridge {
 	($type:ty) => {
 		impl<'a> DecodeValue<'a> for $type {
+			type Error = der::Error;
+
 			fn decode_value<R: Reader<'a>>(reader: &mut R, header: Header) -> der::Result<Self> {
 				// Read the content bytes
-				let content_bytes = reader.read_slice(header.length)?;
+				let content_bytes = reader.read_slice(header.length())?;
 				// Reconstruct the complete DER structure with the SEQUENCE tag and length
 				let mut der_bytes = Vec::new();
 
@@ -196,7 +198,7 @@ macro_rules! impl_der_bridge {
 				der_bytes.push(0x30);
 
 				// Length encoding
-				let length_value = usize::try_from(header.length).map_err(|_| der::ErrorKind::Failed)?;
+				let length_value = usize::try_from(header.length()).map_err(|_| der::ErrorKind::Failed)?;
 				if length_value < 0x80 {
 					der_bytes.push(length_value as u8);
 				} else {

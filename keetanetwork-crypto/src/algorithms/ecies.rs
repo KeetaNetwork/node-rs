@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use core::sync::atomic::{fence, Ordering};
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
@@ -153,7 +153,7 @@ impl Ecies for EciesSecp256k1 {
 		cipher_with_iv.extend_from_slice(&ciphertext_only);
 
 		// Calculate HMAC-SHA256 over cipher_with_iv (IV + ciphertext)
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).or_encryption_failed()?;
+		let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&mac_key).or_encryption_failed()?;
 		mac.update(&cipher_with_iv);
 		let hmac_result = mac.finalize().into_bytes();
 
@@ -192,7 +192,7 @@ impl Ecies for EciesSecp256k1 {
 		let (encryption_key, mac_key) = Self::derive_keys(&shared_secret)?;
 
 		// Verify HMAC before decryption (HMAC is over IV + ciphertext)
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&mac_key).or_decryption_failed()?;
+		let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&mac_key).or_decryption_failed()?;
 		mac.update(cipher_with_iv);
 
 		let computed_hmac = mac.finalize().into_bytes();
@@ -200,7 +200,7 @@ impl Ecies for EciesSecp256k1 {
 		// Constant-time operation memory fence
 		fence(Ordering::SeqCst);
 
-		let hmac_matches = computed_hmac.ct_eq(received_hmac);
+		let hmac_matches = computed_hmac.as_slice().ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
 			return Err(CryptoError::DecryptionFailed);
 		}
@@ -262,7 +262,7 @@ impl Ecies for EciesX25519 {
 		let ephemeral_public_bytes: Vec<u8> = ephemeral_public.into();
 
 		// Calculate HMAC-SHA256 over iv + ephemeral_public_key + ciphertext
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(mac_key).or_encryption_failed()?;
+		let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(mac_key).or_encryption_failed()?;
 		mac.update(&iv);
 		mac.update(&ephemeral_public_bytes);
 		mac.update(ciphertext);
@@ -308,7 +308,7 @@ impl Ecies for EciesX25519 {
 		let mac_key = &sha512_hash[32..]; // Remaining bytes
 
 		// Verify HMAC before decryption (HMAC is over iv + ephemeral_public_key + ciphertext)
-		let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(mac_key).or_decryption_failed()?;
+		let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(mac_key).or_decryption_failed()?;
 		mac.update(iv);
 		mac.update(ephemeral_public_bytes);
 		mac.update(encrypted_data);
@@ -317,7 +317,7 @@ impl Ecies for EciesX25519 {
 		fence(Ordering::SeqCst);
 
 		let computed_mac = mac.finalize().into_bytes();
-		let mac_matches = computed_mac.ct_eq(received_mac);
+		let mac_matches = computed_mac.as_slice().ct_eq(received_mac);
 		if mac_matches.unwrap_u8() == 0 {
 			return Err(CryptoError::DecryptionFailed);
 		}
@@ -379,7 +379,7 @@ impl Ecies for EciesSecp256r1 {
 		let ciphertext_only = &iv_and_ciphertext[16..];
 
 		// Calculate HMAC-SHA512 over the ciphertext only
-		let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).or_encryption_failed()?;
+		let mut mac = <Hmac<sha2::Sha512> as KeyInit>::new_from_slice(&mac_key).or_encryption_failed()?;
 		mac.update(ciphertext_only);
 		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
@@ -426,7 +426,7 @@ impl Ecies for EciesSecp256r1 {
 		let (encryption_key, mac_key) = Self::derive_keys(ephemeral_public_bytes, shared_secret_x)?;
 
 		// Verify HMAC before decryption (HMAC is over ciphertext + fixed IV length value)
-		let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(&mac_key).or_decryption_failed()?;
+		let mut mac = <Hmac<sha2::Sha512> as KeyInit>::new_from_slice(&mac_key).or_decryption_failed()?;
 		mac.update(encrypted_data);
 		// Add the fixed IV length value (padded to 16 hex chars = 8 bytes of zeros)
 		mac.update(&[0u8; 8]); // "0000000000000000" as 8 zero bytes
@@ -435,7 +435,7 @@ impl Ecies for EciesSecp256r1 {
 		// Constant-time operation memory fence
 		fence(Ordering::SeqCst);
 
-		let hmac_matches = computed_hmac.ct_eq(received_hmac);
+		let hmac_matches = computed_hmac.as_slice().ct_eq(received_hmac);
 		if hmac_matches.unwrap_u8() == 0 {
 			return Err(CryptoError::DecryptionFailed);
 		}

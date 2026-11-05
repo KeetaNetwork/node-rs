@@ -21,4 +21,5 @@ pub use signature::{
 pub use signature::{DigestSigner, DigestVerifier, RandomizedSigner, SignatureError, Signer, Verifier};
 
 #[cfg(feature = "encryption")]
-pub use encryption::{Aead, AeadCore, AeadInPlace, KeyInit};
+#[allow(deprecated)]
+pub use encryption::{Aead, AeadCore, AeadInOut, AeadInPlace, KeyInit};

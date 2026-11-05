@@ -2,9 +2,8 @@
 //!
 //! This module provides AES-GCM AEAD.
 
-use alloc::vec::Vec;
-
-use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+use aes_gcm::aead::inout::InOutBuf;
+use aes_gcm::aead::{AeadCore, AeadInOut, Generate, KeyInit, Tag, TagPosition};
 use aes_gcm::{Aes256Gcm as AesGcmCipher, Key};
 
 // Re-export the Nonce type for convenience
@@ -28,8 +27,8 @@ impl Aes256Gcm {
 			return Err(CryptoError::InvalidKeySize);
 		}
 
-		let key = Key::<AesGcmCipher>::from_slice(key);
-		let cipher = AesGcmCipher::new(key);
+		let key = Key::<AesGcmCipher>::try_from(key).map_err(|_| CryptoError::InvalidKeySize)?;
+		let cipher = AesGcmCipher::new(&key);
 
 		Ok(Self { cipher })
 	}
@@ -50,29 +49,35 @@ impl Aes256Gcm {
 	}
 }
 
-// Implement the underlying AEAD traits by delegating to the inner cipher
-impl Aead for Aes256Gcm {
-	fn encrypt<'msg, 'aad>(
+// Implement the underlying AEAD traits by delegating to the inner cipher.
+// `Aead` (and `AeadInPlace`) come from aead's blanket impls over `AeadInOut`.
+impl AeadInOut for Aes256Gcm {
+	fn encrypt_inout_detached(
 		&self,
 		nonce: &aes_gcm::aead::Nonce<Self>,
-		plaintext: impl Into<aes_gcm::aead::Payload<'msg, 'aad>>,
-	) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-		self.cipher.encrypt(nonce, plaintext)
+		associated_data: &[u8],
+		buffer: InOutBuf<'_, '_, u8>,
+	) -> Result<Tag<Self>, aes_gcm::aead::Error> {
+		self.cipher
+			.encrypt_inout_detached(nonce, associated_data, buffer)
 	}
 
-	fn decrypt<'msg, 'aad>(
+	fn decrypt_inout_detached(
 		&self,
 		nonce: &aes_gcm::aead::Nonce<Self>,
-		ciphertext: impl Into<aes_gcm::aead::Payload<'msg, 'aad>>,
-	) -> Result<Vec<u8>, aes_gcm::aead::Error> {
-		self.cipher.decrypt(nonce, ciphertext)
+		associated_data: &[u8],
+		buffer: InOutBuf<'_, '_, u8>,
+		tag: &Tag<Self>,
+	) -> Result<(), aes_gcm::aead::Error> {
+		self.cipher
+			.decrypt_inout_detached(nonce, associated_data, buffer, tag)
 	}
 }
 
 impl AeadCore for Aes256Gcm {
 	type NonceSize = <AesGcmCipher as AeadCore>::NonceSize;
 	type TagSize = <AesGcmCipher as AeadCore>::TagSize;
-	type CiphertextOverhead = <AesGcmCipher as AeadCore>::CiphertextOverhead;
+	const TAG_POSITION: TagPosition = <AesGcmCipher as AeadCore>::TAG_POSITION;
 }
 
 impl CryptoAead for Aes256Gcm {}
@@ -81,7 +86,7 @@ impl NonceGeneration for Aes256Gcm {
 	type Nonce = aes_gcm::aead::Nonce<Self>;
 
 	fn generate_nonce() -> Self::Nonce {
-		AesGcmCipher::generate_nonce(&mut OsRng)
+		aes_gcm::aead::Nonce::<Self>::generate()
 	}
 
 	fn nonce_size() -> usize {
@@ -93,13 +98,14 @@ impl NonceGeneration for Aes256Gcm {
 mod tests {
 	use super::*;
 	use crate::operations::encryption::NonceGeneration;
+	use aes_gcm::aead::Aead;
 
 	#[test]
 	fn test_aes_256_gcm_basic() -> Result<(), CryptoError> {
 		let key = [0x42u8; 32]; // 256-bit key
 		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"Hello, AES-GCM world!";
-		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
+		let nonce = aes_gcm::Nonce::generate();
 
 		// Test encryption
 		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;
@@ -138,8 +144,8 @@ mod tests {
 		let plaintext = b"Same plaintext";
 
 		// Generate two different nonces
-		let nonce1 = AesGcmCipher::generate_nonce(&mut OsRng);
-		let nonce2 = AesGcmCipher::generate_nonce(&mut OsRng);
+		let nonce1 = aes_gcm::Nonce::generate();
+		let nonce2 = aes_gcm::Nonce::generate();
 
 		// Encrypt the same plaintext with different nonces
 		// Should be different due to different nonces
@@ -161,7 +167,7 @@ mod tests {
 		let key = [0x42u8; 32];
 		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"Authenticated message";
-		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
+		let nonce = aes_gcm::Nonce::generate();
 
 		// Encrypt data
 		let mut ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;
@@ -182,7 +188,7 @@ mod tests {
 		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"Secret message";
 		let aad = b"additional data";
-		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
+		let nonce = aes_gcm::Nonce::generate();
 
 		// Create payload with AAD
 		let payload = aes_gcm::aead::Payload { msg: plaintext.as_ref(), aad: aad.as_ref() };
@@ -209,7 +215,7 @@ mod tests {
 		let key = [0x42u8; 32];
 		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = b"";
-		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
+		let nonce = aes_gcm::Nonce::generate();
 
 		// Should handle empty plaintext correctly
 		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;
@@ -226,7 +232,7 @@ mod tests {
 		let key = [0x42u8; 32];
 		let aes_gcm = Aes256Gcm::new(key)?;
 		let plaintext = vec![0x55u8; 8192]; // 8KB of data
-		let nonce = AesGcmCipher::generate_nonce(&mut OsRng);
+		let nonce = aes_gcm::Nonce::generate();
 
 		// Should handle large data efficiently
 		let ciphertext = aes_gcm.encrypt(&nonce, plaintext.as_ref())?;

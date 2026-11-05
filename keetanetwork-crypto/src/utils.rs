@@ -8,7 +8,6 @@ use core::sync::atomic::{fence, Ordering};
 
 use bip39_dict::DefaultDictionary;
 use pbkdf2;
-use rand_core::TryRngCore;
 use secrecy::SecretBox;
 use zeroize::Zeroize;
 
@@ -149,8 +148,7 @@ pub fn generate_random_passphrase(
 	let mut passphrase = Vec::with_capacity(24);
 	let mut random_indices = [0u32; 24];
 
-	rand_core::OsRng
-		.try_fill_bytes(unsafe { from_raw_parts_mut(random_indices.as_mut_ptr() as *mut u8, size_of::<[u32; 24]>()) })
+	getrandom::fill(unsafe { from_raw_parts_mut(random_indices.as_mut_ptr() as *mut u8, size_of::<[u32; 24]>()) })
 		.map_err(|_| create_rng_error())?;
 
 	fence(Ordering::SeqCst);
@@ -187,9 +185,7 @@ pub fn generate_random_seed() -> Result<SecretBox<[u8; 32]>, CryptoError> {
 pub fn generate_random_bytes<const N: usize>() -> Result<[u8; N], CryptoError> {
 	let mut bytes = [0u8; N];
 
-	rand_core::OsRng
-		.try_fill_bytes(&mut bytes)
-		.map_err(|_| create_rng_error())?;
+	getrandom::fill(&mut bytes).map_err(|_| create_rng_error())?;
 
 	Ok(bytes)
 }

@@ -13,9 +13,10 @@ path = "src/lib.rs"
 
 # X.509 certificate parsing
 [dependencies.x509-cert]
-version = "0.2.5"
+version = "0.3.0"
 default-features = false
-features = ["pem"]
+# `hazmat` provides the `Raw` profile used to keep validity time encodings unchanged.
+features = ["pem", "hazmat"]
 
 # ASN.1 and DER encoding
 [dependencies.der]
@@ -66,8 +67,8 @@ keetanetwork-asn1 = { workspace = true }
 keetanetwork-account = { workspace = true }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 chrono = { workspace = true, features = ["wasmbind"] }
 
 [features]

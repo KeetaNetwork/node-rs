@@ -2237,10 +2237,7 @@ impl CertificateBuilder {
 				parameters: None,
 			},
 			issuer: issuer_dn.clone(),
-			validity: Validity {
-				not_before: der_time_from_datetime(valid_from)?,
-				not_after: der_time_from_datetime(valid_to)?,
-			},
+			validity: Validity::new(der_time_from_datetime(valid_from)?, der_time_from_datetime(valid_to)?),
 			subject: subject_dn.clone(),
 			subject_public_key_info: subject_public_key,
 			issuer_unique_id: None,
