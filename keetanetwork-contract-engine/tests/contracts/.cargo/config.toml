@@ -1,0 +1,9 @@
+# Flags every contract build needs. See the engine README (finding 2).
+[target.wasm32-unknown-unknown]
+rustflags = [
+	# Rust 1.96 stopped linking wasm with `--allow-undefined`. cosmwasm-std
+	# declares its host functions (`db_read`, `addr_validate`, …) as plain
+	# `extern "C"` items without `#[link(wasm_import_module = "env")]`, so
+	# they must be allowed to stay undefined and become imports.
+	"-C", "link-arg=--allow-undefined",
+]

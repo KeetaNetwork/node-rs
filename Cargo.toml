@@ -3,6 +3,8 @@ resolver = "2"
 exclude = [
 	# wasmtime host smoke tests
 	"keetanetwork-client-wasi/host-tests",
+	# Example contracts: a separate wasm32 workspace built by the engine tests
+	"keetanetwork-contract-engine/tests/contracts",
 ]
 members = [
 	"keetanetwork-account",
@@ -19,6 +21,8 @@ members = [
 	"keetanetwork-bindings",
 	"keetanetwork-client-wasm",
 	"keetanetwork-client-wasi",
+	"keetanetwork-contract-std",
+	"keetanetwork-contract-engine",
 ]
 
 [workspace.package]
@@ -196,6 +200,11 @@ default-features = false
 [workspace.dependencies.keetanetwork-client-wasm]
 version = "0.5.2"
 path = "keetanetwork-client-wasm"
+default-features = false
+
+[workspace.dependencies.keetanetwork-contract-std]
+version = "0.1.0"
+path = "keetanetwork-contract-std"
 default-features = false
 
 [profile.dev]

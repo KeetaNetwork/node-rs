@@ -1,0 +1,38 @@
+# Example contracts for the contract engine spike.
+#
+# This is a separate workspace because it only builds for
+# `wasm32-unknown-unknown`. The engine's integration tests build it on demand;
+# to build by hand:
+#
+#     cargo build --release --locked --target wasm32-unknown-unknown
+#
+# Target flags are in `.cargo/config.toml`.
+[workspace]
+resolver = "2"
+members = ["cw20-token", "keeta-escrow", "keeta-faucet"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+cosmwasm-std = "2.2"
+cw-storage-plus = "2.0"
+cw20 = "2.0"
+cw20-base = { version = "2.0", features = ["library"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+keetanetwork-contract-std = { path = "../../../keetanetwork-contract-std", features = ["cosmwasm"] }
+
+# The settings CosmWasm recommends for deterministic, compact contracts.
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = "abort"
+incremental = false
+overflow-checks = true
