@@ -1607,8 +1607,9 @@ impl CertificateBuilder {
 	///     0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10,
 	///     0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00,
 	///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	/// ]);
-	/// let large_bytes = &large_serial.to_be_bytes()[0..20]; // Only use first 20 bytes
+	/// ].into());
+	/// let encoded_serial = large_serial.to_be_bytes();
+	/// let large_bytes = &encoded_serial.as_ref()[0..20]; // Only use first 20 bytes
 	/// let builder = CertificateBuilder::new()
 	///     .with_serial_number(SerialNumber::new(large_bytes)?);
 	/// # Ok::<(), Box<dyn std::error::Error>>(())
