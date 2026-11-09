@@ -1,5 +1,22 @@
 import Foundation
 
+struct Fixture: Decodable {
+	let message: String
+	let vectors: [Vector]
+}
+
+struct Vector: Decodable {
+	let phrase: String
+	let accounts: [AccountVector]
+}
+
+struct AccountVector: Decodable {
+	let index: UInt32
+	let publicKey: String
+	let signature: String
+	let ciphertext: String
+}
+
 func check(_ condition: Bool, _ description: String) {
 	if !condition {
 		print("FAILED: \(description)")
@@ -8,29 +25,44 @@ func check(_ condition: Bool, _ description: String) {
 	print("ok: \(description)")
 }
 
-let webPhrase = Array(repeating: "abandon", count: 23).joined(separator: " ") + " art"
-let webPublicKey = "keeta_aabienrwknkyqfrfufv7hyrduri3ctebcu6r4bej6bicpuvhdzpowydjkvcp5ni"
-let webSignature = "7ab82fe1039be1c222c309175400334c4c3e26d7ceb345d747758bc760cec61f072be40975f2c79a55081947b6d81cd0ba4e598b26ac1accd4e5ae10406e86b6"
-let message = Data("keeta mobile prototype vector".utf8)
+func bytes(hex: String) -> Data {
+	var data = Data()
+	var position = hex.startIndex
+	while position < hex.endIndex {
+		let next = hex.index(position, offsetBy: 2)
+		data.append(UInt8(hex[position..<next], radix: 16)!)
+		position = next
+	}
+	return data
+}
 
-let wallet = try MobileWallet.fromPhraseBytes(phrase: Data(webPhrase.utf8))
-check(try wallet.publicKey(index: 0) == webPublicKey, "public key matches the web wallet")
+let fixturePath = CommandLine.arguments[1]
+let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: URL(fileURLWithPath: fixturePath)))
+let message = bytes(hex: fixture.message)
 
-let signature = try wallet.sign(index: 0, message: message)
-let signatureHex = signature.map { String(format: "%02x", $0) }.joined()
-check(signatureHex == webSignature, "signature matches the web wallet")
-check(try verifySignature(publicKey: webPublicKey, message: message, signature: signature), "signature verifies")
+for (vectorIndex, vector) in fixture.vectors.enumerated() {
+	let wallet = try MobileWallet.fromPhraseBytes(phrase: Data(vector.phrase.utf8))
+	for account in vector.accounts {
+		let name = "vector \(vectorIndex) account \(account.index)"
+		let webSignature = bytes(hex: account.signature)
+		check(try wallet.publicKey(index: account.index) == account.publicKey, "\(name) public key matches the web wallet")
+		check(try wallet.sign(index: account.index, message: message) == webSignature, "\(name) signature matches the web wallet")
+		check(try verifySignature(publicKey: account.publicKey, message: message, signature: webSignature), "\(name) signature verifies")
+		check(try wallet.decrypt(index: account.index, ciphertext: bytes(hex: account.ciphertext)) == message, "\(name) web ciphertext decrypts")
+	}
+}
 
 let generated = try generatePhraseBytes()
 let generatedWallet = try MobileWallet.fromPhraseBytes(phrase: generated)
 check(try generatedWallet.publicKey(index: 0).hasPrefix("keeta_"), "generated phrase opens a wallet")
 
+let firstVector = fixture.vectors[0]
 let draft = PhraseDraft()
-for (index, word) in webPhrase.split(separator: " ").enumerated() {
+for (index, word) in firstVector.phrase.split(separator: " ").enumerated() {
 	try draft.setWord(index: UInt32(index), word: Data(word.utf8))
 }
 check(draft.status() == .valid, "draft reports a valid phrase")
-check(try draft.openWallet().publicKey(index: 0) == webPublicKey, "draft opens the web wallet")
+check(try draft.openWallet().publicKey(index: 0) == firstVector.accounts[0].publicKey, "draft opens the web wallet")
 
 do {
 	_ = try MobileWallet.fromPhraseBytes(phrase: Data("not a phrase".utf8))
@@ -38,10 +70,3 @@ do {
 } catch WalletError.InvalidPhrase {
 	check(true, "invalid phrase is rejected")
 }
-
-var start = Date()
-_ = try MobileWallet.fromPhraseBytes(phrase: Data(webPhrase.utf8))
-print("wallet open: \(Int(Date().timeIntervalSince(start) * 1000)) ms")
-start = Date()
-_ = try wallet.sign(index: 0, message: message)
-print("sign: \(Int(Date().timeIntervalSince(start) * 1000)) ms")

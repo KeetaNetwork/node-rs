@@ -30,7 +30,7 @@ swift-host-test: bindings
 		-L $(RELEASE_DIRECTORY) -lkeetanetwork_mobile \
 		tests/swift/main.swift $(OUTPUT_DIRECTORY)/swift/keetanetwork_mobile.swift \
 		-o $(OUTPUT_DIRECTORY)/swift-host-test
-	DYLD_LIBRARY_PATH=$(RELEASE_DIRECTORY) LD_LIBRARY_PATH=$(RELEASE_DIRECTORY) $(OUTPUT_DIRECTORY)/swift-host-test
+	DYLD_LIBRARY_PATH=$(RELEASE_DIRECTORY) LD_LIBRARY_PATH=$(RELEASE_DIRECTORY) $(OUTPUT_DIRECTORY)/swift-host-test $(CURDIR)/tests/fixtures/web-vectors.json
 
 android-library:
 	CC_aarch64_linux_android=$(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang \
