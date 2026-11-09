@@ -8,8 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use zeroize::Zeroizing;
 
 use crate::{
-	generate_phrase, normalize_phrase, phrase_from_entropy, phrase_status, verify, PhraseStatus, Wallet, WalletError,
-	PHRASE_WORDS,
+	generate_phrase, phrase_from_entropy, verify, NormalizedPhrase, PhraseStatus, Wallet, WalletError, PHRASE_WORDS,
 };
 
 fn phrase_text(phrase: &[u8]) -> Result<&str, WalletError> {
@@ -34,12 +33,33 @@ pub fn verify_signature(public_key: String, message: Vec<u8>, signature: Vec<u8>
 
 fn normalized_word(word: Vec<u8>) -> Result<Zeroizing<String>, WalletError> {
 	let word = Zeroizing::new(word);
-	Ok(Zeroizing::new(normalize_phrase(phrase_text(&word)?)))
+	let normalized = NormalizedPhrase::new(phrase_text(&word)?);
+	if normalized.words().count() > 1 {
+		return Err(WalletError::InvalidPhrase);
+	}
+	Ok(normalized.0)
 }
 
 struct DraftState {
 	words: Vec<Zeroizing<String>>,
 	warning_accepted: bool,
+}
+
+impl DraftState {
+	fn phrase(&self) -> NormalizedPhrase {
+		let words: Vec<&str> = self.words.iter().map(|word| word.as_str()).collect();
+		NormalizedPhrase::new(&Zeroizing::new(words.join(" ")))
+	}
+
+	fn accepted_phrase(&self) -> Result<NormalizedPhrase, WalletError> {
+		let phrase = self.phrase();
+		match phrase.status() {
+			PhraseStatus::Valid => Ok(phrase),
+			PhraseStatus::Incomplete => Err(WalletError::InvalidPhrase),
+			PhraseStatus::InvalidWords { .. } | PhraseStatus::BadChecksum if self.warning_accepted => Ok(phrase),
+			PhraseStatus::InvalidWords { .. } | PhraseStatus::BadChecksum => Err(WalletError::WarningNotAccepted),
+		}
+	}
 }
 
 /// Holds the phrase during onboarding, so the host keeps only this handle.
@@ -51,12 +71,6 @@ pub struct PhraseDraft {
 impl PhraseDraft {
 	fn state(&self) -> MutexGuard<'_, DraftState> {
 		self.state.lock().unwrap_or_else(PoisonError::into_inner)
-	}
-
-	fn phrase(&self) -> Zeroizing<String> {
-		let state = self.state();
-		let words: Vec<&str> = state.words.iter().map(|word| word.as_str()).collect();
-		Zeroizing::new(words.join(" "))
 	}
 }
 
@@ -81,7 +95,7 @@ impl PhraseDraft {
 		Ok(())
 	}
 
-	/// An edit that changes the word also withdraws an accepted warning.
+	/// Takes one word. An edit that changes the word also withdraws an accepted warning.
 	pub fn set_word(&self, index: u32, word: Vec<u8>) -> Result<(), WalletError> {
 		let word = normalized_word(word)?;
 		let mut state = self.state();
@@ -114,25 +128,30 @@ impl PhraseDraft {
 	}
 
 	pub fn status(&self) -> PhraseStatus {
-		phrase_status(&self.phrase())
+		self.state().phrase().status()
 	}
 
+	/// Has no effect if the current phrase has no warning.
 	pub fn accept_warning(&self) {
-		self.state().warning_accepted = true;
+		let mut state = self.state();
+		state.warning_accepted =
+			matches!(state.phrase().status(), PhraseStatus::InvalidWords { .. } | PhraseStatus::BadChecksum);
 	}
 
 	pub fn is_warning_accepted(&self) -> bool {
 		self.state().warning_accepted
 	}
 
+	/// Opens a valid phrase, or a phrase with a warning that the user accepted.
 	pub fn open_wallet(&self) -> Result<Arc<MobileWallet>, WalletError> {
-		let wallet = Wallet::from_unverified_phrase(&self.phrase())?;
+		let phrase = self.state().accepted_phrase()?;
+		let wallet = Wallet::from_normalized_phrase(&phrase)?;
 		Ok(Arc::new(MobileWallet { wallet }))
 	}
 
-	/// Returns the whole phrase for the vault to encrypt. The caller must overwrite these bytes.
-	pub fn phrase_bytes(&self) -> Vec<u8> {
-		self.phrase().as_bytes().to_vec()
+	/// Returns the phrase that `open_wallet` opens, for the vault to encrypt. The caller must overwrite these bytes.
+	pub fn phrase_bytes(&self) -> Result<Vec<u8>, WalletError> {
+		Ok(self.state().accepted_phrase()?.0.as_bytes().to_vec())
 	}
 
 	pub fn clear(&self) {

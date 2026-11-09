@@ -2,9 +2,16 @@ CARGO ?= cargo
 WORKSPACE_DIRECTORY := $(abspath ..)
 TARGET_DIRECTORY := $(WORKSPACE_DIRECTORY)/target
 RELEASE_DIRECTORY := $(TARGET_DIRECTORY)/release
-LIBRARY := $(RELEASE_DIRECTORY)/libkeetanetwork_mobile.dylib
+ifeq ($(shell uname -s),Darwin)
+LIBRARY_EXTENSION := dylib
+NDK_HOST := darwin-x86_64
+else
+LIBRARY_EXTENSION := so
+NDK_HOST := linux-x86_64
+endif
+LIBRARY := $(RELEASE_DIRECTORY)/libkeetanetwork_mobile.$(LIBRARY_EXTENSION)
 OUTPUT_DIRECTORY ?= $(TARGET_DIRECTORY)/mobile-bindings
-NDK_BIN = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/darwin-x86_64/bin
+NDK_BIN = $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin
 ANDROID_API := 24
 
 .PHONY: release bindings swift-host-test android-library ios-xcframework
@@ -23,7 +30,7 @@ swift-host-test: bindings
 		-L $(RELEASE_DIRECTORY) -lkeetanetwork_mobile \
 		tests/swift/main.swift $(OUTPUT_DIRECTORY)/swift/keetanetwork_mobile.swift \
 		-o $(OUTPUT_DIRECTORY)/swift-host-test
-	DYLD_LIBRARY_PATH=$(RELEASE_DIRECTORY) $(OUTPUT_DIRECTORY)/swift-host-test
+	DYLD_LIBRARY_PATH=$(RELEASE_DIRECTORY) LD_LIBRARY_PATH=$(RELEASE_DIRECTORY) $(OUTPUT_DIRECTORY)/swift-host-test
 
 android-library:
 	CC_aarch64_linux_android=$(NDK_BIN)/aarch64-linux-android$(ANDROID_API)-clang \

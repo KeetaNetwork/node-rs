@@ -18,7 +18,9 @@ path = "src/bin/uniffi-bindgen.rs"
 required-features = ["cli"]
 
 [features]
+default = ["zeroizing-allocator"]
 cli = ["uniffi/cli"]
+zeroizing-allocator = []
 
 [dependencies]
 bip39-dict = { workspace = true }

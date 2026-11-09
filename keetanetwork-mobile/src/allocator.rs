@@ -2,7 +2,8 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::mem::MaybeUninit;
 use zeroize::Zeroize;
 
-/// Clears each allocation on release. This covers copies of a secret that dependencies and the FFI buffers make.
+/// Clears each heap allocation on release, including heap copies from dependencies and the FFI buffers.
+/// Stack copies and copies in the host language stay in memory.
 pub struct ZeroizingAllocator;
 
 // SAFETY: `System` satisfies the allocator contract, and `dealloc` writes only inside the allocation it releases.
