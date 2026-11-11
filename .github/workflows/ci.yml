@@ -201,6 +201,38 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  mobile-bindings:
+    name: Mobile Bindings
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-mobile-bindings-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Generate Swift and Kotlin bindings
+        run: make -C keetanetwork-mobile bindings
+
   security:
     name: Security Audit
     runs-on: ubuntu-latest

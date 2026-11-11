@@ -1,0 +1,132 @@
+{
+	"warning": "Test only. Never fund these accounts.",
+	"sdk": "@keetanetwork/keetanet-client",
+	"message": "6b65657461206d6f62696c652070726f746f7479706520766563746f72",
+	"vectors": [
+		{
+			"entropy": "0000000000000000000000000000000000000000000000000000000000000000",
+			"phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+			"seed": "f5732c5e12e87999f2af89691ba361a61ce7db165b9dff193935a04e2e6f00b5",
+			"accounts": [
+				{
+					"index": 0,
+					"publicKey": "keeta_aabienrwknkyqfrfufv7hyrduri3ctebcu6r4bej6bicpuvhdzpowydjkvcp5ni",
+					"signature": "7ab82fe1039be1c222c309175400334c4c3e26d7ceb345d747758bc760cec61f072be40975f2c79a55081947b6d81cd0ba4e598b26ac1accd4e5ae10406e86b6",
+					"ciphertext": "04e21053d8784b632112dbdfa53cf7b59dc2f9a92c23da2cc4d0ba7b647405d0ca569985ddcfb772d5a98873b860898a173de29eb98bd0dbe54f5d453595d8c3a18e19d3104a1ae7f3dace2c5d9812ae5a8b63ad9504e7f6fb65e7af936c3925150e3f175f1f1291c65df8066e158e0c2506efba29c0be49b03bebbf3a694e393db3ee2e7f363a10405bf285d9fd"
+				},
+				{
+					"index": 1,
+					"publicKey": "keeta_aab25n3zlcawcqrvql2zlaj3ducca4se4cog3ppwc2r3mtxw3i2g4lu7s2mlrhy",
+					"signature": "7682485a24f2e4fc9e82155f1025001fcb15f08d5d3780e36f2efa2819ac4306002d1387c3ad3b24498ab4c10a1e385050495e31e82b4f43f71f4c13fe705b8b",
+					"ciphertext": "043b3c6152fb517b526282e650e3a549bd1faf4b0be6cdec7661a86eabe85e616d8b80863a03172245996d6a18b329b6686ba9566675f6a19ac8c18c04910ae7830a7cf44a2018db719c3dc1c6629a6aa08b0df7b3f5954b74672bc8ee16d20afd61a246bb8f810428d2619459215595be46447ef1b20044060d0f05aabf412591ffde005de7a56b8d73390870a9"
+				},
+				{
+					"index": 7,
+					"publicKey": "keeta_aabnifkawhejflybf6u4aqm6mmsn5pamuvy5yyko3az7azcwd75mbrhxytvnomi",
+					"signature": "d77f1d364fb55143393ebda8dcbc070b805278255afd8b334a7a1897ab889ca57aa19078be98e539899f55e2d63a21e1cc42b254ef14fbb08af372eb31e16a4b",
+					"ciphertext": "04fa7d3690f1918040339265122121a4c6eeb884ae62044e6bbedcfbbd298096879abaf110525550d7218806b2507027149191ffd306e4c01e88bc0d3694f291c8999987eaab5a9c7a7d0ba3f90a78ae8e88b450d5607b1ddfd0da1f951d1931468e58f1f5f53168d1fde1cdad0af790929df242d64e01d72d9a99fe6c33fe51f5ee1615c54b342006a18ed636cc"
+				}
+			]
+		},
+		{
+			"entropy": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+			"phrase": "legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title",
+			"seed": "266da08ffaf0480d68df18781dbb55cdf006be4bd80a8dcba267fbd62a6860e4",
+			"accounts": [
+				{
+					"index": 0,
+					"publicKey": "keeta_aabu6o24qf7dfdk5xtlcylphz2q3xxdnsiu7oilbqluaxh2zt4jntrcqfn2peca",
+					"signature": "d79219e4c4e90044a2aa608a13c6d94cdfc6b27e1ce56b819988793c100bbb647d73d64ced2c65d8cc17b1026ee2a7495528425599f7e416a07eb194763dd0dc",
+					"ciphertext": "0448e06b619e536763c07e992390cec5eb0aed8a1ae4cdeebcb1da161d47706eaead7cdeeaa82a0424a3c478561720f51d226f7e499b33557ea624d2a206cad64ea29edc7dfab4a3ae422b9c8b350fc8325ec3f37f8bc265740e8ee5dfe768cb49da5b10141e7bef6f1ab1c1ed067fee906ff760b4edd728d61a44f28cfa024691afd628a69a20f6e4341348ccbb"
+				},
+				{
+					"index": 1,
+					"publicKey": "keeta_aabm2wmswzmrmqsasxb2aqw25iwynsaiq675g5ivgiicxnqzffr7m3xvd4anx6q",
+					"signature": "b7d7a4cf5538801b86402a250563db6b57a56a4a79f14b35af64e3b5d8f5fce554448fa8a2d635613d85f321200153fc9b67ce9813b06aef959268c1932f6104",
+					"ciphertext": "042840d273a4a0c5bfb503713d074572b1e4ee03391d305ed4d209869b1d6e0b4772cd6e24ea038b974e2afdff85a0c4342b530ce6dad225f06324c177ad2c85f13f2179df73d90d4967addedd2c52250b60e14713e87224420789d1bf92f0457d55506287b59e328a0f104efa443de5bb3ebe34a63b5ddef656cb8fbc5681b84f157aa3338adea04e59df4c3573"
+				},
+				{
+					"index": 7,
+					"publicKey": "keeta_aabylrj5l2j4pf7sho7dmt6hjeaep2lpv2bspz3sfvsbsy4gxsgztgb4mu3vsxi",
+					"signature": "11827eb37ec834d0a3b93e3d00e942bbd8d08711dfef78e768d1bd5c2660b45407c050f19454c7076b7afb326a58bb85c536e050bd8419aac1e888f06a772a8c",
+					"ciphertext": "0456cafc7453c798e575b8c7f7e6b050f71e0501570a475330b83ee53ddb66771f514b3bcc7d79a7df933908907e43b3ad4720c1762eb20fee8ad493ac75498767503e2771424501d35b708fbcdbebfd3fe5666a5c5ba96955d862f432fc00cb980222da69d1084fe7c6fbd3d6773df3c6eb9b4d057c8c62caa412c4bae1c085bc828e527913fb9d77a3fe404be4"
+				}
+			]
+		},
+		{
+			"entropy": "8080808080808080808080808080808080808080808080808080808080808080",
+			"phrase": "letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic bless",
+			"seed": "34d1b7a03a689af4cfd3e6845308a70c6982c5a2ded06241c93c548569d5becd",
+			"accounts": [
+				{
+					"index": 0,
+					"publicKey": "keeta_aabs7uixxrdyezpswoqjldkafpsrus7xt546pmnjygf7cpik6miwwpwu4qw5byy",
+					"signature": "bebbffc79105b96243313750933b05b774000396adffa162425c237a2c902d2d094816d7a2bf0aa75eb35933391caa7f05ef21be03aefe27d8809e77fa983a0b",
+					"ciphertext": "044c263108cdbbd3f6236b64a2eb783ecc24efa08a4d646669ae7535504798333e2436b1fc84c48ea90d10cb3f927c4f54ae82444ef2afaf94219d36b7bcfad3104302f8f6f5e7b020c1f785f33d7b76245df9171b819dbe8191051b83e30b35ddde01590e6252b5cd8fcc1845f848ee3c34990431fe9523dd25875909cd34e049e96a43028e80c99957e416bb3c"
+				},
+				{
+					"index": 1,
+					"publicKey": "keeta_aabego5qrbfhwmpzg6xg4iwssyoyii6zciwttnkddoqkbgacu33dqe77x2ph4qi",
+					"signature": "2b8de5c8cc4133c83e42799a251441fa0c71eb744b286eb3fbbc1681ddcc84740f21d68d0a57a03fc4e7451275e2b4ac9495bd3999f82947dbe22c7c142cbd33",
+					"ciphertext": "04336fcbe8fb3662ce9b22e5aa84ca3e609eac298d8aa789960fe12cea4a341aaee2208677bfa0bb32d6f2f954c88d49cac3351ef333dc5c386976226821120824f99c9c8705de25c2171c7a8077ff88146aba0e1a15eb44260490c9ff60ad70cf52ab1614762d95d8674780662a66d6ab70c12ff2f3f84d5aea1156f8f2c53c14ff7d36f41687e0901d8f627281"
+				},
+				{
+					"index": 7,
+					"publicKey": "keeta_aabgfvjjbulvgkb4zjhobvpx7s5kvi5i3u2scvnzswpe2klqx7zqo3kt2rlnyti",
+					"signature": "d243cb8c3373ad3ef1fdec4c172792070fdfb16c87c88d79943dacc95c324c025e267ef8057576d2dc9246e5b192cbb2be9ea3af159207d2e7f81846e064fffd",
+					"ciphertext": "04c55051f1396aacd86fe2e07489406fd4f986c1985ad41277eb8b466abebb236d482d944fea891278d8a62812ee2428aa04f4114274f5c0748f8429073c57fa7d64bce60582711a1e9950dd649e1fc97453f718c90434de5bc413e644f9ff4a34182733e300af6ea4688fd08a2deb7ca8fa5644504570b5b85c76d403c110bbd11978c7cb69d25c685cfb00308c"
+				}
+			]
+		},
+		{
+			"entropy": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+			"phrase": "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote",
+			"seed": "4c562a4a73278d49a85ab21518f65e57f328c09bc0e7566142f407ac86473ff0",
+			"accounts": [
+				{
+					"index": 0,
+					"publicKey": "keeta_aabvf3ceuystmtfaafvaadwvasqk6zbfuwwow6hjd3kzoc4fp4zrkktf7uya3hq",
+					"signature": "010b8e4143c546ce6f077f5f47ebd4f1b427e0680e92181c4b8ce1b4e7d7d2733f8a6d2fdf008767e7b62bbac4f296d62ff0d60292857b6618724fa295c77ec5",
+					"ciphertext": "04078b4cb3c8fa6c34744acf60190c225f46963c6d2ea6f79d1ac6d1a66809488da661dd02f53a45596e8babd10c83eeb750e3a6988f581dc364092678b996d61fabeb4bc8c0aa69f25b61ae0e7ebd162a24358bbc5f0233cce71d7830bc7d3e2b074926a172f3c137c2a8557ecbfd4c4b8b20d439cb020fecb6496a2f2344656abbe35d1ce6d48f5e52b41386c8"
+				},
+				{
+					"index": 1,
+					"publicKey": "keeta_aab32lvj4uhdopzvaomxxt5p2mvkbabyv7qsdlgdsxh23cog5p5s67csiczpvsa",
+					"signature": "92a5a56300a0d4a4c53d2026c697c098d4b8a0d0cf10cdb69cb2fb787eb972ac4b36e8ef2611119ec8647ec45bb29af1a7cc05085c88c2768026fa8c29878008",
+					"ciphertext": "04c0168ef22039847a7b46cfa627b8682a1a6521530707d4d7fee410d41606ed260f648af73900a8a99209ee46e7cda0226da1131654473f916dd0d1b2e37f5eff1f66cdbda1c844b65a2e0931bde107de0017a86a111539a1ff5df0af62304a56fcbadff8ea9d68ef117732a6ef8eda108eb19fedc56fb63427872f0b05bba0411f3fcdc521d5ff2c007adfc517"
+				},
+				{
+					"index": 7,
+					"publicKey": "keeta_aabffaksc7ndbpyx5hdobqte4uswfhwy7gxffruj4ugqfq4ah6i2s2yrdbayami",
+					"signature": "6c1fed4326b7e14c5240afecbccef76cda1efa181d1a06d5487dcb1730e7e3f368ef04b467dda39d6a804cc8c997ec783932dbafbe8583cd9bb34293507af7fb",
+					"ciphertext": "04876ea24f994ecec9abdd6d499c3edf2d293aa10d5ba4f096e58acb0677deaa4d94d8e896bb349c7edbae06e58afd53af0a631cb2595430949db7baa7c7b4da1d2bc7e9231cb11b9b837d4d802b76149d889036657628d7bea6bfa8200def70a593668e8e63d94b83549439e399d3728a3f05cf74d2e01e1d0e6ead1bcdba56ed49061a6152046cff0f7bb6e55a"
+				}
+			]
+		},
+		{
+			"entropy": "68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c",
+			"phrase": "hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length",
+			"seed": "3bb32661b7f2735768c235e2b0f8cf472c317d8cbe77a58487f737f5a6b5a615",
+			"accounts": [
+				{
+					"index": 0,
+					"publicKey": "keeta_aabvezoboxmtuzrk46vep4pwtrcqottr4bod3egudakimkrevk56wnkauisgl7q",
+					"signature": "a254e46f927a3dbfa26c3ac9f116c843f128f8b4fa952df9b96e077237e78151323bd2af8b6ca5cf83d24b98628da784ada20eab8101585c6d7df0cf83a69677",
+					"ciphertext": "045e08042517e847f25cad014e3dfb8bd9305114792d7082940bf30c9ee498dfbeb134b5017c3e376f2125ff0c17a37dc09ef7cf79b490660d1d2e9014b380ca2af0952b3332e80b44d2657f15297616884759661cc122b22535dbb3d731df65517e5d754c0cc4023194bcb1ea5d4094f1c64a9cc813b7c627c9abcdeed3018d00769b64d31ff84f1f5d50e562f2"
+				},
+				{
+					"index": 1,
+					"publicKey": "keeta_aablypnjgdpv3b56dkzvpsgqtuorh6xqcoys6hiy37oxkziq3sqttv5du4srsga",
+					"signature": "798f9d3ee1f7c6766e88f60853959f008eaa05015732e22c37283840fc9a084610ef063f1d11dab314ea3aafdd754d0077b76daa17ce473ababc9509c8dc1e97",
+					"ciphertext": "0485130a0160cc8c30e475c2fbe50fde03bb5e114b7359255b095179ece389276f942144d55cb32d3c5c9658fdd72d6e385f16c94c2bdc3d94218101ad690439c37fa86b69cda8b0e669c8bc8916a049e3ac29233d19dc040c33c226eab30b67dd8b774b6d8894f3a36fd7f3132b990b6bf5515c6663f4691e68c9619b98f13f122382e0921f910a6a916410e7c6"
+				},
+				{
+					"index": 7,
+					"publicKey": "keeta_aabpzinjlxww6zwn6m5msouvf2flvnt64qyqw3pwx2f2nzgsxufdbpyhc6wm5lq",
+					"signature": "e291f6c0496d0010c27e5a450e5ac914c214986619b1c9870b025be6cf6dbfdc43948b84003ed94f2df9487ddd899ce21c17688bf65d92f81067116632d9c932",
+					"ciphertext": "047f9536ac3cc635d792d23407be4f7f4585c265f89a99a9aac803caf8af9d5e60e13115334e7e29b01209c397d58d8ee33d61bf714a7f0f6c71fa6cd3b3a85754c664db328332d5c9f1072dd800c3db5eaf6a8ec79cc3ce9784ec109928ff1a0bc623bb6ae7de7c87592d89ccab0740d207b64a24924fd5d28a979beba75e44ff29529e0061fa4a4faa2b844a33"
+				}
+			]
+		}
+	]
+}

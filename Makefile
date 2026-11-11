@@ -55,6 +55,7 @@ do-lint-ci: node-harness-lint
 
 # Test crate packages features
 test-feat:
+	cargo check -p keetanetwork-mobile --no-default-features
 	cargo test -p keetanetwork-crypto --no-default-features --features std,signature
 	cargo test -p keetanetwork-crypto --no-default-features --features std,encryption
 	cargo test -p keetanetwork-crypto --no-default-features --features std,der

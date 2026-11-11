@@ -19,6 +19,7 @@ members = [
 	"keetanetwork-bindings",
 	"keetanetwork-client-wasm",
 	"keetanetwork-client-wasi",
+	"keetanetwork-mobile",
 ]
 
 [workspace.package]
