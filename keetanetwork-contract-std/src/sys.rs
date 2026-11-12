@@ -46,6 +46,47 @@ syscalls! {
 	fn keeta_set_info(fields: *const u8) -> u64 = syscall::SET_INFO;
 	fn keeta_invoke(contract: *const u8, metas: *const u8, count: u64, data: *const u8, data_len: u64) -> u64 = syscall::INVOKE;
 	fn keeta_decimal(value: *const u8, signed: u64, out: *mut u8) -> u64 = syscall::DECIMAL;
-	// The platform's: a panic, where it happened (the engine writes the message).
-	fn sol_panic_(file: *const u8, len: u64, line: u64, column: u64) -> u64 = "sol_panic_";
+	fn keeta_panic(file: *const u8, len: u64, line: u64, column: u64) -> u64 = syscall::PANIC;
+	fn keeta_memcpy(dest: *mut u8, src: *const u8, len: u64) -> u64 = syscall::MEMCPY;
+	fn keeta_memmove(dest: *mut u8, src: *const u8, len: u64) -> u64 = syscall::MEMMOVE;
+	fn keeta_memset(dest: *mut u8, byte: u64, len: u64) -> u64 = syscall::MEMSET;
+	fn keeta_memcmp(a: *const u8, b: *const u8, len: u64, out: *mut i32) -> u64 = syscall::MEMCMP;
+}
+
+/// The memory functions the compiler calls, in place of the platform
+/// toolchain's compiler builtins (which call Solana-named host functions).
+/// The linker takes these first, so the builtins' copies are never linked.
+#[cfg(target_os = "solana")]
+mod mem {
+	use super::{keeta_memcmp, keeta_memcpy, keeta_memmove, keeta_memset};
+
+	#[no_mangle]
+	unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, len: usize) -> *mut u8 {
+		// SAFETY: the compiler's contract for `memcpy`; the engine checks
+		// both regions are mapped.
+		unsafe { keeta_memcpy(dest, src, len as u64) };
+		dest
+	}
+
+	#[no_mangle]
+	unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, len: usize) -> *mut u8 {
+		// SAFETY: as for `memcpy`.
+		unsafe { keeta_memmove(dest, src, len as u64) };
+		dest
+	}
+
+	#[no_mangle]
+	unsafe extern "C" fn memset(dest: *mut u8, byte: i32, len: usize) -> *mut u8 {
+		// SAFETY: as for `memcpy`.
+		unsafe { keeta_memset(dest, byte as u8 as u64, len as u64) };
+		dest
+	}
+
+	#[no_mangle]
+	unsafe extern "C" fn memcmp(a: *const u8, b: *const u8, len: usize) -> i32 {
+		let mut order = 0;
+		// SAFETY: as for `memcpy`; `order` is a valid `i32` to write.
+		unsafe { keeta_memcmp(a, b, len as u64, &mut order) };
+		order
+	}
 }

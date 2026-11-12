@@ -241,6 +241,20 @@ pub mod syscall {
 	/// [`MAX_DECIMAL`](super::MAX_DECIMAL) bytes. Contracts write numbers
 	/// with it instead of carrying code of their own for it.
 	pub const DECIMAL: &str = "keeta_decimal";
+	/// `(file_ptr, file_len, line, column)`: end the call as a panic at
+	/// that place, with the message set by [`ERROR`] if any. The SDK's
+	/// panic handler calls it; the engine writes the error.
+	pub const PANIC: &str = "keeta_panic";
+	/// `(dest, src, len)`: copy `len` bytes; the regions must not overlap.
+	/// The SDK's `memcpy`, which the compiler calls for large copies.
+	pub const MEMCPY: &str = "keeta_memcpy";
+	/// `(dest, src, len)`: copy `len` bytes; the regions may overlap.
+	pub const MEMMOVE: &str = "keeta_memmove";
+	/// `(dest, byte, len)`: set `len` bytes to the low byte of `byte`.
+	pub const MEMSET: &str = "keeta_memset";
+	/// `(a, b, len, out_ptr)`: compare `len` bytes, writing an `i32` that
+	/// is negative, zero or positive to `out_ptr`.
+	pub const MEMCMP: &str = "keeta_memcmp";
 
 	/// Every Keeta host function.
 	pub const ALL: &[&str] = &[
@@ -256,12 +270,18 @@ pub mod syscall {
 		SET_INFO,
 		INVOKE,
 		DECIMAL,
+		PANIC,
+		MEMCPY,
+		MEMMOVE,
+		MEMSET,
+		MEMCMP,
 	];
 
-	/// Host functions the Solana platform toolchain emits by itself (its
-	/// `std` and compiler builtins), which the engine also provides.
-	pub const PLATFORM: &[&str] =
-		&["abort", "sol_panic_", "sol_log_", "sol_memcpy_", "sol_memmove_", "sol_memset_", "sol_memcmp_"];
+	/// Host functions the platform toolchain's `std` calls by itself, which
+	/// the engine also provides: `abort` after a panic, and `sol_log_` for
+	/// its own messages. Everything else contracts call is a Keeta name;
+	/// the SDK replaces the compiler builtins' memory functions.
+	pub const PLATFORM: &[&str] = &["abort", "sol_log_"];
 }
 
 /// The sBPF v3 key of a host function: Murmur3 (32-bit, seed 0) of its name.

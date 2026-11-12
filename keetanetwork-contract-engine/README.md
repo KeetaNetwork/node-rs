@@ -121,12 +121,13 @@ account it has not approved, and a refusal fails the call.
 | `sha256`, `state_id` | Hashing, and naming accounts |
 | `keeta_decimal` (the SDK's `text!`, `bail!`, `attribute`) | An integer in decimal, written into the contract's memory, so contracts carry no number-printing code |
 
-The engine also provides the handful of Solana host functions that the
-platform toolchain's own `std` and compiler builtins call (`abort`,
-`sol_panic_`, `sol_log_`, `sol_memcpy_`, `sol_memmove_`, `sol_memset_`,
-`sol_memcmp_`). Code that calls anything else is refused when it is stored.
-The SDK's panic handler reports a panic's message with `keeta_error` and
-then calls `sol_panic_` with where it happened, and the engine writes
+The SDK also provides `memcpy`, `memmove`, `memset` and `memcmp`, which
+call `keeta_memcpy` and the rest, in place of the platform toolchain's
+compiler builtins. The only other host functions are the two the
+toolchain's own `std` calls: `abort` and `sol_log_`. Code that calls
+anything else is refused when it is stored, so a contract must be built
+with the SDK. The SDK's panic handler reports a panic's message with
+`keeta_error` and then calls `keeta_panic` with where it happened, and the engine writes
 `panicked at <file>:<line>:<column>: <message>`: contracts carry no code to
 format panics.
 

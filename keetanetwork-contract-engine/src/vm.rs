@@ -659,7 +659,7 @@ impl Invocation {
 		Ok(text.len() as u64)
 	}
 
-	fn sol_log(&mut self, address: u64, len: u64, _: u64, _: u64, _: u64) -> Result<u64, EngineError> {
+	fn std_log(&mut self, address: u64, len: u64, _: u64, _: u64, _: u64) -> Result<u64, EngineError> {
 		self.log(address, len, 0, 0, 0)
 	}
 
@@ -923,7 +923,7 @@ macro_rules! host_functions {
 host_functions! {
 	AbortCall => abort,
 	PanicCall => panic,
-	SolLogCall => sol_log,
+	StdLogCall => std_log,
 	MemMoveCall => mem_move,
 	MemSetCall => mem_set,
 	MemCmpCall => mem_cmp,
@@ -949,22 +949,22 @@ fn register_host_functions(loader: &mut BuiltinProgram<Invocation>) -> Result<()
 		.register_definition::<AbortCall>("abort")
 		.map_err(failed)?;
 	loader
-		.register_definition::<PanicCall>("sol_panic_")
+		.register_definition::<PanicCall>(syscall::PANIC)
 		.map_err(failed)?;
 	loader
-		.register_definition::<SolLogCall>("sol_log_")
+		.register_definition::<StdLogCall>("sol_log_")
 		.map_err(failed)?;
 	loader
-		.register_definition::<MemMoveCall>("sol_memcpy_")
+		.register_definition::<MemMoveCall>(syscall::MEMCPY)
 		.map_err(failed)?;
 	loader
-		.register_definition::<MemMoveCall>("sol_memmove_")
+		.register_definition::<MemMoveCall>(syscall::MEMMOVE)
 		.map_err(failed)?;
 	loader
-		.register_definition::<MemSetCall>("sol_memset_")
+		.register_definition::<MemSetCall>(syscall::MEMSET)
 		.map_err(failed)?;
 	loader
-		.register_definition::<MemCmpCall>("sol_memcmp_")
+		.register_definition::<MemCmpCall>(syscall::MEMCMP)
 		.map_err(failed)?;
 	loader
 		.register_definition::<LogCall>(syscall::LOG)

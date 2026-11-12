@@ -521,7 +521,7 @@ pub fn report_panic(info: &core::panic::PanicInfo<'_>) {
 		let file = location.file();
 		// SAFETY: the pointer and length describe `file`. The engine ends
 		// the call here, with the message above.
-		unsafe { sys::sol_panic_(file.as_ptr(), file.len() as u64, location.line() as u64, location.column() as u64) };
+		unsafe { sys::keeta_panic(file.as_ptr(), file.len() as u64, location.line() as u64, location.column() as u64) };
 	}
 }
 
