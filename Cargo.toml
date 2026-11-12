@@ -3,6 +3,8 @@ resolver = "2"
 exclude = [
 	# wasmtime host smoke tests
 	"keetanetwork-client-wasi/host-tests",
+	# Example contracts: a separate sBPF workspace built by the engine tests
+	"keetanetwork-contract-engine/tests/contracts",
 ]
 members = [
 	"keetanetwork-account",
@@ -21,6 +23,7 @@ members = [
 	"keetanetwork-client-wasi",
 	"keetanetwork-mobile",
 	"keetanetwork-contract-std",
+	"keetanetwork-contract-engine",
 ]
 
 [workspace.package]
@@ -199,6 +202,10 @@ default-features = false
 version = "0.5.2"
 path = "keetanetwork-client-wasm"
 default-features = false
+
+[workspace.dependencies.keetanetwork-contract-engine]
+version = "0.1.0"
+path = "keetanetwork-contract-engine"
 
 [workspace.dependencies.keetanetwork-contract-std]
 version = "0.1.0"

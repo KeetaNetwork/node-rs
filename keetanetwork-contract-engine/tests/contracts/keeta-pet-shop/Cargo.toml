@@ -1,0 +1,27 @@
+[package]
+name = "keeta-pet-shop"
+description = "Sells pet food for a token, to people and to other contracts"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# For contracts that call the shop: its instructions and accounts without its
+# entrypoint, which would clash with theirs (Solana's convention).
+no-entrypoint = []
+
+[dependencies]
+# borsh's `std` would bring Rust's formatting code into the contract (see keetanetwork-contract-std).
+borsh = { version = "1", default-features = false, features = ["derive"] }
+keetanetwork-contract-std = { path = "../../../../keetanetwork-contract-std", features = ["borsh"] }
+
+# Off-chain, borsh's schemas, for `contract_interface`. On-chain builds do not change.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+borsh = { version = "1", features = ["derive", "unstable__schema"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
