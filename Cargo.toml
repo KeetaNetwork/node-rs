@@ -24,6 +24,7 @@ members = [
 	"keetanetwork-mobile",
 	"keetanetwork-contract-std",
 	"keetanetwork-contract-engine",
+	"keetanetwork-contract-napi",
 ]
 
 [workspace.package]

@@ -1,0 +1,42 @@
+{
+	"name": "@keetanetwork/contract-engine",
+	"version": "0.1.0",
+	"description": "Node.js bindings for the Keetanetwork sBPF contract engine",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/KeetaNetwork/node-rs"
+	},
+	"main": "index.js",
+	"types": "index.d.ts",
+	"files": [
+		"index.js",
+		"index.d.ts",
+		"*.node"
+	],
+	"napi": {
+		"binaryName": "contract-engine",
+		"targets": [
+			"x86_64-unknown-linux-gnu",
+			"x86_64-unknown-linux-musl",
+			"aarch64-unknown-linux-gnu",
+			"aarch64-unknown-linux-musl",
+			"aarch64-apple-darwin"
+		]
+	},
+	"engines": {
+		"node": ">= 20"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com",
+		"access": "restricted"
+	},
+	"scripts": {
+		"build": "napi build --platform --release",
+		"build:debug": "napi build --platform",
+		"test": "node --test \"__test__/*.test.mjs\""
+	},
+	"devDependencies": {
+		"@napi-rs/cli": "3.10.12"
+	}
+}
