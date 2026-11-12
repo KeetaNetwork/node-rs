@@ -1,0 +1,249 @@
+name: Publish Contract Engine
+
+# Publishes @keetanetwork/contract-engine (keetanetwork-contract-napi) to
+# GitHub Packages when its version changes: one package holding the addon
+# for every platform, which its index.js picks from at load time.
+# Pull requests that touch the engine build and test every platform without
+# publishing.
+
+on:
+  push:
+    branches:
+      - main
+      - 'releases/**'
+    paths:
+      - 'keetanetwork-contract-napi/package.json'
+  pull_request:
+    paths:
+      - 'keetanetwork-contract-napi/**'
+      - 'keetanetwork-contract-engine/**'
+      - 'keetanetwork-contract-std/**'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/publish-contract-engine.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-contract-engine-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # The oldest Node.js the package supports (its `engines`)
+  NODE_VERSION: 20.18.0
+  # Anza's toolchain builds the contract the tests run: the same release as
+  # the anchor's verifiable contract builds.
+  AGAVE_VERSION: v4.3.2
+
+jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check version
+        id: check
+        working-directory: keetanetwork-contract-napi
+        run: |
+          version="$(jq -r .version package.json)"
+          crate="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "$version" != "$crate" ]; then
+            echo "::error::package.json is $version but Cargo.toml is $crate"
+            exit 1
+          fi
+          previous="$(git show HEAD~1:keetanetwork-contract-napi/package.json 2>/dev/null | jq -r .version 2>/dev/null || echo none)"
+          echo "Version $version (previously $previous)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$version" != "$previous" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  contract:
+    name: Build test contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Anza toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: ${{ runner.os }}-agave-${{ env.AGAVE_VERSION }}
+
+      - name: Install Anza toolchain
+        run: |
+          bin="$HOME/.local/share/solana/install/active_release/bin"
+          test -x "$bin/cargo-build-sbf" || sh -c "$(curl -sSfL "https://release.anza.xyz/$AGAVE_VERSION/install")"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # sBPF code is the same on every platform, so it is built once.
+      - name: Build the probe contract
+        working-directory: keetanetwork-contract-engine/tests/contracts
+        run: cargo-build-sbf --arch v3 --manifest-path keeta-probe/Cargo.toml -- --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-contract
+          path: keetanetwork-contract-engine/tests/contracts/target/deploy/keeta_probe.so
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: contract
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds run in containers: Debian 11 for an old glibc the
+          # addon then runs on, Alpine for musl. Each runs on its own
+          # architecture, so nothing is cross-compiled.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            image: rust:1-bullseye
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest-arm64-m
+            image: rust:1-bullseye
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            image: rust:1-alpine3.20
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest-arm64-m
+            image: rust:1-alpine3.20
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: probe-contract
+          path: keetanetwork-contract-engine/tests/contracts/target/deploy
+
+      - name: Build and test in ${{ matrix.image }}
+        if: matrix.image
+        env:
+          IMAGE: ${{ matrix.image }}
+          TARGET: ${{ matrix.target }}
+        # Builds in a copy inside the container, then copies the addon out:
+        # the build rewrites files, which it does not do reliably on a
+        # mounted folder.
+        run: |
+          docker run --rm -v "$PWD:/build" -e TARGET -e NODE_VERSION -e CARGO_TERM_COLOR "$IMAGE" sh -euc '
+            if command -v apk > /dev/null; then
+              apk add --no-cache nodejs npm
+              # napi names a cross linker for musl targets; this build is
+              # native, so the system gcc links.
+              export "CARGO_TARGET_$(printf %s "$TARGET" | tr a-z- A-Z_)_LINKER=gcc"
+            else
+              case "$(uname -m)" in x86_64) arch=x64 ;; aarch64) arch=arm64 ;; esac
+              curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$arch.tar.xz" \
+                | tar -xJ -C /usr/local --strip-components=1
+            fi
+            node --version
+            cp -R /build /work
+            cd /work/keetanetwork-contract-napi
+            npm ci
+            npm run build -- --target "$TARGET"
+            npm test
+            # The build regenerates the loader and types, which are committed.
+            for file in index.js index.d.ts; do
+              cmp "$file" "/build/keetanetwork-contract-napi/$file" \
+                || { echo "$file differs from the committed one: rebuild and commit it"; exit 1; }
+            done
+            cp contract-engine.*.node /build/keetanetwork-contract-napi/
+          '
+
+      - name: Install Rust
+        if: ${{ !matrix.image }}
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
+
+      - name: Set up Node.js
+        if: ${{ !matrix.image }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build and test
+        if: ${{ !matrix.image }}
+        working-directory: keetanetwork-contract-napi
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          npm ci
+          npm run build -- --target "${{ matrix.target }}"
+          npm test
+
+      # The build regenerates the loader and types, which are committed.
+      - name: Check generated files are committed
+        if: ${{ !matrix.image }}
+        run: git diff --exit-code -- keetanetwork-contract-napi/index.js keetanetwork-contract-napi/index.d.ts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: addon-${{ matrix.target }}
+          path: keetanetwork-contract-napi/contract-engine.*.node
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish ${{ needs.version.outputs.version }}
+    needs: [version, build]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # Build provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://npm.pkg.github.com
+          scope: '@keetanetwork'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: addon-*
+          merge-multiple: true
+          path: keetanetwork-contract-napi
+
+      - name: Pack
+        id: pack
+        working-directory: keetanetwork-contract-napi
+        run: |
+          ls -l contract-engine.*.node
+          count="$(ls contract-engine.*.node | wc -l)"
+          if [ "$count" -ne 5 ]; then
+            echo "::error::expected 5 addons, found $count"
+            exit 1
+          fi
+          tarball="$(npm pack --silent)"
+          tar -tzf "$tarball"
+          echo "tarball=keetanetwork-contract-napi/$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to GitHub Packages
+        run: npm publish "./${{ steps.pack.outputs.tarball }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ steps.pack.outputs.tarball }}
