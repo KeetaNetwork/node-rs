@@ -1,0 +1,18 @@
+[package]
+name = "keeta-escrow"
+description = "Arbiter-released escrow of native Keeta tokens"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# borsh's `std` would bring Rust's formatting code into the contract (see keetanetwork-contract-std).
+borsh = { version = "1", default-features = false, features = ["derive"] }
+keetanetwork-contract-std = { path = "../../../../keetanetwork-contract-std", features = ["borsh"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

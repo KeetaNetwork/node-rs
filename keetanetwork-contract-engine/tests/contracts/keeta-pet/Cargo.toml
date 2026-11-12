@@ -1,0 +1,24 @@
+[package]
+name = "keeta-pet"
+description = "A virtual pet that gets hungry and bored as block time passes"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# borsh's `std` would bring Rust's formatting code into the contract (see keetanetwork-contract-std).
+borsh = { version = "1", default-features = false, features = ["derive"] }
+keetanetwork-contract-std = { path = "../../../../keetanetwork-contract-std", features = ["borsh"] }
+# The shop the pet buys its food from: its instructions, without its entrypoint.
+keeta-pet-shop = { path = "../keeta-pet-shop", features = ["no-entrypoint"] }
+
+# Off-chain, borsh's schemas, for `contract_interface`. On-chain builds do not change.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+borsh = { version = "1", features = ["derive", "unstable__schema"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }

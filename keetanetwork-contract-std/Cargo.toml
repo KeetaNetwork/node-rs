@@ -1,0 +1,40 @@
+[package]
+name = "keetanetwork-contract-std"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "SDK for Keetanetwork sBPF contracts, and the binary interface they share with the contract engine"
+
+[features]
+default = []
+# `BorshSerialize`/`BorshDeserialize` for `Address`, and typed loads and
+# stores on accounts. Contracts usually enable it.
+borsh = ["dep:borsh"]
+
+# Off-chain, `sha256` and `state_id` compute the hash themselves, so
+# clients and tests can name accounts with the contract's own helpers.
+[target.'cfg(not(target_os = "solana"))'.dependencies.sha2]
+version = "0.10"
+
+# Without borsh's `std`: its errors are then its own plain values, where
+# `std::io::Error` would bring in Rust's formatting code (about 10 KB of
+# every contract) through the boxed error it wraps a message in.
+[dependencies.borsh]
+version = "1"
+optional = true
+default-features = false
+features = ["derive"]
+
+# Off-chain, borsh's schemas too, for contracts to describe their
+# interface (`interface`). On-chain builds do not change.
+[target.'cfg(not(target_os = "solana"))'.dependencies.borsh]
+version = "1"
+optional = true
+features = ["derive", "unstable__schema"]
+
+# Contracts build for Solana's `sbpfv3-solana-solana` target.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
