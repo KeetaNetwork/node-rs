@@ -125,6 +125,8 @@ pub struct WireConfig {
 	pub max_call_depth: Option<usize>,
 	/// The largest code `storeCode` accepts, in bytes
 	pub max_code_size: Option<usize>,
+	/// How much loaded code to keep between calls, in bytes
+	pub max_cached_code_size: Option<usize>,
 }
 
 impl WireConfig {
@@ -134,6 +136,9 @@ impl WireConfig {
 			network: self.network,
 			max_call_depth: self.max_call_depth.unwrap_or(defaults.max_call_depth),
 			max_code_size: self.max_code_size.unwrap_or(defaults.max_code_size),
+			max_cached_code_size: self
+				.max_cached_code_size
+				.unwrap_or(defaults.max_cached_code_size),
 		}
 	}
 }

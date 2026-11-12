@@ -24,6 +24,7 @@
 #![deny(unsafe_code)]
 
 mod address;
+mod code_cache;
 mod engine;
 mod error;
 pub mod gas;
@@ -34,10 +35,13 @@ mod vm;
 
 pub use address::{from_address, parse_account, to_address};
 pub use engine::{
-	state_id, AccountMeta, Effect, Engine, EngineConfig, Event, Fund, Instruction, LedgerCall, LedgerOutcome, Log,
-	StateAccess, DEFAULT_MAX_CODE_SIZE,
+	AccountMeta, Effect, Engine, EngineConfig, Event, Fund, Instruction, LedgerCall, LedgerOutcome, Log, StateAccess,
+	DEFAULT_MAX_CACHED_CODE_SIZE, DEFAULT_MAX_CODE_SIZE,
 };
 pub use error::EngineError;
 pub use host::{AccountInfo, CodeHash, ContractRecord, Host, HostError, HostResult};
+/// The id of an account named by `seeds`: SHA-256 of their concatenation,
+/// the same helper contracts use.
+pub use keetanetwork_contract_std::state_id;
 pub use keetanetwork_contract_std::{Address, StateId};
 pub use memory::MemoryHost;

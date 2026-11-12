@@ -19,7 +19,6 @@ use std::sync::Arc;
 use keetanetwork_account::KeyPairType;
 use keetanetwork_contract_std::StateId;
 use num_bigint::BigUint;
-use sha2::{Digest, Sha256};
 
 use crate::address::{parse_account, parse_account_of};
 use crate::error::EngineError;
@@ -29,6 +28,10 @@ use crate::vm::{self, Core, Request, Session};
 /// The largest code [`Engine::store_code`] accepts by default, in bytes:
 /// the same as the node's limit on `CONTRACT_DEPLOY` code.
 pub const DEFAULT_MAX_CODE_SIZE: usize = 512 * 1024;
+
+/// How much loaded code the engine keeps by default, in bytes of ELF: at
+/// least 128 contracts at the largest size [`DEFAULT_MAX_CODE_SIZE`] allows.
+pub const DEFAULT_MAX_CACHED_CODE_SIZE: usize = 64 * 1024 * 1024;
 
 /// Engine settings.
 #[derive(Clone, Debug)]
@@ -42,12 +45,21 @@ pub struct EngineConfig {
 	/// Checked only when code is stored, so lowering it leaves code already
 	/// stored running.
 	pub max_code_size: usize,
+	/// How much loaded code to keep between calls, in bytes of ELF. Past
+	/// it, the code used least recently is dropped and loaded from the host
+	/// again when next called; code larger than this is never kept.
+	pub max_cached_code_size: usize,
 }
 
 impl Default for EngineConfig {
 	/// A local test network's settings.
 	fn default() -> Self {
-		Self { network: 0, max_call_depth: 5, max_code_size: DEFAULT_MAX_CODE_SIZE }
+		Self {
+			network: 0,
+			max_call_depth: 5,
+			max_code_size: DEFAULT_MAX_CODE_SIZE,
+			max_cached_code_size: DEFAULT_MAX_CACHED_CODE_SIZE,
+		}
 	}
 }
 
@@ -91,16 +103,6 @@ impl Instruction {
 	pub fn new(contract: impl Into<String>, accounts: Vec<AccountMeta>, data: impl Into<Vec<u8>>) -> Self {
 		Self { contract: contract.into(), accounts, data: data.into() }
 	}
-}
-
-/// The id of an account named by `seeds`: SHA-256 of their concatenation,
-/// the same as `keetanetwork_contract_std::state_id`.
-pub fn state_id(seeds: &[&[u8]]) -> StateId {
-	let mut hasher = Sha256::new();
-	for seed in seeds {
-		hasher.update(seed);
-	}
-	hasher.finalize().into()
 }
 
 /// Tokens attached to a call.
@@ -224,7 +226,8 @@ impl Engine {
 		&self.core.config
 	}
 
-	/// Check sBPF v3 code and keep it loaded. Returns its hash.
+	/// Check sBPF v3 code and keep it loaded, within
+	/// [`EngineConfig::max_cached_code_size`]. Returns its hash.
 	///
 	/// Code larger than [`EngineConfig::max_code_size`] is refused before it
 	/// is parsed. The loader parses the ELF file and the verifier checks
@@ -247,6 +250,9 @@ impl Engine {
 			overlay.contract(host, contract)?;
 			for fund in &call.funds {
 				parse_account_of(&fund.token, KeyPairType::TOKEN)?;
+				// The block's own `SEND`s move the funds: the call sees them
+				// gone from the caller and held by the contract.
+				overlay.debit(host, &call.caller, &fund.token, &fund.amount)?;
 				overlay.credit(host, contract, &fund.token, &fund.amount)?;
 			}
 		}
@@ -258,31 +264,30 @@ impl Engine {
 				caller: &call.caller,
 				funds: &call.funds,
 				accounts: &call.instruction.accounts,
+				room: &[],
 				data: &call.instruction.data,
 			},
 			call.gas_limit,
 		)?;
 
-		let host = session.host();
 		let mut overlay = session.lock();
 		let reads = overlay
 			.storage_reads()
 			.into_iter()
 			.map(|(owner, key, data)| state_access(owner, &key, data))
 			.collect::<Result<Vec<_>, _>>()?;
-		let mut writes = Vec::new();
-		for ((owner, key), data) in overlay.storage_writes() {
-			if host.storage_get(&owner, &key)? != data {
-				writes.push(state_access(owner, &key, data)?);
-			}
-		}
+		let writes = overlay
+			.storage_writes()
+			.into_iter()
+			.map(|((owner, key), data)| state_access(owner, &key, data))
+			.collect::<Result<Vec<_>, _>>()?;
 		let mut effects = std::mem::take(&mut overlay.effects);
-		for (address, info) in overlay.changed_infos() {
-			let before = host.contract(&address)?.map(|record| record.info);
-			if before.as_ref() != Some(&info) {
-				effects.push(Effect::SetInfo { account: address, info });
-			}
-		}
+		effects.extend(
+			overlay
+				.changed_infos()
+				.into_iter()
+				.map(|(account, info)| Effect::SetInfo { account, info }),
+		);
 		drop(overlay);
 
 		let events = std::mem::take(&mut *session.events.lock().expect("events lock"));

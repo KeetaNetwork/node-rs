@@ -42,7 +42,10 @@ const outcome = JSON.parse(await engine.runLedgerCall(JSON.stringify(call)));
 ## API
 
 - `new ContractEngine(config, host)`: `config` is
-  `{ network, maxCallDepth?, maxCodeSize? }`.
+  `{ network, maxCallDepth?, maxCodeSize?, maxCachedCodeSize? }`.
+  `maxCachedCodeSize` (default 64 MiB) is how much loaded code is kept
+  between calls; past it, the code used least recently is loaded from the
+  host again when next called.
 - `storeCode(elf)` checks an sBPF v3 ELF file and keeps it loaded. It
   resolves to `{ checksum }`, the code's SHA-256 in hex.
 - `runLedgerCall(call)` runs a contract call. `call` is

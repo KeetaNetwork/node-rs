@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -995,14 +995,23 @@ fn code_size_is_capped_when_stored() {
 		.expect("adopt");
 }
 
-/// A host that fails balance reads when told to.
+/// A host that fails balance reads when told to, and counts the code it
+/// is asked for.
 struct FlakyHost {
 	inner: Arc<MemoryHost>,
 	fail: AtomicBool,
+	code_loads: AtomicUsize,
+}
+
+impl FlakyHost {
+	fn new(inner: Arc<MemoryHost>) -> Arc<Self> {
+		Arc::new(Self { inner, fail: AtomicBool::new(false), code_loads: AtomicUsize::new(0) })
+	}
 }
 
 impl Host for FlakyHost {
 	fn code_bytes(&self, hash: &CodeHash) -> HostResult<Option<Vec<u8>>> {
+		self.code_loads.fetch_add(1, Ordering::SeqCst);
 		self.inner.code_bytes(hash)
 	}
 	fn contract(&self, address: &str) -> HostResult<Option<ContractRecord>> {
@@ -1032,7 +1041,8 @@ fn host_failures_abort_the_call() {
 	let probe = world.deploy("keeta-probe");
 	world.host.credit(&probe, &kta, 10u32);
 	let alice = world.alice.clone();
-	let flaky = Arc::new(FlakyHost { inner: world.host.clone(), fail: AtomicBool::new(true) });
+	let flaky = FlakyHost::new(world.host.clone());
+	flaky.fail.store(true, Ordering::SeqCst);
 	let call = world.call(&alice);
 	let pay = world.ledger_call(
 		&call,
@@ -1061,6 +1071,40 @@ fn a_restarted_engine_reloads_code_from_the_host() {
 	world
 		.execute(&call, &pet_ix(&pet, &bob, &PetIx::Adopt { name: "Pixel".into() }))
 		.expect("adopt with code fetched from the host");
+}
+
+#[test]
+fn loaded_code_is_kept_within_its_budget() {
+	let (mut world, pet, shop) = pet_world();
+	let bob = world.bob.clone();
+	let call = world.call(&bob);
+	world
+		.execute(&call, &pet_ix(&pet, &bob, &PetIx::Adopt { name: "Pixel".into() }))
+		.expect("adopt");
+	let call = world.call(&bob).with_funds([Fund::new(wusd(), 10u32)]);
+	let feed = world.ledger_call(&call, &feed_ix(&pet, &shop, &bob));
+	// Feeding runs the pet, which invokes the shop. Returns how much code
+	// the call loaded from the host.
+	let feed_with = |engine: &Engine| {
+		let host = FlakyHost::new(world.host.clone());
+		engine.run_ledger_call(host.clone(), &feed).expect("feed");
+		host.code_loads.load(Ordering::SeqCst)
+	};
+
+	// With the default budget both contracts stay loaded.
+	let engine = Engine::new(EngineConfig::default()).unwrap();
+	assert_eq!((feed_with(&engine), feed_with(&engine)), (2, 0));
+
+	// With room for one contract they take turns: each feed loads both, and
+	// the pet's code is dropped while the pet is still running.
+	let room = elf("keeta-pet").len().max(elf("keeta-pet-shop").len());
+	let engine = Engine::new(EngineConfig { max_cached_code_size: room, ..EngineConfig::default() }).unwrap();
+	assert_eq!((feed_with(&engine), feed_with(&engine)), (2, 2));
+
+	// With no room, nothing is kept.
+	let engine = Engine::new(EngineConfig { max_cached_code_size: 0, ..EngineConfig::default() }).unwrap();
+	engine.store_code(&elf("keeta-pet")).expect("store code");
+	assert_eq!((feed_with(&engine), feed_with(&engine)), (2, 2));
 }
 
 #[test]

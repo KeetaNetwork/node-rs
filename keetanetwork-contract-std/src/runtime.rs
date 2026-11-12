@@ -375,10 +375,13 @@ pub fn set_return_data(data: &[u8]) {
 
 /// The return data of the last contract this one invoked.
 pub fn return_data() -> Vec<u8> {
-	let mut buffer = vec![0u8; MAX_RETURN_DATA];
-	// SAFETY: the buffer has room for `MAX_RETURN_DATA` bytes.
-	let len = unsafe { sys::keeta_get_return_data(buffer.as_mut_ptr(), buffer.len() as u64) } as usize;
-	buffer.truncate(len.min(MAX_RETURN_DATA));
+	// The heap is never freed, so ask for the length first and allocate
+	// only that much.
+	// SAFETY: with `max_len` 0 nothing is written.
+	let len = (unsafe { sys::keeta_get_return_data(core::ptr::null_mut(), 0) } as usize).min(MAX_RETURN_DATA);
+	let mut buffer = vec![0u8; len];
+	// SAFETY: the buffer has room for `len` bytes.
+	unsafe { sys::keeta_get_return_data(buffer.as_mut_ptr(), len as u64) };
 	buffer
 }
 

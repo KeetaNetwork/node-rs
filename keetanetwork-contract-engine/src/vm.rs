@@ -14,7 +14,7 @@
 
 #![allow(unsafe_code)]
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use keetanetwork_account::KeyPairType;
@@ -33,6 +33,7 @@ use solana_sbpf::verifier::RequisiteVerifier;
 use solana_sbpf::vm::{CallFrame, Config, ContextObject, EbpfVm, ExecutionMode};
 
 use crate::address::{from_address, parse_account_of, to_address};
+use crate::code_cache::CodeCache;
 use crate::engine::{AccountMeta, EngineConfig, Event, Fund, Log};
 use crate::error::{ledger, EngineError};
 use crate::gas;
@@ -46,7 +47,7 @@ type Memory = AlignedMemory<HOST_ALIGN>;
 pub(crate) struct Core {
 	pub(crate) config: EngineConfig,
 	loader: Arc<BuiltinProgram<Invocation>>,
-	code: Mutex<HashMap<CodeHash, Arc<Executable<Invocation>>>>,
+	code: Mutex<CodeCache<Arc<Executable<Invocation>>>>,
 }
 
 impl Core {
@@ -61,7 +62,8 @@ impl Core {
 		};
 		let mut loader = BuiltinProgram::new_loader(vm_config);
 		register_host_functions(&mut loader)?;
-		Ok(Self { config, loader: Arc::new(loader), code: Mutex::default() })
+		let code = Mutex::new(CodeCache::new(config.max_cached_code_size));
+		Ok(Self { config, loader: Arc::new(loader), code })
 	}
 
 	/// Load and verify an ELF file.
@@ -84,7 +86,7 @@ impl Core {
 		self.code
 			.lock()
 			.expect("code lock")
-			.insert(hash, Arc::new(executable));
+			.insert(hash, Arc::new(executable), elf.len());
 		Ok(hash)
 	}
 
@@ -93,25 +95,23 @@ impl Core {
 	/// has code that passed it when it was stored.
 	fn executable(&self, host: &dyn Host, hash: &CodeHash) -> Result<Arc<Executable<Invocation>>, EngineError> {
 		if let Some(executable) = self.code.lock().expect("code lock").get(hash) {
-			return Ok(executable.clone());
+			return Ok(executable);
 		}
 		let elf = host
 			.code_bytes(hash)?
-			.ok_or_else(|| EngineError::Setup { message: format!("host has no code {}", hex(hash)) })?;
+			.ok_or_else(|| EngineError::Setup { message: format!("host has no code {}", hex::encode(hash)) })?;
 		if Sha256::digest(&elf).as_slice() != hash {
-			return Err(EngineError::Setup { message: format!("host returned the wrong code for {}", hex(hash)) });
+			return Err(EngineError::Setup {
+				message: format!("host returned the wrong code for {}", hex::encode(hash)),
+			});
 		}
 		let executable = Arc::new(self.load(&elf)?);
 		self.code
 			.lock()
 			.expect("code lock")
-			.insert(*hash, executable.clone());
+			.insert(*hash, executable.clone(), elf.len());
 		Ok(executable)
 	}
-}
-
-fn hex(bytes: &[u8]) -> String {
-	bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn load_error(error: impl std::fmt::Display) -> EngineError {
@@ -175,6 +175,9 @@ pub(crate) struct Request<'a> {
 	pub(crate) caller: &'a str,
 	pub(crate) funds: &'a [Fund],
 	pub(crate) accounts: &'a [AccountMeta],
+	/// For a nested invocation, the room the invoking contract has for each
+	/// account, which the callee may not grow it beyond; empty at the top.
+	pub(crate) room: &'a [usize],
 	pub(crate) data: &'a [u8],
 }
 
@@ -218,7 +221,7 @@ pub(crate) fn invoke(session: &Arc<Session>, request: Request<'_>, remaining: u6
 	}
 	put_u64(&mut input, request.accounts.len() as u64);
 	let mut slots = Vec::with_capacity(request.accounts.len());
-	for meta in request.accounts {
+	for (index, meta) in request.accounts.iter().enumerate() {
 		let owner = to_address(&meta.owner)?;
 		let data = {
 			let mut overlay = session.lock();
@@ -232,9 +235,12 @@ pub(crate) fn invoke(session: &Arc<Session>, request: Request<'_>, remaining: u6
 		let writable = meta.writable;
 		// Room to grow every writable account: the caller's own, and those it
 		// passes on, which the contract owning them may grow in a nested call.
+		// A callee gets no more room than its caller has to take the data back.
 		let capacity = if writable {
+			let room = request.room.get(index).copied().unwrap_or(usize::MAX);
 			(data.len() + abi::ACCOUNT_GROWTH)
 				.min(abi::MAX_ACCOUNT_SIZE)
+				.min(room)
 				.max(data.len())
 		} else {
 			data.len()
@@ -300,7 +306,7 @@ fn check_instruction(accounts: &[AccountMeta], data: &[u8]) -> Result<(), Engine
 	let mut seen = BTreeSet::new();
 	for account in accounts {
 		if !seen.insert((&account.owner, account.id)) {
-			return Err(invalid(format!("account {} of {} is listed twice", hex(&account.id), account.owner)));
+			return Err(invalid(format!("account {} of {} is listed twice", hex::encode(account.id), account.owner)));
 		}
 	}
 	Ok(())
@@ -348,7 +354,7 @@ impl Slot {
 	}
 
 	fn describe(&self) -> String {
-		format!("account {} of {}", hex(&self.id), self.owner)
+		format!("account {} of {}", hex::encode(self.id), self.owner)
 	}
 }
 
@@ -535,17 +541,21 @@ impl Invocation {
 		Ok(unsafe { &*buffer.ptr() }.to_vec())
 	}
 
+	/// `len` bytes of writable VM memory at `address`.
+	fn store(&mut self, address: u64, len: u64) -> Result<&mut [u8], EngineError> {
+		let buffer: Result<_, EbpfError> = self.mapping().map(AccessType::Store, address, len).into();
+		let buffer = buffer.map_err(|error| EngineError::Vm { message: format!("{}: {error}", self.contract) })?;
+		// SAFETY: as in `read`; the region is writable and `len` bytes long,
+		// and `&mut self` keeps this the only view while a host function runs.
+		Ok(unsafe { &mut *buffer.ptr_mut() })
+	}
+
 	fn write(&mut self, address: u64, bytes: &[u8]) -> Result<(), EngineError> {
 		if bytes.is_empty() {
 			return Ok(());
 		}
-		let buffer: Result<_, EbpfError> = self
-			.mapping()
-			.map(AccessType::Store, address, bytes.len() as u64)
-			.into();
-		let buffer = buffer.map_err(|error| EngineError::Vm { message: format!("{}: {error}", self.contract) })?;
-		// SAFETY: as in `read`; the region is writable and `bytes.len()` long.
-		unsafe { &mut *buffer.ptr_mut() }.copy_from_slice(bytes);
+		self.store(address, bytes.len() as u64)?
+			.copy_from_slice(bytes);
 		Ok(())
 	}
 
@@ -576,19 +586,27 @@ impl Invocation {
 			.map_err(|_| EngineError::Contract { message: format!("{field} is not UTF-8") })
 	}
 
-	/// `count` `(ptr, len)` slices at `address`.
-	fn read_slices(&self, address: u64, count: u64) -> Result<Vec<Vec<u8>>, EngineError> {
+	/// The `(ptr, len)` table of `count` slices at `address`.
+	fn read_slice_table(&self, address: u64, count: u64) -> Result<Vec<(u64, u64)>, EngineError> {
 		if count > 64 {
 			return Err(EngineError::Contract { message: "too many slices".into() });
 		}
 		let table = self.read(address, count * 16)?;
-		table
+		Ok(table
 			.chunks_exact(16)
 			.map(|pair| {
 				let ptr = u64::from_le_bytes(pair[..8].try_into().expect("8 bytes"));
 				let len = u64::from_le_bytes(pair[8..].try_into().expect("8 bytes"));
-				self.read(ptr, len)
+				(ptr, len)
 			})
+			.collect())
+	}
+
+	/// `count` `(ptr, len)` slices at `address`.
+	fn read_slices(&self, address: u64, count: u64) -> Result<Vec<Vec<u8>>, EngineError> {
+		self.read_slice_table(address, count)?
+			.into_iter()
+			.map(|(ptr, len)| self.read(ptr, len))
 			.collect()
 	}
 
@@ -654,7 +672,10 @@ impl Invocation {
 
 	fn mem_set(&mut self, destination: u64, value: u64, len: u64, _: u64, _: u64) -> Result<u64, EngineError> {
 		self.charge(gas::SYSCALL / 10 + gas::bytes(len as usize))?;
-		self.write(destination, &vec![value as u8; len as usize])?;
+		if len > 0 {
+			// Fill in place: `len` is bounded by the mapping, never allocated.
+			self.store(destination, len)?.fill(value as u8);
+		}
 		Ok(0)
 	}
 
@@ -720,11 +741,15 @@ impl Invocation {
 	}
 
 	fn sha256(&mut self, slices: u64, count: u64, out: u64, _: u64, _: u64) -> Result<u64, EngineError> {
-		let parts = self.read_slices(slices, count)?;
-		self.charge(gas::SYSCALL + gas::sha256(parts.iter().map(Vec::len).sum()))?;
+		// Charge for the bytes before copying any of them.
+		let table = self.read_slice_table(slices, count)?;
+		let total = table
+			.iter()
+			.fold(0u64, |total, (_, len)| total.saturating_add(*len));
+		self.charge(gas::SYSCALL + gas::sha256(total as usize))?;
 		let mut hasher = Sha256::new();
-		for part in &parts {
-			hasher.update(part);
+		for (ptr, len) in table {
+			hasher.update(self.read(ptr, len)?);
 		}
 		self.write(out, &hasher.finalize())?;
 		Ok(0)
@@ -793,6 +818,7 @@ impl Invocation {
 		let data = self.read(data, data_len)?;
 		let mut indexes = Vec::with_capacity(count as usize);
 		let mut accounts = Vec::with_capacity(count as usize);
+		let mut room = Vec::with_capacity(count as usize);
 		for meta in table.chunks_exact(16) {
 			let index = u64::from_le_bytes(meta[..8].try_into().expect("8 bytes")) as usize;
 			let writable = u64::from_le_bytes(meta[8..].try_into().expect("8 bytes")) != 0;
@@ -808,6 +834,7 @@ impl Invocation {
 				});
 			}
 			indexes.push(index);
+			room.push(slot.capacity);
 			accounts.push(AccountMeta { owner: slot.owner.clone(), id: slot.id, writable });
 		}
 
@@ -816,7 +843,14 @@ impl Invocation {
 		let session = self.session.clone();
 		let outcome = invoke(
 			&session,
-			Request { contract: &callee, caller: &self.contract, funds: &[], accounts: &accounts, data: &data },
+			Request {
+				contract: &callee,
+				caller: &self.contract,
+				funds: &[],
+				accounts: &accounts,
+				room: &room,
+				data: &data,
+			},
 			self.remaining,
 		);
 		let outcome = match outcome {

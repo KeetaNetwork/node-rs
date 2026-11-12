@@ -12,7 +12,7 @@ export declare const __napiBindingTarget: 'native' | 'wasm32-wasi' | 'wasm32-was
 /** An sBPF contract engine whose state lives with the caller. */
 export declare class ContractEngine {
   /**
-   * `config` is JSON: `{ network, maxCallDepth?, maxCodeSize? }`. `host`
+   * `config` is JSON: `{ network, maxCallDepth?, maxCodeSize?, maxCachedCodeSize? }`. `host`
    * answers the engine's reads (see the crate docs).
    */
   constructor(config: string, host: (arg: string) => Promise<string>)

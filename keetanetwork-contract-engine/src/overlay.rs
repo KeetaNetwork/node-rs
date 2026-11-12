@@ -65,7 +65,13 @@ impl Overlay {
 		Ok(())
 	}
 
-	fn debit(&mut self, host: &dyn Host, account: &str, token: &str, amount: &BigUint) -> Result<(), EngineError> {
+	pub(crate) fn debit(
+		&mut self,
+		host: &dyn Host,
+		account: &str,
+		token: &str,
+		amount: &BigUint,
+	) -> Result<(), EngineError> {
 		let held = self.balance(host, account, token)?;
 		if held < *amount {
 			return Err(ledger(format!("{account} holds {held} of {token}, needs {amount}")));
@@ -131,10 +137,15 @@ impl Overlay {
 		self.infos.insert(contract.to_string(), info);
 	}
 
-	/// The account info contracts set during the call, by contract.
+	/// The account info contracts set during the call that differs from
+	/// what the call started from, by contract.
 	pub(crate) fn changed_infos(&self) -> Vec<(String, AccountInfo)> {
 		self.infos
 			.iter()
+			.filter(|(address, info)| {
+				let before = self.reads.contracts.get(*address).cloned().flatten();
+				before.map(|record| record.info).as_ref() != Some(*info)
+			})
 			.map(|(address, info)| (address.clone(), info.clone()))
 			.collect()
 	}
@@ -165,11 +176,13 @@ impl Overlay {
 			.collect()
 	}
 
-	/// Every account the call wrote, with its new data, in (contract, key)
-	/// order.
+	/// Every account the call changed from the data it started with, with
+	/// its new data, in (contract, key) order. Each was read before it was
+	/// written, so the read set says what it had.
 	pub(crate) fn storage_writes(&self) -> Vec<(StorageKey, Option<Vec<u8>>)> {
 		self.storage
 			.iter()
+			.filter(|(entry, value)| self.reads.storage.get(*entry) != Some(*value))
 			.map(|(entry, value)| (entry.clone(), value.clone()))
 			.collect()
 	}

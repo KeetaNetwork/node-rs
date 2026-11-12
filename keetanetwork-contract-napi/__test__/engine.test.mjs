@@ -251,6 +251,10 @@ test('engine failures are outcomes, host failures abort the call', async () => {
 	const tooLarge = JSON.parse(await small.storeCode(elf('keeta_probe')));
 	assert.equal(tooLarge.error.kind, 'codeTooLarge');
 
+	// With no code kept between calls, the engine loads it from the host each time.
+	const uncached = new ContractEngine(JSON.stringify({ network: 0, maxCachedCodeSize: 0 }), world.host.callback);
+	ok(await uncached.runLedgerCall(JSON.stringify(call([], probe.echo()))));
+
 	// Malformed input rejects: bad JSON, a call without its gas limit, an unknown setting.
 	await assert.rejects(world.engine.runLedgerCall('not json'), /bad ledger call/);
 	const { gasLimit: _, ...withoutGas } = call([], probe.echo());

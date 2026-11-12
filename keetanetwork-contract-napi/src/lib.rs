@@ -83,7 +83,7 @@ pub struct ContractEngine {
 
 #[napi]
 impl ContractEngine {
-	/// `config` is JSON: `{ network, maxCallDepth?, maxCodeSize? }`. `host`
+	/// `config` is JSON: `{ network, maxCallDepth?, maxCodeSize?, maxCachedCodeSize? }`. `host`
 	/// answers the engine's reads (see the crate docs).
 	#[napi(constructor)]
 	pub fn new(config: String, host: Function<String, Promise<String>>) -> Result<Self> {

@@ -32,9 +32,9 @@
 		"access": "restricted"
 	},
 	"scripts": {
-		"build": "napi build --platform --release",
+		"build": "napi build --platform --profile release-napi",
 		"build:debug": "napi build --platform",
-		"test": "node --test \"__test__/*.test.mjs\""
+		"test": "node --test __test__/"
 	},
 	"devDependencies": {
 		"@napi-rs/cli": "3.10.12"
