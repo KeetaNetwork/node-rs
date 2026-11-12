@@ -25,6 +25,8 @@ An engineer reads this guide to find the page that holds each inbound question. 
 | Where does the shared host projection live? | [Bindings](../keetanetwork-bindings/docs/README.md) |
 | Where does the browser ABI live? | [Client wasm](../keetanetwork-client-wasm/docs/README.md) |
 | Where does the WASI `p1` / `p2` contract live? | [Client WASI](../keetanetwork-client-wasi/docs/README.md) |
+| How does a contract written in Rust get set up, built, and tested? | [Contract Std](../keetanetwork-contract-std/docs/README.md) |
+| How does a contract get built in C, assembly, or another language? | [Contracts in other languages](concepts/CONTRACTS-IN-OTHER-LANGUAGES.md) |
 | Where are the reserved stub crates named? | [Node](../keetanetwork-node/docs/README.md) and [Ledger](../keetanetwork-ledger/docs/README.md) |
 
 ## What this workspace is
@@ -55,6 +57,7 @@ These entries are the living table of contents for crate documentation. [Archite
 | `keetanetwork-bindings` | [Bindings](../keetanetwork-bindings/docs/README.md) |
 | `keetanetwork-client-wasm` | [Client wasm](../keetanetwork-client-wasm/docs/README.md) |
 | `keetanetwork-client-wasi` | [Client WASI](../keetanetwork-client-wasi/docs/README.md) |
+| `keetanetwork-contract-std` | [Contract Std](../keetanetwork-contract-std/docs/README.md) |
 | `keetanetwork-node` | [Node](../keetanetwork-node/docs/README.md) |
 | `keetanetwork-ledger` | [Ledger](../keetanetwork-ledger/docs/README.md) |
 
@@ -69,6 +72,7 @@ These entries are the living table of contents for crate documentation. [Archite
 | `docs/QUICKSTART.md` | Install, build, test, and first use |
 | `keetanetwork-*/docs/README.md` | Crate purpose, Quickstart, and examples |
 | `keetanetwork-*/docs/ARCHITECTURE.md` | Product-crate architecture |
+| `docs/concepts/*.md` | Concept pages that span several crates |
 
 GitHub issues and pull requests stay the history home.
 

@@ -20,6 +20,7 @@ members = [
 	"keetanetwork-client-wasm",
 	"keetanetwork-client-wasi",
 	"keetanetwork-mobile",
+	"keetanetwork-contract-std",
 ]
 
 [workspace.package]
@@ -197,6 +198,11 @@ default-features = false
 [workspace.dependencies.keetanetwork-client-wasm]
 version = "0.5.2"
 path = "keetanetwork-client-wasm"
+default-features = false
+
+[workspace.dependencies.keetanetwork-contract-std]
+version = "0.1.0"
+path = "keetanetwork-contract-std"
 default-features = false
 
 [profile.dev]
