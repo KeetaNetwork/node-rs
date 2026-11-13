@@ -273,7 +273,7 @@ readonly CRATES_IO_USER_AGENT="node-rs-release-script (https://github.com/KeetaN
 fetch_crate_metadata() {
     local package_name="$1"
 
-    # The body is followed by the HTTP status on its own line.
+    # -w appends the HTTP status as the last line.
     local raw
     if ! raw=$(curl -s -A "$CRATES_IO_USER_AGENT" -w '\n%{http_code}' "https://crates.io/api/v1/crates/$package_name" 2>/dev/null); then
         log_error "Could not reach crates.io to look up $package_name"
@@ -326,10 +326,8 @@ get_package_checksum() {
 
 # Package publishing
 
-# Publish the given packages with a single cargo invocation. Cargo packages
-# and verifies them together against a local overlay registry (so crates
-# whose workspace dependencies are released in the same run verify too),
-# then uploads them in dependency order, waiting for each to reach the index.
+# One multi-package publish lets crates verify against workspace
+# dependencies released in the same run.
 publish_packages() {
     local packages=("$@")
 
@@ -352,7 +350,7 @@ publish_packages() {
         log_info "Publishing: cargo ${publish_args[*]}"
     fi
 
-    # cargo's stdout must not mix into this function's caller's capture.
+    # The caller captures stdout.
     cargo "${publish_args[@]}" >&2
 }
 
@@ -565,8 +563,8 @@ process_packages() {
     shift
     local packages=("$@")
 
-    local to_publish=()      # package names, dependency order
-    local to_publish_ids=()  # matching name@version
+    local to_publish=()
+    local to_publish_ids=()
     local already_published_ids=()
     local new_crates=()
 
@@ -617,7 +615,6 @@ process_packages() {
         log_info "Nothing to publish: every version is already on crates.io"
     fi
 
-    # Collect checksums for the release notes.
     local checksums_list=""
     local id
     for id in "${already_published_ids[@]}" "${to_publish_ids[@]}"; do
@@ -741,8 +738,7 @@ main() {
     workspace_version=$(get_workspace_version)
     log_info "Release version: $workspace_version"
 
-    # A full release ends in the workspace tag, so refuse before publishing
-    # anything if that tag already exists.
+    # Fail before publishing, not at the tag step.
     if [[ ${#SELECTED_PACKAGES[@]} -eq 0 ]] \
         && git rev-parse -q --verify "refs/tags/releases/v${workspace_version}" > /dev/null; then
         local tag_msg="Tag releases/v${workspace_version} already exists: bump [workspace.package].version or release named packages"

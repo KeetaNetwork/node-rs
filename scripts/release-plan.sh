@@ -1,18 +1,13 @@
 #!/bin/bash
 set -eo pipefail
 
-# Decide what a push to main should release by comparing workspace crate
-# versions between two commits.
-#
 # Usage: scripts/release-plan.sh [BASE_REF] [HEAD_REF]
-#   BASE_REF defaults to HEAD^, HEAD_REF to HEAD. An unknown or all-zero
-#   BASE_REF (first push, force push) falls back to HEAD_REF^.
 #
-# Prints GitHub Actions style key=value lines on stdout:
-#   mode=none     no crate version changed
-#   mode=full     [workspace.package].version changed: full release + tag
-#   mode=subset   only crate versions changed: publish those crates, no tag
-#   packages=...  space-separated crates whose version changed
+# Prints, as GitHub Actions outputs:
+#   mode=full     [workspace.package].version changed
+#   mode=subset   only crate versions changed
+#   mode=none     no version changed
+#   packages=...  crates whose version changed
 
 readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -24,8 +19,7 @@ if [[ -z "$base_ref" || "$base_ref" =~ ^0+$ ]] || ! git cat-file -e "${base_ref}
     base_ref="${head_ref}^"
 fi
 
-# Pin the toolchain so reading the old tree never triggers a toolchain
-# install from its rust-toolchain.toml.
+# Keeps the old tree's rust-toolchain.toml from installing another toolchain.
 RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-$(rustup show active-toolchain 2>/dev/null | cut -d' ' -f1)}"
 export RUSTUP_TOOLCHAIN
 
@@ -37,8 +31,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Print "<crate> <version>" for every workspace member, plus the workspace
-# version as "@workspace <version>", for the tree at the given ref.
 tree_versions() {
     local ref="$1"
     local dir="$2"
@@ -52,7 +44,6 @@ tree_versions() {
 base_versions="$(tree_versions "$base_ref" "$workdir/base")"
 head_versions="$(tree_versions "$head_ref" "$workdir/head")"
 
-# Lines present at HEAD but not at base: new crates or new versions.
 changed="$(comm -13 <(echo "$base_versions" | sort) <(echo "$head_versions" | sort))"
 
 packages="$(echo "$changed" | awk '$1 != "@workspace" && NF { print $1 }' | tr '\n' ' ' | sed 's/ $//')"

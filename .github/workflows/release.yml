@@ -1,28 +1,5 @@
 name: Release
 
-# Publishes to crates.io whenever a push to main changes a crate version.
-# scripts/release-plan.sh compares workspace crate versions with the
-# previous commit:
-#   - [workspace.package].version changed -> full release + releases/v<ver> tag
-#   - only crate versions changed         -> publish just those crates, no tag
-#   - nothing changed                     -> skip
-#
-# No long-lived credentials:
-#   - crates.io: Trusted Publishing. rust-lang/crates-io-auth-action trades
-#     this job's GitHub OIDC token for a short-lived publish token, which it
-#     revokes when the job ends. Every crate needs a Trusted Publisher entry
-#     on crates.io (owner KeetaNetwork, repo node-rs, workflow release.yml,
-#     environment release).
-#   - Release tag: signed keyless with Sigstore gitsign, using the same OIDC
-#     identity. Verify with:
-#       gitsign verify \
-#         --certificate-identity=https://github.com/KeetaNetwork/node-rs/.github/workflows/release.yml@refs/heads/main \
-#         --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
-#         releases/v<version>
-#
-# release.sh skips any version already on crates.io, so re-running after a
-# partial failure (workflow_dispatch) resumes where it stopped.
-
 on:
   push:
     branches: [main]
@@ -83,12 +60,12 @@ jobs:
       needs.plan.outputs.mode == 'dry-run' ||
       (needs.plan.outputs.mode != 'none' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest-l
-    # Must match the environment on each crate's Trusted Publisher entry.
+    # Must match each crate's Trusted Publisher environment on crates.io.
     environment: release
     permissions:
-      contents: write   # push the release tag
-      id-token: write   # crates.io Trusted Publishing + gitsign
-      packages: read    # node harness from GitHub Packages
+      contents: write
+      id-token: write
+      packages: read
     env:
       MODE: ${{ needs.plan.outputs.mode }}
       PACKAGES: ${{ needs.plan.outputs.packages }}
@@ -124,8 +101,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Tests, lint and package verification all run before a publish token
-      # exists, so the short-lived token only has to cover the uploads.
+      # Verify everything before minting the short-lived publish token.
       - name: Run all tests
         run: make test-all
 
@@ -155,7 +131,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # release.sh runs `git tag -s`; route it through gitsign.
+          # Makes `git tag -s` in release.sh sign with gitsign.
           git config gpg.format x509
           git config gpg.x509.program gitsign
 
