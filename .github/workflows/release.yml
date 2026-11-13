@@ -5,13 +5,10 @@ on:
     branches: [main]
     paths:
       - '**/Cargo.toml'
-  # Dry-runs the whole job, including a gitsign sign/verify, on changes to
-  # the release tooling itself.
+  # Dry-runs the whole job, including a gitsign sign/verify.
   pull_request:
     paths:
       - .github/workflows/release.yml
-      - scripts/release.sh
-      - scripts/release-plan.sh
   workflow_dispatch:
     inputs:
       mode:
@@ -31,7 +28,7 @@ env:
 
 jobs:
   plan:
-    name: Detect version changes
+    name: Plan release
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -66,7 +63,7 @@ jobs:
           fi
 
   release:
-    name: Publish to crates.io
+    name: ${{ needs.plan.outputs.mode == 'dry-run' && 'Release dry run' || 'Publish to crates.io' }}
     needs: plan
     if: >-
       needs.plan.outputs.mode == 'dry-run' ||
