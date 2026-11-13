@@ -6,13 +6,22 @@ name: Release
 #   - [workspace.package].version changed -> full release + releases/v<ver> tag
 #   - only crate versions changed         -> publish just those crates, no tag
 #   - nothing changed                     -> skip
+#
+# No long-lived credentials:
+#   - crates.io: Trusted Publishing. rust-lang/crates-io-auth-action trades
+#     this job's GitHub OIDC token for a short-lived publish token, which it
+#     revokes when the job ends. Every crate needs a Trusted Publisher entry
+#     on crates.io (owner KeetaNetwork, repo node-rs, workflow release.yml,
+#     environment release).
+#   - Release tag: signed keyless with Sigstore gitsign, using the same OIDC
+#     identity. Verify with:
+#       gitsign verify \
+#         --certificate-identity=https://github.com/KeetaNetwork/node-rs/.github/workflows/release.yml@refs/heads/main \
+#         --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+#         releases/v<version>
+#
 # release.sh skips any version already on crates.io, so re-running after a
 # partial failure (workflow_dispatch) resumes where it stopped.
-#
-# Secrets:
-#   CARGO_REGISTRY_TOKEN     crates.io API token (publish-update scope)
-#   RELEASE_GPG_PRIVATE_KEY  optional; when set the tag is GPG-signed with it,
-#   RELEASE_GPG_PASSPHRASE   otherwise it is an annotated, unsigned tag
 
 on:
   push:
@@ -33,6 +42,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  GITSIGN_VERSION: 0.18.0
+  GITSIGN_SHA256: 2bc625472a08fea3bb6a57982c7d8b4978d1032251d305ceef3bf2ded0ca4483
 
 jobs:
   plan:
@@ -72,10 +83,15 @@ jobs:
       needs.plan.outputs.mode == 'dry-run' ||
       (needs.plan.outputs.mode != 'none' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest-l
+    # Must match the environment on each crate's Trusted Publisher entry.
     environment: release
     permissions:
-      contents: write
-      packages: read
+      contents: write   # push the release tag
+      id-token: write   # crates.io Trusted Publishing + gitsign
+      packages: read    # node harness from GitHub Packages
+    env:
+      MODE: ${{ needs.plan.outputs.mode }}
+      PACKAGES: ${{ needs.plan.outputs.packages }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,50 +124,57 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure git identity
+      # Tests, lint and package verification all run before a publish token
+      # exists, so the short-lived token only has to cover the uploads.
+      - name: Run all tests
+        run: make test-all
+
+      - name: Lint
+        run: make do-lint-ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify packages (cargo publish --dry-run)
+        run: |
+          read -ra pkgs <<< "$PACKAGES"
+          ./scripts/release.sh --dry-run --skip-tests --skip-lint --existing-only "${pkgs[@]}"
+
+      - name: Install gitsign
+        if: env.MODE == 'full'
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          curl -sSfL -o "$bin/gitsign" \
+            "https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          echo "${GITSIGN_SHA256}  $bin/gitsign" | sha256sum -c -
+          chmod +x "$bin/gitsign"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Configure git
+        if: env.MODE == 'full'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # release.sh runs `git tag -s`; route it through gitsign.
+          git config gpg.format x509
+          git config gpg.x509.program gitsign
 
-      - name: Import release signing key
-        id: gpg
+      - name: Get crates.io publish token
+        if: env.MODE != 'dry-run'
+        id: crates-io
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+      - name: Publish
+        if: env.MODE != 'dry-run'
         env:
-          GPG_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token }}
+          GITSIGN_TOKEN_PROVIDER: github-actions
         run: |
-          if [[ -n "$GPG_KEY" ]]; then
-            echo "sign=gpg" >> "$GITHUB_OUTPUT"
-          else
-            echo "sign=none" >> "$GITHUB_OUTPUT"
-            echo "::notice::RELEASE_GPG_PRIVATE_KEY not set; release tag will be annotated but unsigned"
-          fi
-
-      - name: Load signing key into gpg
-        if: steps.gpg.outputs.sign == 'gpg'
-        uses: crazy-max/ghaction-import-gpg@v6
-        with:
-          gpg_private_key: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
-          git_user_signingkey: true
-          git_tag_gpgsign: true
-
-      - name: Run release
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG_SIGN: ${{ steps.gpg.outputs.sign }}
-          RELEASE_LINT_TARGET: do-lint-ci
-          MODE: ${{ needs.plan.outputs.mode }}
-          PACKAGES: ${{ needs.plan.outputs.packages }}
-        run: |
-          case "$MODE" in
-            full)    ./scripts/release.sh ;;
-            dry-run) ./scripts/release.sh --dry-run ;;
-            subset)  read -ra pkgs <<< "$PACKAGES"; ./scripts/release.sh "${pkgs[@]}" ;;
-            *)       echo "Unknown release mode '$MODE'" >&2; exit 1 ;;
-          esac
+          read -ra pkgs <<< "$PACKAGES"
+          ./scripts/release.sh --skip-tests --skip-lint --no-verify --existing-only "${pkgs[@]}"
 
       - name: Push release tag
-        if: needs.plan.outputs.mode == 'full'
+        if: env.MODE == 'full'
         run: |
           version="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
           git push origin "refs/tags/releases/v${version}"

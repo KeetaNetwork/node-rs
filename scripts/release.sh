@@ -10,21 +10,16 @@ readonly PROJECT_NAME="node-rs"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 readonly MAX_DEPENDENCY_ITERATIONS=20
-readonly CRATES_IO_WAIT_TIME=30
 readonly ERR_RETURN_DIR="Failed to return to previous directory"
-
-# Release tag signing: "gpg" signs with git tag -s, "none" creates an
-# annotated, unsigned tag (git tag -a).
-readonly RELEASE_TAG_SIGN="${RELEASE_TAG_SIGN:-gpg}"
-# Make target that lints before publishing. CI uses the check-only
-# do-lint-ci so the release never rewrites the tree it publishes.
-readonly RELEASE_LINT_TARGET="${RELEASE_LINT_TARGET:-do-lint}"
 
 # Parse command line arguments
 DRY_RUN=false
 INITIAL_RELEASE=false
 ALLOW_DIRTY=false
 SKIP_TESTS=false
+SKIP_LINT=false
+NO_VERIFY=false
+EXISTING_ONLY=false
 SELECTED_PACKAGES=()
 
 show_help() {
@@ -47,12 +42,14 @@ Options:
                 cargo publish (publishes uncommitted changes)
   --skip-tests  Skip running the test suite (make test-all) before publishing;
                 lints still run
+  --skip-lint   Skip running the lints (make do-lint) before publishing
+  --no-verify   Pass --no-verify to cargo publish (packages were already
+                verified, e.g. by an earlier --dry-run of the same tree)
+  --existing-only
+                Refuse to release if any crate to publish does not exist on
+                crates.io yet. Trusted Publishing tokens cannot create crates,
+                so CI uses this to fail before uploading anything.
   -h, --help    Show this help message
-
-Environment:
-  RELEASE_TAG_SIGN     gpg (default) signs the release tag; none creates an
-                       annotated, unsigned tag
-  RELEASE_LINT_TARGET  Make target run as the lint gate (default: do-lint)
 
 Examples:
   $0                            # Run the full release process
@@ -64,8 +61,9 @@ Examples:
 The script will:
 1. Discover all workspace packages automatically
 2. Order them by dependencies (topological sort)
-3. Validate and publish each package in order
-4. Create a release tag with checksums (signed unless RELEASE_TAG_SIGN=none)
+3. Publish every unpublished version in one cargo publish run (cargo orders
+   the uploads and waits for each crate to reach the index)
+4. Create a signed release tag with checksums
 5. Provide instructions for pushing to GitHub
 
 Prerequisites:
@@ -92,6 +90,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-tests)
             SKIP_TESTS=true
+            shift
+            ;;
+        --skip-lint)
+            SKIP_LINT=true
+            shift
+            ;;
+        --no-verify)
+            NO_VERIFY=true
+            shift
+            ;;
+        --existing-only)
+            EXISTING_ONLY=true
             shift
             ;;
         -h|--help)
@@ -263,44 +273,26 @@ readonly CRATES_IO_USER_AGENT="node-rs-release-script (https://github.com/KeetaN
 fetch_crate_metadata() {
     local package_name="$1"
 
-    local response
-    if ! response=$(curl -s -A "$CRATES_IO_USER_AGENT" "https://crates.io/api/v1/crates/$package_name" 2>/dev/null); then
+    # The body is followed by the HTTP status on its own line.
+    local raw
+    if ! raw=$(curl -s -A "$CRATES_IO_USER_AGENT" -w '\n%{http_code}' "https://crates.io/api/v1/crates/$package_name" 2>/dev/null); then
         log_error "Could not reach crates.io to look up $package_name"
         return 1
     fi
+    local status="${raw##*$'\n'}"
+    local response="${raw%$'\n'*}"
 
-    if echo "$response" | jq -e '.errors' > /dev/null 2>&1; then
-        if echo "$response" | jq -e '.errors[] | select(.detail=="Not Found")' > /dev/null 2>&1; then
-            echo "NOT_FOUND"
-            return 0
-        fi
+    if [[ "$status" == "404" ]]; then
+        echo "NOT_FOUND"
+        return 0
+    fi
+
+    if [[ "$status" != "200" ]] || echo "$response" | jq -e '.errors' > /dev/null 2>&1; then
         log_error "crates.io rejected the $package_name lookup: $(echo "$response" | jq -r '.errors[0].detail')"
         return 1
     fi
 
     echo "$response"
-}
-
-check_if_published() {
-    local package_name="$1"
-    local package_version="$2"
-
-    log_info "Checking if $package_name v$package_version is already published..."
-
-    local response
-    if ! response=$(fetch_crate_metadata "$package_name"); then
-        die "Aborting release: the $package_name published-version lookup failed"
-    fi
-
-    if [[ "$response" == "NOT_FOUND" ]]; then
-        return 1  # Not published
-    fi
-
-    if echo "$response" | jq -e ".versions[] | select(.num==\"$package_version\")" > /dev/null 2>&1; then
-        return 0  # Already published
-    else
-        return 1  # Not published
-    fi
 }
 
 get_package_checksum() {
@@ -332,70 +324,36 @@ get_package_checksum() {
     return 0
 }
 
-# Package publishing functions
-validate_package() {
-    local package_dir="$1"
-    local package_name="$2"
-    local package_version="$3"
+# Package publishing
 
-    log_dry_run "Validating package $package_name v$package_version from $package_dir"
+# Publish the given packages with a single cargo invocation. Cargo packages
+# and verifies them together against a local overlay registry (so crates
+# whose workspace dependencies are released in the same run verify too),
+# then uploads them in dependency order, waiting for each to reach the index.
+publish_packages() {
+    local packages=("$@")
 
-    cd "$package_dir" || die "Failed to change to package directory: $package_dir"
-
-    # First try cargo check to validate compilation
-    if cargo check --all-features; then
-        log_success "Compilation validation passed for $package_name v$package_version"
-
-        # Then try cargo package. A batched release cannot fully package a
-        # crate whose workspace dependencies are released in the same run,
-        # so that failure is tolerated.
-        local package_output
-        if package_output=$(cargo package --allow-dirty --all-features 2>&1); then
-            log_success "Package validation passed for $package_name v$package_version"
-        elif echo "$package_output" | grep -q "failed to select a version for the requirement"; then
-            log_warning "Packaging $package_name v$package_version deferred: a workspace dependency is not published yet"
-        elif [[ "$INITIAL_RELEASE" == "false" ]]; then
-            log_error "$package_output"
-            die "Package validation failed for $package_name v$package_version"
-        fi
-
-        cd - > /dev/null || die "$ERR_RETURN_DIR"
-        return 0
-    else
-        log_error "Compilation validation failed for $package_name v$package_version"
-        cd - > /dev/null || die "$ERR_RETURN_DIR"
-        return 1
-    fi
-}
-
-publish_package() {
-    local package_dir="$1"
-    local package_name="$2"
-    local package_version="$3"
+    local publish_args=(publish --all-features)
+    local package
+    for package in "${packages[@]}"; do
+        publish_args+=(-p "$package")
+    done
 
     if [[ "$DRY_RUN" == "true" ]]; then
-        validate_package "$package_dir" "$package_name" "$package_version"
-        return $?
-    fi
-
-    log_info "Publishing $package_name v$package_version..."
-
-    cd "$package_dir" || die "Failed to change to package directory: $package_dir"
-
-    local publish_args=(--all-features)
-    if [[ "$ALLOW_DIRTY" == "true" ]]; then
-        publish_args+=(--allow-dirty)
-    fi
-
-    if cargo publish "${publish_args[@]}"; then
-        log_success "Published $package_name v$package_version"
-        cd - > /dev/null || die "$ERR_RETURN_DIR"
-        return 0
+        publish_args+=(--dry-run --allow-dirty)
+        log_dry_run "Verifying packages: cargo ${publish_args[*]}"
     else
-        log_error "Failed to publish $package_name v$package_version"
-        cd - > /dev/null || die "$ERR_RETURN_DIR"
-        return 1
+        if [[ "$ALLOW_DIRTY" == "true" ]]; then
+            publish_args+=(--allow-dirty)
+        fi
+        if [[ "$NO_VERIFY" == "true" ]]; then
+            publish_args+=(--no-verify)
+        fi
+        log_info "Publishing: cargo ${publish_args[*]}"
     fi
+
+    # cargo's stdout must not mix into this function's caller's capture.
+    cargo "${publish_args[@]}" >&2
 }
 
 run_tests_and_lints() {
@@ -409,16 +367,20 @@ run_tests_and_lints() {
             fi
         fi
 
-        log_info "Running lints..."
-        if ! make "$RELEASE_LINT_TARGET"; then
-            die "Lints failed. Aborting release."
+        if [[ "$SKIP_LINT" == "true" ]]; then
+            log_warning "Skipping lints (--skip-lint)"
+        else
+            log_info "Running lints..."
+            if ! make do-lint; then
+                die "Lints failed. Aborting release."
+            fi
         fi
     elif [[ "$SKIP_TESTS" == "true" ]]; then
         log_dry_run "Would skip tests (--skip-tests)"
-        log_dry_run "Would run: make $RELEASE_LINT_TARGET"
+        log_dry_run "Would run: make do-lint"
     else
         log_dry_run "Would run: make test-all"
-        log_dry_run "Would run: make $RELEASE_LINT_TARGET"
+        log_dry_run "Would run: make do-lint"
     fi
 }
 
@@ -457,15 +419,8 @@ ${checksums}
 https://github.com/KeetaNetwork/${PROJECT_NAME}/compare/${last_tag}...${tag_name}"
     fi
 
-    local tag_flag kind
-    case "$RELEASE_TAG_SIGN" in
-        gpg)  tag_flag=-s; kind=signed ;;
-        none) tag_flag=-a; kind=annotated ;;
-        *)    die "Unknown RELEASE_TAG_SIGN '$RELEASE_TAG_SIGN' (expected gpg or none)" ;;
-    esac
-
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_dry_run "Would create $kind release tag: $tag_name"
+        log_dry_run "Would create signed release tag: $tag_name"
         echo ""
         log_info "Tag message preview:"
         echo "----------------------------------------"
@@ -474,13 +429,14 @@ https://github.com/KeetaNetwork/${PROJECT_NAME}/compare/${last_tag}...${tag_name
         return 0
     fi
 
-    log_info "Creating $kind release tag: $tag_name"
+    log_info "Creating signed release tag: $tag_name"
 
-    if git tag "$tag_flag" "$tag_name" -m "$tag_message"; then
-        log_success "Created $kind tag: $tag_name"
+    # Create signed tag
+    if git tag -s "$tag_name" -m "$tag_message"; then
+        log_success "Created signed tag: $tag_name"
         return 0
     else
-        log_error "Failed to create $kind tag"
+        log_error "Failed to create signed tag"
         return 1
     fi
 }
@@ -564,7 +520,7 @@ topological_sort_packages() {
             break
         fi
 
-        ((iteration++))
+        iteration=$((iteration + 1))
     done
 
     # Output the sorted packages
@@ -609,87 +565,76 @@ process_packages() {
     shift
     local packages=("$@")
 
-    local published_packages=()
-    local checksums_list=""
+    local to_publish=()      # package names, dependency order
+    local to_publish_ids=()  # matching name@version
+    local already_published_ids=()
+    local new_crates=()
 
-    # Publish each package in dependency order
     for package in "${packages[@]}"; do
         if [[ ! -d "$package" ]]; then
             log_warning "Package directory $package not found, skipping"
             continue
         fi
 
-        log_info "Processing package: $package"
-
-        # Resolve version (workspace or explicit)
         local version
         version=$(resolve_package_version "$package" "$workspace_version")
-
         if [[ -z "$version" ]]; then
             log_warning "Could not extract version for $package, skipping"
             continue
         fi
 
-        log_info "Found $package version: $version"
-
-        # Check if already published (skip check if --initial flag is used)
-        if [[ "$INITIAL_RELEASE" == "true" ]]; then
-            log_info "Initial release mode: forcing publication of $package v$version"
-            local skip_published_check=true
-        else
-            local skip_published_check=false
+        local metadata
+        if ! metadata=$(fetch_crate_metadata "$package"); then
+            die "Aborting release: the $package published-version lookup failed"
         fi
 
-        if [[ "$skip_published_check" == "false" ]] && check_if_published "$package" "$version"; then
-            log_warning "$package v$version is already published, skipping"
-
-            # Still get checksum for release notes (unless dry-run)
-            if [[ "$DRY_RUN" != "true" ]]; then
-                local checksum
-                if checksum=$(get_package_checksum "$package" "$version"); then
-                    checksums_list="${checksums_list}        ${package}@${version}   SHA256: ${checksum}
-"
-                fi
-            else
-                log_dry_run "Would retrieve checksum for already published $package v$version"
-                checksums_list="${checksums_list}        ${package}@${version}   SHA256: [DRY-RUN: would retrieve from crates.io]
-"
-            fi
-        else
-            # Publish the package
-            if publish_package "$package" "$package" "$version"; then
-                published_packages+=("$package@$version")
-
-                if [[ "$DRY_RUN" != "true" ]]; then
-                    # Wait for crates.io to process
-                    log_info "Waiting for crates.io to process $package..."
-                    sleep $CRATES_IO_WAIT_TIME
-
-                    # Get checksum
-                    local checksum
-                    if checksum=$(get_package_checksum "$package" "$version"); then
-                        checksums_list="${checksums_list}        ${package}@${version}   SHA256: ${checksum}
-"
-                    else
-                        checksums_list="${checksums_list}        ${package}@${version}   SHA256: [Error retrieving checksum]
-"
-                    fi
-                else
-                    log_dry_run "Would wait for crates.io to process $package"
-                    log_dry_run "Would retrieve checksum for newly published $package v$version"
-                    checksums_list="${checksums_list}        ${package}@${version}   SHA256: [DRY-RUN: would retrieve from crates.io after publishing]
-"
-                fi
-            else
-                if [[ "$DRY_RUN" != "true" ]]; then
-                    die "Failed to publish $package, aborting release"
-                fi
-            fi
+        if [[ "$metadata" == "NOT_FOUND" ]]; then
+            new_crates+=("$package")
+        elif [[ "$INITIAL_RELEASE" != "true" ]] \
+            && echo "$metadata" | jq -e ".versions[] | select(.num==\"$version\")" > /dev/null 2>&1; then
+            log_info "$package v$version is already published, skipping"
+            already_published_ids+=("$package@$version")
+            continue
         fi
+
+        log_info "Will publish $package v$version"
+        to_publish+=("$package")
+        to_publish_ids+=("$package@$version")
+    done
+
+    if [[ ${#new_crates[@]} -gt 0 ]]; then
+        if [[ "$EXISTING_ONLY" == "true" ]]; then
+            die "Not on crates.io yet: ${new_crates[*]}. Publish them once by hand (make release PKG='${new_crates[*]}') and add a Trusted Publisher for them, then re-run."
+        fi
+        log_warning "First publish of new crates: ${new_crates[*]}"
+    fi
+
+    if [[ ${#to_publish[@]} -gt 0 ]]; then
+        if ! publish_packages "${to_publish[@]}"; then
+            die "cargo publish failed for ${to_publish[*]}"
+        fi
+    else
+        log_info "Nothing to publish: every version is already on crates.io"
+    fi
+
+    # Collect checksums for the release notes.
+    local checksums_list=""
+    local id
+    for id in "${already_published_ids[@]}" "${to_publish_ids[@]}"; do
+        local name="${id%@*}"
+        local version="${id##*@}"
+        local checksum
+        if [[ "$DRY_RUN" == "true" ]]; then
+            checksum="[DRY-RUN: would retrieve from crates.io]"
+        elif ! checksum=$(get_package_checksum "$name" "$version"); then
+            checksum="[Error retrieving checksum]"
+        fi
+        checksums_list="${checksums_list}        ${name}@${version}   SHA256: ${checksum}
+"
     done
 
     # Output results for main function
-    echo "PUBLISHED_PACKAGES:${published_packages[*]}"
+    echo "PUBLISHED_PACKAGES:${to_publish_ids[*]}"
     echo "CHECKSUMS_LIST_START"
     echo -n "$checksums_list"
     echo "CHECKSUMS_LIST_END"
@@ -798,9 +743,14 @@ main() {
 
     # A full release ends in the workspace tag, so refuse before publishing
     # anything if that tag already exists.
-    if [[ ${#SELECTED_PACKAGES[@]} -eq 0 && "$DRY_RUN" != "true" ]] \
+    if [[ ${#SELECTED_PACKAGES[@]} -eq 0 ]] \
         && git rev-parse -q --verify "refs/tags/releases/v${workspace_version}" > /dev/null; then
-        die "Tag releases/v${workspace_version} already exists: bump [workspace.package].version or release named packages"
+        local tag_msg="Tag releases/v${workspace_version} already exists: bump [workspace.package].version or release named packages"
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_warning "$tag_msg"
+        else
+            die "$tag_msg"
+        fi
     fi
 
     # Discover packages and determine order
