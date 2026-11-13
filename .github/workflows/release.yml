@@ -1,0 +1,157 @@
+name: Release
+
+# Publishes to crates.io whenever a push to main changes a crate version.
+# scripts/release-plan.sh compares workspace crate versions with the
+# previous commit:
+#   - [workspace.package].version changed -> full release + releases/v<ver> tag
+#   - only crate versions changed         -> publish just those crates, no tag
+#   - nothing changed                     -> skip
+# release.sh skips any version already on crates.io, so re-running after a
+# partial failure (workflow_dispatch) resumes where it stopped.
+#
+# Secrets:
+#   CARGO_REGISTRY_TOKEN     crates.io API token (publish-update scope)
+#   RELEASE_GPG_PRIVATE_KEY  optional; when set the tag is GPG-signed with it,
+#   RELEASE_GPG_PASSPHRASE   otherwise it is an annotated, unsigned tag
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.toml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full (publish everything unpublished + tag) or dry-run'
+        type: choice
+        options: [full, dry-run]
+        default: full
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    name: Detect version changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      packages: ${{ steps.plan.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
+
+      - name: Compare crate versions with the previous commit
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_MODE: ${{ inputs.mode }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "mode=$DISPATCH_MODE" >> "$GITHUB_OUTPUT"
+            echo "packages=" >> "$GITHUB_OUTPUT"
+          else
+            scripts/release-plan.sh "$BEFORE" HEAD | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    name: Publish to crates.io
+    needs: plan
+    if: >-
+      needs.plan.outputs.mode == 'dry-run' ||
+      (needs.plan.outputs.mode != 'none' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest-l
+    environment: release
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@keetanetwork'
+
+      - name: Install reference implementation harness
+        run: make node-harness
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Import release signing key
+        id: gpg
+        env:
+          GPG_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -n "$GPG_KEY" ]]; then
+            echo "sign=gpg" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=none" >> "$GITHUB_OUTPUT"
+            echo "::notice::RELEASE_GPG_PRIVATE_KEY not set; release tag will be annotated but unsigned"
+          fi
+
+      - name: Load signing key into gpg
+        if: steps.gpg.outputs.sign == 'gpg'
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_tag_gpgsign: true
+
+      - name: Run release
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG_SIGN: ${{ steps.gpg.outputs.sign }}
+          RELEASE_LINT_TARGET: do-lint-ci
+          MODE: ${{ needs.plan.outputs.mode }}
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: |
+          case "$MODE" in
+            full)    ./scripts/release.sh ;;
+            dry-run) ./scripts/release.sh --dry-run ;;
+            subset)  read -ra pkgs <<< "$PACKAGES"; ./scripts/release.sh "${pkgs[@]}" ;;
+            *)       echo "Unknown release mode '$MODE'" >&2; exit 1 ;;
+          esac
+
+      - name: Push release tag
+        if: needs.plan.outputs.mode == 'full'
+        run: |
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
+          git push origin "refs/tags/releases/v${version}"

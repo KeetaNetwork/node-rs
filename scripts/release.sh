@@ -13,6 +13,13 @@ readonly MAX_DEPENDENCY_ITERATIONS=20
 readonly CRATES_IO_WAIT_TIME=30
 readonly ERR_RETURN_DIR="Failed to return to previous directory"
 
+# Release tag signing: "gpg" signs with git tag -s, "none" creates an
+# annotated, unsigned tag (git tag -a).
+readonly RELEASE_TAG_SIGN="${RELEASE_TAG_SIGN:-gpg}"
+# Make target that lints before publishing. CI uses the check-only
+# do-lint-ci so the release never rewrites the tree it publishes.
+readonly RELEASE_LINT_TARGET="${RELEASE_LINT_TARGET:-do-lint}"
+
 # Parse command line arguments
 DRY_RUN=false
 INITIAL_RELEASE=false
@@ -42,6 +49,11 @@ Options:
                 lints still run
   -h, --help    Show this help message
 
+Environment:
+  RELEASE_TAG_SIGN     gpg (default) signs the release tag; none creates an
+                       annotated, unsigned tag
+  RELEASE_LINT_TARGET  Make target run as the lint gate (default: do-lint)
+
 Examples:
   $0                            # Run the full release process
   $0 --dry-run                  # Preview what would be done
@@ -53,7 +65,7 @@ The script will:
 1. Discover all workspace packages automatically
 2. Order them by dependencies (topological sort)
 3. Validate and publish each package in order
-4. Create a signed release tag with checksums
+4. Create a release tag with checksums (signed unless RELEASE_TAG_SIGN=none)
 5. Provide instructions for pushing to GitHub
 
 Prerequisites:
@@ -398,15 +410,15 @@ run_tests_and_lints() {
         fi
 
         log_info "Running lints..."
-        if ! make do-lint; then
+        if ! make "$RELEASE_LINT_TARGET"; then
             die "Lints failed. Aborting release."
         fi
     elif [[ "$SKIP_TESTS" == "true" ]]; then
         log_dry_run "Would skip tests (--skip-tests)"
-        log_dry_run "Would run: make do-lint"
+        log_dry_run "Would run: make $RELEASE_LINT_TARGET"
     else
         log_dry_run "Would run: make test-all"
-        log_dry_run "Would run: make do-lint"
+        log_dry_run "Would run: make $RELEASE_LINT_TARGET"
     fi
 }
 
@@ -445,8 +457,15 @@ ${checksums}
 https://github.com/KeetaNetwork/${PROJECT_NAME}/compare/${last_tag}...${tag_name}"
     fi
 
+    local tag_flag kind
+    case "$RELEASE_TAG_SIGN" in
+        gpg)  tag_flag=-s; kind=signed ;;
+        none) tag_flag=-a; kind=annotated ;;
+        *)    die "Unknown RELEASE_TAG_SIGN '$RELEASE_TAG_SIGN' (expected gpg or none)" ;;
+    esac
+
     if [[ "$DRY_RUN" == "true" ]]; then
-        log_dry_run "Would create signed release tag: $tag_name"
+        log_dry_run "Would create $kind release tag: $tag_name"
         echo ""
         log_info "Tag message preview:"
         echo "----------------------------------------"
@@ -455,14 +474,13 @@ https://github.com/KeetaNetwork/${PROJECT_NAME}/compare/${last_tag}...${tag_name
         return 0
     fi
 
-    log_info "Creating signed release tag: $tag_name"
+    log_info "Creating $kind release tag: $tag_name"
 
-    # Create signed tag
-    if git tag -s "$tag_name" -m "$tag_message"; then
-        log_success "Created signed tag: $tag_name"
+    if git tag "$tag_flag" "$tag_name" -m "$tag_message"; then
+        log_success "Created $kind tag: $tag_name"
         return 0
     else
-        log_error "Failed to create signed tag"
+        log_error "Failed to create $kind tag"
         return 1
     fi
 }
@@ -777,6 +795,13 @@ main() {
     local workspace_version
     workspace_version=$(get_workspace_version)
     log_info "Release version: $workspace_version"
+
+    # A full release ends in the workspace tag, so refuse before publishing
+    # anything if that tag already exists.
+    if [[ ${#SELECTED_PACKAGES[@]} -eq 0 && "$DRY_RUN" != "true" ]] \
+        && git rev-parse -q --verify "refs/tags/releases/v${workspace_version}" > /dev/null; then
+        die "Tag releases/v${workspace_version} already exists: bump [workspace.package].version or release named packages"
+    fi
 
     # Discover packages and determine order
     log_info "Discovering workspace packages and dependency order..."

@@ -43,6 +43,8 @@ make build release=1
 
 `make release` runs `scripts/release.sh` and publishes crates to crates.io. That target is a publish path. It is not a release build.
 
+Publishing normally happens in CI: `.github/workflows/release.yml` runs on every push to `main` that changes a crate version. A `[workspace.package].version` bump publishes every unpublished crate and pushes the `releases/v<version>` tag. A crate-only bump publishes just the crates whose version changed, with no tag.
+
 ## Test
 
 `make test` depends on `make node-harness`. It then runs `cargo test --all-features --workspace`.
