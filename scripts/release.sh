@@ -601,10 +601,14 @@ process_packages() {
     done
 
     if [[ ${#new_crates[@]} -gt 0 ]]; then
-        if [[ "$EXISTING_ONLY" == "true" ]]; then
+        if [[ "$EXISTING_ONLY" == "true" && "$DRY_RUN" != "true" ]]; then
             die "Not on crates.io yet: ${new_crates[*]}. Publish them once by hand (make release PKG='${new_crates[*]}') and add a Trusted Publisher for them, then re-run."
         fi
-        log_warning "First publish of new crates: ${new_crates[*]}"
+        if [[ "$EXISTING_ONLY" == "true" ]]; then
+            log_warning "Not on crates.io yet, a real run would stop here: ${new_crates[*]}"
+        else
+            log_warning "First publish of new crates: ${new_crates[*]}"
+        fi
     fi
 
     if [[ ${#to_publish[@]} -gt 0 ]]; then
