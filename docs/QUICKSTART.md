@@ -43,6 +43,10 @@ make build release=1
 
 `make release` runs `scripts/release.sh` and publishes crates to crates.io. That target is a publish path. It is not a release build.
 
+Publishing normally happens in CI: `.github/workflows/release.yml` runs on every push to `main` that changes a crate version. A `[workspace.package].version` bump publishes every unpublished crate and pushes the `releases/v<version>` tag. A crate-only bump publishes just the crates whose version changed, with no tag.
+
+CI publishes through crates.io Trusted Publishing, so no crates.io token is stored in GitHub. A Trusted Publishing token cannot create a crate, so publish a new crate once with `make release PKG=<crate>` and add its Trusted Publisher entry (owner `KeetaNetwork`, repository `node-rs`, workflow `release.yml`, environment `release`) before CI can release it.
+
 ## Test
 
 `make test` depends on `make node-harness`. It then runs `cargo test --all-features --workspace`.

@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.toml'
+  # Dry-runs the whole job, including a gitsign sign/verify.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'full (publish everything unpublished + tag) or dry-run'
+        type: choice
+        options: [full, dry-run]
+        default: full
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  GITSIGN_VERSION: 0.18.0
+  GITSIGN_SHA256: 2bc625472a08fea3bb6a57982c7d8b4978d1032251d305ceef3bf2ded0ca4483
+
+jobs:
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      packages: ${{ steps.plan.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
+
+      - name: Compare crate versions with the previous commit
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_MODE: ${{ inputs.mode }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            scripts/release-plan.sh "$PR_BASE" HEAD
+            echo "mode=dry-run" >> "$GITHUB_OUTPUT"
+            echo "packages=" >> "$GITHUB_OUTPUT"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "mode=$DISPATCH_MODE" >> "$GITHUB_OUTPUT"
+            echo "packages=" >> "$GITHUB_OUTPUT"
+          else
+            scripts/release-plan.sh "$BEFORE" HEAD | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    name: ${{ needs.plan.outputs.mode == 'dry-run' && 'Release dry run' || 'Publish to crates.io' }}
+    needs: plan
+    if: >-
+      needs.plan.outputs.mode == 'dry-run' ||
+      (needs.plan.outputs.mode != 'none' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest-l
+    # Must match each crate's Trusted Publisher environment on crates.io.
+    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    permissions:
+      contents: write
+      id-token: write
+      packages: read
+    env:
+      MODE: ${{ needs.plan.outputs.mode }}
+      PACKAGES: ${{ needs.plan.outputs.packages }}
+      GITSIGN_TOKEN_PROVIDER: github-actions
+      SIGNER_IDENTITY: ${{ github.server_url }}/${{ github.workflow_ref }}
+      SIGNER_ISSUER: https://token.actions.githubusercontent.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@3551321aa44dd44a0393eb3b6bdfbc5d25ecf621 # v1
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@keetanetwork'
+
+      - name: Install reference implementation harness
+        run: make node-harness
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Verify everything before minting the short-lived publish token.
+      - name: Run all tests
+        run: make test-all
+
+      - name: Lint
+        run: make do-lint-ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify packages (cargo publish --dry-run)
+        run: |
+          read -ra pkgs <<< "$PACKAGES"
+          ./scripts/release.sh --dry-run --skip-tests --skip-lint --existing-only "${pkgs[@]}"
+
+      - name: Install gitsign
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          curl -sSfL -o "$bin/gitsign" \
+            "https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          echo "${GITSIGN_SHA256}  $bin/gitsign" | sha256sum -c -
+          chmod +x "$bin/gitsign"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Makes `git tag -s` in release.sh sign with gitsign.
+          git config gpg.format x509
+          git config gpg.x509.program gitsign
+
+      - name: Sign and verify a throwaway tag
+        if: env.MODE == 'dry-run'
+        run: |
+          tag="release-selftest/${GITHUB_RUN_ID}"
+          git tag -s "$tag" -m "release workflow self-test"
+          gitsign verify-tag --certificate-identity="$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer="$SIGNER_ISSUER" "$tag"
+          git tag -d "$tag"
+
+      # A dry-run on main mints and revokes a token to prove the Trusted
+      # Publisher entries before a real release depends on them.
+      - name: Get crates.io publish token
+        if: env.MODE != 'dry-run' || github.ref == 'refs/heads/main'
+        id: crates-io
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+
+      - name: Publish
+        if: env.MODE != 'dry-run'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token }}
+        run: |
+          read -ra pkgs <<< "$PACKAGES"
+          ./scripts/release.sh --skip-tests --skip-lint --no-verify --existing-only "${pkgs[@]}"
+
+      - name: Push release tag
+        if: env.MODE == 'full'
+        run: |
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"
+          gitsign verify-tag --certificate-identity="$SIGNER_IDENTITY" \
+            --certificate-oidc-issuer="$SIGNER_ISSUER" "releases/v${version}"
+          git push origin "refs/tags/releases/v${version}"
