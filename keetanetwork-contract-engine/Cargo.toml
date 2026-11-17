@@ -1,0 +1,32 @@
+[package]
+name = "keetanetwork-contract-engine"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "sBPF contract execution engine for Keetanetwork representatives"
+publish = false
+
+[dependencies]
+# The sBPF VM Solana runs. Interpreter only: the JIT is x86-64 only, and
+# the interpreter keeps every host on the same code path.
+solana-sbpf = { version = "0.28", default-features = false }
+keetanetwork-contract-std = { workspace = true }
+keetanetwork-account = { workspace = true, features = ["std"] }
+keetanetwork-block = { workspace = true, features = ["std", "rasn"] }
+num-bigint = { workspace = true, features = ["std"] }
+hex = { workspace = true, features = ["std"] }
+sha2 = "0.10"
+snafu = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+keetanetwork-block = { workspace = true, features = ["std", "rasn", "testing"] }
+borsh = "1"
+# The example contracts, built for the host: the tests use their own
+# instruction and state types, and their account-naming helpers.
+keeta-escrow = { path = "tests/contracts/keeta-escrow" }
+keeta-pet = { path = "tests/contracts/keeta-pet" }
+keeta-pet-shop = { path = "tests/contracts/keeta-pet-shop" }
+keeta-probe = { path = "tests/contracts/keeta-probe" }

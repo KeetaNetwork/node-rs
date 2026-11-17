@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Anza's toolchain builds the contract engine's test contracts: the same
+  # release as the anchor's verifiable contract builds.
+  AGAVE_VERSION: v4.3.2
 
 jobs:
   test:
@@ -51,6 +54,21 @@ jobs:
         run: make node-harness
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Anza toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: ${{ runner.os }}-agave-${{ env.AGAVE_VERSION }}
+
+      - name: Install Anza toolchain
+        run: |
+          bin="$HOME/.local/share/solana/install/active_release/bin"
+          test -x "$bin/cargo-build-sbf" || sh -c "$(curl -sSfL "https://release.anza.xyz/$AGAVE_VERSION/install")"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/cargo-build-sbf" --version
 
       - name: Run all tests
         run: make test-all
@@ -291,6 +309,21 @@ jobs:
         run: make node-harness
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Anza toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: ${{ runner.os }}-agave-${{ env.AGAVE_VERSION }}
+
+      - name: Install Anza toolchain
+        run: |
+          bin="$HOME/.local/share/solana/install/active_release/bin"
+          test -x "$bin/cargo-build-sbf" || sh -c "$(curl -sSfL "https://release.anza.xyz/$AGAVE_VERSION/install")"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/cargo-build-sbf" --version
 
       - name: Run tests and generate coverage
         run: make coverage-ci
