@@ -357,7 +357,10 @@ pub fn parse_der_length(data: impl AsRef<[u8]>) -> Option<(usize, usize)> {
 	} else {
 		// Long form: length is encoded in the following bytes
 		let length_bytes = (length_byte & 0x7F) as usize;
-		if length_bytes == 0 || data.len() < 2 + length_bytes {
+		// Reject a length that cannot fit in `usize`; folding more than
+		// `size_of::<usize>()` bytes would silently shift out high bits and
+		// yield a bogus (wrapped) length.
+		if length_bytes == 0 || length_bytes > core::mem::size_of::<usize>() || data.len() < 2 + length_bytes {
 			return None;
 		}
 
