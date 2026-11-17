@@ -393,3 +393,83 @@ fn test_ecdsa_verification_requires_declared_curve() -> Result<(), Box<dyn core:
 
 	Ok(())
 }
+
+/// Regression guard for issue #28: ECDSA certificate signatures must be verified
+/// only against the curve declared in the issuer's `SubjectPublicKeyInfo`.
+///
+/// A previously removed helper worked around a hypothetical "unknown curve" case
+/// by trying every supported curve and returning success if any of them passed.
+/// The curve is always known from the SPKI, so that multi-try path was a
+/// cryptographic weakness. This test locks in the invariant that verification
+/// never falls back to another curve, in both directions and against genuine
+/// wrong-curve keys.
+///
+/// See <https://github.com/KeetaNetwork/node-rs/issues/28>.
+#[test]
+fn test_no_multi_curve_verification_fallback() -> Result<(), Box<dyn core::error::Error>> {
+	// Self-signed secp256r1 certificate.
+	let r1_seed = generate_random_seed()?;
+	let r1_seed_bytes = (*r1_seed.expose_secret()).into_secret();
+	let r1_private_key = Secp256r1Derivation::derive_from_seed(r1_seed_bytes)?;
+	let r1_account = Account::<KeyECDSASECP256R1>::from(r1_private_key);
+	let r1_public_key = r1_account.keypair.to_public_key();
+	let r1_spki = SubjectPublicKeyInfo::from(r1_public_key.clone());
+	let r1_dn = utils::create_dn(&[(oids::CN, "Fallback Test secp256r1")])?;
+	let r1_cert = keetanetwork_x509::builder::CertificateBuilder::new()
+		.with_subject_public_key(r1_spki.clone())
+		.with_subject_dn(r1_dn.clone())
+		.with_issuer_dn(r1_dn)
+		.with_serial_number(SerialNumber::from(1u64))
+		.with_validity_days(365)
+		.build(&r1_account)?;
+
+	// Self-signed secp256k1 certificate.
+	let k1_seed = generate_random_seed()?;
+	let k1_seed_bytes = (*k1_seed.expose_secret()).into_secret();
+	let k1_private_key = Secp256k1Derivation::derive_from_seed(k1_seed_bytes)?;
+	let k1_account = Account::<KeyECDSASECP256K1>::from(k1_private_key);
+	let k1_public_key = k1_account.keypair.to_public_key();
+	let k1_spki = SubjectPublicKeyInfo::from(k1_public_key.clone());
+	let k1_dn = utils::create_dn(&[(oids::CN, "Fallback Test secp256k1")])?;
+	let k1_cert = keetanetwork_x509::builder::CertificateBuilder::new()
+		.with_subject_public_key(k1_spki.clone())
+		.with_subject_dn(k1_dn.clone())
+		.with_issuer_dn(k1_dn)
+		.with_serial_number(SerialNumber::from(1u64))
+		.with_validity_days(365)
+		.build(&k1_account)?;
+
+	// Each certificate verifies under its own correctly declared curve.
+	assert!(r1_cert.verify_signature(&r1_spki)?, "secp256r1 certificate should verify with its declared curve");
+	assert!(k1_cert.verify_signature(&k1_spki)?, "secp256k1 certificate should verify with its declared curve");
+
+	// Reusing the real public key bytes but declaring the other curve must not
+	// verify. The removed multi-try helper would have accepted these because it
+	// also tried the certificate's actual curve.
+	let r1_key_bytes = Vec::<u8>::from(r1_public_key);
+	let r1_bytes_as_k1 = SubjectPublicKeyInfo::new(k1_spki.algorithm.clone(), &r1_key_bytes)?;
+	assert!(
+		!matches!(r1_cert.verify_signature(&r1_bytes_as_k1), Ok(true)),
+		"secp256r1 signature declared as secp256k1 must not verify"
+	);
+
+	let k1_key_bytes = Vec::<u8>::from(k1_public_key);
+	let k1_bytes_as_r1 = SubjectPublicKeyInfo::new(r1_spki.algorithm.clone(), &k1_key_bytes)?;
+	assert!(
+		!matches!(k1_cert.verify_signature(&k1_bytes_as_r1), Ok(true)),
+		"secp256k1 signature declared as secp256r1 must not verify"
+	);
+
+	// A genuine, valid key of the other curve must also be rejected: there is no
+	// fallback to the certificate's actual curve.
+	assert!(
+		!r1_cert.verify_signature(&k1_spki)?,
+		"secp256r1 certificate must not verify against an unrelated secp256k1 key"
+	);
+	assert!(
+		!k1_cert.verify_signature(&r1_spki)?,
+		"secp256k1 certificate must not verify against an unrelated secp256r1 key"
+	);
+
+	Ok(())
+}
