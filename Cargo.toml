@@ -229,6 +229,8 @@ panic = "abort"
 [profile.release-napi]
 inherits = "release"
 panic = "unwind"
+# Published addons carry no symbol tables (their exports stay).
+strip = "symbols"
 
 [profile.test]
 opt-level = 1
