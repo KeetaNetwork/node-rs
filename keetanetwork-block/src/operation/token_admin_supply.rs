@@ -61,4 +61,32 @@ mod tests {
 			} => Err(BlockError::SupplyInvalid),
 		}
 	}
+
+	#[test]
+	fn test_negative_supply_amount_allowed_pre_cutoff() {
+		// Matches the TypeScript reference: negative amounts remain valid for
+		// blocks dated before the numeric cutoff epoch.
+		use crate::operation::harness::PRE_CUTOFF_MS;
+		let mut harness = Harness::new(token(0));
+		harness.date_ms = PRE_CUTOFF_MS;
+		let operation = TokenAdminSupply {
+			amount: Amount::from(-1i64),
+			method: AdjustMethod::Add,
+		};
+		assert!(harness.validate(&operation.into()).is_ok());
+	}
+
+	#[test]
+	fn test_negative_supply_amount_rejected_post_cutoff() {
+		let mut harness = Harness::new(token(0));
+		harness.date_ms = harness.config.numeric_cutoff_epoch_ms;
+		let operation = TokenAdminSupply {
+			amount: Amount::from(-1i64),
+			method: AdjustMethod::Add,
+		};
+		assert!(matches!(
+			harness.validate(&operation.into()),
+			Err(BlockError::AmountBelowZero)
+		));
+	}
 }

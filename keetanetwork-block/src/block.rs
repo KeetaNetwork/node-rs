@@ -210,11 +210,15 @@ impl BlockData {
 			}
 		}
 
-		let config = ValidationConfig::for_network(&self.network).ok();
+		// Reject unknown networks unconditionally. Previously config was
+		// resolved with `.ok()` and only consulted by some operations, so
+		// SET_REP / CREATE_IDENTIFIER(TOKEN) blocks on unknown network IDs
+		// could still verify.
+		let config = ValidationConfig::for_network(&self.network)?;
 
-		self.validate_signer_field(config.as_ref())?;
-		self.validate_operations(config.as_ref())?;
-		self.validate_idempotent(config.as_ref())?;
+		self.validate_signer_field(Some(&config))?;
+		self.validate_operations(Some(&config))?;
+		self.validate_idempotent(Some(&config))?;
 
 		Ok(())
 	}
@@ -566,6 +570,38 @@ mod tests {
 		let result = valid_block_builder()
 			.with_network(1234u32)
 			.with_idempotent(vec![0u8; 4])
+			.build();
+		assert!(matches!(result, Err(BlockError::UnknownNetwork)));
+	}
+
+	#[test]
+	fn test_rejects_unknown_network_set_rep_only() {
+		use crate::builder::BlockBuilder;
+		use crate::time::BlockTime;
+		let result = BlockBuilder::default()
+			.with_network(1234u32)
+			.with_account(generate_ed25519_ref(1))
+			.as_opening()
+			.with_date(BlockTime::from_unix_millis(1_700_000_000_000).expect("date"))
+			.with_operation(SetRep { to: generate_ed25519_ref(2) })
+			.build();
+		assert!(matches!(result, Err(BlockError::UnknownNetwork)));
+	}
+
+	#[test]
+	fn test_rejects_unknown_network_create_token() {
+		use crate::builder::BlockBuilder;
+		use crate::operation::CreateIdentifier;
+		use crate::time::BlockTime;
+		use keetanetwork_account::KeyPairType;
+		let owner = generate_ed25519_ref(1);
+		let token = generate_identifier_ref(1, KeyPairType::TOKEN, 0);
+		let result = BlockBuilder::default()
+			.with_account(owner)
+			.as_opening()
+			.with_network(999_999u32)
+			.with_date(BlockTime::from_unix_millis(1_700_000_000_000).expect("date"))
+			.with_operation(CreateIdentifier { identifier: token, create_arguments: None })
 			.build();
 		assert!(matches!(result, Err(BlockError::UnknownNetwork)));
 	}
