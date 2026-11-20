@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 
 use k256::ecdsa::{Signature, SigningKey};
-use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::elliptic_curve::sec1::ToSec1Point;
 use k256::SecretKey as K256SecretKey;
 use secrecy::SecretBox;
 
@@ -97,7 +97,7 @@ impl PrivateKey for Secp256k1PrivateKey {
 	fn as_public_key(&self) -> Self::PublicKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
-		let bytes = verifying_key.to_encoded_point(true).as_bytes().to_vec();
+		let bytes = verifying_key.to_sec1_point(true).as_bytes().to_vec();
 		Secp256k1PublicKey { inner: verifying_key.into(), bytes }
 	}
 }
@@ -194,7 +194,7 @@ impl Keypair for Secp256k1PrivateKey {
 	fn verifying_key(&self) -> Self::VerifyingKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
-		let bytes = verifying_key.to_encoded_point(true).as_bytes().to_vec();
+		let bytes = verifying_key.to_sec1_point(true).as_bytes().to_vec();
 		Secp256k1PublicKey { inner: verifying_key.into(), bytes }
 	}
 }
@@ -250,7 +250,7 @@ impl CryptoAlgorithm for Secp256k1PublicKey {
 
 impl PublicKey for Secp256k1PublicKey {
 	fn to_uncompressed_bytes(&self) -> Vec<u8> {
-		self.inner.to_encoded_point(false).as_bytes().to_vec()
+		self.inner.to_sec1_point(false).as_bytes().to_vec()
 	}
 }
 
@@ -264,7 +264,7 @@ impl From<&Secp256k1PublicKey> for Vec<u8> {
 	fn from(key: &Secp256k1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
 		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner.to_encoded_point(true).as_bytes().to_vec()
+		key.inner.to_sec1_point(true).as_bytes().to_vec()
 	}
 }
 
@@ -279,7 +279,7 @@ impl TryFrom<&[u8]> for Secp256k1PublicKey {
 
 	fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
 		let public_key = k256::PublicKey::from_sec1_bytes(bytes).or_invalid_public_key()?;
-		let bytes = public_key.to_encoded_point(true).as_bytes().to_vec();
+		let bytes = public_key.to_sec1_point(true).as_bytes().to_vec();
 		Ok(Secp256k1PublicKey { inner: public_key, bytes })
 	}
 }

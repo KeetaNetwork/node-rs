@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 
 use p256::ecdsa::{Signature, SigningKey};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
+use p256::elliptic_curve::sec1::ToSec1Point;
 use p256::SecretKey as P256SecretKey;
 use secrecy::SecretBox;
 
@@ -86,7 +86,7 @@ impl PrivateKey for Secp256r1PrivateKey {
 	fn as_public_key(&self) -> Self::PublicKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
-		let bytes = verifying_key.to_encoded_point(true).as_bytes().to_vec();
+		let bytes = verifying_key.to_sec1_point(true).as_bytes().to_vec();
 
 		Secp256r1PublicKey { inner: verifying_key.into(), bytes }
 	}
@@ -194,7 +194,7 @@ impl Keypair for Secp256r1PrivateKey {
 	fn verifying_key(&self) -> Self::VerifyingKey {
 		let signing_key = SigningKey::from(&self.inner);
 		let verifying_key = signing_key.verifying_key();
-		let bytes = verifying_key.to_encoded_point(true).as_bytes().to_vec();
+		let bytes = verifying_key.to_sec1_point(true).as_bytes().to_vec();
 
 		Secp256r1PublicKey { inner: verifying_key.into(), bytes }
 	}
@@ -251,7 +251,7 @@ impl CryptoAlgorithm for Secp256r1PublicKey {
 
 impl PublicKey for Secp256r1PublicKey {
 	fn to_uncompressed_bytes(&self) -> Vec<u8> {
-		self.inner.to_encoded_point(false).as_bytes().to_vec()
+		self.inner.to_sec1_point(false).as_bytes().to_vec()
 	}
 }
 
@@ -265,7 +265,7 @@ impl From<&Secp256r1PublicKey> for Vec<u8> {
 	fn from(key: &Secp256r1PublicKey) -> Self {
 		// Return compressed format (33 bytes: 0x02/0x03 prefix + 32 bytes)
 		// This is more space-efficient than uncompressed format (65 bytes)
-		key.inner.to_encoded_point(true).as_bytes().to_vec()
+		key.inner.to_sec1_point(true).as_bytes().to_vec()
 	}
 }
 

@@ -14,27 +14,27 @@ path = "src/lib.rs"
 [dependencies]
 # Cryptographic libraries
 [dependencies.k256]
-version = "0.13.2"
+version = "0.14.0"
 default-features = false
 features = ["ecdsa", "ecdh", "alloc"]
 
 [dependencies.p256]
-version = "0.13.2"
+version = "0.14.0"
 default-features = false
 features = ["ecdsa", "ecdh", "alloc"]
 
 [dependencies.ed25519-dalek]
-version = "2.0"
+version = "3.0.0"
 default-features = false
 features = ["rand_core", "zeroize"]
 
 [dependencies.x25519-dalek]
-version = "2.0"
+version = "3.0.0"
 default-features = false
 features = ["zeroize"]
 
 [dependencies.curve25519-dalek]
-version = "4.1.3"
+version = "5.0.0"
 default-features = false
 features = ["zeroize"]
 
@@ -68,7 +68,7 @@ default-features = false
 
 # RustCrypto trait crates
 [dependencies.signature]
-version = "2.2"
+version = "3.0.0"
 default-features = false
 features = ["alloc"]
 optional = true
@@ -116,7 +116,7 @@ features = ["alloc", "aes", "getrandom"]
 version = "0.1.3"
 
 [dependencies.crypto-bigint]
-version = "0.6.1"
+version = "0.7.10"
 default-features = false
 features = ["serde", "der", "zeroize"]
 
@@ -167,7 +167,7 @@ default = ["std", "signature", "encryption", "rasn"]
 std = [
 	"alloc",
 	"snafu/std",
-	"ed25519-dalek/std",
+	"ed25519-dalek/alloc",
 	"hkdf/std",
 	"pbkdf2/std",
 	"pbkdf2/parallel",
@@ -182,7 +182,6 @@ std = [
 	"dep:chrono",
 	"dep:keetanetwork-error",
 	"keetanetwork-utils/std",
-	"signature?/std",
 	"aead?/std",
 	"rand?/std",
 ]
