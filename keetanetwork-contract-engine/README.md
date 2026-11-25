@@ -66,7 +66,8 @@ A contract crate is a `cdylib` that depends on `keetanetwork-contract-std`
 (usually with its `borsh` feature) and builds with `cargo build-sbf --arch v3`.
 `entrypoint!` also installs the heap allocator and reports panics as contract
 errors. The `Context` gives the caller, the contract's own address, the
-block time, the funds attached, the accounts and the instruction data.
+call's time (its order block's date), the funds attached, the accounts and
+the instruction data.
 
 ## The account model
 
@@ -155,11 +156,11 @@ format panics.
 
 | Claim | Test |
 | --- | --- |
-| A pet's state lives in its owner's account, decays with block time, and only its owner can reach it | `a_pet_lives_in_its_owners_account`, `a_starved_pet_runs_away` |
+| A pet's state lives in its owner's account, decays as time passes, and only its owner can reach it | `a_pet_lives_in_its_owners_account`, `a_starved_pet_runs_away` |
 | A pet buys its meals from the shop, paying with the funds its caller attached | `a_pet_buys_its_meals_from_the_shop` |
 | A contract's `SEND`s need the same permissions as a signed `SEND` | `contract_sends_follow_the_ledgers_permissions` |
 | Contracts move native tokens, with `external` memos | `escrow_releases_native_tokens_with_a_memo`, `escrow_refunds_only_after_expiry` |
-| A contract sees its caller, the block time, its funds and its accounts | `a_contract_sees_its_caller_the_time_its_funds_and_its_accounts` |
+| A contract sees its caller, the time, its funds and its accounts | `a_contract_sees_its_caller_the_time_its_funds_and_its_accounts` |
 | A call reports what it read and wrote, and its effects | `a_call_reports_what_it_read_and_wrote` |
 | The engine, not the SDK, enforces who may change which account | `contracts_change_only_their_own_writable_accounts` |
 | Contracts invoke each other and share accounts, without gaining privileges | `contracts_invoke_each_other_and_share_accounts` |

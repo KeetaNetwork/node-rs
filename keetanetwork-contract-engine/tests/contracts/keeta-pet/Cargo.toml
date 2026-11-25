@@ -1,6 +1,6 @@
 [package]
 name = "keeta-pet"
-description = "A virtual pet that gets hungry and bored as block time passes"
+description = "A virtual pet that gets hungry and bored as time passes"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"

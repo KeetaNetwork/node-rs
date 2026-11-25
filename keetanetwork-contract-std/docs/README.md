@@ -69,7 +69,7 @@ overflow-checks = true
 
 ## Write the entrypoint
 
-The entrypoint receives a `Context` with the caller, the contract's own address, the block time, the funds attached, the accounts the instruction lists, and the raw instruction data. Return `Ok(())` to commit the call. Return an error, or panic, to undo the whole call.
+The entrypoint receives a `Context` with the caller, the contract's own address, the call's time (the date of the sequencer's order block), the funds attached, the accounts the instruction lists, and the raw instruction data. Return `Ok(())` to commit the call. Return an error, or panic, to undo the whole call.
 
 ### Counter
 
@@ -191,7 +191,7 @@ contract sequencer adds it.
 | Treat every host function as returning only on success. | A failing `send`, `invoke` or other host function aborts the whole call, so there is no error to handle. |
 | Derive behavior from `Context` and account data only. | Every node that runs the call must reach the same result. `Context::time_millis` is the only clock, and there is no randomness. |
 | Treat `Context::time_millis` as accurate to minutes. | It is the date of the sequencer's order block, so callers cannot set it, and it never goes backwards for a contract. Representatives accept dates up to 5 minutes from their own clocks, so the sequencer can still shift it that much. Design deadlines and rates so a few minutes does not matter, and never use time for randomness. |
-| Return computed results with `set_return_data`. | Return data is part of a call's outcome. Clients run such an instruction as a simulation (`simulateContractCall` in the node's client), which keeps nothing, for anything derived, such as the pet's mood at the block time. |
+| Return computed results with `set_return_data`. | Return data is part of a call's outcome. Clients run such an instruction as a simulation (`simulateContractCall` in the node's client), which keeps nothing, for anything derived, such as the pet's mood at the current time. |
 | Build messages from pieces, not with `format!`: `bail!("attach exactly ", price, " of the token")`, `attribute("fullness", value)`, `log(&text!("fed ", meals, " times"))`. | Every deploy pays by the byte, and Rust's formatting code (`format!`, `Display`, `{:?}`) is about 30 KB of a contract. The SDK's `text` module joins strings and integers without it, and the engine writes the numbers (`keeta_decimal`). `bail!` refuses a message with `{`. A panic reports its message only when it is plain text. |
 | Avoid `std` features that format, such as borsh's `std` and `.to_string()` on errors. | They bring the formatting code back even when nothing is printed: a boxed `std::io::Error` keeps its `Debug` and `Display` code. |
 | Gate off-chain code with `cfg(not(target_os = "solana"))`. | Host builds compile the contract for tests and clients. Host functions panic there, while `sha256` and `state_id` compute locally. |

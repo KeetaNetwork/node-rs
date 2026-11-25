@@ -7,7 +7,7 @@
 //! Account: `state_id(["escrow"])` holds the [`Escrow`] (borsh).
 //!
 //! Exercises: funds of several tokens, `balance`, `send` with an
-//! `external` memo, and block time.
+//! `external` memo, and the call's time.
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use keetanetwork_contract_std::{

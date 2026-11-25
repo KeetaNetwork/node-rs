@@ -1,6 +1,6 @@
 //! A virtual pet, one per account.
 //!
-//! A pet's fullness and happiness fall as block time passes. Its food comes
+//! A pet's fullness and happiness fall as time passes. Its food comes
 //! from a shop, another contract ([`keeta_pet_shop`]): to feed, the owner
 //! attaches the meal's price in the shop's token, and the pet pays the shop
 //! and buys the meal from it, all in the one call. If the shop refuses (the
@@ -16,11 +16,11 @@
 //!
 //! Every instruction lists the config first, then the pets it touches;
 //! `Feed` lists the shop's account third. `Pets` is a view: it returns
-//! borsh `Vec<PetView>` as of the block time, one per listed pet account
+//! borsh `Vec<PetView>` as of the call's time, one per listed pet account
 //! that holds a pet.
 //!
 //! Exercises: calling another contract (`invoke`) and reading what it
-//! returns, paying it (`send` with an `external` memo), funds, block time,
+//! returns, paying it (`send` with an `external` memo), funds, the call's time,
 //! `set_info`, and read-only views.
 
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -80,7 +80,7 @@ pub enum Mood {
 	RanAway,
 }
 
-/// A pet as it is at the block time.
+/// A pet as it is at the call's time.
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(not(target_os = "solana"), derive(borsh::BorshSchema))]
 pub struct PetView {

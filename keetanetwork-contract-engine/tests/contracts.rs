@@ -340,7 +340,7 @@ fn a_pet_lives_in_its_owners_account() {
 	assert_eq!((view.name.as_str(), view.fullness, view.mood), ("Pixel", 50_000, Mood::Content));
 	assert_eq!(view.owner, addr(&bob));
 
-	// Time passes: block time drives decay. Twenty minutes later the pet is
+	// Time passes: the call's time drives decay. Twenty minutes later the pet is
 	// hungry.
 	world.advance(20 * 60 * 1000);
 	let [view] = pets(&world, &pet, &[&bob]).try_into().unwrap();
@@ -389,7 +389,7 @@ fn a_pet_buys_its_meals_from_the_shop() {
 	let state = shop_state(&world, &shop);
 	assert_eq!((state.stock, state.sold, state.accounted), (4, 1, 10));
 	let [view] = pets(&world, &pet, &[&bob]).try_into().unwrap();
-	// A meal adds 30,000 to the 50,000 it started with, less the few seconds of block time the calls took.
+	// A meal adds 30,000 to the 50,000 it started with, less the few seconds that passed between the calls.
 	assert_eq!(view.meals, 1);
 	assert!(view.fullness > 79_000 && view.fullness <= 80_000, "{}", view.fullness);
 
