@@ -20,7 +20,7 @@
 //! | --- | --- | --- |
 //! | 0 | 40 | the contract being run |
 //! | 40 | 40 | its caller: the account that signed the call, or the contract that invoked this one |
-//! | 80 | 8 | block time, milliseconds since the Unix epoch (signed) |
+//! | 80 | 8 | call time (order block date), milliseconds since the Unix epoch (signed) |
 //! | 88 | 8 | number of funds |
 //! | 96 | 56 each | funds: token address slot, then the amount as a `u128` |
 //! | | 8 | number of accounts |
@@ -164,7 +164,7 @@ pub mod layout {
 	pub const CONTRACT: usize = 0;
 	/// Its caller
 	pub const CALLER: usize = 40;
-	/// Block time in milliseconds
+	/// Call time (order block date) in milliseconds
 	pub const TIME_MILLIS: usize = 80;
 	/// Number of funds
 	pub const FUND_COUNT: usize = 88;

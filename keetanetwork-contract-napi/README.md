@@ -20,7 +20,7 @@ const call = {
 	},
 	funds: [],
 	gasLimit: '1400000',
-	timeMillis: block.date.valueOf()
+	timeMillis: order.date.valueOf() // the sequencer's order block, not the caller's
 };
 const outcome = JSON.parse(await engine.runLedgerCall(JSON.stringify(call)));
 ```

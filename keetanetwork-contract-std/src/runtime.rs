@@ -257,7 +257,10 @@ pub struct Context<'a> {
 	/// Who called it: the account that signed the call, or the contract that
 	/// invoked this one
 	pub caller: Address,
-	/// Block time, milliseconds since the Unix epoch
+	/// The call's time, milliseconds since the Unix epoch: the date of the
+	/// sequencer's order block. The caller cannot choose it. Representatives
+	/// accept dates within minutes of their clocks, and never earlier than the
+	/// contract's previous order, so treat it as accurate to minutes, not seconds.
 	pub time_millis: i64,
 	/// Tokens attached to the call, already in the contract's account
 	pub funds: Vec<Fund>,
@@ -311,7 +314,7 @@ impl<'a> Context<'a> {
 		}
 	}
 
-	/// Block time in whole seconds since the Unix epoch.
+	/// The call's time in whole seconds since the Unix epoch.
 	pub fn time_seconds(&self) -> u64 {
 		self.time_millis.max(0) as u64 / 1000
 	}

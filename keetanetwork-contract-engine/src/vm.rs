@@ -128,7 +128,7 @@ fn load_error(error: impl std::fmt::Display) -> EngineError {
 pub(crate) struct Session {
 	core: Arc<Core>,
 	host: Arc<dyn Host>,
-	/// The block's time, milliseconds since the Unix epoch
+	/// The call's time (its order block's date), milliseconds since the Unix epoch
 	time_millis: i64,
 	overlay: Mutex<Overlay>,
 	pub(crate) events: Mutex<Vec<Event>>,

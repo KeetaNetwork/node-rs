@@ -135,7 +135,8 @@ format panics.
 
 1. **The call.** A `LedgerCall` is what the caller's block carries: the
    caller, the instruction, the funds the block sends the contract, the gas
-   limit and the block's time. The block's own `SEND`s move the funds; the
+   limit and the time, which is the date of the sequencer's order block
+   for the call (the caller cannot choose it). The block's own `SEND`s move the funds; the
    engine credits them to the contract for the call, so the contract sees
    them in its balance and its `funds`.
 2. **Gas.** Gas is in compute units, as on Solana: one per sBPF instruction,

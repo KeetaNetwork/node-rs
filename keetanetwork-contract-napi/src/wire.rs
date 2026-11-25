@@ -201,7 +201,7 @@ pub struct WireLedgerCall {
 	pub funds: Vec<WireFund>,
 	#[serde(with = "u64_text")]
 	pub gas_limit: u64,
-	/// The block's time, milliseconds since the Unix epoch
+	/// The call's time: its order block's date, milliseconds since the Unix epoch
 	pub time_millis: i64,
 }
 

@@ -152,8 +152,11 @@ pub struct LedgerCall {
 	pub funds: Vec<Fund>,
 	/// Gas for the call
 	pub gas_limit: u64,
-	/// The block's time in milliseconds since the Unix epoch: the same for
-	/// every representative
+	/// The call's time in milliseconds since the Unix epoch: the date of the
+	/// sequencer's order block for the call, the same for every
+	/// representative. The caller cannot choose it, and representatives
+	/// keep it within minutes of their clocks and never earlier than the
+	/// contract's previous order. Contracts the call invokes see the same time.
 	pub time_millis: i64,
 }
 
