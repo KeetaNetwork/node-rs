@@ -589,3 +589,377 @@ macro_rules! entrypoint {
 		const _: fn(&mut $crate::Context<'_>) -> $crate::ContractResult = $process;
 	};
 }
+
+#[cfg(test)]
+mod tests {
+	use std::cell::RefCell;
+	use std::rc::Rc;
+
+	use super::*;
+	use crate::abi::{syscall, ADDRESS_LEN};
+	use crate::sys::mock::with_host;
+
+	fn address(byte: u8) -> Address {
+		Address([byte; ADDRESS_LEN])
+	}
+
+	/// An account as the engine lays it out in the input.
+	struct Listed {
+		owner: Address,
+		id: StateId,
+		writable: bool,
+		own: bool,
+		data: &'static [u8],
+		capacity: usize,
+	}
+
+	fn listed(owner: Address, id: u8, writable: bool, own: bool, data: &'static [u8], capacity: usize) -> Listed {
+		Listed { owner, id: [id; 32], writable, own, data, capacity }
+	}
+
+	/// An input region laid out as in [`crate::abi`].
+	fn input(caller: Address, time_millis: i64, funds: &[Fund], accounts: &[Listed], data: &[u8]) -> Vec<u8> {
+		fn put(buffer: &mut [u8], at: usize, bytes: &[u8]) {
+			buffer[at..at + bytes.len()].copy_from_slice(bytes);
+		}
+		let accounts_len: usize = accounts
+			.iter()
+			.map(|account| layout::ACCOUNT_HEADER + layout::padded(account.capacity))
+			.sum();
+		let mut buffer = vec![0u8; layout::FUNDS + funds.len() * layout::FUND_SIZE + 8 + accounts_len + 8 + data.len()];
+		put(&mut buffer, layout::CONTRACT, &address(1).0);
+		put(&mut buffer, layout::CALLER, &caller.0);
+		put(&mut buffer, layout::TIME_MILLIS, &time_millis.to_le_bytes());
+		put(&mut buffer, layout::FUND_COUNT, &(funds.len() as u64).to_le_bytes());
+		let mut offset = layout::FUNDS;
+		for fund in funds {
+			put(&mut buffer, offset, &fund.token.0);
+			put(&mut buffer, offset + layout::FUND_AMOUNT, &fund.amount.to_le_bytes());
+			offset += layout::FUND_SIZE;
+		}
+		put(&mut buffer, offset, &(accounts.len() as u64).to_le_bytes());
+		offset += 8;
+		for account in accounts {
+			buffer[offset + layout::ACCOUNT_WRITABLE] = account.writable as u8;
+			buffer[offset + layout::ACCOUNT_OWN] = account.own as u8;
+			put(&mut buffer, offset + layout::ACCOUNT_OWNER, &account.owner.0);
+			put(&mut buffer, offset + layout::ACCOUNT_ID, &account.id);
+			put(&mut buffer, offset + layout::ACCOUNT_DATA_LEN, &(account.data.len() as u64).to_le_bytes());
+			put(&mut buffer, offset + layout::ACCOUNT_CAPACITY, &(account.capacity as u64).to_le_bytes());
+			put(&mut buffer, offset + layout::ACCOUNT_HEADER, account.data);
+			offset += layout::ACCOUNT_HEADER + layout::padded(account.capacity);
+		}
+		put(&mut buffer, offset, &(data.len() as u64).to_le_bytes());
+		put(&mut buffer, offset + 8, data);
+		buffer
+	}
+
+	/// The `len` bytes at `ptr`, an argument a host function was given.
+	fn bytes(ptr: u64, len: u64) -> Vec<u8> {
+		// SAFETY: the wrappers pass pointers to live values of this length.
+		unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize).to_vec() }
+	}
+
+	fn write(ptr: u64, bytes: &[u8]) {
+		// SAFETY: the wrappers pass buffers with room for what the host writes.
+		unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len()) };
+	}
+
+	/// The calls a mock host recorded.
+	type Calls = Rc<RefCell<Vec<String>>>;
+
+	/// A mock host that records each call it gets, as `describe` puts it,
+	/// and answers with `answer`.
+	fn recording(
+		describe: impl Fn(&str, &[u64]) -> String + 'static,
+		answer: impl Fn(&str, &[u64]) -> u64 + 'static,
+	) -> (Calls, impl FnMut(&str, &[u64]) -> u64 + 'static) {
+		let calls = Rc::new(RefCell::new(Vec::new()));
+		let seen = calls.clone();
+		(calls, move |symbol: &str, args: &[u64]| {
+			seen.borrow_mut().push(describe(symbol, args));
+			answer(symbol, args)
+		})
+	}
+
+	#[test]
+	fn errors_carry_their_message() {
+		let fixed = Error::from("fixed");
+		assert_eq!(fixed.message(), "fixed");
+		assert_eq!(format!("{fixed} {fixed:?}"), "fixed fixed");
+		assert_eq!(Error::from(String::from("owned")), Error::from("owned"));
+
+		fn check(value: u32) -> ContractResult {
+			crate::ensure!(value > 1, "too small: ", value);
+			crate::ensure!(value != 2, "two");
+			if value == 3 {
+				crate::bail!(String::from("three"));
+			}
+			Ok(())
+		}
+		assert_eq!(check(1).unwrap_err().message(), "too small: 1");
+		assert_eq!(check(2).unwrap_err().message(), "two");
+		assert_eq!(check(3).unwrap_err().message(), "three");
+		assert!(check(4).is_ok());
+	}
+
+	#[cfg(feature = "borsh")]
+	#[test]
+	fn borsh_errors_name_their_kind_not_their_message() {
+		use borsh::io::ErrorKind;
+		let message = |kind: ErrorKind| {
+			Error::from(borsh::io::Error::from(kind))
+				.message()
+				.to_string()
+		};
+		assert_eq!(message(ErrorKind::UnexpectedEof), "bad data: it ends too soon");
+		assert_eq!(message(ErrorKind::InvalidData), "bad data: not a valid encoding");
+		assert_eq!(message(ErrorKind::InvalidInput), "bad data: not a valid encoding");
+		assert_eq!(message(ErrorKind::Other), "bad data");
+	}
+
+	#[test]
+	fn the_context_reads_the_engines_input() {
+		let funds = [Fund { token: address(7), amount: u128::MAX - 1 }, Fund { token: address(8), amount: 5 }];
+		let accounts = [listed(address(1), 2, true, true, b"abc", 8), listed(address(9), 3, false, false, b"", 0)];
+		let mut buffer = input(address(2), 1_700_000_123_456, &funds, &accounts, b"instruction");
+		// SAFETY: laid out as in the ABI, and outlives the context.
+		let mut ctx = unsafe { Context::from_input(buffer.as_mut_ptr()) };
+
+		assert_eq!((ctx.contract, ctx.caller), (address(1), address(2)));
+		assert_eq!((ctx.time_millis, ctx.time_seconds()), (1_700_000_123_456, 1_700_000_123));
+		assert_eq!(ctx.funds, funds);
+		assert_eq!(ctx.data, b"instruction");
+		assert_eq!(ctx.no_funds().unwrap_err().message(), "this action takes no funds");
+
+		let first = ctx.account(0).unwrap();
+		assert_eq!((first.owner(), first.id()), (address(1), [2; 32]));
+		assert!(first.is_writable() && first.is_own() && first.is_mutable());
+		assert_eq!((first.len(), first.capacity(), first.data()), (3, 8, &b"abc"[..]));
+		assert!(!first.is_empty());
+		let second = ctx.account(1).unwrap();
+		assert!(second.is_empty() && !second.is_mutable());
+
+		assert_eq!(ctx.account(2).err().unwrap().message(), "the instruction lists 2 accounts, needs at least 3");
+		assert!(ctx.own_account(0, &[2; 32]).is_ok());
+		assert_eq!(
+			ctx.own_account(0, &[4; 32]).err().unwrap().message(),
+			"account 0 is not the one this instruction needs"
+		);
+		// The right id, but another contract's.
+		assert!(ctx.own_account(1, &[3; 32]).is_err());
+	}
+
+	#[test]
+	fn a_time_before_the_epoch_is_second_zero() {
+		let mut buffer = input(address(2), -5_000, &[], &[], b"");
+		// SAFETY: as above.
+		let ctx = unsafe { Context::from_input(buffer.as_mut_ptr()) };
+		assert_eq!(ctx.time_seconds(), 0);
+		assert!(ctx.no_funds().is_ok() && ctx.accounts.is_empty() && ctx.data.is_empty());
+	}
+
+	#[test]
+	fn only_the_contracts_writable_accounts_change() {
+		let accounts = [
+			listed(address(1), 1, true, true, b"ab", 16),
+			listed(address(1), 2, false, true, b"ro", 8),
+			listed(address(9), 3, true, false, b"theirs", 8),
+		];
+		let mut buffer = input(address(2), 0, &[], &accounts, b"");
+		{
+			// SAFETY: as above.
+			let mut ctx = unsafe { Context::from_input(buffer.as_mut_ptr()) };
+			let mine = ctx.account(0).unwrap();
+			mine.resize(5).unwrap();
+			assert_eq!(mine.data(), b"ab\0\0\0");
+			assert_eq!(mine.resize(17).unwrap_err().message(), "account data of 17 bytes exceeds the 16 available");
+			mine.set(b"xyz").unwrap();
+			mine.data_mut().unwrap()[0] = b'X';
+			// Shrinking and growing again zeroes what was cut off.
+			mine.resize(1).unwrap();
+			mine.resize(3).unwrap();
+			assert_eq!(mine.data(), b"X\0\0");
+
+			let read_only = ctx.account(1).unwrap();
+			assert_eq!(read_only.data_mut().err().unwrap().message(), "this account is read-only in this instruction");
+			assert!(read_only.set(b"no").is_err());
+			let theirs = ctx.account(2).unwrap();
+			assert_eq!(theirs.clear().unwrap_err().message(), "this account belongs to another contract");
+		}
+		// The changes are in the input region, where the engine reads them.
+		// SAFETY: as above.
+		let mut ctx = unsafe { Context::from_input(buffer.as_mut_ptr()) };
+		assert_eq!(ctx.account(0).unwrap().data(), b"X\0\0");
+		ctx.account(0).unwrap().clear().unwrap();
+		assert!(ctx.account(0).unwrap().is_empty());
+		assert_eq!(ctx.account(1).unwrap().data(), b"ro");
+	}
+
+	#[cfg(feature = "borsh")]
+	#[test]
+	fn accounts_load_and_store_borsh_values() {
+		let mut buffer = input(address(2), 0, &[], &[listed(address(1), 1, true, true, b"", 16)], b"");
+		// SAFETY: as above.
+		let mut ctx = unsafe { Context::from_input(buffer.as_mut_ptr()) };
+		let account = ctx.account(0).unwrap();
+		assert_eq!(account.load::<u64>().unwrap(), None);
+		account.store(&42u64).unwrap();
+		assert_eq!(account.load::<u64>().unwrap(), Some(42));
+		account.set(&[1]).unwrap();
+		// `from_slice` reports data too short as invalid, not as its end.
+		assert_eq!(account.load::<u64>().unwrap_err().message(), "bad data: not a valid encoding");
+	}
+
+	#[test]
+	fn logs_attributes_and_return_data_reach_the_host() {
+		let (calls, host) = recording(
+			|symbol, args| match symbol {
+				syscall::LOG | syscall::SET_RETURN_DATA => {
+					format!("{symbol} {}", String::from_utf8(bytes(args[0], args[1])).unwrap())
+				}
+				syscall::ATTRIBUTE => format!(
+					"{symbol} {}={}",
+					String::from_utf8(bytes(args[0], args[1])).unwrap(),
+					String::from_utf8(bytes(args[2], args[3])).unwrap()
+				),
+				syscall::GET_RETURN_DATA => format!("{symbol} room {}", args[1]),
+				_ => panic!("unexpected host call {symbol}"),
+			},
+			|symbol, args| {
+				if symbol == syscall::GET_RETURN_DATA && args[1] > 0 {
+					write(args[0], b"xyz");
+				}
+				3
+			},
+		);
+		let returned = with_host(host, || {
+			log("hello");
+			attribute("count", 42u64);
+			attribute("ok", true);
+			set_return_data(b"out");
+			return_data()
+		});
+		assert_eq!(returned, b"xyz");
+		assert_eq!(
+			*calls.borrow(),
+			[
+				"keeta_log hello",
+				"keeta_attribute count=42",
+				"keeta_attribute ok=true",
+				"keeta_set_return_data out",
+				// The length first, then exactly that much room.
+				"keeta_get_return_data room 0",
+				"keeta_get_return_data room 3",
+			]
+		);
+	}
+
+	#[test]
+	fn ledger_host_functions_pass_addresses_and_amounts() {
+		let (calls, host) = recording(
+			|symbol, args| match symbol {
+				syscall::SEND => format!(
+					"send to {:?} token {:?} amount {} memo {:?}",
+					bytes(args[0], ADDRESS_LEN as u64)[0],
+					bytes(args[1], ADDRESS_LEN as u64)[0],
+					u128::from_le_bytes(bytes(args[2], 16).try_into().unwrap()),
+					String::from_utf8(bytes(args[3], args[4])).unwrap()
+				),
+				syscall::BALANCE => format!(
+					"balance of {} in {}",
+					bytes(args[0], ADDRESS_LEN as u64)[0],
+					bytes(args[1], ADDRESS_LEN as u64)[0]
+				),
+				syscall::SUPPLY => format!("supply of {}", bytes(args[0], ADDRESS_LEN as u64)[0]),
+				syscall::SET_INFO => {
+					let table: Vec<u64> = bytes(args[0], 48)
+						.chunks_exact(8)
+						.map(|word| u64::from_le_bytes(word.try_into().unwrap()))
+						.collect();
+					let field =
+						|index: usize| String::from_utf8(bytes(table[index * 2], table[index * 2 + 1])).unwrap();
+					format!("set_info {} / {} / {}", field(0), field(1), field(2))
+				}
+				syscall::INVOKE => {
+					let metas: Vec<u64> = bytes(args[1], args[2] * 16)
+						.chunks_exact(8)
+						.map(|word| u64::from_le_bytes(word.try_into().unwrap()))
+						.collect();
+					format!(
+						"invoke {} with {metas:?} data {:?}",
+						bytes(args[0], ADDRESS_LEN as u64)[0],
+						bytes(args[3], args[4])
+					)
+				}
+				_ => panic!("unexpected host call {symbol}"),
+			},
+			|symbol, args| match symbol {
+				syscall::BALANCE => {
+					write(args[2], &77u128.to_le_bytes());
+					0
+				}
+				// Token 5 exists; any other does not.
+				syscall::SUPPLY if bytes(args[0], 1)[0] == 5 => {
+					write(args[1], &1_000u128.to_le_bytes());
+					1
+				}
+				_ => 0,
+			},
+		);
+		let (held, supplies) = with_host(host, || {
+			send(&address(3), &address(4), 250, Some("memo"));
+			send(&address(3), &address(4), 1, None);
+			set_info("Pet", "A pet", "");
+			invoke(&address(6), &[(0, true), (2, false)], &[9, 8]);
+			(balance(&address(3), &address(4)), [supply(&address(5)), supply(&address(6))])
+		});
+		assert_eq!((held, supplies), (77, [Some(1_000), None]));
+		assert_eq!(
+			*calls.borrow(),
+			[
+				"send to 3 token 4 amount 250 memo \"memo\"",
+				"send to 3 token 4 amount 1 memo \"\"",
+				"set_info Pet / A pet / ",
+				"invoke 6 with [0, 1, 2, 0] data [9, 8]",
+				"balance of 3 in 4",
+				"supply of 5",
+				"supply of 6",
+			]
+		);
+	}
+
+	#[test]
+	fn run_reports_a_contracts_error_to_the_host() {
+		let mut buffer = input(address(2), 0, &[], &[], b"go");
+		let (calls, host) = recording(
+			|symbol, args| format!("{symbol} {}", String::from_utf8(bytes(args[0], args[1])).unwrap()),
+			|_, _| 0,
+		);
+		let results = with_host(host, || {
+			// SAFETY: as above.
+			let ok = unsafe {
+				run(buffer.as_mut_ptr(), |ctx| {
+					if ctx.data == b"go" {
+						Ok(())
+					} else {
+						Err("no".into())
+					}
+				})
+			};
+			// SAFETY: as above.
+			let failed = unsafe { run(buffer.as_mut_ptr(), |_| Err("refused".into())) };
+			(ok, failed)
+		});
+		assert_eq!(results, (0, 1));
+		assert_eq!(*calls.borrow(), ["keeta_error refused"]);
+	}
+
+	#[test]
+	fn state_ids_are_the_sha256_of_their_seeds() {
+		let abc = sha256(&[b"abc"]);
+		assert_eq!(abc[..4], [0xba, 0x78, 0x16, 0xbf]);
+		assert_eq!(state_id(&[b"a", b"bc"]), abc);
+		assert_eq!(state_id(&[]), sha256(&[b""]));
+	}
+}

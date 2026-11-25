@@ -429,3 +429,250 @@ impl From<LedgerOutcome> for WireLedgerOutcome {
 		}
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use keetanetwork_contract_engine::HostError;
+	use serde_json::json;
+
+	use super::*;
+
+	fn hex32(byte: u8) -> String {
+		hex::encode([byte; 32])
+	}
+
+	#[test]
+	fn the_config_fills_in_defaults() {
+		let config: WireConfig = serde_json::from_value(json!({ "network": "21378" })).unwrap();
+		let config = config.into_config();
+		let defaults = EngineConfig::default();
+		assert_eq!(config.network, 21378);
+		assert_eq!(
+			(config.max_call_depth, config.max_code_size, config.max_cached_code_size),
+			(defaults.max_call_depth, defaults.max_code_size, defaults.max_cached_code_size)
+		);
+
+		let config: WireConfig = serde_json::from_value(
+			json!({ "network": 1, "maxCallDepth": 2, "maxCodeSize": 3, "maxCachedCodeSize": 4 }),
+		)
+		.unwrap();
+		let config = config.into_config();
+		assert_eq!(
+			(config.network, config.max_call_depth, config.max_code_size, config.max_cached_code_size),
+			(1, 2, 3, 4)
+		);
+
+		assert!(serde_json::from_value::<WireConfig>(json!({ "network": 1, "extra": true })).is_err());
+		assert!(serde_json::from_value::<WireConfig>(json!({ "network": "-1" })).is_err());
+	}
+
+	#[test]
+	fn a_ledger_call_becomes_the_engines_call() {
+		let call: WireLedgerCall = serde_json::from_value(json!({
+			"caller": "keeta_caller",
+			"instruction": {
+				"contract": "keeta_contract",
+				"accounts": [
+					{ "owner": "keeta_contract", "id": hex32(1), "writable": true },
+					{ "owner": "keeta_other", "id": hex32(2) }
+				],
+				"data": encode_b64(b"\x00\x01")
+			},
+			"funds": [{ "token": "keeta_token", "amount": "340282366920938463463374607431768211456" }],
+			"gasLimit": "1400000",
+			"timeMillis": 1_767_225_600_000i64
+		}))
+		.unwrap();
+		let call = call.into_call().unwrap();
+		assert_eq!(call.caller, "keeta_caller");
+		assert_eq!(
+			call.instruction,
+			Instruction {
+				contract: "keeta_contract".into(),
+				accounts: vec![
+					AccountMeta { owner: "keeta_contract".into(), id: [1; 32], writable: true },
+					AccountMeta { owner: "keeta_other".into(), id: [2; 32], writable: false },
+				],
+				data: vec![0, 1],
+			}
+		);
+		// Amounts may exceed a u128.
+		assert_eq!(call.funds, vec![Fund::new("keeta_token", BigUint::from(u128::MAX) + 1u8)]);
+		assert_eq!((call.gas_limit, call.time_millis), (1_400_000, 1_767_225_600_000));
+	}
+
+	#[test]
+	fn a_ledger_call_takes_a_number_for_gas_and_needs_no_funds_or_accounts() {
+		let call: WireLedgerCall = serde_json::from_value(json!({
+			"caller": "keeta_caller",
+			"instruction": { "contract": "keeta_contract", "data": "" },
+			"gasLimit": 5,
+			"timeMillis": 0
+		}))
+		.unwrap();
+		let call = call.into_call().unwrap();
+		assert_eq!((call.gas_limit, call.funds.len(), call.instruction.accounts.len()), (5, 0, 0));
+	}
+
+	#[test]
+	fn malformed_calls_are_refused() {
+		let call = |instruction: serde_json::Value, amount: &str| {
+			serde_json::from_value::<WireLedgerCall>(json!({
+				"caller": "keeta_caller",
+				"instruction": instruction,
+				"funds": [{ "token": "keeta_token", "amount": amount }],
+				"gasLimit": "1",
+				"timeMillis": 0
+			}))
+		};
+		let good = json!({ "contract": "c", "data": "" });
+		let error = call(json!({ "contract": "c", "data": "not base64!" }), "1")
+			.err()
+			.unwrap();
+		assert!(error.to_string().contains("bad base64"), "{error}");
+		let error = call(json!({ "contract": "c", "data": "", "accounts": [{ "owner": "c", "id": "zz" }] }), "1")
+			.err()
+			.unwrap();
+		assert!(error.to_string().contains("bad hex"), "{error}");
+		let error = call(json!({ "contract": "c", "data": "", "accounts": [{ "owner": "c", "id": "00" }] }), "1")
+			.err()
+			.unwrap();
+		assert!(error.to_string().contains("expected 32 bytes of hex"), "{error}");
+		assert!(call(json!({ "contract": "c", "data": "", "extra": 1 }), "1").is_err());
+
+		let error = call(good, "-1").unwrap().into_call().err().unwrap();
+		assert_eq!(error.to_string(), "bad amount \"-1\"");
+		assert!(serde_json::from_value::<WireLedgerCall>(json!({
+			"caller": "c", "instruction": { "contract": "c", "data": "" }, "gasLimit": "many", "timeMillis": 0
+		}))
+		.is_err());
+	}
+
+	#[test]
+	fn host_requests_name_their_op() {
+		let requests = [
+			(HostRequest::CodeBytes { checksum: [0xab; 32] }, json!({ "op": "codeBytes", "checksum": hex32(0xab) })),
+			(HostRequest::Contract { address: "a".into() }, json!({ "op": "contract", "address": "a" })),
+			(
+				HostRequest::StorageGet { contract: "c".into(), key: vec![1, 2] },
+				json!({ "op": "storageGet", "contract": "c", "key": "AQI=" }),
+			),
+			(
+				HostRequest::Balance { account: "a".into(), token: "t".into() },
+				json!({ "op": "balance", "account": "a", "token": "t" }),
+			),
+			(HostRequest::TokenSupply { token: "t".into() }, json!({ "op": "tokenSupply", "token": "t" })),
+			(
+				HostRequest::SendRefusal { from: "f".into(), to: "t".into(), token: "k".into() },
+				json!({ "op": "sendRefusal", "from": "f", "to": "t", "token": "k" }),
+			),
+		];
+		for (request, expected) in requests {
+			assert_eq!(request.op(), expected["op"]);
+			assert_eq!(serde_json::to_value(&request).unwrap(), expected);
+		}
+	}
+
+	#[test]
+	fn a_contract_record_comes_from_the_host() {
+		let record: WireContractRecord = serde_json::from_value(json!({
+			"address": "keeta_contract",
+			"codeHash": hex32(7),
+			"info": { "name": "Pet", "description": "A pet", "metadata": "" }
+		}))
+		.unwrap();
+		let record = ContractRecord::from(record);
+		assert_eq!(record.code_hash, [7; 32]);
+		assert_eq!(
+			record.info,
+			AccountInfo { name: "Pet".into(), description: "A pet".into(), metadata: String::new() }
+		);
+	}
+
+	#[test]
+	fn every_engine_error_has_a_stable_kind() {
+		let message = || String::from("m");
+		let errors = [
+			(EngineError::Vm { message: message() }, "vm"),
+			(EngineError::Contract { message: message() }, "contract"),
+			(EngineError::Ledger { message: message() }, "ledger"),
+			(EngineError::InvalidInstruction { reason: message() }, "invalidInstruction"),
+			(EngineError::InvalidAccount { reason: message() }, "invalidAccount"),
+			(EngineError::Reentrancy { contract: message() }, "reentrancy"),
+			(EngineError::UnknownContract { address: message() }, "unknownContract"),
+			(EngineError::InvalidAddress { address: message(), reason: message() }, "invalidAddress"),
+			(EngineError::InvalidField { field: "name", reason: message() }, "invalidField"),
+			(EngineError::OutOfGas, "outOfGas"),
+			(EngineError::DepthExceeded { limit: 5 }, "depthExceeded"),
+			(EngineError::Setup { message: message() }, "setup"),
+			(EngineError::Host { source: HostError::new("down") }, "host"),
+			(EngineError::CodeTooLarge { size: 2, limit: 1 }, "codeTooLarge"),
+		];
+		for (error, kind) in errors {
+			let text = error.to_string();
+			let json: serde_json::Value =
+				serde_json::from_str(&Outcome::<()>::from_result(Err(error)).to_json()).unwrap();
+			assert_eq!(json, json!({ "error": { "kind": kind, "message": text } }));
+		}
+		assert_eq!(Outcome::from_result(Ok("hash")).to_json(), r#"{"ok":"hash"}"#);
+	}
+
+	#[test]
+	fn a_ledger_outcome_serializes_for_javascript() {
+		let outcome = LedgerOutcome {
+			data: Some(vec![1]),
+			events: vec![Event { contract: "c".into(), attributes: vec![("action".into(), "feed".into())] }],
+			logs: vec![Log { contract: "c".into(), message: "hello".into() }],
+			gas_used: u64::MAX,
+			reads: vec![StateAccess { owner: "c".into(), id: [1; 32], data: None }],
+			writes: vec![StateAccess { owner: "c".into(), id: [2; 32], data: Some(vec![2, 3]) }],
+			effects: vec![
+				Effect::Send {
+					from: "c".into(),
+					to: "a".into(),
+					token: "t".into(),
+					amount: BigUint::from(u128::MAX) + 1u8,
+					external: Some("memo".into()),
+				},
+				Effect::SetInfo {
+					account: "c".into(),
+					info: AccountInfo { name: "n".into(), description: "d".into(), metadata: "m".into() },
+				},
+			],
+		};
+		let json = serde_json::to_value(Outcome::Ok(WireLedgerOutcome::from(outcome))).unwrap();
+		assert_eq!(
+			json,
+			json!({ "ok": {
+				"data": "AQ==",
+				"events": [{ "contract": "c", "attributes": [["action", "feed"]] }],
+				"logs": [{ "contract": "c", "message": "hello" }],
+				// As text: JavaScript numbers cannot hold every u64.
+				"gasUsed": u64::MAX.to_string(),
+				"reads": [{ "owner": "c", "id": hex32(1), "data": null }],
+				"writes": [{ "owner": "c", "id": hex32(2), "data": "AgM=" }],
+				"effects": [
+					{ "kind": "send", "from": "c", "to": "a", "token": "t", "amount": "340282366920938463463374607431768211456", "external": "memo" },
+					{ "kind": "setInfo", "account": "c", "name": "n", "description": "d", "metadata": "m" }
+				]
+			}})
+		);
+		let empty = LedgerOutcome {
+			data: None,
+			events: vec![],
+			logs: vec![],
+			gas_used: 0,
+			reads: vec![],
+			writes: vec![],
+			effects: vec![],
+		};
+		assert_eq!(serde_json::to_value(WireLedgerOutcome::from(empty)).unwrap()["data"], json!(null));
+	}
+
+	#[test]
+	fn wire_errors_show_their_message() {
+		assert_eq!(WireError("bad".into()).to_string(), "bad");
+		assert_eq!(decode_b64("AQI=").unwrap(), vec![1, 2]);
+		assert_eq!(decode_hash(&hex32(9)).unwrap(), [9; 32]);
+	}
+}

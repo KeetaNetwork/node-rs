@@ -2,7 +2,8 @@
 //!
 //! On-chain each is a call through its [`syscall_hash`]; built for any other
 //! target they panic, so contracts and this crate still compile (for tests
-//! of pure logic, docs and lints).
+//! of pure logic, docs and lints). This crate's own tests answer them with
+//! a mock host (`mock`).
 //!
 //! [`syscall_hash`]: crate::abi::syscall_hash
 
@@ -22,13 +23,48 @@ macro_rules! syscalls {
 				let function: extern "C" fn($($ty),*) -> $ret = unsafe { core::mem::transmute(KEY) };
 				function($($arg),*)
 			}
-			#[cfg(not(target_os = "solana"))]
+			// This crate's own tests answer through a mock host.
+			#[cfg(all(test, not(target_os = "solana")))]
+			{
+				mock::call($symbol, &[$($arg as u64),*])
+			}
+			#[cfg(all(not(test), not(target_os = "solana")))]
 			{
 				let _ = ($($arg,)*);
 				panic!("{} is only available to contracts running in the engine", $symbol)
 			}
 		}
 	)*};
+}
+
+/// A stand-in host for this crate's tests: each host function call goes to
+/// the handler [`mock::with_host`] installs, with its arguments as `u64`s
+/// (pointers into the test's own memory).
+#[cfg(all(test, not(target_os = "solana")))]
+pub(crate) mod mock {
+	use std::cell::RefCell;
+
+	type Handler = Box<dyn FnMut(&str, &[u64]) -> u64>;
+
+	thread_local! {
+		static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
+	}
+
+	/// Run `body` with `handler` answering host function calls.
+	pub(crate) fn with_host<R>(handler: impl FnMut(&str, &[u64]) -> u64 + 'static, body: impl FnOnce() -> R) -> R {
+		HANDLER.with(|slot| *slot.borrow_mut() = Some(Box::new(handler)));
+		let result = body();
+		HANDLER.with(|slot| *slot.borrow_mut() = None);
+		result
+	}
+
+	pub(crate) fn call(symbol: &str, args: &[u64]) -> u64 {
+		HANDLER.with(|slot| {
+			let mut slot = slot.borrow_mut();
+			let handler = slot.as_mut().expect("no mock host installed");
+			handler(symbol, args)
+		})
+	}
 }
 
 use crate::abi::syscall;
