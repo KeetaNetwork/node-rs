@@ -3,6 +3,8 @@ resolver = "2"
 exclude = [
 	# wasmtime host smoke tests
 	"keetanetwork-client-wasi/host-tests",
+	# Example contracts: a separate sBPF workspace built by the engine tests
+	"keetanetwork-contract-engine/tests/contracts",
 ]
 members = [
 	"keetanetwork-account",
@@ -20,6 +22,9 @@ members = [
 	"keetanetwork-client-wasm",
 	"keetanetwork-client-wasi",
 	"keetanetwork-mobile",
+	"keetanetwork-contract-std",
+	"keetanetwork-contract-engine",
+	"keetanetwork-contract-napi",
 ]
 
 [workspace.package]
@@ -199,6 +204,15 @@ version = "0.5.2"
 path = "keetanetwork-client-wasm"
 default-features = false
 
+[workspace.dependencies.keetanetwork-contract-engine]
+version = "0.1.0"
+path = "keetanetwork-contract-engine"
+
+[workspace.dependencies.keetanetwork-contract-std]
+version = "0.1.0"
+path = "keetanetwork-contract-std"
+default-features = false
+
 [profile.dev]
 opt-level = 0
 debug = true
@@ -209,6 +223,12 @@ debug = false
 lto = true
 codegen-units = 1
 panic = "abort"
+
+# The Node.js bindings catch a panic in a call and reject its promise
+# instead of aborting the node, which needs unwinding.
+[profile.release-napi]
+inherits = "release"
+panic = "unwind"
 
 [profile.test]
 opt-level = 1

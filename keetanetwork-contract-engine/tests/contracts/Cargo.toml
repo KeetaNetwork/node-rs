@@ -1,0 +1,22 @@
+# Example contracts for the contract engine.
+#
+# A separate workspace because it only builds for sBPF, with Solana's
+# platform tools. The engine's integration tests build it on demand; to
+# build by hand, each contract on its own:
+#
+#     for contract in keeta-*; do cargo build-sbf --arch v3 --manifest-path $contract/Cargo.toml; done
+#
+# which leaves `target/deploy/<contract>.so`. Not all at once: the pet
+# depends on the shop with `no-entrypoint` (to call it), and a build of the
+# whole workspace unifies features, leaving the shop without its entrypoint. The engine's tests also build
+# the contracts for the host, as path dependencies, to use their types; so
+# the contracts spell out their package fields rather than inheriting them.
+[workspace]
+resolver = "2"
+members = ["keeta-escrow", "keeta-pet", "keeta-pet-shop", "keeta-probe"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+overflow-checks = true
